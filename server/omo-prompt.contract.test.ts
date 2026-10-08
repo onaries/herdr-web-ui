@@ -61,7 +61,7 @@ process.stdin.on("data", (chunk) => {
     appendFileSync(out, questions[tab].header + "=" + questions[tab].options[picked[tab]] + "\\n");
     tab += 1;
     cursor = 0;
-  } else if (tab === questions.length && data.includes("\\r")) appendFileSync(out, "submitted\\n");
+  } else if (tab === questions.length && (data.includes("\\r") || data === "\\u001b[13;5u")) appendFileSync(out, "submitted\\n");
   draw();
 });
 // earlier output in the pane's history, for its viewport to scroll back to

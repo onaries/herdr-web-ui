@@ -1130,7 +1130,7 @@ describe("OmO's ask_user_question form", () => {
     // navigation picks the option and moves on; a typed answer replaces one typed before
     expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
     expect(answerKeys(prompt!, { custom_text: "둘 다" })).toEqual([
-      { keys: ["backspace"] }, { keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }, { text: "둘 다" }, { keys: ["enter"] },
+      { keys: ["backspace"] }, { keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }, { text: "둘 다" }, { text: "\n" },
     ]);
     expect(() => answerKeys(prompt!, { option_index: 2 })).toThrow("valid option index");
     // herdr may name the pane omo, or claude while omo's SDK child runs
@@ -1157,7 +1157,7 @@ describe("OmO's ask_user_question form", () => {
     expect(prompt?.steps?.map((step) => [step.answered, step.current])).toEqual([[true, false], [true, true]]);
     expect(prompt?.id).not.toBe(parseInteractivePrompt("pi", first)?.id);
     // the cursor is on the typed answer's row already
-    expect(answerKeys(prompt!, { custom_text: "없음" })).toEqual([{ keys: ["backspace"] }, { keys: ["enter"] }, { text: "없음" }, { keys: ["enter"] }]);
+    expect(answerKeys(prompt!, { custom_text: "없음" })).toEqual([{ keys: ["backspace"] }, { keys: ["enter"] }, { text: "없음" }, { text: "\n" }]);
   });
 
   test("answers a multiple choice afresh by navigation, then moves on with Tab", () => {
@@ -1196,16 +1196,16 @@ ${rows}
       steps: [{ label: "표시 위치", answered: true, current: false }, { label: "월 한도", answered: true, current: false }],
     });
     expect(labels(onComment)).toEqual(["Submit", "표시 위치: 설정 > 음성 입력 (추천)", "월 한도: 월 $5 한도", "Comment (optional; unanswered questions are reported)"]);
-    expect(answerKeys(onComment!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(onComment!, { option_index: 0 })).toEqual([{ text: "\u001b[13;5u" }]);
     expect(answerKeys(onComment!, { option_index: 1 })).toEqual([{ keys: ["up"] }, { keys: ["up"] }, { keys: ["enter"] }]);
-    expect(answerKeys(onComment!, { custom_text: "급해요" })).toEqual([{ text: "급해요" }, { keys: ["enter"] }]);
+    expect(answerKeys(onComment!, { custom_text: "급해요" })).toEqual([{ text: "급해요" }, { text: "\u001b[13;5u" }]);
     expect(() => answerKeys(onComment!, { option_index: 3 })).toThrow("valid option index");
 
     const onRow = parseInteractivePrompt("pi", review("   표시 위치: 설정 > 음성 입력 (추천)\n → 월 한도: 월 $5 한도", "enter edit answer  ↑↓ move  tab next question  esc back"));
     expect(onRow?.id).toBe(onComment?.id);
-    expect(answerKeys(onRow!, { option_index: 0 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    expect(answerKeys(onRow!, { option_index: 0 })).toEqual([{ text: "\u001b[13;5u" }]);
     expect(answerKeys(onRow!, { option_index: 1 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
-    expect(answerKeys(onRow!, { custom_text: "급해요" })).toEqual([{ keys: ["down"] }, { text: "급해요" }, { keys: ["enter"] }]);
+    expect(answerKeys(onRow!, { custom_text: "급해요" })).toEqual([{ keys: ["down"] }, { text: "급해요" }, { text: "\u001b[13;5u" }]);
   });
 
   test("joins what a narrow pane wraps, the tab bar, the hint and words cut at the edge", () => {
@@ -1343,7 +1343,7 @@ ${rule60}
     // the cursor's row is out of view: to the typed answer's row from the top, where ↑ stops
     expect(answerKeys(prompt!, { custom_text: "둘 다" })).toEqual([
       { keys: ["backspace"] }, ...Array(5).fill({ keys: ["up"] }), ...Array(4).fill({ keys: ["down"] }), { keys: ["enter"] },
-      { text: "둘 다" }, { keys: ["enter"] },
+      { text: "둘 다" }, { text: "\n" },
     ]);
     // rows that are not the call's question's are no card
     expect(parseInteractivePrompt("pi", short, { questions: [pendingOmoAsk(asking)!.questions[1]!] })).toBeNull();
@@ -1372,7 +1372,7 @@ ${rule60}
     const prompt = parseInteractivePrompt("pi", typing, pendingOmoAsk(asking));
     expect(prompt).toMatchObject({ kind: "menu", title: "Question 1 of 2", question: "음성 사용량과 추정 비용을 어디에 보여줄까요?", custom_option_index: null });
     expect(prompt?.options).toEqual([{ label: "Save the typed answer", description: "안녕" }, { label: "Discard it", description: null }]);
-    expect(answerKeys(prompt!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(prompt!, { option_index: 0 })).toEqual([{ text: "\n" }]);
     expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["esc"] }]);
     // the whole form in view needs no session
     const whole = form(` → 표시 위치    월 한도    Submit
@@ -1401,7 +1401,7 @@ ${rule60}
     const prompt = parseInteractivePrompt("pi", short, pendingOmoAsk(asking));
     expect(labels(prompt)).toEqual(["Submit", "표시 위치", "월 한도", "Comment (optional; unanswered questions are reported)"]);
     expect(prompt?.steps?.every((step) => step.answered && !step.current)).toBeTrue();
-    expect(answerKeys(prompt!, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(prompt!, { option_index: 0 })).toEqual([{ text: "\u001b[13;5u" }]);
     expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["up"] }, { keys: ["up"] }, { keys: ["enter"] }]);
   });
 
@@ -2826,7 +2826,7 @@ ${omoRule}
       };
       const prompt = (await card())!;
       expect(await answer(prompt.id, { custom_text: "2 please" })).toEqual({ status: 200, code: undefined });
-      expect(pane.sent).toEqual(["alt+up", "backspace", "down", "down", "enter", "text:2 please", "enter"]);
+      expect(pane.sent).toEqual(["alt+up", "backspace", "down", "down", "enter", "text:2 please", "text:\n"]);
     });
   });
 
@@ -2869,7 +2869,7 @@ ${omoRule}
       expect(prompt.custom_option_index).toBe(0);
       pane.onSent = (sent) => { if (sent === "alt+up" || sent === "backspace") pane.screen = omoFormScreen(0, "Which one?", []); };
       expect((await answer(prompt.id, { custom_text: "my answer" })).status).toBe(200);
-      expect(pane.sent).toEqual(["alt+up", "backspace", "enter", "text:my answer", "enter"]);
+      expect(pane.sent).toEqual(["alt+up", "backspace", "enter", "text:my answer", "text:\n"]);
     });
   });
 

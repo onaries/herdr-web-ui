@@ -17,6 +17,9 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#181613" />
     <meta name="color-scheme" content="dark" />
+    <!-- The app ships its own i18n (Settings → Language); keep Chrome from
+         auto-translating the shell, which garbles terminal output and code. -->
+    <meta name="google" content="notranslate" />
     <!-- The query is a URL no pre-0.3.32 service worker has cached: those serve the plain
          URL cache-first, which handed Chrome the old `orientation: "any"` manifest on the
          first launch after an upgrade and spent that day's installed-app update check. -->

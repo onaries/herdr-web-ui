@@ -71,6 +71,9 @@ const OMO_PENDING_HINT_RE = /^enter(?: or \S+)? to answer · \/answer · or just
 /** OmO's apparently empty input box; never sufficient evidence for sending text into it. */
 const OMO_EMPTY_BOX_RE = /^[❯›>]$/;
 
+// Explicit OMO submit is independent of remapped tui.input.submit bindings.
+const OMO_SUBMIT: AnswerStep = { text: "\u001b[13;5u" };
+
 const KEY = {
   up: "up",
   down: "down",
@@ -895,7 +898,7 @@ function parseOmoQuestion(screen: string, ask: OmoAsk | null, trusted: boolean):
     customMenuIndex: options.length, rejectWithEscapeIndex: null,
     optionSteps: options.map((_, option) => pick(option)),
     // what was typed before stays in the row: a Backspace on the options clears the answer first
-    customSteps: (text) => [...keySteps([KEY.backspace, ...omoWalk(options.length, selectedIndex, rows), KEY.enter]), { text }, ...keySteps([KEY.enter])],
+    customSteps: (text) => [...keySteps([KEY.backspace, ...omoWalk(options.length, selectedIndex, rows), KEY.enter]), { text }, { text: "\n" }],
     multiSteps: (choices) => {
       let at = selectedIndex;
       const steps = keySteps([KEY.backspace]);
@@ -946,7 +949,7 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
     question = joinWrapped(view.question, screenWidth(lines));
   }
   const choices: { label: string; description: string | null; steps: AnswerStep[] }[] = [
-    { label: "Save the typed answer", description: typed || null, steps: keySteps([KEY.enter]) },
+    { label: "Save the typed answer", description: typed || null, steps: [{ text: "\n" }] },
     { label: "Discard it", description: null, steps: keySteps([KEY.escape]) },
   ];
   return finishPrompt("omo", {
@@ -1031,7 +1034,7 @@ function parseOmoReview(screen: string, ask: OmoAsk | null, trusted: boolean): P
     current: false,
   }));
   const choices: { label: string; steps: AnswerStep[] }[] = [
-    { label: "Submit", steps: keySteps([...omoWalk(count, selectedIndex, count + 1), KEY.enter]) },
+    { label: "Submit", steps: [OMO_SUBMIT] },
     ...labels.map((label, row) => ({ label, steps: keySteps([...omoWalk(row, selectedIndex, count + 1), KEY.enter]) })),
   ];
   return finishPrompt("omo", {
@@ -1044,7 +1047,7 @@ function parseOmoReview(screen: string, ask: OmoAsk | null, trusted: boolean): P
     responder: "omo-review", menuLabels: [...labels, commentLabel], selectedIndex,
     checkedOptionIndices: [], customMenuIndex: count, rejectWithEscapeIndex: null,
     optionSteps: [...choices.map(({ steps }) => steps), []],
-    customSteps: (text) => [...keySteps(omoWalk(count, selectedIndex, count + 1)), { text }, ...keySteps([KEY.enter])],
+    customSteps: (text) => [...keySteps(omoWalk(count, selectedIndex, count + 1)), { text }, OMO_SUBMIT],
   }, { call: known?.id });
 }
 

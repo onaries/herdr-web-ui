@@ -7,12 +7,12 @@
  * Files land in `<pane cwd>/.herdr-web-ui/`, not /tmp, on purpose: agents ask before
  * reading outside their project directory, and a path inside the project keeps the
  * attachment visible (and git-ignorable) next to the conversation. A pane without a
- * known cwd falls back to the OS temp dir - the path still works, it just may cost
+ * known cwd (or one the OS no longer has) falls back to the OS temp dir - the path still works, it just may cost
  * the agent a read-permission prompt. `HERDR_WEB_PASTE_DIR` sends every attachment to
  * one directory instead, for those who would rather keep them out of the working tree.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { HerdrError, sessionSnapshot } from "./herdr/client.ts";
@@ -33,6 +33,25 @@ function storedName(name: string | undefined): { base: string; extension: string
     base: (dot > 0 ? clean.slice(0, dot) : clean) || "file",
     extension: /^[a-z0-9]{1,10}$/.test(extension) ? extension : "bin",
   };
+}
+
+/**
+ * A cwd the OS still has. Herdr reports a removed directory as `<path> (deleted)`, and
+ * `mkdir -p` on that string creates a tree named after the kernel's marker instead of
+ * failing, so a cwd that is not a directory now counts as no cwd at all.
+ */
+function existingDirectory(cwd: string | null | undefined): string | null {
+  if (!cwd) return null;
+  try {
+    return statSync(cwd).isDirectory() ? cwd : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where one pane's attachment goes: `pasteDirectory` of its cwd when that cwd still exists. */
+export function pasteDirectoryForPane(cwd: string | null | undefined): string {
+  return pasteDirectory(existingDirectory(cwd));
 }
 
 /** Where a pane's attachments go: `HERDR_WEB_PASTE_DIR` when set, else `<cwd>/.herdr-web-ui`. */
@@ -97,7 +116,7 @@ export async function savePaneImage(options: {
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === options.paneId);
   if (!pane) throw new HerdrError("pane_not_found", `pane ${options.paneId} not found`);
 
-  const directory = pasteDirectory(pane.cwd);
+  const directory = pasteDirectoryForPane(pane.cwd);
   mkdirSync(directory, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const unique = `${stamp}-${crypto.randomUUID().slice(0, 8)}`;
