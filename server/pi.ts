@@ -1,4 +1,5 @@
 import { constants, closeSync, fstatSync, lstatSync, openSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import { herdrRpc } from "./herdr/client.ts";
@@ -83,8 +84,12 @@ export async function piTranscriptPath(paneId: string, sessionDir = defaultPiSes
   const session = info?.agent?.agent_session;
   // pi reports an absolute path; the id-only form belongs to agents with no store of ours.
   if (session?.kind !== "path" || typeof session.value !== "string") return null;
-  const path = piTranscriptInStore(session.value, sessionDir);
-  if (path !== null) return { path };
-  const unwritten = unwrittenSession(session.value, sessionDir);
-  return unwritten === null ? null : { unwritten };
+  const storeCandidates = Array.from(new Set([sessionDir, join(homedir(), ".omo", "agent", "sessions"), join(homedir(), ".omp", "agent", "sessions")]));
+  for (const store of storeCandidates) {
+    const path = piTranscriptInStore(session.value, store);
+    if (path !== null) return { path };
+    const unwritten = unwrittenSession(session.value, store);
+    if (unwritten !== null) return { unwritten };
+  }
+  return null;
 }

@@ -4,7 +4,7 @@ import type { HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { processStartedAt } from "./process-start.ts";
 
-const OMO_PROCESS = /(^|\/)omo(\.js)?$|\/omo-ai\//;
+const OMO_PROCESS = /(^|\/)omo(\.js)?$|\/omo-ai\/|\/\.omo\//;
 /** node and bun run a script: the program is then the script, the first word that is not a flag */
 const JS_RUNTIME = /(^|\/)(node|nodejs|bun)$/;
 /** omo's engine, run by its launcher; it is omo only with omo-ai's plugin as an extension */
@@ -279,7 +279,7 @@ export function omoTranscriptsOfCwd(cwd: string, panes: HerdrPane[], infos: Read
       }
     }
     const session = pane.agent_session;
-    if (session?.agent === "omo" && session.value) {
+    if ((session?.agent === "omo" || (session?.agent === "pi" && typeof session.value === "string" && session.value.includes("/.omo/"))) && session.value) {
       if (session.kind === "path") paths.push(session.value);
       if (session.kind === "id") ids.push(session.value);
     }

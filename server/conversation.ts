@@ -32,6 +32,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import nodePath, { type PlatformPath } from "node:path";
 
+import { agyConversation, AgyHistoryChanged, agyToolOutput, agyTranscriptPath } from "./agy.ts";
+
+import { dshConversation, DshHistoryChanged, dshSessionFromPids, dshToolOutput } from "./dsh.ts";
+
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
@@ -59,6 +63,9 @@ export const TRANSCRIPT_WINDOW_BYTES = 16 * 1024 * 1024;
 
 /** A page never holds more prompts than this (each opens a user + assistant pair). */
 const MAX_PAGE_PROMPTS = MAX_TURNS / 2;
+
+/** Polls need only recent turns; older pages retain their larger history batch. */
+const NEWEST_PAGE_PROMPTS = 12;
 
 /** A single turn longer than a window still gets a page of its own, up to this. */
 const MAX_PAGE_BYTES = 4 * TRANSCRIPT_WINDOW_BYTES;
@@ -407,7 +414,7 @@ export class HistoryChanged extends Error {
 
 /** What paneConversation resolved: which store the turns came from, and where they start. */
 export type RecognizedConversation = {
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "dsh-transcript" | "agy-transcript";
   turns: ConversationTurn[];
   metadata: ConversationMetadata;
   /** the first turn's position, for the page before it; null at the conversation's beginning */
@@ -574,7 +581,7 @@ function applyHistoryBoundary(path: string, stream: TranscriptStream, source: Re
 }
 
 /** Bytes that every line opening a turn contains: a cheap filter before JSON.parse. */
-const TURN_MARK: Record<RecognizedConversation["source"], Buffer> = {
+const TURN_MARK: Partial<Record<RecognizedConversation["source"], Buffer>> = {
   "codex-transcript": Buffer.from('"task_started"'),
   "claude-transcript": Buffer.from('"user"'),
   "omp-transcript": Buffer.from('"user"'),
@@ -607,11 +614,12 @@ function opensTurn(source: RecognizedConversation["source"], line: string): bool
 
 function turnStarts(bytes: Buffer, source: RecognizedConversation["source"]): number[] {
   const starts: number[] = [];
+  const mark = TURN_MARK[source];
   for (let offset = 0; offset < bytes.length;) {
     const newline = bytes.indexOf(0x0a, offset);
     const end = newline === -1 ? bytes.length : newline;
     const line = bytes.subarray(offset, end);
-    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) starts.push(offset);
+    if (mark && line.includes(mark) && opensTurn(source, line.toString("utf8"))) starts.push(offset);
     offset = end + 1;
   }
   return starts;
@@ -715,7 +723,7 @@ function rememberPaneSession(paneId: string, session: string): void {
   remember(paneReads, paneId, reads, PANE_READS_MAX);
 }
 
-/** The newest page's start and every turn start in it (pageBefore without widening), or null when it starts mid-turn. */
+/** The newest page's start and scanned turn starts, or null when it starts mid-turn. */
 function newestPage(path: string, stream: TranscriptStream, source: RecognizedConversation["source"]): { start: number; starts: number[] } | null {
   const from = Math.max(stream.floor, stream.length - TRANSCRIPT_WINDOW_BYTES);
   let scan = liveScans.get(path);
@@ -739,7 +747,7 @@ function newestPage(path: string, stream: TranscriptStream, source: RecognizedCo
   if (stale !== 0) scan.starts.splice(0, stale === -1 ? scan.starts.length : stale);
   remember(liveScans, path, scan, 32);
   const starts = pending.length > 0 ? [...scan.starts, ...pending] : scan.starts;
-  const start = starts.length > MAX_PAGE_PROMPTS ? starts[starts.length - MAX_PAGE_PROMPTS] : from === stream.floor ? stream.floor : starts[0];
+  const start = starts.length > NEWEST_PAGE_PROMPTS ? starts[starts.length - NEWEST_PAGE_PROMPTS] : from === stream.floor ? stream.floor : starts[0];
   return start === undefined ? null : { start, starts };
 }
 
@@ -1022,6 +1030,21 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
     return { source: "omo-transcript", path: await omoTranscriptPath(paneId, cwd, panes) };
   }
   try {
+    if (agent === "agy") {
+      const info = await herdrRpc<{ agent: { agent_session?: { agent?: string; kind?: string; value?: string } } }>("agent.get", { target: paneId });
+      const session = info.agent.agent_session;
+      const path = session?.agent === "agy" && session.kind === "id" && typeof session.value === "string" ? agyTranscriptPath(session.value) : null;
+      if (path === null) throw new ConversationUnavailable("no_session_path");
+      return { source: "agy-transcript", path };
+    }
+    if (agent === "dsh-tui") {
+      // dsh reports no session id, so the session is the one its own processes hold open.
+      const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown }[] } }>("pane.process_info", { pane_id: paneId });
+      const pids = (info.process_info?.foreground_processes ?? []).map((process) => Number(process.pid)).filter((pid) => Number.isInteger(pid));
+      const path = dshSessionFromPids(pids);
+      if (path === null) throw new ConversationUnavailable("no_session_path");
+      return { source: "dsh-transcript", path };
+    }
     if (agent === "codex") {
       // the pane's own store: the rollout, its history and its images are all read from there
       const home = await paneCodexHome(paneId, codexHome);
@@ -1103,6 +1126,20 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
 
 /** One page of a resolved transcript (paneConversation's `page`). */
 export function transcriptPage(source: RecognizedConversation["source"], path: string, page: ConversationPage = {}, codexHome?: string): RecognizedConversation {
+  if (source === "agy-transcript") {
+    try { return agyConversation(path, page); }
+    catch (error) {
+      if (error instanceof AgyHistoryChanged) throw new HistoryChanged();
+      throw new ConversationUnavailable("transcript_unreadable");
+    }
+  }
+  if (source === "dsh-transcript") {
+    try { return dshConversation(path, page); }
+    catch (error) {
+      if (error instanceof DshHistoryChanged) throw new HistoryChanged();
+      throw new ConversationUnavailable("transcript_unreadable");
+    }
+  }
   let stat: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number };
   try {
     stat = statSync(path);
@@ -1249,6 +1286,8 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
 /** The output a transcript file holds for one tool call id, whole (up to TOOL_OUTPUT_MAX). */
 export function transcriptToolOutput(source: RecognizedConversation["source"], path: string, ref: string, codexHome?: string): string | null {
   if (!TOOL_REF.test(ref)) return null;
+  if (source === "dsh-transcript") return dshToolOutput(path, ref);
+  if (source === "agy-transcript") return agyToolOutput(path, ref);
   if (source === "codex-transcript") {
     let segments: ReturnType<typeof codexHistorySegments>;
     try { segments = codexHistorySegments(path, codexHome); } catch { return null; }

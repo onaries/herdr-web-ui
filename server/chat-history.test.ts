@@ -86,10 +86,15 @@ for (const source of ["omp-transcript", "omo-transcript", "gjc-transcript", "cla
     appendFileSync(path, "\n" + jsonl(Array.from({ length: 80 }, (_, i) => user(`new ${i}`))));
     const latest = transcriptPage(source, path);
     expect(latest.history_id).toBe(cleared.history_id);
-    const older = transcriptPage(source, path, { before: latest.cursor! });
-    expect(older.cursor).toBeNull();
-    expect([...older.turns, ...latest.turns]).toHaveLength(80);
-    expect(JSON.stringify([...older.turns, ...latest.turns])).not.toContain("old ");
+    let page = latest;
+    let turns = latest.turns;
+    for (let count = 0; page.cursor !== null; count++) {
+      expect(count).toBeLessThan(10);
+      page = transcriptPage(source, path, { before: page.cursor });
+      turns = [...page.turns, ...turns];
+    }
+    expect(turns).toHaveLength(80);
+    expect(JSON.stringify(turns)).not.toContain("old ");
     forgetTranscriptState();
     expect(transcriptPage(source, path)).toEqual(latest);
   });
