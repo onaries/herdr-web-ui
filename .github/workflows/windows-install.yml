@@ -49,7 +49,7 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-e2e.ps1 -Ref $env:HEAD_SHA -Fresh
       - name: Install the latest release with the README's command
         if: github.event_name != 'pull_request'
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-e2e.ps1 -Installer https://devswha.github.io/herdr-web-ui/install.ps1 -Fresh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-e2e.ps1 -Installer https://herdrweb.dev/install.ps1 -Fresh
       - name: Update from the release before it
         if: github.event_name != 'pull_request'
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-e2e.ps1 -Installer https://devswha.github.io/herdr-web-ui/install.ps1 -Update
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-e2e.ps1 -Installer https://herdrweb.dev/install.ps1 -Update

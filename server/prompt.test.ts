@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, paneIsCompacting, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
+import { answerKeys, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, paneIsCompacting, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
 
@@ -1004,6 +1004,74 @@ ${rows}
 
   test("does not take a rule of another program under the panel for Claude's own", () => {
     expect(parseInteractivePrompt("claude", question + "\n⏺ Done.\n──── user@host:~/project ─\n")).toBeNull();
+  });
+});
+
+describe("Claude's held message", () => {
+  // Claude Code 2.1.294, live: a pasted message with a zero-width space, after its Enter
+  const rule = "─".repeat(80);
+  const held = (box: string, footer = "  [Haiku 4.5] │ project\n  ⏸ manual mode on") => `
+ ▐▛███▜▌   Claude Code v2.1.294
+${" ".repeat(40)}Removed 1 invisible character · review and press Enter to send
+${rule}
+${box}
+${rule}
+${footer}
+`;
+
+  test("shows the message Claude holds, with Send and Discard", () => {
+    const prompt = parseInteractivePrompt("claude", held("❯ helloworld test"))!;
+    expect(prompt).not.toBeNull();
+    expect(prompt.title).toBe("Claude Code removed 1 invisible character");
+    expect(prompt.body).toBe("helloworld test");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Send", "Discard"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["ctrl+c"] }]);
+  });
+
+  test("keeps a held message of several lines whole, and counts the characters", () => {
+    const screen = held("❯ first line\n  second line").replace("Removed 1 invisible character", "Removed 3 invisible characters");
+    const prompt = parseInteractivePrompt("claude", screen)!;
+    expect(prompt.title).toBe("Claude Code removed 3 invisible characters");
+    expect(prompt.body).toBe("first line\nsecond line");
+  });
+
+  test("knows a held message without the hint, by what the chat just sent", () => {
+    // a turn's status line took the hint's row: only the box says it, and only to the one who sent it
+    const screen = held("\u276f timingtest").replace(/.*Removed 1 invisible character.*\n/, "  \u273b Cooked for 1s \u00b7 done 5:23 PM\n");
+    expect(parseInteractivePrompt("claude", screen)).toBeNull();
+    const prompt = parseInteractivePrompt("claude", screen, null, true, [], "timing\u200btest")!;
+    expect(prompt.title).toBe("Claude Code removed 1 invisible character");
+    expect(prompt.body).toBe("timingtest");
+    // a box that differs in anything visible is the user's own draft
+    expect(parseInteractivePrompt("claude", screen, null, true, [], "timing\u200btests")).toBeNull();
+    expect(parseInteractivePrompt("claude", screen, null, true, [], "timingtest")).toBeNull();
+  });
+
+  test("counts only invisible characters as removed, a wrapped box aside", () => {
+    expect(removedInvisible("a\u200bb\u2060c\ufeff", "abc")).toBe(3);
+    expect(removedInvisible("long message here", "long mess\nage here")).toBe(0);
+    expect(removedInvisible("abc", "abd")).toBe(0);
+    expect(removedInvisible("ab\u200bc", "ab")).toBe(0);
+    expect(removedInvisible("\ud55c\u3164\uae00", "\ud55c\uae00")).toBe(1);
+  });
+
+  test("offers no Discard while Claude works: its Ctrl+C would interrupt the turn", () => {
+    // Claude Code 2.1.294, live: Ctrl+C under a running turn answers "Interrupted" and leaves the box as it was
+    const prompt = parseInteractivePrompt("claude", held("❯ helloworld test"), null, true, [], null, true)!;
+    expect(prompt.body).toBe("helloworld test");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Send"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(() => answerKeys(prompt, { option_index: 1 })).toThrow();
+  });
+
+  test("is gone once the input is empty, and never reads the hint off a quoted screen", () => {
+    // sent or discarded: the hint stays over an empty input
+    expect(parseInteractivePrompt("claude", held("❯"))).toBeNull();
+    // output under the box is not Claude's footer: the hint is quoted, not live
+    expect(parseInteractivePrompt("claude", held("❯ hi", `  footer\n${rule}\n❯ another box`))).toBeNull();
+    // the same words not over an input box
+    expect(parseInteractivePrompt("claude", "Removed 1 invisible character · review and press Enter to send\nsome output\n")).toBeNull();
   });
 });
 
@@ -2687,6 +2755,8 @@ describe("an answer and the menu it was made for", () => {
     onRead?: () => void;
     /** herdr never answers what it is asked about the pane's agent */
     agentUnanswered?: boolean;
+    /** what an ANSI read shows instead of `screen`: the pane's viewport, scrolled off its live screen */
+    viewport?: string;
     /** the next screen read alone answers with this, that much later */
     nextRead?: { text: string; delay: number };
     /** herdr presses this key and its reply is lost on the way */
@@ -2712,7 +2782,7 @@ describe("an answer and the menu it was made for", () => {
       socket.on("data", (chunk) => {
         input += chunk.toString();
         if (!input.includes("\n")) return;
-        const request = JSON.parse(input.split("\n")[0]!) as { id: string; method: string; params: { keys?: string[]; text?: string } };
+        const request = JSON.parse(input.split("\n")[0]!) as { id: string; method: string; params: { keys?: string[]; text?: string; format?: string } };
         const answer = (result: unknown) => socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
         const snapshotDelay = request.method === "session.snapshot" ? pane.nextSnapshotDelay : undefined;
         if (snapshotDelay !== undefined) pane.nextSnapshotDelay = undefined;
@@ -2722,7 +2792,7 @@ describe("an answer and the menu it was made for", () => {
           const once = pane.nextRead;
           pane.nextRead = undefined;
           if (once) return void setTimeout(() => answer({ read: { text: once.text } }), once.delay);
-          return void setTimeout(() => answer({ read: { text: pane.screen } }), pane.readDelay ?? 0);
+          return void setTimeout(() => answer({ read: { text: request.params.format === "ansi" ? pane.viewport ?? pane.screen : pane.screen } }), pane.readDelay ?? 0);
         }
         if (request.method === "pane.process_info") return answer({ process_info: { foreground_processes: pane.omo?.live ? [{ pid: pane.omo.pid, argv: ["omo"] }] : [] } });
         if (request.method === "agent.get" && pane.agentUnanswered) return;
@@ -2804,6 +2874,93 @@ ${omoRule}
       finally { child.kill(); await child.exited; }
     });
   }
+
+  // Claude Code 2.1.294, live: a message it holds back for an invisible character
+  const heldRule = "─".repeat(80);
+  const heldScreen = (box: string, over = `${" ".repeat(40)}Removed 1 invisible character · review and press Enter to send`) => `
+ ▐▛███▜▌   Claude Code v2.1.294
+${over}
+${heldRule}
+${box}
+${heldRule}
+  [Haiku 4.5] │ project
+`;
+
+  test("sends Claude's held message only as the card showed it: a box edited in the terminal refuses the answer", async () => {
+    await withPane("claude", "idle", heldScreen("❯ helloworld test"), async (pane) => {
+      const shown = (await card())!;
+      expect(shown.body).toBe("helloworld test");
+      // edited in the terminal after the card was read: the hint stays, the message is another one
+      pane.screen = heldScreen("❯ helloworld test and more");
+      expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      // sent from the terminal meanwhile: the hint lingers over an empty input
+      pane.screen = heldScreen("❯");
+      expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(await answer(shown.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+      // the card as the screen shows it now is answered with one Enter
+      pane.screen = heldScreen("❯ helloworld test");
+      const again = (await card())!;
+      expect(await answer(again.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
+      expect(pane.sent).toEqual(["enter"]);
+    });
+  });
+
+  test("never presses Ctrl+C for a Discard tapped before Claude went to work", async () => {
+    await withPane("claude", "idle", heldScreen("❯ helloworld test"), async (pane) => {
+      const shown = (await card())!;
+      expect(labels(shown)).toEqual(["Send", "Discard"]);
+      // a turn began under the card: Ctrl+C would interrupt it and leave the message where it is
+      pane.status = "working";
+      expect(await answer(shown.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+      const working = (await card())!;
+      expect(labels(working)).toEqual(["Send"]);
+      expect((await answer(working.id, { option_index: 1 })).status).toBe(400);
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("forgets what the chat sent once its held message is answered: the same words after it are a new message", async () => {
+    // the hint has gone: only the chat's own send says the box holds a held message
+    const box = heldScreen("❯ samemessage", "  ✻ Cooked for 1s · done");
+    await withPane("claude", "idle", box, async (pane) => {
+      expect(await card()).toBeNull();
+      noteSubmitted("p_1", "same\u200bmessage");
+      const shown = (await card())!;
+      expect(shown.body).toBe("samemessage");
+      expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
+      expect(pane.sent).toEqual(["enter"]);
+      // typed or pasted again, without the character: nothing was taken out of this one
+      expect(await card()).toBeNull();
+    });
+  });
+
+  test("takes no grey placeholder or suggestion in Claude's empty box for a held message", async () => {
+    // Claude Code 2.1.294, live: the empty box's own grey text (SGR 2), as herdr's ANSI read gives it
+    const grey = (text: string) => `❯ \u001b[0m\u001b[2m${text}\u001b[0m`;
+    await withPane("claude", "idle", heldScreen("❯ helloworld test"), async (pane) => {
+      const shown = (await card())!;
+      expect(labels(shown)).toEqual(["Send", "Discard"]);
+      // sent or cleared in the terminal: the hint lingers a moment over a box that is empty again
+      for (const empty of [grey('Try "how does <filepath> work?"'), grey("run the tests")]) {
+        pane.screen = heldScreen(empty);
+        expect(await card()).toBeNull();
+        // Enter there would send Claude's suggestion, Ctrl+C would ask to leave Claude
+        expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+        expect(await answer(shown.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      }
+      expect(pane.sent).toEqual([]);
+      // typed text is not grey: a message of the same words is a held message
+      pane.screen = heldScreen("❯ run the tests");
+      expect((await card())?.body).toBe("run the tests");
+      // a pane scrolled into its history: the viewport's older box and its grey text say nothing
+      // about the message the live screen holds
+      pane.screen = heldScreen("❯ helloworld test");
+      pane.viewport = heldScreen(grey("run the tests"));
+      expect((await card())?.body).toBe("helloworld test");
+    });
+  });
 
   test.skipIf(process.platform !== "linux")("opens the pending OmO form, navigates to a non-default row and confirms after redraw", async () => {
     for (const box of ["❯", "❯ ", "❯\n ", "❯│"]) await withOmo(async (pane) => {

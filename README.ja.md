@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://devswha.github.io/herdr-web-ui/">公式サイト</a> ·
+  <a href="https://herdrweb.dev/">公式サイト</a> ·
   <a href="#install">インストール</a> ·
-  <a href="https://devswha.github.io/herdr-web-ui/demo/">デモを試す</a> ·
+  <a href="https://herdrweb.dev/demo/">デモを試す</a> ·
   <a href="docs/guide.md#quick-start">クイックスタート</a> ·
   <a href="#faq">よくある質問</a> ·
   <a href="#docs">ドキュメント</a>
@@ -76,12 +76,12 @@ https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
 
 <p align="center"><sub>どのクリップも、パソコンとスマートフォンを同時に収録した実際の動作です。等速・カットなし。クリックすると動画全体を再生できます。</sub></p>
 
-- **チャットとターミナルを、ひとつのペインで** — Claude Code、Codex、omp、omo、gjc、pi のネイティブな会話履歴を表示し、ワンクリックでライブターミナルに切り替えられます。[対応エージェント →](docs/guide.md#supported-agents)
+- **チャットとターミナルを、ひとつのペインで** — Claude Code、Codex、omp、omo、gjc、pi の会話履歴と、herdr が識別した OpenCode 2 のセッションを表示し、ワンクリックでライブターミナルに切り替えられます。エージェントの作業中に次のメッセージを書いておくと次のターンで送られ、Send now ですぐに送ることもできます。[対応エージェント →](docs/guide.md#supported-agents)
 - **タップで承認** — 承認リクエスト、質問、計画メニューがカードになり、問いかけがまだ有効か確認してから回答を送信します。
 - **対応が必要なときに通知** — すべてのペインの状態をリアルタイムに表示し、アプリを開いているときは通知が上から降りてきます。入力が必要なときや完了したときには、アプリを閉じていてもプッシュ通知が届きます。
-- **スマートフォンにインストール** — キーボードの上に Esc、Tab、Ctrl、矢印キーが並ぶ PWA。Tailscale のアドレスは QR コードで表示されます。[スマートフォンの設定 →](docs/guide.md#on-your-phone)
+- **スマートフォンにインストール** — キーボードの上にキーバー（Esc、Tab、Ctrl、Alt、Shift、Enter、矢印キー）が並ぶ PWA。キーの並べ替えや独自のキー組み合わせの追加は Settings（設定）でできます。Tailscale のアドレスは QR コードで表示されます。[スマートフォンの設定 →](docs/guide.md#on-your-phone)
 - **話して入力** — チャットやターミナルの入力欄に音声で入力できます。韓国語と英語が混ざっても認識し、送信するまで何も送られません。自分の OpenAI API キー、またはブラウザの音声認識を使います。
-- **いつもの作業環境をそのままに** — エージェントは herdr が管理し、このアプリはそこに接続します。エージェントを止めずに Settings（設定）からアップデートできます。新しいタブや worktree は行の ⋯ メニューから作れます。[すべての機能 →](docs/guide.md#features)
+- **いつもの作業環境をそのままに** — エージェントは herdr が管理し、このアプリはそこに接続します。エージェントを止めずに Settings（設定）からアップデートでき、アップデートごとの変更はパッチノートで確認できます。新しいタブや worktree は行の ⋯ メニューから作れます。[すべての機能 →](docs/guide.md#features)
 
 ---
 
@@ -90,10 +90,19 @@ https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
 ## インストール
 
 ```bash
-curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh
+curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
 Linux（x64、arm64）または macOS に対応しています。必要な herdr 0.9.0+、Bun 1.4+、Node 18+ がなければ現在のユーザー向けにインストールし、その後アプリを herdr プラグインとしてインストールします。既存の herdr が 0.9.0 より古い場合は、自分で herdr を更新・再起動してからインストーラーを再実行してください。デフォルトの待ち受けアドレスを使用し、Tailscale が起動している場合、HTTPS の設定に成功すると tailnet 内のアクセス用アドレスと QR コードが表示されます。自分のデバイスはもともとコードなしで入れます。`tailscale serve` がログイン名を伝えるためです。それでも自分のスマートフォンがペアリングを求められるときは、`HERDR_WEB_TAILSCALE_SERVE_ONLY=1` を設定すると、ログインが1つだけの tailnet ならコードなしで入れるようになります。ただし、公開プロキシやトンネルなど別の経路でこのポートに届く場合は設定しないでください（[アクセスと安全性](docs/guide.md#access-and-safety)）。
+
+<p align="center">
+Windows x64 では PowerShell で:
+
+```powershell
+irm https://herdrweb.dev/install.ps1 | iex
+```
+
+[Git for Windows](https://git-scm.com/download/win) が必要です。足りない herdr と Bun を現在のユーザー向けにインストールし、同じプラグインをインストールします。Node や WSL は不要です。スマートフォンから使うには herdr で **Phone setup** を開いてください。herdr が Windows でターミナルのアタッチに対応するまで、Windows のターミナルは入力でき、グリッドが固定された[画面ミラー](docs/remote-pcs.md#windows-pcs)になります。
 
 <p align="center">
   <img src="docs/screenshots/install.png" width="720" alt="インストーラーの出力：Bun、Node、herdr プラグインのインストール後、tailscale serve でアプリへのアクセスを有効にし、スマートフォン用の QR コードを表示します。">
@@ -119,7 +128,7 @@ herdr が起動した状態で **[localhost:7317](http://localhost:7317)** を�
 
 **チャット表示はどのエージェントに対応していますか？**
 
-Claude Code、Codex、omp、omo、gjc、pi は、それぞれのセッションファイルから読み取ります。herdr のペインで動くそれ以外のプログラムは、ライブターミナルと状態が表示されます。[対応エージェント →](docs/guide.md#supported-agents)
+Claude Code、Codex、omp、omo、gjc、pi は、それぞれのセッションファイルから読み取ります。OpenCode 2 は herdr が報告したセッションを OpenCode 自身のデータベースから読み取り、ホーム画面または 1.x のストアではライブターミナルを表示します。それ以外のプログラムはライブターミナルと状態が表示されます。[対応エージェント →](docs/guide.md#supported-agents)
 
 **herdr の TUI の代わりになるものですか？**
 

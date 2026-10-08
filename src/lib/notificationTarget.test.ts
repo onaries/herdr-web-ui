@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { notificationTargets } from "./notificationTarget.ts";
+import { notificationTargetFromSearch, notificationTargets, notificationViewForPane } from "./notificationTarget.ts";
 
 function messages() {
   let receive!: (event: MessageEvent) => void;
@@ -15,6 +15,37 @@ describe("notification pane delivery", () => {
     const selected: unknown[] = [];
     source.subscribe((target) => selected.push(target));
     expect(selected).toEqual([{ machine_id: "remote&pc", pane_id: "latest pane/?" }]);
+  });
+
+  it("preserves the requested chat view with a pane target", () => {
+    const source = messages();
+    const selected: unknown[] = [];
+    source.subscribe((target) => selected.push(target));
+    source.send({ type: "select-pane", pane_id: "pi-pane", machine_id: "local", view: "chat" });
+    expect(selected).toEqual([{ machine_id: "local", pane_id: "pi-pane", view: "chat" }]);
+  });
+
+  it("reads a chat target from a cold-start notification URL only when a pane is present", () => {
+    expect(notificationTargetFromSearch("?machine=remote%26pc&pane=pi%2F1&view=chat")).toEqual({
+      machine_id: "remote&pc",
+      pane_id: "pi/1",
+      view: "chat",
+    });
+    expect(notificationTargetFromSearch("?pane=pi-pane&view=chat")).toEqual({
+      machine_id: "local",
+      pane_id: "pi-pane",
+      view: "chat",
+    });
+    expect(notificationTargetFromSearch("?pane=pi-pane")).toBeNull();
+    expect(notificationTargetFromSearch("?view=chat")).toBeNull();
+  });
+
+  it("forces the requested view only for that exact PC and pane", () => {
+    const target = { machine_id: "remote", pane_id: "pi-pane", view: "chat" as const };
+    expect(notificationViewForPane(target, "remote", "pi-pane")).toBe("chat");
+    expect(notificationViewForPane(target, "local", "pi-pane")).toBeNull();
+    expect(notificationViewForPane(target, "remote", "another-pane")).toBeNull();
+    expect(notificationViewForPane({ machine_id: "remote", pane_id: "pi-pane" }, "remote", "pi-pane")).toBeNull();
   });
 
   it("delivers directly once the app subscribes", () => {

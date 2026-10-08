@@ -132,7 +132,7 @@
 }
 
 .settings-shortcut-select {
-  width: 11rem;
+  width: 14rem;
 }
 
 .settings-link {
@@ -310,7 +310,7 @@
   }
 
   .settings-shortcut-select {
-    width: 9.5rem;
+    width: 100%;
   }
 
   /* the key takes the line; Save and Remove share the next one */

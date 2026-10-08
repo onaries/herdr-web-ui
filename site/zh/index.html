@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="zh-CN" data-mode="ink">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>herdr web ui：在手机上使用 Claude Code 和 Codex</title>
+    <meta name="description" content="herdr 的浏览器与手机客户端：无论身在何处，都能以聊天或实时终端的方式阅读并回复你电脑上运行的 Claude Code 和 Codex 智能体。" />
+    <link rel="canonical" href="https://herdrweb.dev/zh/" />
+    <link rel="alternate" hreflang="en" href="https://herdrweb.dev/" />
+    <link rel="alternate" hreflang="zh-CN" href="https://herdrweb.dev/zh/" />
+    <link rel="alternate" hreflang="x-default" href="https://herdrweb.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://herdrweb.dev/zh/" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:title" content="herdr web ui：在手机上使用 Claude Code 和 Codex" />
+    <meta property="og:description" content="在任何地方运行 herdr。通过 herdr 的浏览器与手机客户端，在电脑和手机上使用 Claude Code 和 Codex。" />
+    <meta property="og:image" content="https://herdrweb.dev/assets/social-preview.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta property="og:image:alt" content="herdr web ui：一只公羊、一个终端提示符、一个浏览器窗口和一个指针" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#12100e" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "herdr web ui",
+        "description": "herdr 的浏览器与手机客户端：以聊天或实时终端的方式，阅读并回复你电脑上运行的 Claude Code 和 Codex 智能体。",
+        "inLanguage": "zh-CN",
+        "url": "https://herdrweb.dev/",
+        "image": "https://herdrweb.dev/assets/social-preview.png",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "softwareRequirements": "herdr 0.9.0 or newer",
+        "softwareVersion": "{{version}}",
+        "license": "https://github.com/devswha/herdr-web-ui/blob/main/LICENSE",
+        "sameAs": "https://github.com/devswha/herdr-web-ui",
+        "author": { "@type": "Person", "name": "devswha", "url": "https://github.com/devswha" },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+    <link rel="icon" href="../favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/png" href="../favicon.png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
+    <script>
+      // before first paint: the saved ink/paper choice, else the system's
+      (() => {
+        let mode = null;
+        try { mode = localStorage.getItem("herdr-web-ui-site-mode"); } catch {}
+        if (mode !== "ink" && mode !== "paper") mode = matchMedia("(prefers-color-scheme: light)").matches ? "paper" : "ink";
+        document.documentElement.dataset.mode = mode;
+      })();
+    </script>
+    <style>
+      /* Laid out after herdr.dev (ink/paper, display type, stat strip, numbered rows), coloured with
+         the app's own DESIGN.md tokens: warm graphite or ledger paper, amber as the one spot colour. */
+      :root {
+        --disp: "Archivo", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+        --body: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", Helvetica, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        --gut: clamp(20px, 3.4vw, 48px);
+        --max: 1440px;
+      }
+      html, html[data-mode="ink"] {
+        color-scheme: dark;
+        --bg: #12100e; --panel: #181613; --raise: #211e1a; --mass: #221f1b;
+        --ink: #f2ebdf; --dim: #d8d0c3; --faint: #9b9183;
+        --line: #2d2924; --line2: #3e3830;
+        --spot: #f0a830; --spot-ink: #1b1407; --spot-tint: rgba(240, 168, 48, 0.13);
+        --working: #6cb8d6; --blocked: #ff7b70; --done: #93c36b; --idle: #9b9183;
+      }
+      html[data-mode="paper"] {
+        color-scheme: light;
+        --bg: #eeeae2; --panel: #f2eee6; --raise: #e8e2d6; --mass: #e2dbce;
+        --ink: #16120d; --dim: #2a251f; --faint: #685e52;
+        --line: #dcd4c6; --line2: #c5baa8;
+        --spot: #8c5000; --spot-ink: #fffdf9; --spot-tint: rgba(140, 80, 0, 0.1);
+        --working: #155a72; --blocked: #a82323; --done: #2f6317; --idle: #685e52;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      html { background: var(--bg); color: var(--dim); font-family: var(--body); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; scroll-behavior: smooth; scroll-padding-top: 72px; }
+      body { margin: 0; }
+      h1, h2, h3, p, figure, ol, ul { margin: 0; }
+      a { color: inherit; text-decoration: none; }
+      img, video { display: block; max-width: 100%; height: auto; }
+      code, kbd { font-family: var(--mono); }
+      :focus-visible { outline: 2px solid var(--spot); outline-offset: 2px; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      .frame { max-width: var(--max); margin: 0 auto; border-inline: 1px solid var(--line); }
+      .mono { font-family: var(--mono); }
+      .caps { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+      .mark { display: inline-block; flex: none; background: currentColor; -webkit-mask: url(../assets/mark-ink.png) center / contain no-repeat; mask: url(../assets/mark-ink.png) center / contain no-repeat; }
+      .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
+      .dot.working { background: var(--working); }
+      .dot.blocked { background: var(--blocked); }
+      .dot.done { background: var(--done); }
+      .dot.ring { background: none; box-shadow: inset 0 0 0 1.5px var(--idle); }
+      .ic { width: 13px; height: 13px; fill: currentColor; flex: none; }
+
+      /* header */
+      .top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+      .top .frame { display: flex; align-items: center; gap: 18px; height: 60px; padding-inline: var(--gut); border-inline-color: transparent; }
+      .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--disp); font-weight: 800; font-size: 18px; letter-spacing: -0.02em; white-space: nowrap; }
+      .brand .mark { width: 24px; height: 24px; }
+      .top nav { display: flex; gap: 26px; margin-left: auto; }
+      .top nav a { color: var(--faint); }
+      .top nav a:hover { color: var(--ink); }
+      .chip { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: 1px solid var(--line2); color: var(--dim); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+      a.chip:hover { color: var(--ink); border-color: var(--faint); }
+      .modes { display: inline-flex; border: 1px solid var(--line2); }
+      .modes button { height: 30px; padding: 0 11px; white-space: nowrap; border: 0; background: none; color: var(--faint); cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+      .modes button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+      .top .install-link { height: 34px; padding: 0 16px; color: var(--ink); }
+      @media (max-width: 960px) { .top nav { display: none; } .top .stars { margin-left: auto; } }
+      @media (max-width: 560px) { .top .install-link, .top .stars { display: none; } .top .lang { margin-left: auto; } .top .modes button { padding: 0 8px; } }
+      @media (max-width: 360px) { .top .frame { gap: 10px; } .top .lang { padding: 0 8px; } .top .modes button { padding: 0 6px; } }
+
+      /* hero */
+      .hero { position: relative; overflow: hidden; padding: clamp(40px, 6vw, 72px) var(--gut) clamp(36px, 5vw, 56px); }
+      .hero .mascot { position: absolute; z-index: 0; right: -7%; top: 2%; width: min(640px, 52vw); aspect-ratio: 1; color: var(--mass); pointer-events: none; }
+      .hero > :not(.mascot) { position: relative; z-index: 1; }
+      .eyebrow { display: flex; align-items: center; gap: 14px; color: var(--spot); }
+      .eyebrow s { display: inline-block; width: 44px; height: 1px; background: currentColor; }
+      h1 { margin-top: 26px; color: var(--ink); font-family: var(--disp); font-weight: 900; font-size: clamp(46px, 7.4vw, 104px); line-height: 0.9; letter-spacing: -0.055em; }
+      h1 em { font-style: normal; color: var(--spot); }
+      @media (min-width: 700px) { h1 em { white-space: nowrap; } }
+      .lede { margin-top: 28px; max-width: 34em; font-size: clamp(16px, 1.3vw, 17.5px); line-height: 1.7; color: var(--faint); }
+      .lede b { color: var(--ink); font-weight: 500; }
+      .cmd { display: inline-flex; align-items: stretch; max-width: 100%; margin-top: 32px; border: 1px solid var(--line2); background: color-mix(in srgb, var(--panel) 92%, transparent); }
+      .cmd code { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 16px; color: var(--ink); font-size: 14px; overflow-x: auto; white-space: nowrap; }
+      .cmd code::before { content: "$"; color: var(--spot); }
+      .copy { flex: none; padding: 0 16px; border: 0; border-left: 1px solid var(--line2); background: none; color: var(--faint); cursor: pointer; }
+      .copy:hover, .copy.is-done { color: var(--spot); }
+      .hero-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 32px; margin-top: 22px; }
+      .hero-meta p { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+      .hero-meta p a { color: var(--spot); }
+      .hero-meta p a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+      .news { display: inline-flex; align-items: center; gap: 14px; color: var(--ink); font-size: 15px; font-weight: 500; }
+      .news .tag { padding: 3px 8px; background: var(--spot); color: var(--spot-ink); font-weight: 500; }
+      .news .arw { color: var(--faint); transition: transform 0.15s ease; }
+      .news:hover .arw { transform: translateX(4px); color: var(--spot); }
+      @media (max-width: 560px) {
+        .cmd { display: flex; }
+        .cmd code { align-items: flex-start; white-space: pre-wrap; overflow-wrap: anywhere; }
+      }
+
+      /* stat strip */
+      .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); }
+      .stat { padding: 22px var(--gut) 20px; border-right: 1px solid var(--line); }
+      .stat:last-child { border-right: 0; }
+      .stat b { display: block; color: var(--ink); font-family: var(--disp); font-weight: 900; font-size: clamp(30px, 3.2vw, 44px); line-height: 1.1; letter-spacing: -0.03em; }
+      .stat span { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--faint); }
+      .stat .ic { color: var(--spot); }
+      a.stat:hover b { color: var(--spot); }
+      @media (max-width: 760px) {
+        .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .stat:nth-child(2) { border-right: 0; }
+        .stat:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+      }
+
+      /* the recording, or the app itself */
+      .show { padding: 30px var(--gut) 40px; }
+      .show-head { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 14px; color: var(--faint); }
+      .show-head h2 { font: inherit; }
+      .win { border: 1px solid var(--line2); background: var(--panel); }
+      .win-bar { display: flex; align-items: center; gap: 14px; height: 36px; padding-left: 12px; border-bottom: 1px solid var(--line2); font-family: var(--mono); font-size: 12px; color: var(--faint); }
+      .win-bar .lights { display: inline-flex; gap: 6px; }
+      .win-bar .lights i { width: 9px; height: 9px; border-radius: 50%; background: var(--line2); }
+      .tabs { display: flex; height: 100%; }
+      .tabs button { height: 100%; padding: 0 14px; border: 0; border-left: 1px solid var(--line2); background: none; color: var(--faint); cursor: pointer; font: inherit; }
+      .tabs button:last-child { border-right: 1px solid var(--line2); }
+      .tabs button:hover { color: var(--ink); }
+      .tabs button[aria-pressed="true"] { background: var(--spot); color: var(--spot-ink); }
+      .win-bar .addr { margin-left: auto; padding-right: 14px; }
+      .win video { width: 100%; aspect-ratio: 16 / 9; background: #000; }
+      .win iframe { display: block; width: 100%; height: min(80vh, 780px); border: 0; background: var(--bg); }
+      .win > [hidden] { display: none; }
+      .show-note { margin-top: 14px; font-size: 14px; color: var(--faint); }
+      .show-note b { color: var(--ink); font-weight: 500; }
+      .show-note a { color: var(--spot); }
+      .show-note a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+      @media (max-width: 560px) { .win-bar .addr { display: none; } }
+
+      /* numbered rows */
+      .rows { border-top: 1px solid var(--line); }
+      .row { display: grid; grid-template-columns: minmax(80px, 150px) minmax(0, 1fr) minmax(0, 390px); gap: 28px clamp(24px, 4vw, 64px); align-items: center; padding: 38px var(--gut); border-bottom: 1px solid var(--line); }
+      .row .n { color: var(--mass); font-family: var(--disp); font-weight: 900; font-size: clamp(40px, 4.4vw, 60px); line-height: 1; letter-spacing: -0.04em; align-self: start; }
+      .row h3 { color: var(--ink); font-family: var(--disp); font-weight: 800; font-size: clamp(20px, 1.8vw, 25px); letter-spacing: -0.035em; line-height: 1.2; }
+      .row h3 .arw { display: inline-block; margin-left: 6px; color: var(--faint); font-family: var(--body); font-weight: 400; font-size: 0.72em; transition: transform 0.15s ease; }
+      a.row:hover h3 .arw { transform: translateX(4px); color: var(--spot); }
+      .row p { margin-top: 12px; max-width: 34em; font-size: 15.5px; color: var(--faint); }
+      .row p code { color: var(--dim); font-size: 0.88em; }
+      .ev { border: 1px solid var(--line2); background: var(--panel); padding: 14px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--dim); }
+      .ev-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 5px 0; }
+      .ev-row > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ev-row b { display: inline-flex; align-items: center; gap: 7px; font-weight: 400; color: var(--faint); white-space: nowrap; }
+      .ev-note { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--faint); }
+      .ev .cmdline::before { content: "$ "; color: var(--spot); }
+      .ev .cmdline { color: var(--ink); overflow-wrap: anywhere; }
+      .ev .seg { display: inline-flex; border: 1px solid var(--line2); margin-bottom: 8px; }
+      .ev .seg span { padding: 2px 10px; color: var(--faint); }
+      .ev .seg span.on { background: var(--spot-tint); color: var(--spot); }
+      .ev .q { color: var(--ink); }
+      .ev .opt { display: block; margin-top: 6px; padding: 5px 10px; border: 1px solid var(--line2); color: var(--dim); }
+      .ev .opt.on { border-color: var(--spot); background: var(--spot-tint); color: var(--ink); }
+      .ev .opt i { font-style: normal; color: var(--faint); margin-right: 8px; }
+      .keys { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+      .keys kbd { padding: 3px 6px; border: 1px solid var(--line2); background: var(--raise); color: var(--ink); font-size: 11.5px; }
+      @media (max-width: 900px) {
+        .row { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+        .row .n { font-size: 34px; }
+        .ev { max-width: 460px; }
+      }
+
+      /* section heads */
+      .sec { padding: clamp(40px, 5vw, 64px) var(--gut) 0; }
+      .sec h2 { margin-top: 18px; max-width: 22ch; color: var(--ink); font-family: var(--disp); font-weight: 900; font-size: clamp(32px, 3.6vw, 50px); line-height: 1; letter-spacing: -0.045em; }
+      .sec .intro { margin-top: 16px; max-width: 42em; font-size: 15.5px; color: var(--faint); }
+      .sec .intro a { color: var(--spot); }
+
+      /* the README's feature clips */
+      .clips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 32px; border-top: 1px solid var(--line); }
+      .clip { display: block; padding: 22px var(--gut) 28px; border-bottom: 1px solid var(--line); }
+      .clip:nth-child(odd) { border-right: 1px solid var(--line); }
+      .clip img, .clip canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line2); background: var(--panel); }
+      .clip img[hidden] { display: none; }
+      .clip h3 { margin-top: 16px; color: var(--ink); font-family: var(--disp); font-weight: 800; font-size: 19px; letter-spacing: -0.03em; }
+      .clip h3 .arw { display: inline-block; margin-left: 6px; color: var(--faint); font-family: var(--body); font-weight: 400; font-size: 0.8em; transition: transform 0.15s ease; }
+      .clip:hover h3 .arw { transform: translateX(4px); color: var(--spot); }
+      .clip p { margin-top: 6px; font-size: 14.5px; color: var(--faint); }
+      .clips-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px; padding: 14px var(--gut); border-bottom: 1px solid var(--line); color: var(--faint); }
+      .clips-toggle { height: 30px; padding: 0 12px; border: 1px solid var(--line2); background: none; color: var(--dim); cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+      .clips-toggle:hover { color: var(--ink); border-color: var(--faint); }
+      @media (max-width: 760px) {
+        .clips { grid-template-columns: minmax(0, 1fr); }
+        .clip:nth-child(odd) { border-right: 0; }
+      }
+
+      /* the demo band */
+      .band { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px 40px; margin-top: clamp(40px, 5vw, 64px); padding: 34px var(--gut); background: var(--panel); border-block: 1px solid var(--line); }
+      .band .caps { display: flex; gap: 14px; }
+      .band .caps b { color: var(--spot); font-weight: 400; }
+      .band h2 { margin-top: 10px; color: var(--ink); font-family: var(--disp); font-weight: 800; font-size: clamp(26px, 2.6vw, 34px); letter-spacing: -0.04em; line-height: 1.1; }
+      .band p { margin-top: 8px; max-width: 36em; font-size: 15px; color: var(--faint); }
+      .button { display: inline-flex; align-items: center; gap: 18px; padding: 12px 18px; border: 1px solid var(--line2); color: var(--ink); font-size: 14px; font-weight: 500; }
+      .button .arw { color: var(--faint); transition: transform 0.15s ease; }
+      .button:hover { border-color: var(--spot); }
+      .button:hover .arw { transform: translateX(4px); color: var(--spot); }
+
+      /* the comparison: every data cell has the same inset, so the column we highlight lines up */
+      .table-wrap { margin: 32px var(--gut) 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+      th, td { text-align: left; vertical-align: top; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+      thead th { color: var(--faint); font-family: var(--mono); font-weight: 400; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; border-bottom-color: var(--line2); }
+      tbody th { padding-left: 0; color: var(--ink); font-weight: 600; }
+      thead th:first-child { padding-left: 0; }
+      td { color: var(--dim); }
+      td.dim { color: var(--faint); }
+      .compare col.label { width: 15%; }
+      .compare col.us { width: 27%; }
+      .compare .us { background: var(--panel); }
+      .compare thead th.us { color: var(--spot); border-top: 2px solid var(--spot); padding-top: 12px; }
+      .compare td.us { color: var(--ink); }
+      .compare thead th a { text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 0.2em; }
+      .compare thead th a:hover { color: var(--ink); text-decoration-color: currentColor; }
+      .legend { margin: 14px var(--gut) 0; font-size: 14px; color: var(--faint); }
+
+      /* the questions: one ruled row each, the question beside its answer */
+      .faq dl { margin: 32px var(--gut) 0; border-top: 1px solid var(--line2); }
+      .faq .qa { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); gap: 8px 40px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+      .faq dt { color: var(--ink); font-weight: 600; }
+      .faq dd { margin: 0; font-size: 14.5px; color: var(--dim); }
+      .faq dd a { color: var(--spot); }
+      .faq dd a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+      @media (max-width: 720px) { .faq .qa { grid-template-columns: minmax(0, 1fr); } }
+      @media (max-width: 720px) {
+        /* one block per row: the label, then each client's answer on its own line */
+        .compare .table-wrap { overflow: visible; }
+        .compare table, .compare tbody, .compare tr, .compare th, .compare td { display: block; }
+        .compare colgroup, .compare thead { display: none; }
+        .compare tbody tr { padding: 16px 0 6px; border-bottom: 1px solid var(--line); }
+        .compare tbody tr:last-child { border-bottom: 0; }
+        .compare tbody th { padding: 0 0 10px; border: 0; font-size: 16px; }
+        .compare td { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 8px 0; border: 0; }
+        .compare td::before { content: attr(data-client); color: var(--faint); font-size: 13px; font-weight: 600; padding-top: 2px; }
+        .compare td.us { background: none; }
+        .compare td.us::before { color: var(--spot); }
+      }
+
+      /* install */
+      .end { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 40px clamp(32px, 5vw, 80px); align-items: center; margin-top: clamp(48px, 6vw, 80px); padding: clamp(48px, 6vw, 88px) var(--gut); border-top: 1px solid var(--line); }
+      .end h2 { color: var(--ink); font-family: var(--disp); font-weight: 900; font-size: clamp(42px, 5vw, 72px); line-height: 0.95; letter-spacing: -0.05em; }
+      .end > div > p { margin-top: 22px; max-width: 32em; font-size: 15.5px; color: var(--faint); }
+      .end .after { max-width: none; margin-top: 16px; font-family: var(--mono); font-size: 12px; line-height: 1.8; color: var(--faint); }
+      .end .after code { color: var(--dim); }
+      .end .after a { color: var(--spot); }
+      .end .after a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+      .end figure img { width: 100%; border: 1px solid var(--line2); }
+      .end figcaption { margin-top: 10px; font-size: 13.5px; color: var(--faint); }
+      @media (max-width: 900px) { .end { grid-template-columns: minmax(0, 1fr); } }
+
+      /* footer */
+      footer { border-top: 1px solid var(--line); }
+      footer .frame { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 22px var(--gut); font-family: var(--mono); font-size: 12px; color: var(--faint); }
+      footer .mark { width: 18px; height: 18px; color: var(--ink); }
+      footer nav { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+      footer nav a { color: var(--dim); }
+      footer nav a:hover, footer p a:hover { color: var(--spot); }
+      footer p a { color: var(--dim); }
+      footer .gh { margin-left: auto; display: inline-flex; color: var(--dim); }
+      footer .gh .ic { width: 16px; height: 16px; }
+
+      @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+      /* Chinese headings: CJK glyphs need none of the Latin display type's tight tracking */
+      h1, .sec h2, .end h2, .band h2, .row h3, .clip h3 { letter-spacing: 0; }
+      h1 { line-height: 1.05; }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="frame">
+        <a class="brand" href="./"><span class="mark" aria-hidden="true"></span>herdr web ui</a>
+        <nav class="caps" aria-label="栏目">
+          <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md">指南</a>
+          <a href="../demo/">演示</a>
+          <a href="#compare">对比</a>
+          <a href="#faq">常见问题</a>
+          <a href="https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.md">更新日志</a>
+        </nav>
+        <a class="chip stars" href="https://github.com/devswha/herdr-web-ui" aria-label="GitHub，{{stars}} 个星标"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>{{stars}}</a>
+        <a class="chip lang" href="../" hreflang="en" lang="en" title="English">EN</a>
+        <div class="modes caps" role="group" aria-label="配色">
+          <button type="button" data-mode="ink" aria-pressed="true">深色</button>
+          <button type="button" data-mode="paper" aria-pressed="false">浅色</button>
+        </div>
+        <a class="chip caps install-link" href="#install">安装</a>
+      </div>
+    </header>
+
+    <main class="frame">
+      <section class="hero" aria-labelledby="hero-title">
+        <span class="mark mascot" aria-hidden="true"></span>
+        <div class="eyebrow caps"><s></s>herdr 插件</div>
+        <h1 id="hero-title">在任何地方<br /> <em>运行 herdr。</em></h1>
+        <p class="lede">电脑和手机都能用。这是 <a href="https://herdr.dev">herdr</a> 的浏览器与手机客户端：打开你已经在运行的会话，看智能体正在做什么，<b>无论身在何处都能回复它们。</b></p>
+        <div class="cmd"><code>curl -fsSL https://herdrweb.dev/install.sh | sh</code><button type="button" class="copy caps" data-copy="curl -fsSL https://herdrweb.dev/install.sh | sh">复制</button></div>
+        <div class="hero-meta">
+          <p>Linux · macOS · Windows · herdr 0.9.0+ · MIT — <a href="#install">只装插件，或从源码运行 →</a></p>
+          <a class="news" href="../demo/"><span class="tag caps">演示</span>先在浏览器里试试<span class="arw" aria-hidden="true">→</span></a>
+        </div>
+      </section>
+
+      <section class="stats" aria-label="概览">
+        <a class="stat" href="https://github.com/devswha/herdr-web-ui/stargazers">
+          <b>{{stars}}</b>
+          <span class="caps"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 5.9 6.5.95-4.7 4.6 1.1 6.45L12 17.45 6.2 20.5l1.1-6.45-4.7-4.6 6.5-.95z"/></svg>GitHub 星标</span>
+        </a>
+        <a class="stat" href="https://github.com/devswha/herdr-web-ui/releases/latest">
+          <b>v{{version}}</b>
+          <span class="caps"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6zM4 19h16v2H4z"/></svg>最新版本</span>
+        </a>
+        <a class="stat" href="https://github.com/devswha/herdr-web-ui/graphs/contributors">
+          <b>{{contributors}}</b>
+          <span class="caps"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 9c0-3.3 3.1-6 7-6s7 2.7 7 6zm15-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm1 9v-1c0-1.7-.7-3.2-1.8-4.3 2.7.3 4.8 2.3 4.8 5.3z"/></svg>贡献者</span>
+        </a>
+        <a class="stat" href="https://herdr.dev/plugins/" title="按 GitHub 星标在 herdr 插件索引中的仓库排名">
+          <b>{{plugin_rank}}</b>
+          <span class="caps"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h4v8H4zm6-10h4v18h-4zm6 6h4v12h-4z"/></svg>共 {{plugin_repo_count}} 个插件仓库</span>
+        </a>
+      </section>
+
+      <section class="show" aria-labelledby="show-title">
+        <div class="show-head caps"><h2 id="show-title">一个窗格，每块屏幕</h2><span>实机录制</span></div>
+        <div class="win">
+          <div class="win-bar">
+            <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <div class="tabs" role="group" aria-label="显示内容">
+              <button type="button" data-view="film" aria-pressed="true">录屏</button>
+              <button type="button" data-view="live" aria-pressed="false">在线试用</button>
+            </div>
+            <span class="addr">localhost:7317</span>
+          </div>
+          <video class="view-film" src="../media/readme-hero.mp4" poster="../media/readme-hero.jpg" width="1920" height="1080" autoplay muted loop playsinline controls preload="metadata" aria-label="屏幕录制，实时、无剪辑。herdr 的终端里 Claude Code 询问是否创建 health.ts，前方的手机以卡片显示同一个问题。镜头拉远，浏览器中也有同一张卡片。在手机上点一下作答：终端里的菜单自行关闭，Claude 写出文件并运行测试，浏览器的聊天显示它的总结。"></video>
+        </div>
+        <p class="show-note">Claude Code 在 herdr 的终端中提问，浏览器和手机显示同一个问题。<b>在手机上点一下就能回答，终端随之自动继续。</b>在同一个 herdr 会话上实机录制，无剪辑。</p>
+      </section>
+
+      <section class="rows" aria-label="功能">
+        <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#supported-agents">
+          <div class="n">01</div>
+          <div>
+            <h3>聊天与终端，共用一个窗格。<span class="arw" aria-hidden="true">→</span></h3>
+            <p>阅读 Claude Code、Codex、omp、omo、gjc 和 pi 的原生会话记录，以及 herdr 识别出的 OpenCode 2 会话，一键切换到实时终端。聊天内容来自智能体自己的会话数据，而不是屏幕文字，每一轮的命令和编辑会折叠成一个块。智能体工作时可以先写好下一条消息：它会在下一轮发出，也可以用 Send now 立即发送。</p>
+          </div>
+          <div class="ev" aria-hidden="true">
+            <div class="seg"><span class="on">聊天</span><span>终端</span></div>
+            <div class="ev-row"><span>claude</span><b>原生会话记录</b></div>
+            <div class="ev-row"><span>codex</span><b>原生 rollout</b></div>
+            <div class="ev-row"><span>omp · omo · gjc · pi</span><b>会话文件</b></div>
+            <div class="ev-row"><span>OpenCode 2</span><b>会话数据库</b></div>
+            <div class="ev-row"><span>其他程序</span><b>终端文字</b></div>
+          </div>
+        </a>
+        <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#features">
+          <div class="n">02</div>
+          <div>
+            <h3>轻点即可批准。<span class="arw" aria-hidden="true">→</span></h3>
+            <p>审批请求、问题和计划菜单会显示为卡片，发送回答前会先确认提示仍然有效。点选一个选项，或输入它的编号。</p>
+          </div>
+          <div class="ev" aria-hidden="true">
+            <div class="ev-row"><span>codex · web-dashboard</span><b><i class="dot blocked"></i>受阻</b></div>
+            <div class="q">Allow command? <span class="mono">git push origin feat/export-guard</span></div>
+            <span class="opt on"><i>1</i>Yes</span>
+            <span class="opt"><i>2</i>Yes, and don't ask again for git push</span>
+            <span class="opt"><i>3</i>No, and tell Codex what to do differently</span>
+          </div>
+        </a>
+        <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#features">
+          <div class="n">03</div>
+          <div>
+            <h3>需要你时，及时知道。<span class="arw" aria-hidden="true">→</span></h3>
+            <p>实时显示每个窗格的状态；应用打开时提醒会从顶部滑下；智能体需要输入或完成任务时发送推送提醒，即使应用已关闭也能收到。</p>
+          </div>
+          <div class="ev" aria-hidden="true">
+            <div class="ev-row"><span>Guard the export button</span><b><i class="dot blocked"></i>需要输入</b></div>
+            <div class="ev-row"><span>Idempotent payments</span><b><i class="dot working"></i>工作中</b></div>
+            <div class="ev-row"><span>Why did the backup fail?</span><b><i class="dot done"></i>已完成</b></div>
+            <div class="ev-row"><span>Proofread the guide</span><b><i class="dot ring"></i>空闲</b></div>
+            <div class="ev-note">推送 · codex 需要你的输入</div>
+          </div>
+        </a>
+        <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#on-your-phone">
+          <div class="n">04</div>
+          <div>
+            <h3>安装到手机。<span class="arw" aria-hidden="true">→</span></h3>
+            <p>PWA 在键盘上方提供按键栏，可调整顺序并添加自定义组合键；Tailscale 地址以二维码显示。你自己的 Tailscale 设备以你的身份进入，其他设备只需用验证码配对一次。</p>
+          </div>
+          <div class="ev" aria-hidden="true">
+            <div class="cmdline">tailscale serve --bg --https=443 http://127.0.0.1:7317</div>
+            <div class="keys"><kbd>esc</kbd><kbd>tab</kbd><kbd>ctrl</kbd><kbd>alt</kbd><kbd>shift</kbd><kbd>⏎</kbd><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd><kbd>^C</kbd></div>
+          </div>
+        </a>
+        <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#how-it-works">
+          <div class="n">05</div>
+          <div>
+            <h3>沿用现有工作流。<span class="arw" aria-hidden="true">→</span></h3>
+            <p>智能体由 herdr 管理，本应用负责连接。无需包装命令，无需第二个守护进程，无需账号。在 Settings（设置）中更新应用，无需停止智能体，每次更新带来的变化以更新说明列出。</p>
+          </div>
+          <div class="ev" aria-hidden="true">
+            <div class="ev-row"><span>herdr</span><b><i class="dot done"></i>掌管所有 pty</b></div>
+            <div class="ev-row"><span>herdr web ui</span><b>herdr terminal attach</b></div>
+            <div class="ev-note">监听 127.0.0.1 · 健康检查失败时更新自动回滚</div>
+          </div>
+        </a>
+        <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#voice-input">
+          <div class="n">06</div>
+          <div>
+            <h3>开口代替打字。<span class="arw" aria-hidden="true">→</span></h3>
+            <p>在聊天或终端输入行中语音输入，韩语和英语混说也能识别。发送给智能体之前可以先检查文字；转写使用你自己的 OpenAI 密钥，或浏览器自带的语音识别。</p>
+          </div>
+          <div class="ev" aria-hidden="true">
+            <div class="ev-row"><span>按住麦克风</span><b><i class="dot working"></i>录音中 0:04</b></div>
+            <div class="q">테스트 다시 돌리고, fix the flaky one</div>
+            <div class="ev-note">插入到光标处 · 不会自动发送</div>
+          </div>
+        </a>
+      </section>
+
+      <section aria-labelledby="clips-title">
+        <div class="sec">
+          <div class="eyebrow caps"><s></s>电脑和手机，同时</div>
+          <h2 id="clips-title">智能体经手的一切，两块屏幕都能看到。</h2>
+        </div>
+        <div class="clips">
+          <a class="clip" href="https://github.com/user-attachments/assets/33ed2183-9b94-4677-8980-edd90d45750a">
+            <img src="../media/readme/terminal.webp" width="800" height="450" loading="lazy" decoding="async" alt="实机录制。浏览器的聊天里是 Claude Code 的回复；点击 Terminal 后，同一个窗格显示为 Claude Code 自己的终端，可以看到它在 src/server.test.ts 中添加测试“unknown refund is 404”的修改。在手机上 tests 标签页的终端里，按键栏的 ↑ 调出 bun test，输入行的 Enter 按钮运行它：5 pass，0 fail。" />
+            <h3>切换到实时终端<span class="arw" aria-hidden="true">→</span></h3>
+            <p>点一下，聊天就变成该窗格真正的终端；在手机上，按键栏的 ↑ 调出测试命令，再按 Enter 重新运行。</p>
+          </a>
+          <a class="clip" href="https://github.com/user-attachments/assets/ac8dbf34-5c27-441b-8e49-e3850eac0c27">
+            <img src="../media/readme/layout.webp" width="800" height="450" loading="lazy" decoding="async" alt="实机录制。浏览器显示 herdr 的布局：侧边栏中的四个工作区及其智能体状态（checkout-api DONE、web-dashboard RUN、infra READY、release），以及 checkout-api 的标签页 payments 和 dev。点击 dev 标签页显示它的第一个窗格，bun test 结果为 4 pass；该标签页的窗格菜单列出分屏的两个窗格 tests 和 git，点击 git 显示其 git log。在手机上，☰ 打开同样的四个工作区和相同的状态，轻点 checkout-api 打开 Claude 的聊天：“What does this repo do? Answer in one line.”及其回答。" />
+            <h3>浏览器里的 herdr 布局<span class="arw" aria-hidden="true">→</span></h3>
+            <p>工作区、标签页、分屏窗格，以及每个智能体的状态都在：点一下标签页，选择分屏中的窗格，在手机上切换工作区。</p>
+          </a>
+          <a class="clip" href="https://github.com/user-attachments/assets/804ed0e1-54e6-4c1a-9d87-bd769a970315">
+            <img src="../media/readme/alerts.webp" width="800" height="450" loading="lazy" decoding="async" alt="实机录制。浏览器中 Claude 正在处理 checkout-api，手机停在另一个工作区的终端上。Claude 提问要用哪种限流时，手机上弹出“checkout-api Needs input”提醒，点一下即以卡片打开问题；浏览器的 Needs you 下也列出 checkout-api 和同一张卡片。" />
+            <h3>智能体需要你时，立刻知道<span class="arw" aria-hidden="true">→</span></h3>
+            <p>即使在看别的工作区，Claude 一提问就会弹出提醒，点一下即可打开它的问题。</p>
+          </a>
+          <a class="clip" href="https://github.com/user-attachments/assets/25e55478-354b-4c5d-a33a-c1158f4b819a">
+            <img src="../media/readme/attach.webp" width="800" height="450" loading="lazy" decoding="async" alt="实机录制。在手机上用回形针附加一张显示 $NaN 的收据截图并插入其路径，然后发送“Fix this, with a test.”；电脑的聊天中出现带图片的同一条消息，Claude 从读取 src/routes/receipt.ts 开始。" />
+            <h3>从手机发送截图<span class="arw" aria-hidden="true">→</span></h3>
+            <p>回形针把它上传到窗格的文件夹并插入路径，Claude 会读取这张图。</p>
+          </a>
+          <a class="clip" href="https://github.com/user-attachments/assets/b410d41c-a822-47fe-94a5-88becab9b235">
+            <img src="../media/readme/open.webp" width="800" height="450" loading="lazy" decoding="async" alt="实机录制。在浏览器的终端里，Claude Code 已写出 bench/p95.svg；点击该路径会在文件查看器中打开图表，在手机聊天中轻点同一路径则全屏打开。" />
+            <h3>打开智能体生成的文件<span class="arw" aria-hidden="true">→</span></h3>
+            <p>在终端里点击路径，或在聊天里轻点路径，文件就地打开。</p>
+          </a>
+          <a class="clip" href="https://github.com/user-attachments/assets/3a50f082-d13a-4a88-b2a4-7bc050e8a47a">
+            <img src="../media/readme/worktree.webp" width="800" height="450" loading="lazy" decoding="async" alt="实机录制。在手机上点 checkout-api 行的 ⋯ 菜单 → New worktree，表单中已填好分支 worktree/clear-forest-3580；选择 Claude Code 作为智能体并点 Create worktree 后，浏览器中 checkout-api 下出现一个新行，变为 Claude Code 并显示 READY。" />
+            <h3>分出第二个智能体<span class="arw" aria-hidden="true">→</span></h3>
+            <p>在手机上点 ⋯ → New worktree：分支已自动填好，选一个智能体，它就在第一个旁边启动。</p>
+          </a>
+        </div>
+        <div class="clips-note caps">
+          <p>每段片段都是同时录制电脑和手机的真实操作，实时、无剪辑。点击可播放完整视频。</p>
+          <button type="button" class="clips-toggle" aria-pressed="false">暂停片段</button>
+        </div>
+      </section>
+
+      <section class="band" aria-labelledby="band-title">
+        <div>
+          <div class="caps"><b>演示</b><span>无需安装</span></div>
+          <h2 id="band-title">先在浏览器里试试。</h2>
+          <p>就是这个应用本身，运行在虚构的会话和虚构的智能体上。里面没有任何真实内容，你输入的东西也不会到达任何机器。</p>
+        </div>
+        <a class="button" href="../demo/">打开演示<span class="arw" aria-hidden="true">→</span></a>
+      </section>
+
+      <section class="compare" id="compare" aria-labelledby="compare-title">
+        <div class="sec">
+          <div class="eyebrow caps"><s></s>对比</div>
+          <h2 id="compare-title">herdr 的其他手机客户端。</h2>
+          <p class="intro">这四个都在 <a href="https://herdr.dev/plugins/">herdr 插件市场</a>中。这里对每一个的描述都取自它自己的 README 和文档，而且每一个都有本应用没有的功能。</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <colgroup><col class="label" /><col class="us" /><col /><col /><col /></colgroup>
+            <thead>
+              <tr>
+                <th scope="col"><span class="visually-hidden">项目</span></th>
+                <th scope="col" class="us">herdr web ui</th>
+                <th scope="col"><a href="https://github.com/AltanS/collie">collie</a></th>
+                <th scope="col"><a href="https://github.com/powerfooI/roamgate">roamgate</a></th>
+                <th scope="col"><a href="https://github.com/dcolinmorgan/herdr-remote">herdr-remote</a></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">运行方式</th>
+                <td class="us" data-client="herdr web ui">herdr 插件。由 herdr 构建和启动，并会自行更新。</td>
+                <td data-client="collie">自带桥接服务，可用 curl 安装程序安装，或作为 herdr 插件。</td>
+                <td data-client="roamgate">自带服务器，可用 curl 安装程序安装，或作为 herdr 插件。</td>
+                <td data-client="herdr-remote">macOS 菜单栏或 Windows 托盘应用，外加一个供手机使用的 Python 中继。</td>
+              </tr>
+              <tr>
+                <th scope="row">支持的终端</th>
+                <td class="us" data-client="herdr web ui">herdr</td>
+                <td data-client="collie">herdr、tmux 或 zellij</td>
+                <td data-client="roamgate">herdr</td>
+                <td data-client="herdr-remote">herdr</td>
+              </tr>
+              <tr>
+                <th scope="row">阅读内容</th>
+                <td class="us" data-client="herdr web ui">智能体自己的会话记录，以聊天显示，每轮的工作折叠起来。其他程序显示实时终端。</td>
+                <td data-client="collie">窗格输出，以及一个把需要你输入的内容排在最前的仪表盘。</td>
+                <td data-client="roamgate">终端、智能体会话、文件和 diff。</td>
+                <td data-client="herdr-remote">智能体时间线和终端输出。</td>
+              </tr>
+              <tr>
+                <th scope="row">回答方式</th>
+                <td class="us" data-client="herdr web ui">提示卡片（发送前与实时菜单核对），或直接用终端。两者都能语音输入。</td>
+                <td data-client="collie">可点按的提示按钮、快捷回复、语音输入。</td>
+                <td data-client="roamgate">在终端中输入，可用编辑框或直接按键。</td>
+                <td data-client="herdr-remote">在手机、菜单栏或 Telegram 上一键批准。</td>
+              </tr>
+              <tr>
+                <th scope="row">连到手机</th>
+                <td class="us" data-client="herdr web ui">你自己的 Tailscale、SSH 隧道或 HTTPS 代理。你的 Tailscale 登录可直接进入，其他设备用验证码配对。</td>
+                <td data-client="collie">Tailscale serve，或你自己的入口。</td>
+                <td data-client="roamgate">Tailscale Serve、SSH 转发或原生 HTTPS，以令牌或密码保护。Web 推送。</td>
+                <td data-client="herdr-remote">免费的 Cloudflare 隧道、Telegram、Web 推送。</td>
+              </tr>
+              <tr>
+                <th scope="row">其他机器</th>
+                <td class="us" data-client="herdr web ui">通过 SSH 连接 Linux、macOS 和 Windows 电脑，在设置中添加。</td>
+                <td data-client="collie">Crews：每台机器一个 collie，统一在一个 URL 之后。</td>
+                <td data-client="roamgate">通过 SSH 配置连接其他 Linux 和 macOS 主机上的 herdr。</td>
+                <td data-client="herdr-remote">由中继汇集多台机器。</td>
+              </tr>
+              <tr>
+                <th scope="row">其他</th>
+                <td class="us" data-client="herdr web ui">查看智能体生成文件的查看器、Web 推送、随应用保持最新的远程电脑桥接，以及英文、中文、日文和韩文界面。</td>
+                <td data-client="collie">六种界面语言、设备配对、输出搜索、只读的变更视图。</td>
+                <td data-client="roamgate">带 diff 批注的文件浏览器、Ranger 助手，还能帮你安装 herdr。</td>
+                <td data-client="herdr-remote">每日摘要、TUI、MacBook 刘海面板。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="legend">以上内容截至 2026 年 10 月。如果你想要开箱即用的 tmux 或 zellij、diff、Telegram 或隧道，其他几个会更合适。</p>
+      </section>
+
+      <section class="faq" id="faq" aria-labelledby="faq-title">
+        <div class="sec">
+          <div class="eyebrow caps"><s></s>常见问题</div>
+          <h2 id="faq-title">常见问题，直接回答。</h2>
+          <p class="intro">这里是简短的回答，详细的回答见<a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">指南的常见问题</a>（英文）。</p>
+        </div>
+        <dl>
+          <div class="qa">
+            <dt>可以在手机上使用 Claude Code 或 Codex 吗？</dt>
+            <dd>可以。在电脑上的 herdr 窗格里运行智能体，本应用就会在手机浏览器中显示同一个窗格：智能体自己的会话记录显示为聊天，审批和提问显示为可点按回答的卡片，随时可以切换到实时终端。它可以安装到主屏幕，并在智能体需要你时发送推送提醒。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#on-your-phone">手机设置 →</a></dd>
+          </div>
+          <div class="qa">
+            <dt>聊天视图支持哪些智能体？</dt>
+            <dd>Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读取。OpenCode 2 会从 OpenCode 自己的数据库读取 herdr 报告的会话；处于主屏幕或使用 1.x 数据库时则显示实时终端。其他程序显示实时终端和状态。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#supported-agents">支持的智能体 →</a></dd>
+          </div>
+          <div class="qa">
+            <dt>它会取代 herdr 自带的 TUI 吗？</dt>
+            <dd>不会。两者同时连接到同一批终端，所以窗格在桌面、浏览器和手机上都保持实时。不需要停止或交接任何东西。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">TUI 与浏览器 →</a></dd>
+          </div>
+          <div class="qa">
+            <dt>必须使用 Tailscale 吗？</dt>
+            <dd>不必。Tailscale、SSH 隧道、VPN 或自行配置的 HTTPS 代理都可以提供访问电脑的通路。安装应用和推送提醒需要 HTTPS 或 localhost 等安全上下文；基本浏览也可以使用局域网中的普通 HTTP 地址。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">其他方式 →</a></dd>
+          </div>
+          <div class="qa">
+            <dt>我的代码或对话会离开我的电脑吗？</dt>
+            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
+          </div>
+          <div class="qa">
+            <dt>支持 Windows 吗？</dt>
+            <dd>支持，在 Windows x64 上无需 WSL。在 herdr 支持 Windows 终端附加之前，终端是一个可以输入、网格固定的<a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/remote-pcs.md#windows-pcs">屏幕镜像</a>。</dd>
+          </div>
+          <div class="qa">
+            <dt>它与 Happy、Paseo、CloudCLI UI 有什么不同？</dt>
+            <dd>这些项目提供各自启动或管理智能体会话的方式。本应用使用你已经在运行的 herdr 窗格，让同一批终端同时在 TUI 和浏览器中可用。如果你不使用 herdr，请比较这些项目的部署方式和智能体支持。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">完整对比 →</a></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="end" id="install" aria-labelledby="install-title">
+        <div>
+          <h2 id="install-title">把 herdr 带在身边。</h2>
+          <p>支持 Linux（x64、arm64）或 macOS。安装程序会为当前用户补齐缺少的依赖（herdr 0.9.0+、Bun 1.4+、Node 18+），然后将应用安装为 herdr 插件。如果 Tailscale 正在运行，最后会显示供手机扫描的二维码。</p>
+          <div class="cmd"><code>curl -fsSL https://herdrweb.dev/install.sh | sh</code><button type="button" class="copy caps" data-copy="curl -fsSL https://herdrweb.dev/install.sh | sh">复制</button></div>
+          <p class="after">Windows x64 请在 PowerShell 中运行：<code>irm https://herdrweb.dev/install.ps1 | iex</code><br />需要 Git for Windows，Windows 上的终端使用<a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/remote-pcs.md#windows-pcs">屏幕镜像</a>。</p>
+          <p class="after">已经装好 herdr、Bun 和 Node？<code>herdr plugin install devswha/herdr-web-ui</code><br />然后打开 <code>http://localhost:7317</code>。之后它会随 herdr 一起启动。<br /><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#quick-start">从源码运行</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">给编程智能体的 INSTALL.md</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">访问与安全 →</a></p>
+        </div>
+        <figure>
+          <img src="../assets/install.png" width="2264" height="1580" loading="lazy" decoding="async" alt="安装程序输出：安装 Bun、Node 和 herdr 插件，然后通过 tailscale serve 提供应用访问地址，并显示供手机扫描的二维码。" />
+          <figcaption>安装程序：从零开始，直到出现供手机扫描的二维码。</figcaption>
+        </figure>
+      </section>
+    </main>
+
+    <footer>
+      <div class="frame">
+        <span class="mark" aria-hidden="true"></span>
+        <nav aria-label="链接">
+          <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md">指南</a>
+          <a href="../demo/">演示</a>
+          <a href="https://github.com/devswha/herdr-web-ui/releases">版本发布</a>
+          <a href="https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.md">更新日志</a>
+          <a href="#faq">常见问题</a>
+        </nav>
+        <p>v{{version}} · MIT · <a href="https://herdr.dev">herdr</a> 的独立插件，herdr 是另一个项目</p>
+        <a class="gh" href="https://github.com/devswha/herdr-web-ui" aria-label="GitHub"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.070-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+      </div>
+    </footer>
+
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const theme = document.querySelector('meta[name="theme-color"]');
+        const modeButtons = document.querySelectorAll(".modes button");
+        const applyMode = (mode) => {
+          root.dataset.mode = mode;
+          theme.content = mode === "paper" ? "#eeeae2" : "#12100e";
+          for (const button of modeButtons) button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
+        };
+        applyMode(root.dataset.mode);
+        for (const button of modeButtons) {
+          button.addEventListener("click", () => {
+            applyMode(button.dataset.mode);
+            try { localStorage.setItem("herdr-web-ui-site-mode", button.dataset.mode); } catch {}
+          });
+        }
+
+        for (const button of document.querySelectorAll(".copy")) {
+          const idle = button.textContent;
+          let timer;
+          const show = (label, done) => {
+            button.textContent = label;
+            button.classList.toggle("is-done", done);
+            clearTimeout(timer);
+            timer = setTimeout(() => { button.textContent = idle; button.classList.remove("is-done"); }, done ? 1600 : 4000);
+          };
+          button.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(button.dataset.copy);
+              show("已复制", true);
+            } catch {
+              // no Clipboard API here (or it was refused): copy the selected command the old way
+              const range = document.createRange();
+              range.selectNodeContents(button.previousElementSibling);
+              const selection = getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+              let copied = false;
+              try { copied = document.execCommand("copy"); } catch {}
+              if (copied) show("已复制", true); else show("已选中，请手动复制", false);
+            }
+          });
+        }
+
+        // the recording, or the demo app itself: the app loads only when asked for
+        const win = document.querySelector(".win");
+        const film = win.querySelector(".view-film");
+        let live = null;
+        for (const button of win.querySelectorAll(".tabs button")) {
+          button.addEventListener("click", () => {
+            const view = button.dataset.view;
+            for (const other of win.querySelectorAll(".tabs button")) other.setAttribute("aria-pressed", String(other === button));
+            if (view === "live" && !live) {
+              live = document.createElement("iframe");
+              live.src = "../demo/app/";
+              live.title = "herdr web ui，运行在虚构的演示会话上";
+              live.allow = "clipboard-write; fullscreen";
+              win.append(live);
+            }
+            if (live) live.hidden = view !== "live";
+            film.hidden = view === "live";
+            if (view === "live") film.pause(); else if (!matchMedia("(prefers-reduced-motion: reduce)").matches) film.play().catch(() => {});
+          });
+        }
+
+        // An animated WebP in an <img> cannot be paused: a paused clip shows a still of it on a
+        // canvas instead. Reduced motion starts paused.
+        const clipImages = [...document.querySelectorAll(".clip img")];
+        const clipsToggle = document.querySelector(".clips-toggle");
+        const freeze = (img) => {
+          if (clipsToggle.getAttribute("aria-pressed") !== "true" || img.hidden || !img.naturalWidth) return;
+          const still = document.createElement("canvas");
+          still.width = img.naturalWidth;
+          still.height = img.naturalHeight;
+          still.getContext("2d").drawImage(img, 0, 0);
+          still.setAttribute("role", "img");
+          still.setAttribute("aria-label", img.alt);
+          img.after(still);
+          img.hidden = true;
+        };
+        const pauseClips = (paused) => {
+          clipsToggle.setAttribute("aria-pressed", String(paused));
+          clipsToggle.textContent = paused ? "播放片段" : "暂停片段";
+          for (const img of clipImages) {
+            if (paused) {
+              if (img.complete) freeze(img); else img.addEventListener("load", () => freeze(img), { once: true });
+            } else if (img.hidden) {
+              img.nextElementSibling.remove();
+              img.hidden = false;
+            }
+          }
+        };
+        clipsToggle.addEventListener("click", () => pauseClips(clipsToggle.getAttribute("aria-pressed") !== "true"));
+        if (matchMedia("(prefers-reduced-motion: reduce)").matches) pauseClips(true);
+
+        if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          for (const video of document.querySelectorAll("video")) { video.removeAttribute("autoplay"); video.pause(); }
+        }
+      })();
+    </script>
+  </body>
+</html>

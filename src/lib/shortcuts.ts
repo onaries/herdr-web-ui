@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useSettings } from "./settings.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
+import { physicalKey } from "./keys.ts";
 
 import type { AppActions } from "./actions.ts";
 
@@ -46,6 +47,15 @@ export function shortcutKeys(id: ShortcutId, overrides: ShortcutOverrides): stri
   if (Object.hasOwn(overrides, id)) return overrides[id] ? [overrides[id]!] : [];
   return Object.entries(KEY_TO_ID).filter(([, action]) => action === id).map(([key]) => key);
 }
+
+export function shortcutDisplayKeys(id: ShortcutId, overrides: ShortcutOverrides): string[] {
+  const shortcut = SHORTCUTS.find((candidate) => candidate.id === id)!;
+  if (id === "voice" || !Object.hasOwn(overrides, id)) return [...shortcut.keys];
+  const key = overrides[id];
+  if (!key) return [];
+  return ["Mod", "Shift", key.length === 1 ? key.toUpperCase() : key];
+}
+
 export function shortcutConflict(id: ShortcutId, keys: string[], overrides: ShortcutOverrides): boolean {
   return SHORTCUTS.some((other) => other.id !== id && shortcutKeys(other.id, overrides).some((key) => keys.includes(key)));
 }
@@ -55,7 +65,17 @@ export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, 
   const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!hasMod || !event.shiftKey || event.altKey) return null;
   // Shift+Comma produces "<" on common keyboard layouts.
-  const key = event.code === "Comma" ? "," : /^Digit[0-9]$/.test(event.code ?? "") ? event.code!.slice(-1) : event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  const code = event.code ?? "";
+  // Share the terminal's letter-position convention, but never turn a typed symbol into an app action.
+  // A Latin layout's own letter stays as typed, accented ones included: BÉPO's É sits on KeyW and
+  // Turkish F's Ç on KeyB, and neither is that binding.
+  const nonLatinLetter = /^\p{L}$/u.test(event.key) && !/^\p{Script=Latin}$/u.test(event.key);
+  const letter = nonLatinLetter ? physicalKey(event.key, code) : event.key;
+  const key = code === "Comma"
+    ? ","
+    : /^Digit[0-9]$/.test(code)
+      ? code.slice(-1)
+      : letter.length === 1 ? letter.toLowerCase() : letter;
   for (const shortcut of SHORTCUTS) {
     if (shortcut.id === "voice") continue;
     if (Object.hasOwn(overrides, shortcut.id) && overrides[shortcut.id] === key) return shortcut.id;
@@ -122,7 +142,6 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
     if (!enabled) return;
     const platformIsMac = isMacPlatform();
     const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.target as HTMLElement | null)?.closest?.("[data-shortcut-recorder]")) return;
       const shortcut = matchShortcut(event, platformIsMac, settings.shortcutOverrides);
       if (shortcut === null) return;
       if (event.key.startsWith("Arrow") && keepsArrowsForText(event.target)) return;

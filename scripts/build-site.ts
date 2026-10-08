@@ -2,7 +2,8 @@
  * Assembles the website into _site/ for GitHub Pages (.github/workflows/pages.yml) and for a local
  * look (`bun run build:site`, then serve _site/ under /herdr-web-ui/).
  *
- * The page is site/index.html, built from the README's artifacts: its top video (`videos`, a GitHub
+ * The page is site/index.html, with its Simplified Chinese copy at site/zh/index.html (the same page,
+ * its paths one level up; a change to one belongs in the other). Both are built from the README's artifacts: its top video (`videos`, a GitHub
  * upload that is downloaded, never committed; docs/development.md, "README media"), its feature clips
  * (docs/media/readme/*.webp) and the installer still. A video's poster frame is cut with ffmpeg when it
  * is installed (the workflow installs it); without it the still stays full size and a poster that
@@ -31,8 +32,9 @@ const out = join(root, "_site");
 
 const copies: Array<[from: string, to: string]> = [
   ["site/index.html", "index.html"],
+  ["site/zh/index.html", "zh/index.html"],
   ["site/googlec8861932279eca6b.html", "googlec8861932279eca6b.html"],
-  // the one-line installer: curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh
+  // the one-line installer: curl -fsSL https://herdrweb.dev/install.sh | sh
   ["install.sh", "install.sh"],
   ["install.ps1", "install.ps1"],
   ["public/favicon.ico", "favicon.ico"],
@@ -41,6 +43,9 @@ const copies: Array<[from: string, to: string]> = [
   ["public/icons/icon-192.png", "assets/icon-192.png"],
   ["public/social-preview.png", "assets/social-preview.png"],
 ];
+
+/** The pages, in _site/: every one gets the figures, the media checks and the FAQ data below. */
+const pages = ["index.html", "zh/index.html"];
 
 /** README stills, scaled down for the page when ffmpeg is there. */
 const stills: Array<{ file: string; width: number }> = [{ file: "install.png", width: 1400 }];
@@ -110,21 +115,20 @@ for (const video of videos) {
   }
   const poster = join(out, "media", video.poster);
   if (!hasFfmpeg || !(await run(["ffmpeg", "-v", "error", "-y", "-ss", video.at, "-i", target, "-frames:v", "1", "-q:v", "3", poster]))) {
-    // no poster file: the page must not ask for one
-    const page = join(out, "index.html");
-    writeFileSync(page, readFileSync(page, "utf8").replace(` poster="media/${video.poster}"`, ""));
+    // no poster file: the pages must not ask for one
+    for (const name of pages) {
+      const page = join(out, name);
+      writeFileSync(page, readFileSync(page, "utf8").replace(new RegExp(` poster="(?:\\.\\./)?media/${video.poster.replace(".", "\\.")}"`), ""));
+    }
   }
 }
 
-// the page's figures: the release it is built from, and the repository's stars as of the build
-let page = readFileSync(join(out, "index.html"), "utf8");
+// the pages' figures: the release they are built from, and the repository's stars as of the build
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
-page = page.replaceAll("{{version}}", version);
 const repo = await fetch("https://api.github.com/repos/devswha/herdr-web-ui", { headers: { accept: "application/vnd.github+json" } }).catch(() => null);
 const repoBody: unknown = repo?.ok ? await repo.json() : null;
 const stars = repoBody && typeof repoBody === "object" && "stargazers_count" in repoBody && typeof repoBody.stargazers_count === "number" ? repoBody.stargazers_count : null;
 if (stars === null) console.warn(`GitHub star count unavailable (${repo ? `HTTP ${repo.status}` : "no connection"}): the page shows a dash`);
-page = page.replaceAll("{{stars}}", stars === null ? "—" : stars.toLocaleString("en-US"));
 // the people with a commit on the default branch, bots left out: at most ten pages, and a part of
 // the list is not a count, so a page that cannot be read leaves a dash
 let contributors: number | null = 0;
@@ -141,7 +145,6 @@ for (let pageNumber = 1; contributors !== null && pageNumber <= 10; pageNumber +
   // a full tenth page: there may be more, so the sum is not the count
   if (pageNumber === 10) contributors = null;
 }
-page = page.replaceAll("{{contributors}}", contributors === null ? "—" : contributors.toLocaleString("en-US"));
 // Where this repository stands by stars. A repository can ship several plugins, so the label
 // counts the same repositories as the rank, not the index's separate pluginCount.
 const index = await fetch("https://assets.herdr.dev/plugins/index.json", { signal: AbortSignal.timeout(10_000) }).catch(() => null);
@@ -157,11 +160,10 @@ for (const plugin of listed) {
 const listedStars = starsByRepo.get("devswha/herdr-web-ui");
 const rank = listedStars === undefined ? null : [...starsByRepo.values()].filter((count) => count > listedStars).length + 1;
 if (rank === null) console.warn(`herdr plugin index unavailable (${index ? `HTTP ${index.status}` : "no connection"}) or the plugin is not in it: the page shows a dash`);
-page = page.replaceAll("{{plugin_rank}}", rank === null ? "—" : `#${rank}`);
-page = page.replaceAll("{{plugin_repo_count}}", repositoryCount === null ? "—" : repositoryCount.toLocaleString("en-US"));
 
-// the page's own media: cut a missing poster from its video, then unlink whatever is still missing
+// the pages' own media: cut a missing poster from its video; a file still missing is unlinked below
 const pageMedia = ["herdr-web-ui-film", "chat-loop"];
+const missingMedia: Array<{ file: string; attrs: string }> = [];
 for (const name of pageMedia) {
   const video = join(out, "media", `${name}.mp4`);
   const poster = join(out, "media", `${name}.jpg`);
@@ -169,27 +171,39 @@ for (const name of pageMedia) {
   for (const [file, attrs] of [[video, "src|data-src"], [poster, "poster|data-poster"]] as const) {
     if (existsSync(file)) continue;
     console.warn(`site/media/${file.split("/").pop()} is missing: the page shows its still instead`);
-    page = page.replace(new RegExp(` (?:${attrs})="media/${file.split("/").pop()!.replace(".", "\\.")}"`, "g"), "");
+    missingMedia.push({ file: file.split("/").pop()!, attrs });
   }
 }
 
-// the FAQ as structured data, read from the rows the page shows
-// (a row's closing "… →" link is navigation, not part of the answer)
-const text = (html: string) => html.replace(/<a [^>]*>[^<]*→<\/a>/g, "").replace(/<[^>]+>/g, "").replaceAll("&amp;", "&").replace(/\s+/g, " ").trim();
-const questions = [...page.matchAll(/<div class="qa">\s*<dt>(.*?)<\/dt>\s*<dd>(.*?)<\/dd>\s*<\/div>/gs)].map(([, question, answer]) => ({
-  "@type": "Question",
-  name: text(question),
-  acceptedAnswer: { "@type": "Answer", text: text(answer) },
-}));
-const rowCount = [...page.matchAll(/<div class="qa">/g)].length;
-if (questions.length === 0 || questions.length !== rowCount) throw new Error("site/index.html has missing or unparseable FAQ rows (<div class=\"qa\">)");
-const faq = JSON.stringify({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: questions }).replaceAll("<", "\\u003c");
-page = page.replace("</head>", () => `  <script type="application/ld+json">${faq}</script>\n  </head>`);
-writeFileSync(join(out, "index.html"), page);
+for (const name of pages) {
+  let page = readFileSync(join(out, name), "utf8");
+  page = page.replaceAll("{{version}}", version);
+  page = page.replaceAll("{{stars}}", stars === null ? "—" : stars.toLocaleString("en-US"));
+  page = page.replaceAll("{{contributors}}", contributors === null ? "—" : contributors.toLocaleString("en-US"));
+  page = page.replaceAll("{{plugin_rank}}", rank === null ? "—" : `#${rank}`);
+  page = page.replaceAll("{{plugin_repo_count}}", repositoryCount === null ? "—" : repositoryCount.toLocaleString("en-US"));
+  for (const { file, attrs } of missingMedia) {
+    page = page.replace(new RegExp(` (?:${attrs})="(?:\\.\\./)?media/${file.replace(".", "\\.")}"`, "g"), "");
+  }
+
+  // the FAQ as structured data, read from the rows the page shows
+  // (a row's closing "… →" link is navigation, not part of the answer)
+  const text = (html: string) => html.replace(/<a [^>]*>[^<]*→<\/a>/g, "").replace(/<[^>]+>/g, "").replaceAll("&amp;", "&").replace(/\s+/g, " ").trim();
+  const questions = [...page.matchAll(/<div class="qa">\s*<dt>(.*?)<\/dt>\s*<dd>(.*?)<\/dd>\s*<\/div>/gs)].map(([, question, answer]) => ({
+    "@type": "Question",
+    name: text(question),
+    acceptedAnswer: { "@type": "Answer", text: text(answer) },
+  }));
+  const rowCount = [...page.matchAll(/<div class="qa">/g)].length;
+  if (questions.length === 0 || questions.length !== rowCount) throw new Error(`site/${name} has missing or unparseable FAQ rows (<div class="qa">)`);
+  const faq = JSON.stringify({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: questions }).replaceAll("<", "\\u003c");
+  page = page.replace("</head>", () => `  <script type="application/ld+json">${faq}</script>\n  </head>`);
+  writeFileSync(join(out, name), page);
+}
 // A rebuild is not necessarily a content change; omit the optional lastmod rather than invent it.
 writeFileSync(
   join(out, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://devswha.github.io/herdr-web-ui/</loc></url>\n</urlset>\n`,
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://herdrweb.dev/</loc></url>\n  <url><loc>https://herdrweb.dev/zh/</loc></url>\n</urlset>\n`,
 );
 
 // the demo: the real client, relative paths, the transport in front of it

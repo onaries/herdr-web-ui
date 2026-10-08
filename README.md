@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://devswha.github.io/herdr-web-ui/">website</a> ·
+  <a href="https://herdrweb.dev/">website</a> ·
   <a href="#install">install</a> ·
-  <a href="https://devswha.github.io/herdr-web-ui/demo/">try the demo</a> ·
+  <a href="https://herdrweb.dev/demo/">try the demo</a> ·
   <a href="docs/guide.md#quick-start">quick start</a> ·
   <a href="#faq">faq</a> ·
   <a href="#docs">docs</a>
@@ -76,19 +76,19 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 
 <p align="center"><sub>Each clip is a live recording of the desktop and a phone at once, in real time with no cuts. Click one for the full video.</sub></p>
 
-- **Chat and terminal, one pane** — native Claude Code, Codex, omp, omo, gjc and pi transcripts, with the live terminal a click away. [Supported agents →](docs/guide.md#supported-agents)
+- **Chat and terminal, one pane** — native Claude Code, Codex, omp, omo, gjc and pi transcripts, plus OpenCode 2 sessions herdr identifies, with the live terminal a click away. Write the next message while the agent works: it goes in with the next turn, or at once with Send now. [Supported agents →](docs/guide.md#supported-agents)
 - **Approve with a tap** — approvals, questions and plan menus become cards, checked to be current before your answer is sent.
 - **Know when you're needed** — live status for every pane, an alert that drops in while the app is open, and push alerts when an agent needs input or finishes, even with the app closed.
-- **Install it on your phone** — a PWA with Esc, Tab, Ctrl, Alt and arrows above the keyboard, and a QR code to your Tailscale address. [Phone setup →](docs/guide.md#on-your-phone)
+- **Install it on your phone** — a PWA with a key bar above the keyboard (Esc, Tab, Ctrl, Alt, Shift, Enter, arrows) that you can rearrange and extend with your own combinations in Settings, and a QR code to your Tailscale address. [Phone setup →](docs/guide.md#on-your-phone)
 - **Speak instead of typing** — dictate into the chat or the terminal line, Korean and English mixed. Review the words before sending them to the agent; transcription uses your own OpenAI key or the browser's speech recognition.
-- **Keep your workflow** — herdr owns the agents; this app connects to them. Update from Settings without stopping them. New tabs and worktrees come from a row's ⋯ menu. [All features →](docs/guide.md#features)
+- **Keep your workflow** — herdr owns the agents; this app connects to them. Update from Settings without stopping them, with patch notes for what each update brings. New tabs and worktrees come from a row's ⋯ menu. [All features →](docs/guide.md#features)
 
 ---
 
 ## install
 
 ```bash
-curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh
+curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
 Linux (x64, arm64) or macOS. Installs missing herdr 0.9.0+, Bun 1.4+ and Node 18+ prerequisites for your user, then installs the app as a herdr plugin. If an existing herdr installation is older than 0.9.0, update and restart herdr yourself before rerunning the installer. With the default listen address and Tailscale running, successful HTTPS setup provides a tailnet address and QR code. Your own devices get in without a code as it is: `tailscale serve` states your login. If your own phone is asked to pair anyway, `HERDR_WEB_TAILSCALE_SERVE_ONLY=1` lets it in without a code on a tailnet one login owns, but only when nothing else, such as a public proxy or tunnel, reaches this port ([Access and safety](docs/guide.md#access-and-safety)).
@@ -96,7 +96,7 @@ Linux (x64, arm64) or macOS. Installs missing herdr 0.9.0+, Bun 1.4+ and Node 18
 Windows x64, in PowerShell:
 
 ```powershell
-irm https://devswha.github.io/herdr-web-ui/install.ps1 | iex
+irm https://herdrweb.dev/install.ps1 | iex
 ```
 
 Requires [Git for Windows](https://git-scm.com/download/win). Installs missing herdr and Bun for your user, then installs the same plugin. No Node or WSL is needed. Open **Phone setup** in herdr for phone access. Windows terminals use the [screen mirror](docs/remote-pcs.md#windows-pcs), with typing and a fixed grid, until herdr supports terminal attach there.
@@ -123,7 +123,7 @@ Yes. Run the agent in a [herdr](https://github.com/herdrdev/herdr) pane on your 
 
 **Which agents does the chat view support?**
 
-Claude Code, Codex, omp, omo, gjc and pi are read from their own session files. Any other program in a herdr pane gets the live terminal and its status. [Supported agents →](docs/guide.md#supported-agents)
+Claude Code, Codex, omp, omo, gjc and pi are read from their own session files. For OpenCode 2, the chat reads the session herdr reports from OpenCode's database; the home screen and OpenCode 1.x use the live terminal instead. Any other program in a herdr pane gets the live terminal and its status. [Supported agents →](docs/guide.md#supported-agents)
 
 **Does it replace herdr's own TUI?**
 

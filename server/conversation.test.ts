@@ -1,13 +1,184 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { Database } from "bun:sqlite";
 import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
-
-import { forgetHistoryChains } from "./codex.ts";
-import { ConversationUnavailable, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isOmoProcess, ompSessionPath, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { MAX_TURNS, parseOmpTranscript } from "./transcript-records.ts";
 import { toolVerb } from "../src/lib/toolVerbs.ts";
 import type { ConversationTurn } from "../shared/protocol.ts";
+import * as herdr from "./herdr/client.ts";
+import { forgetHistoryChains } from "./codex.ts";
+import { DevinHistoryChanged } from "./devin.ts";
+import * as omo from "./omo.ts";
+import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionPath, paneConversation, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+
+let mockedPanes: HerdrPane[] = [];
+let mockedProcesses: { argv?: unknown }[] = [];
+
+describe("Devin pane identity", () => {
+  const restores: Array<() => void> = [];
+  beforeEach(() => {
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method) => {
+      if (method !== "pane.process_info") throw new Error(`unexpected conversation fixture RPC: ${method}`);
+      return { process_info: { foreground_processes: mockedProcesses } } as never;
+    });
+    restores.push(() => rpc.mockRestore());
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: mockedPanes } as SessionSnapshot));
+    restores.push(() => snapshot.mockRestore());
+  });
+  afterEach(() => {
+    for (const restore of restores.splice(0)) restore();
+    mockedPanes = [];
+    mockedProcesses = [];
+    forgetTranscriptState();
+  });
+  const pane = { pane_id: "pane-a", cwd: "/synthetic/work", agent: "devin" } as HerdrPane;
+  const shell = { pane_id: "pane-b", cwd: pane.cwd, agent_session: { agent: "devin", kind: "id", value: "stale" } } as HerdrPane;
+  const peer = { pane_id: "pane-b", cwd: pane.cwd, agent: "devin" } as HerdrPane;
+  const reported = { ...pane, agent_session: { agent: "devin", kind: "id", value: "one" } } as HerdrPane;
+  it("never guesses a session from its directory or a stale shell agent_session", () => {
+    expect(() => devinSessionForPane(pane, [pane], ["/bin/devin"])).toThrow(ConversationUnavailable);
+    expect(() => devinSessionForPane(shell, [shell], ["/bin/devin", "--resume", "stale"])).toThrow(ConversationUnavailable);
+  });
+  it("accepts only an exact reported or resumed identity and does not consider shell peers", () => {
+    expect(devinSessionForPane(reported, [reported, shell], ["/bin/devin"])).toBe("one");
+    expect(devinSessionForPane(pane, [pane, shell], ["/bin/devin", "--resume=two"])).toBe("two");
+    expect(() => devinSessionForPane(reported, [reported], ["/bin/devin", "--resume", "two"])).toThrow(ConversationUnavailable);
+    expect(() => devinSessionForPane(reported, [reported], ["/bin/devin", "--resume=one", "-r", "two"])).toThrow(ConversationUnavailable);
+    expect(() => devinSessionForPane(reported, [reported, { ...peer, agent_session: reported.agent_session }], ["/bin/devin"])).toThrow(ConversationUnavailable);
+    expect(() => devinSessionForPane(pane, [pane], ["/bin/devin", "--", "--resume", "one"])).toThrow(ConversationUnavailable);
+    expect(() => devinSessionForPane(pane, [pane], ["/bin/devin", "--resume"])).toThrow(ConversationUnavailable);
+  });
+  it("recognizes only Devin as the executable, not another argument", () => {
+    expect(isDevinProcess(["/usr/bin/devin"])).toBeTrue();
+    expect(isDevinProcess(["C:\\tools\\devin.exe"])).toBeTrue();
+    expect(isDevinProcess(["node", "/tmp/devin"])).toBeFalse();
+    expect(isDevinProcess(["sh", "-c", "devin --resume one"])).toBeFalse();
+    expect(isDevinProcess(["/usr/bin/not-devin"])).toBeFalse();
+  });
+  it("reads through paneConversation only with live executable and explicit session evidence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-devin-pane-"));
+    const dbPath = join(root, "sessions.db");
+    const cwd = "/synthetic/work";
+    const pane = { pane_id: "pane-a", cwd, foreground_cwd: cwd, agent: "devin", agent_session: { agent: "devin", kind: "id", value: "one" } } as HerdrPane;
+    try {
+      const db = new Database(dbPath);
+      try {
+        db.exec("CREATE TABLE sessions(id TEXT, working_directory TEXT, main_chain_id INTEGER, hidden INTEGER, model TEXT); CREATE TABLE message_nodes(session_id TEXT,node_id INTEGER,parent_node_id INTEGER,chat_message TEXT,created_at INTEGER); CREATE TABLE tool_call_state(session_id TEXT,tool_call_id TEXT,tool_call_json TEXT,tool_call_update_json TEXT)");
+        db.query("INSERT INTO sessions VALUES ('one', ?, 2, 0, 'synthetic-model')").run(cwd);
+        db.query("INSERT INTO message_nodes VALUES ('one', 1, NULL, ?, 1700000000)").run(JSON.stringify({ role: "user", content: "synthetic question" }));
+        db.query("INSERT INTO message_nodes VALUES ('one', 2, 1, ?, 1700000001)").run(JSON.stringify({ role: "assistant", content: "synthetic answer" }));
+      } finally { db.close(); }
+      mockedPanes = [pane];
+      mockedProcesses = [{ argv: ["/usr/local/bin/devin"] }];
+      const answer = await paneConversation(pane.pane_id, undefined, {}, dbPath);
+      expect(answer.source).toBe("devin-transcript");
+      expect(answer.turns.map((turn) => turn.parts[0])).toEqual([
+        { kind: "text", text: "synthetic question" }, { kind: "text", text: "synthetic answer" },
+      ]);
+      mockedProcesses = [{ argv: ["/usr/bin/vim", "/usr/local/bin/devin"] }];
+      await expect(paneConversation(pane.pane_id, undefined, {}, dbPath)).rejects.toThrow(ConversationUnavailable);
+      mockedProcesses = [{ argv: ["/usr/local/bin/devin"] }];
+      mockedPanes = [{ ...pane, agent_session: undefined }];
+      await expect(paneConversation(pane.pane_id, undefined, {}, dbPath)).rejects.toMatchObject({ name: "ConversationUnavailable", message: "no_session_id" });
+      mockedProcesses = [{ argv: ["/usr/local/bin/devin", "--resume=one"] }];
+      expect((await paneConversation(pane.pane_id, undefined, {}, dbPath)).turns).toEqual(answer.turns);
+    } finally {
+      mockedPanes = [];
+      mockedProcesses = [];
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("does not render Devin for a shell with a stale Devin session report", async () => {
+    const pane = { pane_id: "pane-shell", cwd: "/synthetic/work", agent_session: { agent: "devin", kind: "id", value: "one" } } as HerdrPane;
+    mockedPanes = [pane];
+    mockedProcesses = [{ argv: ["/usr/local/bin/devin"] }];
+    try {
+      await expect(paneConversation(pane.pane_id, undefined, {}, "/missing/sessions.db")).rejects.toThrow(ConversationUnavailable);
+    } finally {
+      mockedPanes = [];
+      mockedProcesses = [];
+    }
+  });
+  it("falls back when the explicit store is inaccessible or malformed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-devin-unavailable-"));
+    const cwd = "/synthetic/work";
+    const pane = { pane_id: "pane-a", cwd, agent: "devin", agent_session: { agent: "devin", kind: "id", value: "one" } } as HerdrPane;
+    mockedPanes = [pane];
+    mockedProcesses = [{ argv: ["/usr/local/bin/devin"] }];
+    try {
+      await expect(paneConversation(pane.pane_id, undefined, {}, join(root, "missing.db"))).rejects.toThrow(ConversationUnavailable);
+      const dbPath = join(root, "malformed.db");
+      const db = new Database(dbPath);
+      try { db.exec("CREATE TABLE sessions(id TEXT)"); } finally { db.close(); }
+      await expect(paneConversation(pane.pane_id, undefined, {}, dbPath)).rejects.toThrow(ConversationUnavailable);
+
+      const oversizedPath = join(root, "oversized.db");
+      const oversized = new Database(oversizedPath);
+      try {
+        oversized.exec("CREATE TABLE sessions(id TEXT, working_directory TEXT, main_chain_id INTEGER, hidden INTEGER, model TEXT); CREATE TABLE message_nodes(session_id TEXT,node_id INTEGER,parent_node_id INTEGER,chat_message TEXT,created_at INTEGER); CREATE TABLE tool_call_state(session_id TEXT,tool_call_id TEXT,tool_call_json TEXT,tool_call_update_json TEXT); CREATE INDEX node_identity ON message_nodes(session_id, node_id); BEGIN");
+        oversized.query("INSERT INTO sessions VALUES ('one', ?, 5001, 0, NULL)").run(cwd);
+        const insert = oversized.query("INSERT INTO message_nodes VALUES ('one', ?, ?, '{\"role\":\"user\",\"content\":\"synthetic\"}', 1700000000)");
+        for (let index = 1; index <= 5001; index++) insert.run(index, index === 1 ? null : index - 1);
+        oversized.exec("COMMIT");
+      } finally { oversized.close(); }
+      await expect(paneConversation(pane.pane_id, undefined, {}, oversizedPath)).rejects.toThrow(ConversationUnavailable);
+    } finally {
+      mockedPanes = [];
+      mockedProcesses = [];
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("reads an omo that runs in a pane herdr still labels devin", async () => {
+    const pane = { pane_id: "pane-a", cwd: "/synthetic/work", agent: "devin" } as HerdrPane;
+    const session = spyOn(omo, "omoSessionForPane").mockImplementation(async () => ({ path: null, pending: "synthetic-id" }));
+    mockedPanes = [pane];
+    mockedProcesses = [{ argv: ["node", "/home/u/.nvm/versions/node/v24.18.0/bin/omo"] }];
+    try {
+      expect(await paneConversation(pane.pane_id, undefined, {}, "/missing/sessions.db")).toMatchObject({ source: "omo-transcript", turns: [], history_id: "unwritten:synthetic-id" });
+    } finally {
+      session.mockRestore();
+      mockedPanes = [];
+      mockedProcesses = [];
+    }
+  });
+  it("forgets a pane's Devin history cache on pane teardown and test-suite reset", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-devin-reset-"));
+    const dbPath = join(root, "sessions.db");
+    const cwd = "/synthetic/work";
+    const pane = { pane_id: "pane-a", cwd, agent: "devin", agent_session: { agent: "devin", kind: "id", value: "one" } } as HerdrPane;
+    const db = new Database(dbPath);
+    try {
+      db.exec("CREATE TABLE sessions(id TEXT, working_directory TEXT, main_chain_id INTEGER, hidden INTEGER, model TEXT); CREATE TABLE message_nodes(session_id TEXT,node_id INTEGER,parent_node_id INTEGER,chat_message TEXT,created_at INTEGER); CREATE TABLE tool_call_state(session_id TEXT,tool_call_id TEXT,tool_call_json TEXT,tool_call_update_json TEXT)");
+      // more turns than one page holds, so the newest page carries a cursor
+      db.query("INSERT INTO sessions VALUES ('one', ?, 120, 0, NULL)").run(cwd);
+      const insert = db.query("INSERT INTO message_nodes VALUES ('one', ?, ?, ?, 1700000000)");
+      for (let node = 1; node <= 120; node++) insert.run(node, node === 1 ? null : node - 1, JSON.stringify({ role: "user", content: `synthetic ${node}` }));
+      mockedPanes = [pane];
+      mockedProcesses = [{ argv: ["/usr/local/bin/devin", "--resume", "one"] }];
+      // the store never changes below, so only a forgotten cache can move the identity
+      const read = () => paneConversation(pane.pane_id, undefined, {}, dbPath);
+      const initial = await read();
+      expect(typeof initial.cursor).toBe("string");
+      expect((await read()).history_id).toBe(initial.history_id);
+      expect((await paneConversation(pane.pane_id, undefined, { before: initial.cursor! }, dbPath)).turns.length).toBe(20);
+      forgetPaneTranscriptState(pane.pane_id);
+      const paneReset = await read();
+      expect(paneReset.history_id).not.toBe(initial.history_id);
+      await expect(paneConversation(pane.pane_id, undefined, { before: initial.cursor! }, dbPath)).rejects.toThrow(DevinHistoryChanged);
+      forgetTranscriptState();
+      const testReset = await read();
+      expect(testReset.history_id).not.toBe(paneReset.history_id);
+      await expect(paneConversation(pane.pane_id, undefined, { before: paneReset.cursor! }, dbPath)).rejects.toThrow(DevinHistoryChanged);
+    } finally {
+      db.close();
+      mockedPanes = [];
+      mockedProcesses = [];
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
 const lines = [

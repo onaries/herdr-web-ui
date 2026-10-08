@@ -5,14 +5,23 @@ import { DEFAULT_KEY_BAR_ITEMS, KEY_BAR_ITEMS_MAX, KEY_BAR_KEYS, keyBarInputSequ
 describe("key bar migration", () => {
   const caps = (items: KeyBarItem[]) => items.map(keyBarItemLabel);
 
-  it("preserves the current default and a legacy device's extra selections in display order", () => {
-    expect(caps(DEFAULT_KEY_BAR_ITEMS)).toEqual(["Esc", "Tab", "Ctrl", "Alt", "Shift", "Enter", "↑", "↓", "←", "→", "^C"]);
+  it("preserves legacy migration order and selected extras", () => {
+    expect(caps(migrateKeyBarItems(["alt"]))).toEqual(["Esc", "Tab", "Ctrl", "Alt", "Shift", "Enter", "↑", "↓", "←", "→", "^C"]);
     expect(caps(migrateKeyBarItems(["slash", "home-end", "shift-tab", "ctrl-z"]))).toEqual([
       "Esc", "Tab", "⇧Tab", "Ctrl", "Shift", "Enter", "↑", "↓", "←", "→", "Home", "End", "^C", "^Z", "/",
     ]);
     const all = migrateKeyBarItems(KEY_BAR_EXTRAS);
     expect(caps(all)).toEqual(["Esc", "Tab", "⇧Tab", "Ctrl", "Alt", "Shift", "Enter", "↑", "↓", "←", "→", "Home", "End", "PgUp", "PgDn", "^C", "^D", "^Z", "|", "~", "/"]);
     expect(all.filter((item) => item.type === "key" && ["Home", "End", "PageUp", "PageDown"].includes(item.key))).toHaveLength(4);
+  });
+});
+
+describe("default key bar", () => {
+  const caps = (items: KeyBarItem[]) => items.map(keyBarItemLabel);
+
+  it("prioritizes core keys ahead of modifiers and navigation", () => {
+    expect(caps(DEFAULT_KEY_BAR_ITEMS)).toEqual(["Esc", "Tab", "^C", "Ctrl", "Alt", "Shift", "Enter", "↑", "↓", "←", "→"]);
+    expect(caps(sanitizeKeyBarItems(undefined))).toEqual(caps(DEFAULT_KEY_BAR_ITEMS));
   });
 });
 

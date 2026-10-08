@@ -260,10 +260,13 @@ export function sanitizeSettings(raw: unknown): Settings {
   const font = record["terminalFontSize"];
   const chatFont = record["chatFontSize"];
   const keyBarExtras = sanitizeKeyBarExtras(record["keyBarExtras"], DEFAULT_SETTINGS.keyBarExtras);
+  const keyBarFallback = Array.isArray(record["keyBarExtras"])
+    ? migrateKeyBarItems(keyBarExtras)
+    : DEFAULT_KEY_BAR_ITEMS;
   return {
     terminalInputMode: record["terminalInputMode"] === "line" || record["terminalInputMode"] === "direct" ? record["terminalInputMode"] : "auto",
     keyBarExtras,
-    keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], migrateKeyBarItems(keyBarExtras)),
+    keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], keyBarFallback),
     shortcutOverrides: sanitizeShortcutOverrides(record["shortcutOverrides"]),
     theme: theme === "dark" || theme === "light" || theme === "system" ? theme : DEFAULT_SETTINGS.theme,
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,

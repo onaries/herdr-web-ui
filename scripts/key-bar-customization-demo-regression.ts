@@ -15,6 +15,7 @@ const app = mkdtempSync(join(tmpdir(), "herdr-key-bar-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
 const SETTINGS_KEY = "herdr-web-ui:settings";
 const MIGRATED_KEYS = ["direct", "Escape", "Tab", "BackTab", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "ctrl-c", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"];
+const DEFAULT_KEY_BAR_KEYS = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
 interface InputFrame { type: "input" | "keys"; pane_id: string; text?: string; keys?: string[] }
 const framesOf = (page: Page): Promise<InputFrame[]> => page.evaluate(() => (window as unknown as { keyBarFrames: InputFrame[] }).keyBarFrames);
@@ -271,9 +272,148 @@ try {
         dialog = await openSettings(page);
         await dialog.locator(".key-bar-settings").getByRole("button", { name: "Restore defaults", exact: true }).tap();
         await closeSettings(page, dialog);
-        assert.deepEqual(await keysOf(page), ["direct", "Escape", "Tab", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "ctrl-c"]);
+        assert.deepEqual(await keysOf(page), DEFAULT_KEY_BAR_KEYS);
+        for (const width of [320, 390]) {
+          await page.setViewportSize({ width, height: 844 });
+          await settled(page);
+          const controlC = await page.evaluate(() => {
+            const bar = document.querySelector<HTMLElement>(".key-bar");
+            const key = bar?.querySelector<HTMLElement>('[data-key="ctrl-c"]');
+            if (!bar || !key) return null;
+            bar.scrollLeft = 0;
+            const barRect = bar.getBoundingClientRect();
+            const keyRect = key.getBoundingClientRect();
+            return {
+              visibleAtStart: getComputedStyle(bar).display !== "none"
+                && keyRect.left >= barRect.left
+                && keyRect.right <= barRect.left + bar.clientWidth,
+              scrollLeft: bar.scrollLeft,
+            };
+          });
+          assert.deepEqual(controlC, { visibleAtStart: true, scrollLeft: 0 }, `Ctrl+C is visible without horizontal scrolling at ${width}px`);
+          if (evidence && width === 390) {
+            mkdirSync(evidence, { recursive: true });
+            await appFaces(page);
+            await page.screenshot({ path: join(evidence, "key-bar-defaults-390.png") });
+          }
+        }
+
+        await page.setViewportSize({ width: 1280, height: 844 });
+        await settled(page);
+        const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
+        const openSidebarAction = async (): Promise<Locator> => {
+          await page.keyboard.press("ControlOrMeta+Shift+k");
+          await palette.waitFor({ timeout: 5_000 });
+          await palette.getByRole("searchbox", { name: "Search panes and actions", exact: true }).fill("Toggle sidebar");
+          const action = palette.getByRole("option").filter({ hasText: "Toggle sidebar" });
+          await action.waitFor({ state: "visible", timeout: 5_000 });
+          return action;
+        };
+        const closePalette = async (): Promise<void> => {
+          await page.keyboard.press("Escape");
+          await palette.waitFor({ state: "hidden", timeout: 5_000 });
+        };
+        const modifierLabel = await page.evaluate(() => /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl");
+        const expectSidebarHint = async (action: Locator, key: string): Promise<void> => {
+          const hint = action.locator(".palette-shortcut");
+          await hint.waitFor({ state: "visible", timeout: 5_000 });
+          assert.equal(await hint.getAttribute("aria-label"), `${modifierLabel} + Shift + ${key}`);
+          assert.deepEqual(await hint.locator("kbd").allTextContents(), [modifierLabel, "Shift", key]);
+        };
+        const openShortcutSettings = async (): Promise<Locator> => {
+          await page.keyboard.press("ControlOrMeta+Shift+Comma");
+          const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+          await settings.waitFor({ timeout: 5_000 });
+          await openSettingsPage(page, "Shortcuts");
+          return settings;
+        };
+        let action = await openSidebarAction();
+        await expectSidebarHint(action, "B");
+        await closePalette();
+
+        dialog = await openShortcutSettings();
+        let sidebarShortcut = dialog.getByRole("combobox", { name: "Toggle sidebar", exact: true });
+        await sidebarShortcut.selectOption("x");
+        await page.waitForFunction((key) => JSON.parse(localStorage.getItem(key)!).shortcutOverrides["toggle-sidebar"] === "x", SETTINGS_KEY, { timeout: 5_000 });
+        await closeSettings(page, dialog);
+        action = await openSidebarAction();
+        await expectSidebarHint(action, "X");
+        await closePalette();
+        await page.reload();
+        await ready(page);
+        const savedOverrides = (await settingsOf(page)).shortcutOverrides as Record<string, string | null>;
+        assert.equal(savedOverrides["toggle-sidebar"], "x", "a shortcut rebinding survives reload");
+        action = await openSidebarAction();
+        await expectSidebarHint(action, "X");
+        await closePalette();
+
+        dialog = await openShortcutSettings();
+        sidebarShortcut = dialog.getByRole("combobox", { name: "Toggle sidebar", exact: true });
+        await sidebarShortcut.selectOption("off");
+        await page.waitForFunction((key) => JSON.parse(localStorage.getItem(key)!).shortcutOverrides["toggle-sidebar"] === null, SETTINGS_KEY, { timeout: 5_000 });
+        await closeSettings(page, dialog);
+        action = await openSidebarAction();
+        assert.equal(await action.locator(".palette-shortcut").count(), 0, "disabling a shortcut removes its CommandPalette hint");
+        await closePalette();
+
+        dialog = await openShortcutSettings();
+        sidebarShortcut = dialog.getByRole("combobox", { name: "Toggle sidebar", exact: true });
+        assert.match(await sidebarShortcut.locator('option[value="t"]').innerText(), /Reserved/);
+        await sidebarShortcut.selectOption("t");
+        await dialog.getByText(`Your browser or operating system may intercept ${modifierLabel}+⇧+T.`, { exact: true }).waitFor({ timeout: 5_000 });
+        assert.equal(((await settingsOf(page)).shortcutOverrides as Record<string, string>)["toggle-sidebar"], "t", "a reservation warns without silently changing the configured key");
+        await dialog.getByRole("button", { name: "Reset shortcuts", exact: true }).click();
+        await page.waitForFunction((key) => Object.keys(JSON.parse(localStorage.getItem(key)!).shortcutOverrides).length === 0, SETTINGS_KEY, { timeout: 5_000 });
+        sidebarShortcut = dialog.getByRole("combobox", { name: "Toggle sidebar", exact: true });
+        await page.waitForFunction(() => (document.querySelector<HTMLSelectElement>('.settings-dialog select[aria-label="Toggle sidebar"]')?.value ?? "") === "default", undefined, { timeout: 5_000 });
+        if (evidence) {
+          mkdirSync(evidence, { recursive: true });
+          await sidebarShortcut.scrollIntoViewIfNeeded();
+          await appFaces(page);
+          await page.screenshot({ path: join(evidence, "shortcuts-settings-defaults.png") });
+          await page.setViewportSize({ width: 390, height: 844 });
+          await settled(page);
+          await dialog.locator(".settings-body").evaluate((node) => { node.scrollTop = 0; });
+          await page.screenshot({ path: join(evidence, "shortcuts-settings-phone.png") });
+          await page.setViewportSize({ width: 1280, height: 844 });
+          await settled(page);
+        }
+        await closeSettings(page, dialog);
+        action = await openSidebarAction();
+        await expectSidebarHint(action, "B");
+        if (evidence) {
+          await appFaces(page);
+          await page.screenshot({ path: join(evidence, "command-palette-shortcut-defaults.png") });
+        }
+        await closePalette();
+
+        const dispatchPhysicalK = async (isComposing: boolean): Promise<void> => {
+          await input.focus();
+          await input.evaluate((node, composing) => {
+            const mac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+            node.dispatchEvent(new KeyboardEvent("keydown", {
+              key: "ㅏ",
+              code: "KeyK",
+              ctrlKey: !mac,
+              metaKey: mac,
+              shiftKey: true,
+              isComposing: composing,
+              bubbles: true,
+              cancelable: true,
+            }));
+          }, isComposing);
+        };
+        const beforePhysicalShortcut = (await framesOf(page)).length;
+        await dispatchPhysicalK(false);
+        await palette.waitFor({ state: "visible", timeout: 5_000 });
+        await settled(page);
+        assert.equal((await framesOf(page)).length, beforePhysicalShortcut, "a non-Latin physical Mod+Shift+K opens the palette without sending terminal input");
+        await closePalette();
+        await dispatchPhysicalK(true);
+        await settled(page);
+        assert.equal(await palette.count(), 0, "the composing equivalent does not open the command palette");
         assert.deepEqual(errors, []);
-        console.log("PASS an empty key list keeps the keyboard mode toggle usable, persists, and can restore the defaults");
+        console.log("PASS restoring defaults keeps Ctrl+C visible; shortcut hints update, disable and reset; physical non-Latin Mod+Shift+K opens the palette without terminal input, but composition does not");
 
         // The frames above go to an agent pane, which the demo never types into. Its shell must
         // answer a chord as a terminal would: the demo has no herdr to turn the names into keys.

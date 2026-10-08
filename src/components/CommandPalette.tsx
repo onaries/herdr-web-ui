@@ -7,7 +7,8 @@ import "./CommandPalette.css";
 import type { PaneInfo, SessionSnapshot } from "../../shared/protocol.ts";
 import type { AppActions, PaneView } from "../lib/actions.ts";
 import { rankPanes } from "../lib/paletteSearch.ts";
-import { SHORTCUTS, formatKeys, type ShortcutId } from "../lib/shortcuts.ts";
+import { shortcutDisplayKeys, formatKeys, type ShortcutId } from "../lib/shortcuts.ts";
+import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
 import { placeLine } from "../lib/paneName.ts";
@@ -60,10 +61,11 @@ function cwdBasename(path: string | null | undefined): string {
 }
 
 function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
+  const { settings } = useSettings();
   if (!shortcutId) return null;
-  const shortcut = SHORTCUTS.find((item) => item.id === shortcutId);
-  if (!shortcut) return null;
-  return <span className="palette-shortcut" aria-label={formatKeys(shortcut.keys).join(" + ")}>{formatKeys(shortcut.keys).map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>;
+  const keys = formatKeys(shortcutDisplayKeys(shortcutId, settings.shortcutOverrides));
+  if (keys.length === 0) return null;
+  return <span className="palette-shortcut" aria-label={keys.join(" + ")}>{keys.map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>;
 }
 
 export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, actions }: CommandPaletteProps) {

@@ -459,9 +459,11 @@ it("sanitizes input modes and shortcut overrides without accepting arbitrary com
 });
 
 describe("key bar settings", () => {
-  it("migrates existing optional keys without restoring keys a new layout removed", () => {
+  it("uses the new default for fresh partial records and migrates explicit legacy records", () => {
     expect(DEFAULT_SETTINGS.keyBarItems).toEqual(DEFAULT_KEY_BAR_ITEMS);
     expect(sanitizeSettings({}).keyBarItems).toEqual(DEFAULT_KEY_BAR_ITEMS);
+    expect(sanitizeSettings({ theme: "light" }).keyBarItems).toEqual(DEFAULT_KEY_BAR_ITEMS);
+    expect(sanitizeSettings({ keyBarExtras: ["alt"] }).keyBarItems).toEqual(migrateKeyBarItems(["alt"]));
     expect(sanitizeSettings({ keyBarExtras: ["home-end", "slash", "unknown"] }).keyBarItems).toEqual(migrateKeyBarItems(["home-end", "slash"]));
     expect(sanitizeSettings({ keyBarExtras: [], keyBarItems: [] }).keyBarItems).toEqual([]);
     expect(sanitizeSettings({ keyBarExtras: ["alt"], keyBarItems: [] }).keyBarItems).toEqual([]);

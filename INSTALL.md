@@ -45,7 +45,7 @@ git --version
 | **C. One-line installer** | The user agrees to install what is missing (herdr, Bun, Node) and to let Tailscale serve the app | In-app, like A |
 
 Use A unless the user says otherwise. C is A plus the prerequisites and step 5 in one command,
-`curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh`: it installs herdr, Bun and
+`curl -fsSL https://herdrweb.dev/install.sh | sh`: it installs herdr, Bun and
 Node 22 for the user only (no sudo) when they are missing, installs the plugin, starts it when herdr
 runs, and, when Tailscale runs on the PC, serves the app to the tailnet (`tailscale serve`) and
 prints the address as a QR code. It changes the user's Tailscale configuration, so it needs the
@@ -54,7 +54,7 @@ for a GitHub star, unless the account gh is signed in to has starred the reposit
 asks whether to give one only at a terminal, and goes on by itself after 20 seconds: do not answer
 the question, and do not star the repository for the user.
 
-On Windows x64, use `irm https://devswha.github.io/herdr-web-ui/install.ps1 | iex` in PowerShell.
+On Windows x64, use `irm https://herdrweb.dev/install.ps1 | iex` in PowerShell.
 It requires Git for Windows and installs missing herdr and Bun for the user, without Node or WSL.
 It starts the plugin when herdr runs. Phone access stays optional: use the **Phone setup** action.
 `HERDR_WEB_UI_REF` selects a branch or tag for testing; otherwise it installs the latest release.

@@ -11,8 +11,10 @@ user previously chose direct typing; a fine pointer uses direct typing. The key 
 button switches modes too, on a touch screen only: a desktop changes the mode in Settings.
 Settings → Shortcuts can change each app action's Mod+Shift key or return its keys to the
 terminal. The hold-to-dictate binding remains fixed. Conflicts include the legacy New workspace
-alias, and Reset restores the defaults. Browser-reserved keys still depend on the browser and
-installed-app mode.
+alias, and Reset restores the defaults. Palette hints reflect the saved bindings and disappear
+when a binding is off. Known browser/OS reservations are marked; delivery still depends on the
+browser, OS and installed-app mode. These settings belong to this browser, not the remote PC.
+Global bindings do not replace focus-local list/tab controls or text-field selection keys.
 
 The input line keeps its unsent text per `paneStorageId(machineId, paneId)`, including across
 lens changes and reloads. Storage refusal falls back to memory for view changes. Pending sends
@@ -48,12 +50,15 @@ left out whole and the notice says some input was left out, also when nothing el
 draft is replayed on reconnect. The input-line and chat Send buttons preserve an active composition, and the key bar
 waits for composition to finish. Leaving the input clears its composition guard.
 
-The key bar defaults to Esc, Tab, Ctrl, Alt, Shift, Enter, the arrows and ^C.
+The key bar defaults to Esc, Tab, ^C, Ctrl, Alt, Shift, Enter and the arrows. Esc, Tab and ^C
+come first so they stay reachable without scrolling on narrow phones.
 Settings → Terminal → Key bar → Edit key bar opens the complete list: add or remove keys, move each key up or
 down, and register a custom combination such as Ctrl+W. The catalog includes editing keys and
 F1–F12; a custom combination can use any single printable character, including space and `+`.
 Existing extra-key preferences migrate to the same visible order. Restore defaults returns the
-original bar; an empty list stays empty. The keyboard mode button stays first on touch screens.
+default bar; an empty list stays empty. Saved custom layouts keep their order.
+The keyboard mode button stays first on touch screens. App actions belong in the header and
+menus, not this terminal-input row.
 Ctrl, Alt and Shift stay held until tapped again and can be combined. Removing a modifier button
 clears its held state immediately. Ordinary key buttons use the held modifiers, while saved
 combinations send exactly their configured modifiers without changing the held state.

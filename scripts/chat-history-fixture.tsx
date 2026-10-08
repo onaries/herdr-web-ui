@@ -8,7 +8,7 @@ import { useWholeOutput } from "../src/lib/useWholeOutput.ts";
 import { MachineContext } from "../src/lib/machineContext.tsx";
 import "../src/styles.css";
 
-declare global { interface Window { qa: { requests: { url: string; signal: AbortSignal; resolve: (text: string) => void; reject: () => void }[]; commits: string[][]; answered: string[]; target: (url: string, scope: string) => void; chat: (pane: string, machine?: string) => void; select: (pane: string, machine: string) => void; refresh: () => void } } }
+declare global { interface Window { qa: { requests: { url: string; signal: AbortSignal; resolve: (text: string) => void; reject: () => void }[]; commits: string[][]; answered: string[]; target: (url: string, scope: string) => void; chat: (pane: string, machine?: string) => void; select: (pane: string, machine: string, agent?: string) => void; refresh: () => void } } }
 const nativeFetch = window.fetch;
 window.qa = { requests: [], commits: [], answered: [], target: () => {}, chat: () => {}, select: () => {}, refresh: () => {} };
 window.fetch = (input, init) => {
@@ -41,19 +41,19 @@ function Fixture() {
   return <><button id="fetch-output" onClick={() => { output.load(); output.load(); }}>Load output</button><output id="output">{output.state}:{output.text}</output>
     <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><ChatView key={machine} paneId={pane} refreshKey={refresh} connected={true} ended={false} agent="omo" agentStatus={null} /></MachineContext.Provider></div></>;
 }
-function Product({ pane, machine }: { pane: string; machine: string }) {
+function Product({ pane, machine, agent }: { pane: string; machine: string; agent: string }) {
   const [chat, setChat] = useState(true);
   window.qa.chat = setChat;
   return <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><Profiler id="product-pane" onRender={() => {
     window.qa.commits.push(Array.from(document.querySelectorAll(".chat-turn"), (turn) => turn.textContent ?? ""));
-  }}><PaneTerminal key={machine} paneId={pane} agent="codex" view={chat ? "chat" : "terminal"} terminalFontSize={14} terminalWheelSpeed={1} terminalFontFamily="" theme="dark" palette="amber" /></Profiler></MachineContext.Provider></div>;
+  }}><PaneTerminal key={machine} paneId={pane} agent={agent} view={chat ? "chat" : "terminal"} terminalFontSize={14} terminalWheelSpeed={1} terminalFontFamily="" theme="dark" palette="amber" /></Profiler></MachineContext.Provider></div>;
 }
 function Root() {
-  const [selected, setSelected] = useState<{ pane: string; machine: string } | null>(null);
-  window.qa.select = (pane, machine) => setSelected({ pane, machine });
+  const [selected, setSelected] = useState<{ pane: string; machine: string; agent: string } | null>(null);
+  window.qa.select = (pane, machine, agent = "codex") => setSelected({ pane, machine, agent });
   // The hook and ChatView checks keep StrictMode. The real PaneTerminal is mounted outside it:
   // xterm's viewport callbacks can outlive StrictMode's synthetic terminal unmount.
-  return selected ? <SettingsProvider><Product pane={selected.pane} machine={selected.machine} /></SettingsProvider>
+  return selected ? <SettingsProvider><Product pane={selected.pane} machine={selected.machine} agent={selected.agent} /></SettingsProvider>
     : <React.StrictMode><SettingsProvider><Fixture /></SettingsProvider></React.StrictMode>;
 }
 createRoot(document.getElementById("root")!).render(<Root />);

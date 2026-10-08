@@ -1,4 +1,4 @@
-# Native Windows install: irm https://devswha.github.io/herdr-web-ui/install.ps1 | iex
+# Native Windows install: irm https://herdrweb.dev/install.ps1 | iex
 param([string]$Ref = $env:HERDR_WEB_UI_REF)
 
 & {

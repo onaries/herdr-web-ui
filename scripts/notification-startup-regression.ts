@@ -108,7 +108,7 @@ export async function checkNotificationStartup(browser: Browser, upstream: strin
     await app.waitForFunction((pane) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id === pane, newerPane);
     const result = await app.evaluate(() => ({ selection: JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null"), selections: (window as ProbeWindow).selections }));
     assert.deepEqual(result.selection, { machine_id: "local", pane_id: newerPane });
-    assert.deepEqual(result.selections.at(-1), { type: "select-pane", machine_id: "local", pane_id: newerPane });
+    assert.deepEqual(result.selections.at(-1), { type: "select-pane", machine_id: "local", pane_id: newerPane, view: "chat" });
     assert.deepEqual(errors, []);
     if (process.env.UI_EVIDENCE_DIR) {
       mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });

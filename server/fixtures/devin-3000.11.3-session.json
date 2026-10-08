@@ -1,0 +1,742 @@
+{
+ "source": "Devin CLI 3000.11.3 sessions.db, one session: a tool prompt, a plain follow-up, then `devin --resume` and one more prompt. System prompts, account data and paths are replaced.",
+ "sessions": [
+  {
+   "id": "rift-gallimimus",
+   "working_directory": "/work/project",
+   "backend_type": "windsurf",
+   "model": "swe-1-6-slow",
+   "agent_mode": "normal",
+   "created_at": 1791462520,
+   "last_activity_at": 1791462623,
+   "title": "Run ls in this directory and tell me the file names, nothing else.",
+   "main_chain_id": 78,
+   "shell_last_seen_index": 0,
+   "cogs_json": "[]",
+   "workspace_dirs": "[]",
+   "hidden": 0,
+   "metadata": "{\"total_credit_cost\":0,\"total_acu_cost\":0.0}"
+  }
+ ],
+ "message_nodes": [
+  {
+   "row_id": 66,
+   "session_id": "rift-gallimimus",
+   "node_id": 0,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 67,
+   "session_id": "rift-gallimimus",
+   "node_id": 1,
+   "parent_node_id": 0,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 68,
+   "session_id": "rift-gallimimus",
+   "node_id": 2,
+   "parent_node_id": 1,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 69,
+   "session_id": "rift-gallimimus",
+   "node_id": 3,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"041c5d95-d6c8-4d90-847e-e20a9d3c49ae\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.063908211Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"normal\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 70,
+   "session_id": "rift-gallimimus",
+   "node_id": 4,
+   "parent_node_id": 3,
+   "chat_message": "{\"message_id\":\"aa16985d-a613-4b47-974a-0d4da47ff309\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070941364Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"subagent_profiles\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 71,
+   "session_id": "rift-gallimimus",
+   "node_id": 5,
+   "parent_node_id": 4,
+   "chat_message": "{\"message_id\":\"9bec8634-262b-40cb-84de-1474fee1bad2\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070925364Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 72,
+   "session_id": "rift-gallimimus",
+   "node_id": 6,
+   "parent_node_id": 5,
+   "chat_message": "{\"message_id\":\"ac59aecc-6f23-4b60-b91f-ee33c01564ac\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070894405Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 73,
+   "session_id": "rift-gallimimus",
+   "node_id": 7,
+   "parent_node_id": 6,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[0]}}"
+  },
+  {
+   "row_id": 74,
+   "session_id": "rift-gallimimus",
+   "node_id": 8,
+   "parent_node_id": 7,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[1]}}"
+  },
+  {
+   "row_id": 75,
+   "session_id": "rift-gallimimus",
+   "node_id": 9,
+   "parent_node_id": 8,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[2]}}"
+  },
+  {
+   "row_id": 76,
+   "session_id": "rift-gallimimus",
+   "node_id": 10,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"041c5d95-d6c8-4d90-847e-e20a9d3c49ae\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.063908211Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"normal\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 77,
+   "session_id": "rift-gallimimus",
+   "node_id": 11,
+   "parent_node_id": 10,
+   "chat_message": "{\"message_id\":\"aa16985d-a613-4b47-974a-0d4da47ff309\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070941364Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"subagent_profiles\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 78,
+   "session_id": "rift-gallimimus",
+   "node_id": 12,
+   "parent_node_id": 11,
+   "chat_message": "{\"message_id\":\"9bec8634-262b-40cb-84de-1474fee1bad2\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070925364Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 79,
+   "session_id": "rift-gallimimus",
+   "node_id": 13,
+   "parent_node_id": 12,
+   "chat_message": "{\"message_id\":\"ac59aecc-6f23-4b60-b91f-ee33c01564ac\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070894405Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 80,
+   "session_id": "rift-gallimimus",
+   "node_id": 14,
+   "parent_node_id": 13,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[0]}}"
+  },
+  {
+   "row_id": 81,
+   "session_id": "rift-gallimimus",
+   "node_id": 15,
+   "parent_node_id": 14,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[1]}}"
+  },
+  {
+   "row_id": 82,
+   "session_id": "rift-gallimimus",
+   "node_id": 16,
+   "parent_node_id": 15,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[2]}}"
+  },
+  {
+   "row_id": 83,
+   "session_id": "rift-gallimimus",
+   "node_id": 17,
+   "parent_node_id": 2,
+   "chat_message": "{\"message_id\":\"f8b0b41a-b9c1-4e22-b383-ba9358e0b77c\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/skills-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:40.430357318Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 92,
+   "session_id": "rift-gallimimus",
+   "node_id": 26,
+   "parent_node_id": 25,
+   "chat_message": "{\"message_id\":\"dd5076ef-6761-4e44-8b4e-f12612bcc8a1\",\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_4c1c7f008512420a9636b262\",\"name\":\"exec\",\"arguments\":{\"command\":\"ls\"},\"index\":0,\"kind\":\"function\"}],\"thinking\":{\"thinking\":\"The user wants me to run `ls` in the current directory and tell them the file names, nothing else. This is a simple, direct request. I should just run the ls command and output the file names only.\\n\\nThe current working directory is `/work/project` according to the system info.\\n\\nI'll use the exec tool to run `ls`.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":88,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1674,\"total_time_ms\":1868,\"input_tokens\":12653,\"output_tokens\":88,\"cache_read_tokens\":1344,\"cache_creation_tokens\":null,\"tpot_ms\":2.2045454545454546,\"tokens_per_sec\":453.6082474226804},\"finish_reason\":\"tool_calls\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:42.679632975Z\",\"created_at\":\"2026-10-08T12:28:42.873356009Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 93,
+   "session_id": "rift-gallimimus",
+   "node_id": 27,
+   "parent_node_id": 25,
+   "chat_message": "{\"message_id\":\"dd5076ef-6761-4e44-8b4e-f12612bcc8a1\",\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_4c1c7f008512420a9636b262\",\"name\":\"exec\",\"arguments\":{\"command\":\"ls\"},\"index\":0,\"kind\":\"function\"}],\"thinking\":{\"thinking\":\"The user wants me to run `ls` in the current directory and tell them the file names, nothing else. This is a simple, direct request. I should just run the ls command and output the file names only.\\n\\nThe current working directory is `/work/project` according to the system info.\\n\\nI'll use the exec tool to run `ls`.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":88,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1674,\"total_time_ms\":1868,\"input_tokens\":12653,\"output_tokens\":88,\"cache_read_tokens\":1344,\"cache_creation_tokens\":null,\"tpot_ms\":2.2045454545454546,\"tokens_per_sec\":453.6082474226804},\"finish_reason\":\"tool_calls\",\"extensions\":{\"chisel/tool_call_content\":{\"call_4c1c7f008512420a9636b262\":{\"toolCallId\":\"call_4c1c7f008512420a9636b262\",\"title\":\"Listed ./\",\"status\":\"pending\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"resource\",\"resource\":{\"mimeType\":\"text/x-shellscript\",\"text\":\"ls\",\"uri\":\"tool://preview\"},\"_meta\":{\"cognition.ai/preview_is_shell_command\":true}}}],\"kind\":\"execute\",\"rawInput\":{\"command\":\"ls\"},\"_meta\":{\"cognition.ai/commandNames\":[\"ls\"]}}}},\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:42.679632975Z\",\"created_at\":\"2026-10-08T12:28:42.873356009Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462560,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":13997,\"is_system_prefix\":null}"
+  },
+  {
+   "row_id": 94,
+   "session_id": "rift-gallimimus",
+   "node_id": 28,
+   "parent_node_id": 27,
+   "chat_message": "{\"message_id\":\"606635d7-4fd9-4b8d-9859-998ff8ef8c7c\",\"role\":\"tool\",\"content\":\"Output from command in shell f6b8ba:\\nalpha.txt\\nbeta.txt\\n\\n\\nExit code: 0\",\"tool_call_id\":\"call_4c1c7f008512420a9636b262\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/tool_result_meta\":{\"success\":true,\"kind\":\"execute\"},\"chisel/terminal_output\":{\"text\":\"alpha.txt\\nbeta.txt\\n\",\"cwd\":\"/work/project\",\"exit\":{\"terminal_id\":\"f6b8ba\",\"exit_code\":0}},\"chisel/tool_call_timing\":{\"started_at\":\"2026-10-08T12:28:42.888133475Z\",\"finished_at\":\"2026-10-08T12:28:42.908425162Z\",\"duration_ms\":20}},\"created_at\":\"2026-10-08T12:28:42.911500768Z\",\"telemetry\":{\"source\":\"tool_result\",\"operation\":\"exec\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 95,
+   "session_id": "rift-gallimimus",
+   "node_id": 29,
+   "parent_node_id": 28,
+   "chat_message": "{\"message_id\":\"cc3b6f02-4176-4d86-bdc3-31f1aef5ce7c\",\"role\":\"assistant\",\"content\":\"alpha.txt\\nbeta.txt\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user asked me to run ls and tell them the file names, nothing else. The output shows two files: alpha.txt and beta.txt. I should provide just the file names as requested.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":45,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1467,\"total_time_ms\":1506,\"input_tokens\":49,\"output_tokens\":45,\"cache_read_tokens\":13984,\"cache_creation_tokens\":null,\"tpot_ms\":0.8666666666666667,\"tokens_per_sec\":1153.8461538461538},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:44.424732605Z\",\"created_at\":\"2026-10-08T12:28:44.463643417Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 98,
+   "session_id": "rift-gallimimus",
+   "node_id": 32,
+   "parent_node_id": 31,
+   "chat_message": "{\"message_id\":\"cc9f66fb-8e5f-443b-a530-5b614f703435\",\"role\":\"assistant\",\"content\":\"done\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user is asking me to reply with just the word \\\"done\\\". I should do exactly that.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":22,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1300,\"total_time_ms\":1489,\"input_tokens\":35,\"output_tokens\":22,\"cache_read_tokens\":14016,\"cache_creation_tokens\":null,\"tpot_ms\":8.590909090909092,\"tokens_per_sec\":116.40211640211639},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:29:20.370847904Z\",\"created_at\":\"2026-10-08T12:29:20.560097040Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462560,
+   "metadata": "null"
+  },
+  {
+   "row_id": 145,
+   "session_id": "rift-gallimimus",
+   "node_id": 18,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"041c5d95-d6c8-4d90-847e-e20a9d3c49ae\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.063908211Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"normal\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 146,
+   "session_id": "rift-gallimimus",
+   "node_id": 19,
+   "parent_node_id": 18,
+   "chat_message": "{\"message_id\":\"aa16985d-a613-4b47-974a-0d4da47ff309\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070941364Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"subagent_profiles\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 147,
+   "session_id": "rift-gallimimus",
+   "node_id": 20,
+   "parent_node_id": 19,
+   "chat_message": "{\"message_id\":\"9bec8634-262b-40cb-84de-1474fee1bad2\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070925364Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 148,
+   "session_id": "rift-gallimimus",
+   "node_id": 21,
+   "parent_node_id": 20,
+   "chat_message": "{\"message_id\":\"ac59aecc-6f23-4b60-b91f-ee33c01564ac\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:28:31.070894405Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 149,
+   "session_id": "rift-gallimimus",
+   "node_id": 22,
+   "parent_node_id": 21,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[0]}}"
+  },
+  {
+   "row_id": 150,
+   "session_id": "rift-gallimimus",
+   "node_id": 23,
+   "parent_node_id": 22,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[1]}}"
+  },
+  {
+   "row_id": 151,
+   "session_id": "rift-gallimimus",
+   "node_id": 24,
+   "parent_node_id": 23,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[2]}}"
+  },
+  {
+   "row_id": 152,
+   "session_id": "rift-gallimimus",
+   "node_id": 25,
+   "parent_node_id": 24,
+   "chat_message": "{\"message_id\":\"f8b0b41a-b9c1-4e22-b383-ba9358e0b77c\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/skills-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:40.430357318Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[17]}}"
+  },
+  {
+   "row_id": 153,
+   "session_id": "rift-gallimimus",
+   "node_id": 30,
+   "parent_node_id": 28,
+   "chat_message": "{\"message_id\":\"cc3b6f02-4176-4d86-bdc3-31f1aef5ce7c\",\"role\":\"assistant\",\"content\":\"alpha.txt\\nbeta.txt\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user asked me to run ls and tell them the file names, nothing else. The output shows two files: alpha.txt and beta.txt. I should provide just the file names as requested.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":45,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1467,\"total_time_ms\":1506,\"input_tokens\":49,\"output_tokens\":45,\"cache_read_tokens\":13984,\"cache_creation_tokens\":null,\"tpot_ms\":0.8666666666666667,\"tokens_per_sec\":1153.8461538461538},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:44.424732605Z\",\"created_at\":\"2026-10-08T12:28:44.463643417Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14033,\"is_system_prefix\":null}"
+  },
+  {
+   "row_id": 154,
+   "session_id": "rift-gallimimus",
+   "node_id": 31,
+   "parent_node_id": 30,
+   "chat_message": "{\"message_id\":\"73dfa647-ef98-4d0a-91a2-eec24e3d13b7\",\"role\":\"user\",\"content\":\"Thanks. Now reply with just the word done.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"75bf5ee3-2e74-4a7e-bd6d-ab93b105c9a5\"},\"created_at\":\"2026-10-08T12:29:19.031255181Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "null"
+  },
+  {
+   "row_id": 155,
+   "session_id": "rift-gallimimus",
+   "node_id": 33,
+   "parent_node_id": 31,
+   "chat_message": "{\"message_id\":\"cc9f66fb-8e5f-443b-a530-5b614f703435\",\"role\":\"assistant\",\"content\":\"done\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user is asking me to reply with just the word \\\"done\\\". I should do exactly that.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":22,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1300,\"total_time_ms\":1489,\"input_tokens\":35,\"output_tokens\":22,\"cache_read_tokens\":14016,\"cache_creation_tokens\":null,\"tpot_ms\":8.590909090909092,\"tokens_per_sec\":116.4021164021164},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:29:20.370847904Z\",\"created_at\":\"2026-10-08T12:29:20.560097040Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14051,\"is_system_prefix\":null}"
+  },
+  {
+   "row_id": 156,
+   "session_id": "rift-gallimimus",
+   "node_id": 34,
+   "parent_node_id": 33,
+   "chat_message": "{\"message_id\":\"7e564c83-b0e6-4a07-8933-276ad292f65b\",\"role\":\"user\",\"content\":\"Reply with just ok.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"4e0986f1-7d68-4dea-9425-ef4e5f389f26\"},\"created_at\":\"2026-10-08T12:30:21.694579272Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "null"
+  },
+  {
+   "row_id": 157,
+   "session_id": "rift-gallimimus",
+   "node_id": 35,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"25af055b-8935-40d3-a8a7-5a6dd74b9c3e\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.131915704Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"normal\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 158,
+   "session_id": "rift-gallimimus",
+   "node_id": 36,
+   "parent_node_id": 35,
+   "chat_message": "{\"message_id\":\"5b4ca1f9-c16e-4011-8e1b-b71e3e8a9478\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.138625317Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"subagent_profiles\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 159,
+   "session_id": "rift-gallimimus",
+   "node_id": 37,
+   "parent_node_id": 36,
+   "chat_message": "{\"message_id\":\"9f1efd3d-5f9d-42ea-81a8-2250a2e25b36\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.148543947Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 160,
+   "session_id": "rift-gallimimus",
+   "node_id": 38,
+   "parent_node_id": 37,
+   "chat_message": "{\"message_id\":\"153dd2c3-8b92-43b6-80de-593b31bb15bf\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.148573322Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 161,
+   "session_id": "rift-gallimimus",
+   "node_id": 39,
+   "parent_node_id": 38,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[0,22]}}"
+  },
+  {
+   "row_id": 162,
+   "session_id": "rift-gallimimus",
+   "node_id": 40,
+   "parent_node_id": 39,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[1,23]}}"
+  },
+  {
+   "row_id": 163,
+   "session_id": "rift-gallimimus",
+   "node_id": 41,
+   "parent_node_id": 40,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[2,24]}}"
+  },
+  {
+   "row_id": 164,
+   "session_id": "rift-gallimimus",
+   "node_id": 42,
+   "parent_node_id": 41,
+   "chat_message": "{\"message_id\":\"f8b0b41a-b9c1-4e22-b383-ba9358e0b77c\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/skills-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:40.430357318Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[17,25]}}"
+  },
+  {
+   "row_id": 109,
+   "session_id": "rift-gallimimus",
+   "node_id": 43,
+   "parent_node_id": 42,
+   "chat_message": "{\"message_id\":\"dd5076ef-6761-4e44-8b4e-f12612bcc8a1\",\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_4c1c7f008512420a9636b262\",\"name\":\"exec\",\"arguments\":{\"command\":\"ls\"},\"index\":0,\"kind\":\"function\"}],\"thinking\":{\"thinking\":\"The user wants me to run `ls` in the current directory and tell them the file names, nothing else. This is a simple, direct request. I should just run the ls command and output the file names only.\\n\\nThe current working directory is `/work/project` according to the system info.\\n\\nI'll use the exec tool to run `ls`.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":88,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1674,\"total_time_ms\":1868,\"input_tokens\":12653,\"output_tokens\":88,\"cache_read_tokens\":1344,\"cache_creation_tokens\":null,\"tpot_ms\":2.2045454545454546,\"tokens_per_sec\":453.6082474226804},\"finish_reason\":\"tool_calls\",\"extensions\":{\"chisel/tool_call_content\":{\"call_4c1c7f008512420a9636b262\":{\"toolCallId\":\"call_4c1c7f008512420a9636b262\",\"title\":\"Listed ./\",\"status\":\"pending\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"resource\",\"resource\":{\"mimeType\":\"text/x-shellscript\",\"text\":\"ls\",\"uri\":\"tool://preview\"},\"_meta\":{\"cognition.ai/preview_is_shell_command\":true}}}],\"kind\":\"execute\",\"rawInput\":{\"command\":\"ls\"},\"_meta\":{\"cognition.ai/commandNames\":[\"ls\"]}}}},\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:42.679632975Z\",\"created_at\":\"2026-10-08T12:28:42.873356009Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":13997,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[27]}}"
+  },
+  {
+   "row_id": 110,
+   "session_id": "rift-gallimimus",
+   "node_id": 44,
+   "parent_node_id": 43,
+   "chat_message": "{\"message_id\":\"606635d7-4fd9-4b8d-9859-998ff8ef8c7c\",\"role\":\"tool\",\"content\":\"Output from command in shell f6b8ba:\\nalpha.txt\\nbeta.txt\\n\\n\\nExit code: 0\",\"tool_call_id\":\"call_4c1c7f008512420a9636b262\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/tool_call_timing\":{\"started_at\":\"2026-10-08T12:28:42.888133475Z\",\"finished_at\":\"2026-10-08T12:28:42.908425162Z\",\"duration_ms\":20},\"chisel/tool_result_meta\":{\"success\":true,\"kind\":\"execute\"},\"chisel/terminal_output\":{\"text\":\"alpha.txt\\nbeta.txt\\n\",\"cwd\":\"/work/project\",\"exit\":{\"terminal_id\":\"f6b8ba\",\"exit_code\":0}}},\"created_at\":\"2026-10-08T12:28:42.911500768Z\",\"telemetry\":{\"source\":\"tool_result\",\"operation\":\"exec\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[28]}}"
+  },
+  {
+   "row_id": 165,
+   "session_id": "rift-gallimimus",
+   "node_id": 45,
+   "parent_node_id": 44,
+   "chat_message": "{\"message_id\":\"cc3b6f02-4176-4d86-bdc3-31f1aef5ce7c\",\"role\":\"assistant\",\"content\":\"alpha.txt\\nbeta.txt\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user asked me to run ls and tell them the file names, nothing else. The output shows two files: alpha.txt and beta.txt. I should provide just the file names as requested.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":45,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1467,\"total_time_ms\":1506,\"input_tokens\":49,\"output_tokens\":45,\"cache_read_tokens\":13984,\"cache_creation_tokens\":null,\"tpot_ms\":0.8666666666666667,\"tokens_per_sec\":1153.8461538461538},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:44.424732605Z\",\"created_at\":\"2026-10-08T12:28:44.463643417Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14033,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[30]}}"
+  },
+  {
+   "row_id": 166,
+   "session_id": "rift-gallimimus",
+   "node_id": 46,
+   "parent_node_id": 45,
+   "chat_message": "{\"message_id\":\"73dfa647-ef98-4d0a-91a2-eec24e3d13b7\",\"role\":\"user\",\"content\":\"Thanks. Now reply with just the word done.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"75bf5ee3-2e74-4a7e-bd6d-ab93b105c9a5\"},\"created_at\":\"2026-10-08T12:29:19.031255181Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[31]}}"
+  },
+  {
+   "row_id": 167,
+   "session_id": "rift-gallimimus",
+   "node_id": 47,
+   "parent_node_id": 46,
+   "chat_message": "{\"message_id\":\"cc9f66fb-8e5f-443b-a530-5b614f703435\",\"role\":\"assistant\",\"content\":\"done\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user is asking me to reply with just the word \\\"done\\\". I should do exactly that.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":22,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1300,\"total_time_ms\":1489,\"input_tokens\":35,\"output_tokens\":22,\"cache_read_tokens\":14016,\"cache_creation_tokens\":null,\"tpot_ms\":8.590909090909092,\"tokens_per_sec\":116.4021164021164},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:29:20.370847904Z\",\"created_at\":\"2026-10-08T12:29:20.560097040Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14051,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[33]}}"
+  },
+  {
+   "row_id": 168,
+   "session_id": "rift-gallimimus",
+   "node_id": 48,
+   "parent_node_id": 47,
+   "chat_message": "{\"message_id\":\"7e564c83-b0e6-4a07-8933-276ad292f65b\",\"role\":\"user\",\"content\":\"Reply with just ok.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"4e0986f1-7d68-4dea-9425-ef4e5f389f26\"},\"created_at\":\"2026-10-08T12:30:21.694579272Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[34]}}"
+  },
+  {
+   "row_id": 169,
+   "session_id": "rift-gallimimus",
+   "node_id": 49,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"25af055b-8935-40d3-a8a7-5a6dd74b9c3e\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.131915704Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"normal\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 170,
+   "session_id": "rift-gallimimus",
+   "node_id": 50,
+   "parent_node_id": 49,
+   "chat_message": "{\"message_id\":\"5b4ca1f9-c16e-4011-8e1b-b71e3e8a9478\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.138625317Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"subagent_profiles\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 171,
+   "session_id": "rift-gallimimus",
+   "node_id": 51,
+   "parent_node_id": 50,
+   "chat_message": "{\"message_id\":\"9f1efd3d-5f9d-42ea-81a8-2250a2e25b36\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.148543947Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 172,
+   "session_id": "rift-gallimimus",
+   "node_id": 52,
+   "parent_node_id": 51,
+   "chat_message": "{\"message_id\":\"153dd2c3-8b92-43b6-80de-593b31bb15bf\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.148573322Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 173,
+   "session_id": "rift-gallimimus",
+   "node_id": 53,
+   "parent_node_id": 52,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[0,22]}}"
+  },
+  {
+   "row_id": 174,
+   "session_id": "rift-gallimimus",
+   "node_id": 54,
+   "parent_node_id": 53,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[1,23]}}"
+  },
+  {
+   "row_id": 175,
+   "session_id": "rift-gallimimus",
+   "node_id": 55,
+   "parent_node_id": 54,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[2,24]}}"
+  },
+  {
+   "row_id": 176,
+   "session_id": "rift-gallimimus",
+   "node_id": 56,
+   "parent_node_id": 55,
+   "chat_message": "{\"message_id\":\"f8b0b41a-b9c1-4e22-b383-ba9358e0b77c\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/skills-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:40.430357318Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[17,25]}}"
+  },
+  {
+   "row_id": 123,
+   "session_id": "rift-gallimimus",
+   "node_id": 57,
+   "parent_node_id": 56,
+   "chat_message": "{\"message_id\":\"dd5076ef-6761-4e44-8b4e-f12612bcc8a1\",\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_4c1c7f008512420a9636b262\",\"name\":\"exec\",\"arguments\":{\"command\":\"ls\"},\"index\":0,\"kind\":\"function\"}],\"thinking\":{\"thinking\":\"The user wants me to run `ls` in the current directory and tell them the file names, nothing else. This is a simple, direct request. I should just run the ls command and output the file names only.\\n\\nThe current working directory is `/work/project` according to the system info.\\n\\nI'll use the exec tool to run `ls`.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":88,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1674,\"total_time_ms\":1868,\"input_tokens\":12653,\"output_tokens\":88,\"cache_read_tokens\":1344,\"cache_creation_tokens\":null,\"tpot_ms\":2.2045454545454546,\"tokens_per_sec\":453.6082474226804},\"finish_reason\":\"tool_calls\",\"extensions\":{\"chisel/tool_call_content\":{\"call_4c1c7f008512420a9636b262\":{\"toolCallId\":\"call_4c1c7f008512420a9636b262\",\"title\":\"Listed ./\",\"status\":\"pending\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"resource\",\"resource\":{\"mimeType\":\"text/x-shellscript\",\"text\":\"ls\",\"uri\":\"tool://preview\"},\"_meta\":{\"cognition.ai/preview_is_shell_command\":true}}}],\"kind\":\"execute\",\"rawInput\":{\"command\":\"ls\"},\"_meta\":{\"cognition.ai/commandNames\":[\"ls\"]}}}},\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:42.679632975Z\",\"created_at\":\"2026-10-08T12:28:42.873356009Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":13997,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[27]}}"
+  },
+  {
+   "row_id": 124,
+   "session_id": "rift-gallimimus",
+   "node_id": 58,
+   "parent_node_id": 57,
+   "chat_message": "{\"message_id\":\"606635d7-4fd9-4b8d-9859-998ff8ef8c7c\",\"role\":\"tool\",\"content\":\"Output from command in shell f6b8ba:\\nalpha.txt\\nbeta.txt\\n\\n\\nExit code: 0\",\"tool_call_id\":\"call_4c1c7f008512420a9636b262\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/tool_call_timing\":{\"started_at\":\"2026-10-08T12:28:42.888133475Z\",\"finished_at\":\"2026-10-08T12:28:42.908425162Z\",\"duration_ms\":20},\"chisel/tool_result_meta\":{\"success\":true,\"kind\":\"execute\"},\"chisel/terminal_output\":{\"text\":\"alpha.txt\\nbeta.txt\\n\",\"cwd\":\"/work/project\",\"exit\":{\"terminal_id\":\"f6b8ba\",\"exit_code\":0}}},\"created_at\":\"2026-10-08T12:28:42.911500768Z\",\"telemetry\":{\"source\":\"tool_result\",\"operation\":\"exec\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[28]}}"
+  },
+  {
+   "row_id": 177,
+   "session_id": "rift-gallimimus",
+   "node_id": 59,
+   "parent_node_id": 58,
+   "chat_message": "{\"message_id\":\"cc3b6f02-4176-4d86-bdc3-31f1aef5ce7c\",\"role\":\"assistant\",\"content\":\"alpha.txt\\nbeta.txt\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user asked me to run ls and tell them the file names, nothing else. The output shows two files: alpha.txt and beta.txt. I should provide just the file names as requested.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":45,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1467,\"total_time_ms\":1506,\"input_tokens\":49,\"output_tokens\":45,\"cache_read_tokens\":13984,\"cache_creation_tokens\":null,\"tpot_ms\":0.8666666666666667,\"tokens_per_sec\":1153.8461538461538},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:44.424732605Z\",\"created_at\":\"2026-10-08T12:28:44.463643417Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14033,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[30]}}"
+  },
+  {
+   "row_id": 178,
+   "session_id": "rift-gallimimus",
+   "node_id": 60,
+   "parent_node_id": 59,
+   "chat_message": "{\"message_id\":\"73dfa647-ef98-4d0a-91a2-eec24e3d13b7\",\"role\":\"user\",\"content\":\"Thanks. Now reply with just the word done.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"75bf5ee3-2e74-4a7e-bd6d-ab93b105c9a5\"},\"created_at\":\"2026-10-08T12:29:19.031255181Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[31]}}"
+  },
+  {
+   "row_id": 179,
+   "session_id": "rift-gallimimus",
+   "node_id": 61,
+   "parent_node_id": 60,
+   "chat_message": "{\"message_id\":\"cc9f66fb-8e5f-443b-a530-5b614f703435\",\"role\":\"assistant\",\"content\":\"done\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user is asking me to reply with just the word \\\"done\\\". I should do exactly that.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":22,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1300,\"total_time_ms\":1489,\"input_tokens\":35,\"output_tokens\":22,\"cache_read_tokens\":14016,\"cache_creation_tokens\":null,\"tpot_ms\":8.590909090909092,\"tokens_per_sec\":116.4021164021164},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:29:20.370847904Z\",\"created_at\":\"2026-10-08T12:29:20.560097040Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14051,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[33]}}"
+  },
+  {
+   "row_id": 180,
+   "session_id": "rift-gallimimus",
+   "node_id": 62,
+   "parent_node_id": 61,
+   "chat_message": "{\"message_id\":\"7e564c83-b0e6-4a07-8933-276ad292f65b\",\"role\":\"user\",\"content\":\"Reply with just ok.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"4e0986f1-7d68-4dea-9425-ef4e5f389f26\"},\"created_at\":\"2026-10-08T12:30:21.694579272Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[34]}}"
+  },
+  {
+   "row_id": 181,
+   "session_id": "rift-gallimimus",
+   "node_id": 63,
+   "parent_node_id": null,
+   "chat_message": "{\"message_id\":\"25af055b-8935-40d3-a8a7-5a6dd74b9c3e\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.131915704Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"normal\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 182,
+   "session_id": "rift-gallimimus",
+   "node_id": 64,
+   "parent_node_id": 63,
+   "chat_message": "{\"message_id\":\"5b4ca1f9-c16e-4011-8e1b-b71e3e8a9478\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.138625317Z\",\"telemetry\":{\"source\":\"sysprompt\",\"operation\":\"subagent_profiles\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 183,
+   "session_id": "rift-gallimimus",
+   "node_id": 65,
+   "parent_node_id": 64,
+   "chat_message": "{\"message_id\":\"9f1efd3d-5f9d-42ea-81a8-2250a2e25b36\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.148543947Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 184,
+   "session_id": "rift-gallimimus",
+   "node_id": 66,
+   "parent_node_id": 65,
+   "chat_message": "{\"message_id\":\"153dd2c3-8b92-43b6-80de-593b31bb15bf\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"created_at\":\"2026-10-08T12:29:41.148573322Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":true}"
+  },
+  {
+   "row_id": 185,
+   "session_id": "rift-gallimimus",
+   "node_id": 67,
+   "parent_node_id": 66,
+   "chat_message": "{\"message_id\":\"572b8d82-0781-4454-8a14-8165f2dde72d\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"affogato/cog-context\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.071512911Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[0,22]}}"
+  },
+  {
+   "row_id": 186,
+   "session_id": "rift-gallimimus",
+   "node_id": 68,
+   "parent_node_id": 67,
+   "chat_message": "{\"message_id\":\"211dc01c-f924-4def-9e82-f8306e927af3\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/rules-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:31.113219722Z\",\"telemetry\":{\"source\":\"rules\",\"operation\":\"available\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[1,23]}}"
+  },
+  {
+   "row_id": 187,
+   "session_id": "rift-gallimimus",
+   "node_id": 69,
+   "parent_node_id": 68,
+   "chat_message": "{\"message_id\":\"d28c99a2-3325-442a-a85f-c54210f25ea7\",\"role\":\"user\",\"content\":\"Run ls in this directory and tell me the file names, nothing else.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"252ad274-9357-4198-9332-7f8cb5dae4f9\"},\"created_at\":\"2026-10-08T12:28:40.410481575Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[2,24]}}"
+  },
+  {
+   "row_id": 188,
+   "session_id": "rift-gallimimus",
+   "node_id": 70,
+   "parent_node_id": 69,
+   "chat_message": "{\"message_id\":\"f8b0b41a-b9c1-4e22-b383-ba9358e0b77c\",\"role\":\"system\",\"content\":\"(system prompt omitted)\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"agent-ext/skills-loaded\":\"(omitted)\"},\"created_at\":\"2026-10-08T12:28:40.430357318Z\",\"telemetry\":{\"source\":\"system\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[17,25]}}"
+  },
+  {
+   "row_id": 137,
+   "session_id": "rift-gallimimus",
+   "node_id": 71,
+   "parent_node_id": 70,
+   "chat_message": "{\"message_id\":\"dd5076ef-6761-4e44-8b4e-f12612bcc8a1\",\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_4c1c7f008512420a9636b262\",\"name\":\"exec\",\"arguments\":{\"command\":\"ls\"},\"index\":0,\"kind\":\"function\"}],\"thinking\":{\"thinking\":\"The user wants me to run `ls` in the current directory and tell them the file names, nothing else. This is a simple, direct request. I should just run the ls command and output the file names only.\\n\\nThe current working directory is `/work/project` according to the system info.\\n\\nI'll use the exec tool to run `ls`.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":88,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1674,\"total_time_ms\":1868,\"input_tokens\":12653,\"output_tokens\":88,\"cache_read_tokens\":1344,\"cache_creation_tokens\":null,\"tpot_ms\":2.2045454545454546,\"tokens_per_sec\":453.6082474226804},\"finish_reason\":\"tool_calls\",\"extensions\":{\"chisel/tool_call_content\":{\"call_4c1c7f008512420a9636b262\":{\"toolCallId\":\"call_4c1c7f008512420a9636b262\",\"title\":\"Listed ./\",\"status\":\"pending\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"resource\",\"resource\":{\"mimeType\":\"text/x-shellscript\",\"text\":\"ls\",\"uri\":\"tool://preview\"},\"_meta\":{\"cognition.ai/preview_is_shell_command\":true}}}],\"kind\":\"execute\",\"rawInput\":{\"command\":\"ls\"},\"_meta\":{\"cognition.ai/commandNames\":[\"ls\"]}}}},\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:42.679632975Z\",\"created_at\":\"2026-10-08T12:28:42.873356009Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":13997,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[27]}}"
+  },
+  {
+   "row_id": 138,
+   "session_id": "rift-gallimimus",
+   "node_id": 72,
+   "parent_node_id": 71,
+   "chat_message": "{\"message_id\":\"606635d7-4fd9-4b8d-9859-998ff8ef8c7c\",\"role\":\"tool\",\"content\":\"Output from command in shell f6b8ba:\\nalpha.txt\\nbeta.txt\\n\\n\\nExit code: 0\",\"tool_call_id\":\"call_4c1c7f008512420a9636b262\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":null,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/tool_call_timing\":{\"started_at\":\"2026-10-08T12:28:42.888133475Z\",\"finished_at\":\"2026-10-08T12:28:42.908425162Z\",\"duration_ms\":20},\"chisel/tool_result_meta\":{\"success\":true,\"kind\":\"execute\"},\"chisel/terminal_output\":{\"text\":\"alpha.txt\\nbeta.txt\\n\",\"cwd\":\"/work/project\",\"exit\":{\"terminal_id\":\"f6b8ba\",\"exit_code\":0}}},\"created_at\":\"2026-10-08T12:28:42.911500768Z\",\"telemetry\":{\"source\":\"tool_result\",\"operation\":\"exec\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[28]}}"
+  },
+  {
+   "row_id": 189,
+   "session_id": "rift-gallimimus",
+   "node_id": 73,
+   "parent_node_id": 72,
+   "chat_message": "{\"message_id\":\"cc3b6f02-4176-4d86-bdc3-31f1aef5ce7c\",\"role\":\"assistant\",\"content\":\"alpha.txt\\nbeta.txt\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user asked me to run ls and tell them the file names, nothing else. The output shows two files: alpha.txt and beta.txt. I should provide just the file names as requested.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":45,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1467,\"total_time_ms\":1506,\"input_tokens\":49,\"output_tokens\":45,\"cache_read_tokens\":13984,\"cache_creation_tokens\":null,\"tpot_ms\":0.8666666666666667,\"tokens_per_sec\":1153.8461538461538},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:28:44.424732605Z\",\"created_at\":\"2026-10-08T12:28:44.463643417Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14033,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[30]}}"
+  },
+  {
+   "row_id": 190,
+   "session_id": "rift-gallimimus",
+   "node_id": 74,
+   "parent_node_id": 73,
+   "chat_message": "{\"message_id\":\"73dfa647-ef98-4d0a-91a2-eec24e3d13b7\",\"role\":\"user\",\"content\":\"Thanks. Now reply with just the word done.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"75bf5ee3-2e74-4a7e-bd6d-ab93b105c9a5\"},\"created_at\":\"2026-10-08T12:29:19.031255181Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[31]}}"
+  },
+  {
+   "row_id": 191,
+   "session_id": "rift-gallimimus",
+   "node_id": 75,
+   "parent_node_id": 74,
+   "chat_message": "{\"message_id\":\"cc9f66fb-8e5f-443b-a530-5b614f703435\",\"role\":\"assistant\",\"content\":\"done\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user is asking me to reply with just the word \\\"done\\\". I should do exactly that.\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":22,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1300,\"total_time_ms\":1489,\"input_tokens\":35,\"output_tokens\":22,\"cache_read_tokens\":14016,\"cache_creation_tokens\":null,\"tpot_ms\":8.590909090909092,\"tokens_per_sec\":116.4021164021164},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:29:20.370847904Z\",\"created_at\":\"2026-10-08T12:29:20.560097040Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14051,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[33]}}"
+  },
+  {
+   "row_id": 192,
+   "session_id": "rift-gallimimus",
+   "node_id": 76,
+   "parent_node_id": 75,
+   "chat_message": "{\"message_id\":\"7e564c83-b0e6-4a07-8933-276ad292f65b\",\"role\":\"user\",\"content\":\"Reply with just ok.\",\"metadata\":{\"num_tokens\":null,\"is_user_input\":true,\"request_id\":null,\"metrics\":null,\"finish_reason\":null,\"extensions\":{\"chisel/client-message-id\":\"4e0986f1-7d68-4dea-9425-ef4e5f389f26\"},\"created_at\":\"2026-10-08T12:30:21.694579272Z\",\"telemetry\":{\"source\":\"user\",\"operation\":\"unknown\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":null,\"is_system_prefix\":null,\"extensions\":{\"compact/prior_node_ids\":[34]}}"
+  },
+  {
+   "row_id": 193,
+   "session_id": "rift-gallimimus",
+   "node_id": 77,
+   "parent_node_id": 76,
+   "chat_message": "{\"message_id\":\"bea261f1-d33b-4501-bbec-38b6fbf7ec8d\",\"role\":\"assistant\",\"content\":\"ok\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user wants me to reply with just \\\"ok\\\".\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":13,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1581,\"total_time_ms\":1766,\"input_tokens\":1964,\"output_tokens\":13,\"cache_read_tokens\":12096,\"cache_creation_tokens\":null,\"tpot_ms\":14.23076923076923,\"tokens_per_sec\":70.27027027027027},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:30:23.330204325Z\",\"created_at\":\"2026-10-08T12:30:23.515873032Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "null"
+  },
+  {
+   "row_id": 194,
+   "session_id": "rift-gallimimus",
+   "node_id": 78,
+   "parent_node_id": 76,
+   "chat_message": "{\"message_id\":\"bea261f1-d33b-4501-bbec-38b6fbf7ec8d\",\"role\":\"assistant\",\"content\":\"ok\",\"tool_calls\":[],\"thinking\":{\"thinking\":\"The user wants me to reply with just \\\"ok\\\".\",\"signature\":\"\"},\"metadata\":{\"num_tokens\":13,\"is_user_input\":null,\"request_id\":\"request-id\",\"metrics\":{\"ttft_ms\":1581,\"total_time_ms\":1766,\"input_tokens\":1964,\"output_tokens\":13,\"cache_read_tokens\":12096,\"cache_creation_tokens\":null,\"tpot_ms\":14.23076923076923,\"tokens_per_sec\":70.27027027027027},\"finish_reason\":\"stop\",\"response_dimensions\":[{\"uid\":\"agent_messages\",\"group_title\":\"Response Statistics\",\"kind\":{\"CumulativeMetric\":{\"label\":\"Agent messages\",\"value\":1,\"tail\":\" message\",\"plural_tail\":\" messages\",\"prefix\":\"\"}}},{\"uid\":\"model\",\"group_title\":\"Response Statistics\",\"kind\":{\"Metric\":{\"label\":\"Model\",\"value\":\"SWE-1.6 Slow\"}}}],\"started_generation_at\":\"2026-10-08T12:30:23.330204325Z\",\"created_at\":\"2026-10-08T12:30:23.515873032Z\",\"generation_model\":\"swe-1-6-slow\",\"telemetry\":{\"source\":\"assistant\",\"operation\":\"inference\"}}}",
+   "created_at": 1791462623,
+   "metadata": "{\"summarized_from\":null,\"num_tokens_preceding\":14060,\"is_system_prefix\":null}"
+  }
+ ],
+ "tool_call_state": [
+  {
+   "session_id": "rift-gallimimus",
+   "tool_call_id": "call_4c1c7f008512420a9636b262",
+   "tool_call_json": "{\"toolCallId\":\"call_4c1c7f008512420a9636b262\",\"title\":\"Listed ./\",\"kind\":\"execute\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"resource\",\"resource\":{\"mimeType\":\"text/x-shellscript\",\"text\":\"ls\",\"uri\":\"tool://preview\"},\"_meta\":{\"cognition.ai/preview_is_shell_command\":true}}}],\"rawInput\":{\"command\":\"ls\"},\"_meta\":{\"cognition.ai/commandNames\":[\"ls\"],\"cognition.ai/inferenceToolName\":\"exec\"}}",
+   "tool_call_update_json": "{\"toolCallId\":\"call_4c1c7f008512420a9636b262\",\"status\":\"completed\",\"content\":[{\"type\":\"content\",\"content\":{\"type\":\"text\",\"text\":\"alpha.txt\\nbeta.txt\\n\"}}],\"_meta\":{\"cognition.ai/cwd\":\"/work/project\",\"terminal_exit\":{\"terminal_id\":\"f6b8ba\",\"exit_code\":0,\"signal\":null},\"cognition.ai/inferenceToolName\":\"exec\"}}"
+  }
+ ]
+}

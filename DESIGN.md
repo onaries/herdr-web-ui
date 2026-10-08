@@ -952,7 +952,7 @@ One set for both themes: the card is island black wherever it shows.
   and Escape closes. IME candidate, commit and cancel keys stay with composition. Buttons reached
   with Tab keep their native activation, and arrow navigation scrolls the selected result into view.
 - Actions cover new workspace, lens/sidebar/theme, settings, notifications, lock and refresh, with
-  `.kbd` hints where a global shortcut exists.
+  `.kbd` hints resolved from this browser's shortcut settings; disabled bindings have no hint.
 
 ### Settings dialog
 - A Settings shortcut opened over a file preview places Settings above it (`--z-modal + 2`, one
@@ -976,7 +976,7 @@ One set for both themes: the card is island black wherever it shows.
   (panes open in, show thinking, chat width, chat font size and family; then **Composer**: Enter
   sends, suggestion chip; then **Quick replies**), **Terminal** (font size and family, wheel
   speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
-  **Shortcuts** (the complete platform-resolved list), **Phone & devices** (the phone address,
+  **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (the phone address,
   Keep screen on, Install; then paired devices), **Remote PCs**, **About** (Updates, herdr,
   the repository links). A button that points at Updates opens the dialog on About.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an
@@ -1024,7 +1024,7 @@ One set for both themes: the card is island black wherever it shows.
 - xterm has `scrollback: 0`; wheel/touch gestures reach herdr's alternate-screen scrollback. The
   mount clips its own gutter and hides the unused xterm scrollbar.
 - Terminal banners stack top-right for ended, reconnecting, observe and held-draft review states.
-- The mobile key bar is Esc, Tab, sticky Ctrl/Alt/Shift, Enter, arrows and `^C`;
+- The mobile key bar starts with Esc, Tab and `^C`, then sticky Ctrl/Alt/Shift, Enter and arrows;
   it never steals typing focus. Modifiers remain highlighted until toggled off,
   leaving the pane/lens or disconnecting; each exposes `aria-pressed`.
 - That is the default row. Settings → Terminal → Key bar can add, remove and reorder every
@@ -1113,7 +1113,16 @@ One set for both themes: the card is island black wherever it shows.
 - Touch targets grow to `--touch-target`; fields stay `--fs-input` where mobile zoom is a risk.
 - `prefers-reduced-motion` is honored. Lucide/inline SVG decoration is hidden from assistive tech.
 - Global shortcuts use the convention **Mod+Shift+key**: Mod is Command on Apple platforms and Ctrl
-  elsewhere. The settings table is the discoverable source of the complete mapping.
+  elsewhere. Settings lists the global bindings and allows changing their final key or disabling
+  them, with duplicate assignments blocked and known browser/OS reservations warned about.
+  Reservations vary by browser and installed-app mode; a warning is not a guarantee of delivery.
+  Bindings belong to this browser, not the remote PC or pane. Hold-to-dictate remains fixed.
+- Text-field selection and IME composition keep their keys. Focus-local list/tab navigation and
+  reordering are separate from global bindings; they must not intercept terminal input.
+  Global actions target the selected pane, and a handled shortcut must never also reach its PTY.
+- On touch screens app actions stay in buttons and menus, including the palette in More on phones.
+  The key bar sends terminal input only; it is not an app-action toolbar. Hardware keyboards use
+  the same global bindings on phones and desktops.
 - `document.title` is `<pane title> · herdr` while selected, otherwise `herdr web ui`.
 
 ### Accepted debt

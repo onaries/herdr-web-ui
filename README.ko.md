@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://devswha.github.io/herdr-web-ui/">웹사이트</a> ·
+  <a href="https://herdrweb.dev/">웹사이트</a> ·
   <a href="#install">설치</a> ·
-  <a href="https://devswha.github.io/herdr-web-ui/demo/">데모 체험</a> ·
+  <a href="https://herdrweb.dev/demo/">데모 체험</a> ·
   <a href="docs/guide.md#quick-start">빠른 시작</a> ·
   <a href="#faq">자주 묻는 질문</a> ·
   <a href="#docs">문서</a>
@@ -76,11 +76,12 @@ https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
 
 <p align="center"><sub>모든 클립은 데스크톱과 폰을 동시에 녹화한 실제 동작이며, 실제 속도로 컷 없이 담았습니다. 누르면 전체 영상을 볼 수 있습니다.</sub></p>
 
-- **채팅과 터미널을 pane 하나에** — Claude Code, Codex, omp, omo, gjc와 pi의 대화 기록을 그대로 보여 주고, 클릭 한 번이면 라이브 터미널로 넘어갑니다. [지원 에이전트 →](docs/guide.md#supported-agents)
+- **채팅과 터미널을 pane 하나에** — Claude Code, Codex, omp, omo, gjc, pi의 대화 기록과 herdr가 식별한 OpenCode 2 세션을 보여 주고, 클릭 한 번이면 라이브 터미널로 넘어갑니다. 에이전트가 일하는 동안 다음 메시지를 써 두면 다음 턴에 들어가고, Send now로 바로 보낼 수도 있습니다. [지원 에이전트 →](docs/guide.md#supported-agents)
 - **탭 한 번으로 승인** — 승인 요청, 질문, 계획 메뉴가 카드로 뜹니다. 답을 보내기 전에 그 질문이 아직 유효한지 확인합니다.
 - **내가 필요할 때 알림** — 모든 pane의 상태를 실시간으로 보여 주고, 앱을 보고 있을 때는 알림이 위에서 내려오며, 에이전트가 입력을 기다리거나 일을 끝내면 앱이 닫혀 있어도 푸시 알림을 보냅니다.
-- **폰에 설치해서 쓰기** — 키보드 위에 Esc, Tab, Ctrl, 방향키가 붙은 PWA입니다. Tailscale 주소는 QR 코드로 받아 갑니다. [폰 설정 →](docs/guide.md#on-your-phone)
-- **작업 방식은 그대로** — 에이전트는 herdr가 관리하고, 이 앱은 거기에 연결만 합니다. 에이전트를 멈추지 않고 Settings(설정)에서 업데이트합니다. 새 탭과 worktree는 행의 ⋯ 메뉴에서 만듭니다. [전체 기능 →](docs/guide.md#features)
+- **폰에 설치해서 쓰기** — 키보드 위에 키 바(Esc, Tab, Ctrl, Alt, Shift, Enter, 방향키)가 붙은 PWA입니다. 키 순서를 바꾸거나 나만의 키 조합을 Settings(설정)에서 추가할 수 있습니다. Tailscale 주소는 QR 코드로 받아 갑니다. [폰 설정 →](docs/guide.md#on-your-phone)
+- **말로 입력하기** — 채팅이나 터미널 입력 줄에 받아쓰기로 입력합니다. 한국어와 영어를 섞어 말해도 됩니다. 에이전트에게 보내기 전에 글자를 확인할 수 있고, 받아쓰기는 내 OpenAI 키나 브라우저의 음성 인식을 씁니다.
+- **작업 방식은 그대로** — 에이전트는 herdr가 관리하고, 이 앱은 거기에 연결만 합니다. 에이전트를 멈추지 않고 Settings(설정)에서 업데이트하며, 업데이트마다 무엇이 바뀌는지 패치 노트로 보여 줍니다. 새 탭과 worktree는 행의 ⋯ 메뉴에서 만듭니다. [전체 기능 →](docs/guide.md#features)
 
 ---
 
@@ -89,10 +90,19 @@ https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
 ## 설치
 
 ```bash
-curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh
+curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
 Linux(x64, arm64)와 macOS를 지원합니다. herdr 0.9.0 이상, Bun 1.4 이상, Node 18 이상 중 없는 것을 현재 사용자 계정에 설치한 뒤, 앱을 herdr 플러그인으로 설치합니다. 이미 설치된 herdr가 0.9.0보다 오래됐다면 herdr를 직접 업데이트하고 다시 시작한 다음 설치 스크립트를 다시 실행하세요. 기본 수신 주소를 쓰고 Tailscale이 켜져 있으면, HTTPS 설정이 끝났을 때 tailnet 주소와 QR 코드가 나옵니다. 자신의 기기는 원래 코드 없이 들어갑니다. `tailscale serve`가 로그인을 알려 주기 때문입니다. 그래도 자신의 폰이 페어링을 요구받는다면 `HERDR_WEB_TAILSCALE_SERVE_ONLY=1`을 설정하면 로그인이 하나뿐인 tailnet에서는 코드 없이 들어갈 수 있습니다. 단, 공용 프록시나 터널 등 다른 경로로 이 포트에 접근할 수 있다면 설정하지 마세요 ([접근과 안전](docs/guide.md#access-and-safety)).
+
+<p align="center">
+PowerShell에서 Windows x64용으로 설치하려면:
+
+```powershell
+irm https://herdrweb.dev/install.ps1 | iex
+```
+
+[Git for Windows](https://git-scm.com/download/win)가 필요합니다. 없는 herdr와 Bun을 현재 사용자 계정에 설치한 뒤 같은 플러그인을 설치합니다. Node나 WSL은 필요 없습니다. 폰에서 쓰려면 herdr에서 **Phone setup**을 여세요. herdr가 Windows에서 터미널 attach를 지원하기 전까지 Windows 터미널은 입력은 되고 격자 크기는 고정된 [화면 미러](docs/remote-pcs.md#windows-pcs)로 보입니다.
 
 <p align="center">
   <img src="docs/screenshots/install.png" width="720" alt="설치 스크립트 출력: Bun, Node, herdr 플러그인이 설치되고 tailscale serve가 앱을 공개한 뒤 폰용 QR 코드가 나옵니다.">
@@ -118,7 +128,7 @@ herdr가 실행 중인 상태에서 **[localhost:7317](http://localhost:7317)**�
 
 **채팅 화면은 어떤 에이전트를 지원하나요?**
 
-Claude Code, Codex, omp, omo, gjc, pi는 각자의 세션 파일에서 읽습니다. herdr pane에서 도는 그 밖의 프로그램은 라이브 터미널과 상태로 보입니다. [지원 에이전트 →](docs/guide.md#supported-agents)
+Claude Code, Codex, omp, omo, gjc, pi는 각자의 세션 파일에서 읽습니다. OpenCode 2는 herdr가 보고한 세션을 OpenCode 데이터베이스에서 읽으며, 홈 화면이나 1.x 저장소에서는 라이브 터미널을 표시합니다. 그 밖의 프로그램은 라이브 터미널과 상태로 보입니다. [지원 에이전트 →](docs/guide.md#supported-agents)
 
 **herdr의 TUI를 대체하나요?**
 

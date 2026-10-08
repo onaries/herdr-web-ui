@@ -135,7 +135,7 @@ body { font-family: "Pretendard Variable", sans-serif; -webkit-font-smoothing: a
 <div id="stage"><div id="lamp"></div><div id="pools"></div><div id="objs"></div>
 <div id="scrimL"></div><div id="scrimB"></div><div id="shade"></div><div id="vig"></div>
 <div id="type"></div><div id="keys"></div>
-<div id="end"><img src="/_film/brand/mark-paper.png"><div class="word">herdr web ui</div><div class="cmd"></div><div class="tag">Your agents, in plain conversation.</div><div class="url">devswha.github.io/herdr-web-ui · MIT · a plugin for herdr</div></div>
+<div id="end"><img src="/_film/brand/mark-paper.png"><div class="word">herdr web ui</div><div class="cmd"></div><div class="tag">Your agents, in plain conversation.</div><div class="url">herdrweb.dev · MIT · a plugin for herdr</div></div>
 <div id="reveal"></div><div id="fade"></div></div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -339,7 +339,7 @@ function drawKeys(k, t) {
     e.style.boxShadow = down ? "0 0 0 1px rgba(240,168,48,0.55), 0 14px 32px -12px rgba(0,0,0,0.7)" : "0 18px 40px -12px rgba(0,0,0,0.7)";
   });
 }
-const CMD = "curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh";
+const CMD = "curl -fsSL https://herdrweb.dev/install.sh | sh";
 function drawEnd(e, t) {
   const root = $("end");
   if (!e) { root.style.display = "none"; return; }

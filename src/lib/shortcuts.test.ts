@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { matchShortcut, type ShortcutEventLike, keepsArrowsForText, shortcutConflict, shortcutKeys } from "./shortcuts.ts";
+import { isAppShortcut, isMacPlatform, matchShortcut, type ShortcutEventLike, keepsArrowsForText, shortcutConflict, shortcutDisplayKeys, shortcutKeys } from "./shortcuts.ts";
+import { isReservedShortcutKey, sanitizeShortcutOverrides } from "./shortcutBindings.ts";
 
 function keyEvent(key: string, patch: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   return { key, ctrlKey: false, metaKey: false, shiftKey: true, altKey: false, ...patch };
@@ -70,4 +71,83 @@ it("matches shifted digits and detects alias and default-restoration conflicts",
   expect(matchShortcut({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }, false, { palette: "1" })).toBe("palette");
   expect(shortcutConflict("palette", ["n"], {})).toBe(true);
   expect(shortcutConflict("palette", shortcutKeys("palette", {}), { palette: "p", settings: "k" })).toBe(true);
+});
+
+describe("shortcutDisplayKeys", () => {
+  it("shows the default chord, custom chord, disabled state, and uncustomizable voice chord", () => {
+    expect(shortcutDisplayKeys("palette", {})).toEqual(["Mod", "Shift", "K"]);
+    expect(shortcutDisplayKeys("toggle-view", { "toggle-view": "p" })).toEqual(["Mod", "Shift", "P"]);
+    expect(shortcutDisplayKeys("settings", { settings: null })).toEqual([]);
+    expect(shortcutDisplayKeys("voice", { voice: "p" })).toEqual(["Mod", "Shift", "Space"]);
+  });
+});
+
+describe("non-Latin keyboard layouts", () => {
+  it("uses KeyA-Z for a non-ASCII single character but preserves an ASCII event.key layout", () => {
+    expect(matchShortcut(keyEvent("한", { ctrlKey: true, code: "KeyK" }), false, { palette: "k" })).toBe("palette");
+    expect(matchShortcut(keyEvent("ㅏ", { ctrlKey: true, code: "KeyK" }), false)).toBe("palette");
+    expect(matchShortcut(keyEvent("л", { metaKey: true, code: "KeyK" }), true)).toBe("palette");
+    expect(matchShortcut(keyEvent("ㅏ", { ctrlKey: true, code: "KeyK" }), false, { palette: null })).toBeNull();
+    expect(matchShortcut(keyEvent("q", { ctrlKey: true, code: "KeyK" }), false, { palette: "q" })).toBe("palette");
+    expect(matchShortcut(keyEvent("q", { ctrlKey: true, code: "KeyK" }), false)).toBeNull();
+    expect(matchShortcut(keyEvent("🙂", { ctrlKey: true, code: "KeyK" }), false, { palette: "k" })).toBeNull();
+  });
+
+  it("leaves an accented Latin letter to the terminal, whatever key position it sits on", () => {
+    // BÉPO: É is on KeyW; Turkish F: Ç is on KeyB, the default sidebar key's position
+    expect(matchShortcut(keyEvent("É", { ctrlKey: true, code: "KeyW" }), false, { "toggle-sidebar": "w" })).toBeNull();
+    expect(matchShortcut(keyEvent("Ç", { ctrlKey: true, code: "KeyB" }), false)).toBeNull();
+    expect(matchShortcut(keyEvent("ı", { ctrlKey: true, code: "KeyI" }), false, { palette: "i" })).toBeNull();
+  });
+
+  it("keeps IME guards and Comma/Digit code normalization ahead of layout fallback", () => {
+    expect(matchShortcut(keyEvent("한", { ctrlKey: true, code: "KeyK", isComposing: true }), false, { palette: "k" })).toBeNull();
+    expect(matchShortcut(keyEvent("한", { ctrlKey: true, code: "KeyK", keyCode: 229 }), false, { palette: "k" })).toBeNull();
+    expect(matchShortcut(keyEvent("한", { ctrlKey: true, code: "Comma" }), false, { settings: "," })).toBe("settings");
+    expect(matchShortcut(keyEvent("한", { ctrlKey: true, code: "Digit1" }), false, { palette: "1" })).toBe("palette");
+  });
+
+  it("keeps app-level and terminal shortcut detection on the same matcher", () => {
+    const overrides = { palette: "k", "toggle-sidebar": "x" };
+    const events = [
+      keyEvent("한", { ctrlKey: true, code: "KeyK" }),
+      keyEvent("x", { ctrlKey: true }),
+      keyEvent("k", { ctrlKey: true, isComposing: true }),
+      keyEvent("z", { ctrlKey: true }),
+    ];
+    for (const event of events) {
+      expect(isAppShortcut(event, overrides)).toBe(matchShortcut(event, isMacPlatform(), overrides) !== null);
+    }
+  });
+});
+
+describe("isReservedShortcutKey", () => {
+  it("reports documented browser reservations and macOS screenshot chords", () => {
+    expect(isReservedShortcutKey("n", false)).toBe(true);
+    expect(isReservedShortcutKey("T", false)).toBe(true);
+    expect(isReservedShortcutKey("p", true)).toBe(true);
+    expect(isReservedShortcutKey("b", true)).toBe(true);
+    expect(isReservedShortcutKey("w", false)).toBe(true);
+    expect(isReservedShortcutKey("w", true)).toBe(true);
+    expect(isReservedShortcutKey("q", true)).toBe(true);
+    expect(isReservedShortcutKey("j", false)).toBe(true);
+    expect(isReservedShortcutKey("o", false)).toBe(true);
+    expect(isReservedShortcutKey("3", true)).toBe(true);
+    expect(isReservedShortcutKey("4", true)).toBe(true);
+    expect(isReservedShortcutKey("5", true)).toBe(true);
+  });
+
+  it("does not classify unrelated or platform-inapplicable keys as reserved", () => {
+    expect(isReservedShortcutKey("k", false)).toBe(false);
+    expect(isReservedShortcutKey("ArrowUp", true)).toBe(false);
+    expect(isReservedShortcutKey("j", true)).toBe(false);
+    expect(isReservedShortcutKey("3", false)).toBe(false);
+  });
+
+  it("warns without rejecting a configured key or changing an existing default", () => {
+    const overrides = sanitizeShortcutOverrides({ "new-session": "t" });
+    expect(overrides).toEqual({ "new-session": "t" });
+    expect(matchShortcut(keyEvent("t", { ctrlKey: true }), false, overrides)).toBe("new-session");
+    expect(matchShortcut(keyEvent("n", { ctrlKey: true }), false)).toBe("new-session");
+  });
 });

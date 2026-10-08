@@ -16,6 +16,7 @@ import { checkSecretInput } from "./secret-input-regression.ts";
 import { checkTerminalCopy } from "./terminal-copy-regression.ts";
 import { checkUsageMeters } from "./usage-regression.ts";
 import { checkNotificationStartup } from "./notification-startup-regression.ts";
+import { checkNotificationView } from "./notification-view-regression.ts";
 import { checkMobileViewport } from "./mobile-viewport-regression.ts";
 import { checkMobileTabs } from "./mobile-tabs-regression.ts";
 import { checkTerminalFileInput } from "./terminal-file-input-regression.ts";
@@ -86,6 +87,7 @@ try {
     if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
     for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
   }, panes);
+
   const page = await context.newPage();
   const workspaceGroup = (workspaceId: string) => page.locator(`.workspace-group[data-workspace="${workspaceId}"]`);
   const workspaceHeader = (workspaceId: string) => workspaceGroup(workspaceId).locator(":scope > .workspace-header");
@@ -641,6 +643,7 @@ try {
   await checkTerminalCopy(browser, origin);
   await checkUsageMeters(browser, origin);
   await checkNotificationStartup(browser, origin, paneA, paneB);
+  await checkNotificationView(browser, origin);
   await checkMobileViewport(browser, origin, paneB);
   await checkMobileTabs(browser, origin);
   await checkDefaultView(browser, origin);

@@ -8,6 +8,17 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- Devin CLI panes with an explicitly identified native session show their active conversation
+  branch and tool activity in Chat. Unresolved or unreadable sessions keep the terminal-text
+  fallback. ([#438](https://github.com/devswha/herdr-web-ui/pull/438) by @Haeminway1)
+- An OpenCode pane reads as a conversation. The chat shows the session herdr's OpenCode
+  integration reports, read from OpenCode 2's own database: prompts with their pasted images and
+  the skills they mention, each answer's steps folded into one block with their thinking, tool
+  calls, outputs and pictures, commands run with `!`, background and subagent results, and
+  compactions. Turns an `/undo` took back leave the chat with it. The ring by the message box
+  shows the context the last step filled, as OpenCode's own footer counts it. A pane on OpenCode's
+  home screen, or on a 1.x store, keeps the terminal's text.
+  ([#543](https://github.com/devswha/herdr-web-ui/pull/543) by @Ploppy3)
 - The app sends an anonymous count when it is installed and each time it is updated: the version,
   the OS, how it was installed and a random ID, nothing about your terminals or files, and no IP
   address is stored. A line says so the first time you open the app, and
@@ -17,14 +28,27 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   [#599](https://github.com/devswha/herdr-web-ui/pull/599))
 
 ### Changed
+- The default mobile terminal key bar puts Esc, Tab and Ctrl+C first, before the held modifiers
+  and arrows. Saved layouts keep their order. ([#607](https://github.com/devswha/herdr-web-ui/pull/607))
+- **Settings → Shortcuts** explains which keys control the app and marks known browser/OS
+  reservations without changing saved bindings. ([#607](https://github.com/devswha/herdr-web-ui/pull/607))
 - **Settings → Terminal → Clipboard from a pane** is on again: vim, tmux and Claude Code copy to
   your clipboard from a pane without a trip to Settings. It is also on for anyone 0.4.1 left off
   without asking (it saved the switch with any other setting). Turn it off if a pane runs output
   you do not trust.
 - A GitHub release opens with its patch notes, short lines under New features, Improvements and
   Bug fixes as an install shows them, with the full changelog folded underneath.
+- The website moved to <https://herdrweb.dev/>, and the install commands with it:
+  `curl -fsSL https://herdrweb.dev/install.sh | sh` and
+  `irm https://herdrweb.dev/install.ps1 | iex`. Every address under
+  `devswha.github.io/herdr-web-ui/`, the old install commands included, still leads to the same page
+  or file there. The website can also be read in Simplified Chinese, at <https://herdrweb.dev/zh/>.
+  ([#610](https://github.com/devswha/herdr-web-ui/pull/610))
 
 ### Fixed
+- Command palette shortcut hints follow changed bindings and disappear for disabled ones.
+  App shortcuts also recognize physical letter keys on non-Latin layouts outside IME composition.
+  ([#607](https://github.com/devswha/herdr-web-ui/pull/607))
 - macOS Safari direct terminal input preserves Korean syllables when the input method
   replaces text without emitting composition events, including after switching from English.
   ([#524](https://github.com/devswha/herdr-web-ui/pull/524) by @suho-han)
@@ -38,6 +62,16 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
   informational entries, which the chat left out.
   ([#600](https://github.com/devswha/herdr-web-ui/pull/600) by @Yoonwoo-Ha)
+- A chat message with an invisible character in it (a zero-width space, a joiner, a byte-order
+  mark, often in pasted text) no longer seems lost. Claude Code 2.1.294 takes such characters out
+  and keeps the message in its input for review instead of sending it, while the chat had already
+  cleared its box. The chat now shows a card with the message as Claude holds it: **Send** sends
+  it, **Discard** clears Claude's input.
+  ([#601](https://github.com/devswha/herdr-web-ui/pull/601) by @Yoonwoo-Ha)
+- Clicking an agent's notification opens that pane on its chat, where the answer or the question
+  is, also when the pane is kept on the terminal. The pane's own view is not changed: pick the
+  pane or a view yourself and it is back. A shell's notification opens its terminal as before.
+  ([#605](https://github.com/devswha/herdr-web-ui/pull/605) by @Xianbei233)
 
 ## [0.4.1] - 2026-10-08
 

@@ -43,7 +43,13 @@ try {
       const pane = url.searchParams.get("pane_id") ?? url.searchParams.get("pane") ?? "";
       const key = `${/\/api\/machines\/([^/]+)\//.exec(url.pathname)?.[1] ?? "local"}/${pane}`;
       const answer = (status: number) => status === 200
-        ? route.fulfill({ json: { source: "omp-transcript", history_id: key, cursor: null, turns: [user(`history ${key}`)] } })
+        ? route.fulfill({ json: key === "local/devin" ? { source: "devin-transcript", history_id: "synthetic-devin-session", cursor: null, turns: [
+          user("Synthetic Devin prompt"),
+          { role: "assistant", ts: null, parts: [
+            { kind: "tool", name: "synthetic_tool", summary: "synthetic_tool", input: "{}", output: "synthetic result" },
+            { kind: "text", text: "Synthetic Devin answer" },
+          ] },
+        ] } : { source: key === "local/claude" ? "claude-transcript" : "omp-transcript", history_id: key, cursor: null, turns: [user(key === "local/claude" ? "Synthetic Claude prompt" : `history ${key}`)] } })
         : route.fulfill({ status, json: { error: { code: "unavailable", message: "conversation unavailable" } } });
       // answered as it arrives unless its pane is held: a poll an abandoned mount left
       // behind can then never stand in for the request an assertion waits on
@@ -169,10 +175,10 @@ try {
   console.log("PASS reused tool ids after clear, machine switch and unmount cancellation; no browser errors");
 
   // Exercise the actual product owner. A profiler observes every committed DOM, not just the final frame.
-  const select = async (pane: string, machine: string) => {
+  const select = async (pane: string, machine: string, agent?: string) => {
     product = true;
     // the log is cleared in the task that switches: no commit of the pane being left slips in between
-    await page.evaluate(([p, m]) => { window.qa.commits.length = 0; window.qa.select(p!, m!); }, [pane, machine]);
+    await page.evaluate(([p, m, a]) => { window.qa.commits.length = 0; window.qa.select(p!, m!, a); }, [pane, machine, agent]);
   };
   /** The expected chat is up, and no commit since the switch showed the other pane's. */
   const shows = async (expected: string, forbidden: string) => {
@@ -228,7 +234,19 @@ try {
   await page.locator(".chat-inline-error").waitFor();
   assert.equal(await page.getByText("history remote-pc/a", { exact: true }).count(), 0, "unavailable chat cannot show another pane's history");
   assert.ok((await page.evaluate(() => window.qa.commits)).every((turns) => !turns.some((turn) => turn.includes("history remote-pc/a"))), "no commit of the unavailable chat showed another pane's history");
+  await select("devin", "local", "devin");
+  await page.getByText("Synthetic Devin prompt", { exact: true }).waitFor();
+  await page.getByText("Synthetic Devin answer", { exact: true }).waitFor();
+  await page.locator(".work-block-head").click();
+  assert.equal(await page.locator(".work-row-name").filter({ hasText: "synthetic_tool" }).count(), 1);
+  await page.locator(".work-row-head").click();
+  await page.getByText("synthetic result", { exact: true }).waitFor();
+  await select("claude", "local", "claude");
+  await page.getByText("Synthetic Claude prompt", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Synthetic Devin answer", { exact: true }).count(), 0);
+  assert.ok((await page.evaluate(() => window.qa.commits)).every((turns) => !turns.some((turn) => turn.includes("Synthetic Devin"))), "switch to Claude cannot commit Devin history");
   assert.deepEqual(errors, []);
+  console.log("PASS synthetic Devin bubbles and tools render; switching to Claude clears Devin history");
   console.log("PASS product pane commits across A→B→A, another PC, and late or failed answers");
 } finally {
   releases.forEach((release) => release());

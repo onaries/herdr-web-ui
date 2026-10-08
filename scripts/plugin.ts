@@ -55,8 +55,8 @@ const KILL_WAIT_MS = 3_000;
 const SERVE_TIMEOUT_MS = 180_000;
 /** how to come back to `phone` once Tailscale is set up: an action's output goes to herdr's log, not a terminal */
 const PHONE_AGAIN = platform() === "win32"
-  ? "irm https://devswha.github.io/herdr-web-ui/install.ps1 | iex"
-  : "curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh";
+  ? "irm https://herdrweb.dev/install.ps1 | iex"
+  : "curl -fsSL https://herdrweb.dev/install.sh | sh";
 
 /**
  * Run by hand (`pair` on a headless PC), herdr's env is not there to name the config dir:

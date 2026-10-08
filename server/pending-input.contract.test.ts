@@ -230,6 +230,75 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe(`${paste("first")}\r${paste("second")}\r${paste("third")}\r`);
   }, 30_000);
 
+  it("waits behind a message Claude Code holds for its invisible characters, with no hint left on screen", async () => {
+    const f = await setup("held");
+    // the first queued message, with a zero-width space, goes at the next turn as usual
+    await f.queue(1, "first\u200bmessage");
+    await f.state("idle");
+    await f.waitBytes(`${paste("first\u200bmessage")}\r`);
+    // Claude took the character out and kept the message in its box; its hint has gone
+    const rule = "\u2500".repeat(60);
+    await f.state("working");
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f firstmessage\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    const before = f.bytes();
+    // the held message is a card to answer first, as a menu is: nothing is queued or pasted over it
+    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "second", payload: "unused\r", delivery: "queue" });
+    expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "agent_blocked" });
+    await f.state("idle");
+    await Bun.sleep(500);
+    expect(f.bytes()).toBe(before);
+  }, 30_000);
+
+  it("queues past Claude's hint left over an empty box that shows its grey suggestion", async () => {
+    const f = await setup("held-grey");
+    // the held message was sent from the terminal: the hint outlasts it over a box that is empty again
+    const rule = "\u2500".repeat(60);
+    const hint = `${" ".repeat(20)}Removed 1 invisible character \u00b7 review and press Enter to send`;
+    const footer = "[Haiku 4.5] \u2502 project";
+    await f.showScreen(`${hint}\n${rule}\n\u276f \u001b[0m\u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer}\n`, footer);
+    // grey text is Claude's own, no message waiting for an answer: the chat's message is queued as ever
+    await f.queue(1, "next message");
+    // typed text in the same place is a held message, and a card to answer first
+    await f.showScreen(`${hint}\n${rule}\n\u276f run the tests\n${rule}\n  ${footer} \n`, `${footer} `);
+    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "another", payload: "unused\r", delivery: "queue" });
+    expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "agent_blocked" });
+  }, 30_000);
+
+  it("sends the same words again after a held message was dealt with: its own paste is no held message", async () => {
+    // a long pause between paste and Enter, so the screen below is drawn before the check ahead of the Enter
+    const f = await setup("held-again", "claude", "› Message\n", { submitDelayMs: 3_000 });
+    const first = await f.queue(1, "same\u200bmessage");
+    await f.state("idle"); await f.removed(first.id);
+    await f.waitBytes(`${paste("same\u200bmessage")}\r`);
+    // dealt with in the terminal; the message goes out once more, the character taken out by hand
+    await f.state("working");
+    const second = await f.queue(2, "samemessage");
+    await f.state("idle");
+    await f.waitBytes(paste("samemessage"));
+    // Claude's box holds the paste, as it does for any message between its paste and its Enter
+    const rule = "\u2500".repeat(60);
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f samemessage\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    await f.removed(second.id);
+    await f.waitBytes(`${paste("samemessage")}\r`);
+  }, 30_000);
+
+  it("sends its own paste under Claude's hint left from the message before", async () => {
+    // a long pause between paste and Enter, so the screen below is drawn before the check ahead of the Enter
+    const f = await setup("held-hint-left", "claude", "\u203a Message\n", { submitDelayMs: 3_000 });
+    const rule = "\u2500".repeat(60);
+    const hint = `${" ".repeat(20)}Removed 1 invisible character \u00b7 review and press Enter to send`;
+    const footer = "[Haiku 4.5] \u2502 project";
+    // the held message was sent from the terminal: its hint is still up over an empty box
+    await f.showScreen(`${hint}\n${rule}\n\u276f\n${rule}\n  ${footer}\n`, footer);
+    const message = await f.queue(1, "next message");
+    await f.state("idle");
+    await f.waitBytes(paste("next message"));
+    // typing does not take the hint down (Claude Code 2.1.294): the box under it now holds this delivery's paste
+    await f.showScreen(`${hint}\n${rule}\n\u276f next message\n${rule}\n  ${footer} \n`, `${footer} `);
+    await f.removed(message.id);
+    await f.waitBytes(`${paste("next message")}\r`);
+  }, 30_000);
+
   it("reads the pane's live screen: a menu drawn below a scrolled viewport still stops Send now", async () => {
     const f = await setup("scrolled", "codex"); const message = await f.queue(1, "after the menu");
     const history = Array.from({ length: 150 }, (_, index) => `line ${index + 1}`).join("\n");

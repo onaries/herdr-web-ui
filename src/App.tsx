@@ -41,7 +41,7 @@ import {
   type NotificationState,
 } from "./lib/notifications.ts";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
-import { onNotificationTarget } from "./lib/notificationTarget.ts";
+import { notificationTargetFromSearch, notificationViewForPane, onNotificationTarget, type NotificationTarget } from "./lib/notificationTarget.ts";
 import { useUpdates } from "./lib/updates.ts";
 import { UpdateNotice } from "./components/UpdateControls.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
@@ -188,6 +188,9 @@ export function App() {
     if (paneFromUrl()) return paneFromUrl();
     return storedSelection()?.pane_id ?? null;
   });
+  const [notificationViewTarget, setNotificationViewTarget] = useState<NotificationTarget | null>(
+    () => notificationTargetFromSearch(window.location.search),
+  );
   // App picked the selected pane itself because the one selected closed: it must not raise a
   // phone's keyboard (over the drawer the close was tapped in) until the user picks a pane or lens
   const [autoSelected, setAutoSelected] = useState(false);
@@ -392,7 +395,7 @@ export function App() {
           dropIn(machine, pane, kind);
           chime(machine, pane, kind);
         }
-        if (pane && shouldNotifyStatus(previous, message.agent_status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, message.agent_status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${displayPaneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
+        if (pane && shouldNotifyStatus(previous, message.agent_status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, message.agent_status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${displayPaneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id, "chat"), machine.id);
         setMachines((list) => {
           let changed = false;
           const next = list.map((m) => {
@@ -415,7 +418,7 @@ export function App() {
       }
       if (message.type === "pane-exited" && alertsOnRef.current && !pushOnRef.current && alertsRef.current.done !== "off") {
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
-        if (pane) showPaneEndedNotification(message.pane_id, `${machine.name} · ${displayPaneTitle(pane)}`, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
+        if (pane) showPaneEndedNotification(message.pane_id, `${machine.name} · ${displayPaneTitle(pane)}`, () => selectTargetRef.current(machine.id, message.pane_id, "chat"), machine.id);
       }
       if (message.type === "session-changed" || message.type === "pane-exited") scheduleRefetch();
     };
@@ -508,13 +511,14 @@ export function App() {
 
   const selectedMachineRef = useRef(selectedMachineId);
   selectedMachineRef.current = selectedMachineId;
-  const selectTarget = useCallback((machineId: string, paneId: string | null) => {
+  const selectTarget = useCallback((machineId: string, paneId: string | null, view?: PaneView) => {
     // Only another PC mounts a new terminal (and socket), which reports its own state. A pane
     // on the same PC keeps the connected socket, which never reports again: resetting here
     // left the header on "reconnecting" after every pane switch.
     if (machineId !== selectedMachineRef.current) setConnected(false);
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
     setOutputStopped(false);
+    setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
     storeSelection(machineId, paneId);
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
@@ -541,12 +545,13 @@ export function App() {
 
   const selectPane = useCallback((paneId: string) => {
     setSelectedPaneId(paneId);
+    setNotificationViewTarget(null);
     setAutoSelected(false);
     setDrawerOpen(false);
   }, []);
 
   // a tapped notification focuses this window and names the pane (public/sw.js)
-  useEffect(() => onNotificationTarget((target) => selectTargetRef.current(target.machine_id, target.pane_id)), []);
+  useEffect(() => onNotificationTarget((target) => selectTargetRef.current(target.machine_id, target.pane_id, target.view)), []);
 
   // the ?pane= a notification opened us with has done its job once it selected the pane
   useEffect(() => {
@@ -572,14 +577,20 @@ export function App() {
   // that selects the pane, not in an effect after it: the pane's terminal attaches in that render's
   // layout effect, and an attach in the previous pane's lens resized a pane whose lens is chat
   const lensKey = JSON.stringify([selectedPaneId, selectedMachineId, selectedPane !== null, selectedAgent !== null, terminalAttach, settings.defaultView]);
+  const notificationView = notificationViewForPane(notificationViewTarget, selectedMachineId, selectedPaneId);
   let view = lens.view;
   if (lens.key !== lensKey) {
     if (selectedPaneId !== null) view = storedView(selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null, terminalAttach, settings.defaultView);
     setLens({ key: lensKey, view });
   }
+  // a tapped alert's lens is drawn over the pane's own, never stored: once it is gone (the pane or
+  // its lens picked by hand) the pane is back on the lens it had. A shell has no conversation to
+  // show (storedView), so its alert opens its own lens; until the snapshot says, it counts as an agent
+  if (notificationView !== null && !(notificationView === "chat" && selectedPane !== null && selectedAgent === null)) view = notificationView;
 
   const setView = useCallback(
     (next: PaneView) => {
+      setNotificationViewTarget(null);
       setLens((current) => ({ ...current, view: next }));
       setAutoSelected(false);
       if (selectedPaneId === null) return;

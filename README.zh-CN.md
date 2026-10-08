@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://devswha.github.io/herdr-web-ui/">官网</a> ·
+  <a href="https://herdrweb.dev/">官网</a> ·
   <a href="#install">安装</a> ·
-  <a href="https://devswha.github.io/herdr-web-ui/demo/">体验演示</a> ·
+  <a href="https://herdrweb.dev/demo/">体验演示</a> ·
   <a href="docs/guide.md#quick-start">快速入门</a> ·
   <a href="#faq">常见问题</a> ·
   <a href="#docs">文档</a>
@@ -76,12 +76,12 @@ https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
 
 <p align="center"><sub>每段片段都是同时录制电脑和手机的真实操作，实时、无剪辑。点击可播放完整视频。</sub></p>
 
-- **聊天与终端，共用一个窗格** — 阅读 Claude Code、Codex、omp、omo、gjc 和 pi 的原生会话记录，一键切换到实时终端。[支持的智能体 →](docs/guide.md#supported-agents)
+- **聊天与终端，共用一个窗格** — 阅读 Claude Code、Codex、omp、omo、gjc 和 pi 的原生会话记录，以及 herdr 识别出的 OpenCode 2 会话，一键切换到实时终端。智能体工作时可以先写好下一条消息，它会在下一轮发出，也可以用 Send now 立即发送。[支持的智能体 →](docs/guide.md#supported-agents)
 - **轻点即可批准** — 审批请求、问题和计划菜单会显示为卡片，发送回答前会先确认提示仍然有效。
 - **需要你时及时提醒** — 实时显示每个窗格的状态；应用打开时提醒会从顶部滑下；智能体需要输入或完成任务时发送推送通知，即使应用已关闭也能收到。
-- **安装到手机** — PWA 在键盘上方提供 Esc、Tab、Ctrl 和方向键，Tailscale 地址以二维码显示。[手机设置 →](docs/guide.md#on-your-phone)
+- **安装到手机** — PWA 在键盘上方提供按键栏（Esc、Tab、Ctrl、Alt、Shift、Enter 和方向键），可在 Settings（设置）中调整顺序或添加自定义组合键；Tailscale 地址以二维码显示。[手机设置 →](docs/guide.md#on-your-phone)
 - **开口代替打字** — 在聊天或终端输入行中语音输入，韩语和英语混说也能识别；文字只放进输入框，由你决定何时发送。使用你自己的 OpenAI API 密钥，或浏览器自带的语音识别。
-- **沿用现有工作流** — 智能体由 herdr 管理，本应用负责连接；在 Settings（设置）中更新应用，无需停止智能体。新标签页和 worktree 可从行的 ⋯ 菜单创建。[全部功能 →](docs/guide.md#features)
+- **沿用现有工作流** — 智能体由 herdr 管理，本应用负责连接；在 Settings（设置）中更新应用，无需停止智能体，每次更新带来的变化以更新说明列出。新标签页和 worktree 可从行的 ⋯ 菜单创建。[全部功能 →](docs/guide.md#features)
 
 ---
 
@@ -90,10 +90,19 @@ https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
 ## 安装
 
 ```bash
-curl -fsSL https://devswha.github.io/herdr-web-ui/install.sh | sh
+curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
 支持 Linux（x64、arm64）或 macOS。安装程序会为当前用户补齐 herdr 0.9.0+、Bun 1.4+ 和 Node 18+ 依赖，然后将应用安装为 herdr 插件。如果已安装的 herdr 低于 0.9.0，请先自行更新并重启 herdr，再重新运行安装程序。使用默认监听地址且 Tailscale 正在运行时，HTTPS 配置成功后会提供 tailnet 内的访问地址和二维码。你自己的设备本来就能免验证码进入：`tailscale serve` 会告知你的登录名。如果你的手机仍被要求配对，设置 `HERDR_WEB_TAILSCALE_SERVE_ONLY=1` 后，在只有一个登录名的 tailnet 上也能免验证码进入；但仅限于没有公共代理或隧道等其他途径能访问此端口的情况（[访问与安全](docs/guide.md#access-and-safety)）。
+
+<p align="center">
+Windows x64 请在 PowerShell 中运行：
+
+```powershell
+irm https://herdrweb.dev/install.ps1 | iex
+```
+
+需要 [Git for Windows](https://git-scm.com/download/win)。安装程序会为当前用户补齐 herdr 和 Bun，然后安装同一个插件，无需 Node 或 WSL。要在手机上使用，请在 herdr 中打开 **Phone setup**。在 herdr 支持 Windows 终端附加之前，Windows 上的终端是一个可以输入、网格固定的[屏幕镜像](docs/remote-pcs.md#windows-pcs)。
 
 <p align="center">
   <img src="docs/screenshots/install.png" width="720" alt="安装程序输出：安装 Bun、Node 和 herdr 插件，然后通过 tailscale serve 提供应用访问地址，并显示供手机扫描的二维码。">
@@ -119,7 +128,7 @@ herdr plugin install devswha/herdr-web-ui
 
 **聊天视图支持哪些智能体？**
 
-Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读取。herdr 窗格里的其他程序则显示实时终端和状态。[支持的智能体 →](docs/guide.md#supported-agents)
+Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读取。OpenCode 2 会从 OpenCode 自己的数据库读取 herdr 报告的会话；处于主屏幕或使用 1.x 数据库时则显示实时终端。其他程序显示实时终端和状态。[支持的智能体 →](docs/guide.md#supported-agents)
 
 **它会取代 herdr 自带的 TUI 吗？**
 
