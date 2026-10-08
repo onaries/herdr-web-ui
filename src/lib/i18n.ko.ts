@@ -6,6 +6,7 @@
  * braces keep their English names.
  */
 export const KO: Record<string, string> = {
+  "Compacting conversation…": "대화 압축 중…",
   "Dismiss": "닫기",
   "Waiting for terminal input…": "터미널 입력 준비 중…",
   "Direct typing": "직접 입력",

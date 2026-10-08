@@ -642,6 +642,9 @@ One set for both themes: the card is island black wherever it shows.
   floor stays in px (`--content-w` is px); under a 13.67px root, where 60rem is less than 820px, the
   floor wins and Default is the same lane as Narrow.
   Structured Claude/omp transcripts fall back to ANSI-stripped pane scrollback when unavailable.
+- A live compaction is a quiet `chat-inline-state` status at the transcript's end, using the
+  existing prompt poll's detection-screen read. It disappears when that loader leaves the screen;
+  the completed compaction summary remains a separate transcript entry. No guessed progress.
 - The register is Codex / gajae-code-app: a quiet document. User turns are right-aligned neutral
   cards (`--bg-elevated`, a `--bubble-border` edge, `--radius-lg` on all four corners, ≤80% wide,
   no avatar or name). Assistant turns have no header: the answer is plain prose.

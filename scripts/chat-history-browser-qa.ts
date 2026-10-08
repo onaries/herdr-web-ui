@@ -21,7 +21,8 @@ try {
     if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = process.env.CHROME_CDP ? await chromium.connectOverCDP(process.env.CHROME_CDP)
+    : await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   // The fixture follows the browser's language; its text assertions below use English.
   const page = await browser.newPage({ locale: "en-US" });
   page.setDefaultTimeout(10_000);
@@ -30,6 +31,8 @@ try {
   let epoch = "one", newest = "old newest", before: string | null = "one:100";
   let holdOlder = false, olderRequested = false;
   let product = false;
+  let compacting = false;
+  await page.route("**/api/**/prompt?*", route => route.fulfill({ json: { prompt: null, suggestion: null, compacting } }));
   /** product panes ("machine/pane") whose conversation requests wait for the script, and those that fail */
   const held = new Set<string>(), failing = new Set<string>();
   const pending: Array<{ key: string; answer: (status: number) => Promise<void> }> = [];
@@ -65,6 +68,20 @@ try {
   });
   await page.goto(`http://127.0.0.1:${server.port}/`);
   await page.getByText("old newest", { exact: true }).waitFor();
+  compacting = true;
+  const compactionLine = page.locator('.chat-inline-state[role="status"]').filter({ hasText: "Compacting conversation" });
+  await compactionLine.waitFor();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await compactionLine.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `/tmp/herdr-compaction-${theme}-${width}.png` });
+    }
+  }
+  compacting = false;
+  await compactionLine.waitFor({ state: "detached" });
+  console.log("PASS live compaction appears and clears without a new transcript turn");
   const refresh = () => page.evaluate(() => window.qa.refresh());
   const output = page.locator("#output");
   await page.locator("#fetch-output").click();
@@ -87,13 +104,15 @@ try {
 
   // Start an older-page request, then observe clear before it completes.
   holdOlder = true;
+  const olderRequest = page.waitForRequest(request => new URL(request.url()).searchParams.has("before"));
   await page.locator(".chat-older").click();
-  while (!olderRequested) await Bun.sleep(20);
+  await olderRequest;
   epoch = "two"; newest = ""; before = null;
   await refresh();
   await page.getByText("No conversation yet — say something below", { exact: true }).waitFor();
+  const olderResponse = page.waitForResponse(response => new URL(response.url()).searchParams.has("before"));
   releases.splice(0).forEach((release) => release());
-  await page.waitForTimeout(100);
+  await (await olderResponse).finished();
   assert.equal(await page.locator(".chat-turn").count(), 0, "late older page cannot revive cleared history");
   assert.equal(await page.locator(".chat-older").count(), 0);
   console.log("PASS clear while earlier page is in flight and empty history before a new prompt");
@@ -170,16 +189,28 @@ try {
   await shows("local/a", "local/b");
   await select("a", "remote-pc");
   await shows("remote-pc/a", "local/a");
+  await page.evaluate(() => {
+    const view = document.querySelector(".chat-view");
+    if (!view) throw new Error("no retained chat");
+    (window as unknown as { retainedChat: Element | null }).retainedChat = view;
+    const talk = document.querySelector(".chat-turn")!;
+    talk.setAttribute("data-retained-chat-test", "yes");
+  });
+  await page.evaluate(() => window.qa.chat(false));
+  await page.locator('.chat-view').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('[data-retained-chat-test]').count(), 1, "terminal lens retains chat DOM and data");
+  await page.evaluate(() => window.qa.chat(true));
+  await page.locator('.chat-view').waitFor({ state: 'visible' });
+  assert.equal(await page.evaluate(() => document.querySelector('.chat-view') === (window as unknown as {retainedChat:Element}).retainedChat), true, "chat lens reuses the existing view");
+  await shows("remote-pc/a", "local/a");
+  console.log("PASS terminal/chat toggles reuse the same loaded chat DOM");
   // A late success and a late error from B must neither replace nor erase A's chat.
   for (const status of [200, 503]) {
     held.add("remote-pc/b");
     const ended = await page.evaluate(() => window.qa.answered.filter((key) => key === "remote-pc/b").length);
+    const delayedRequest = page.waitForRequest(request => request.url().includes("/api/machines/remote-pc/") && new URL(request.url()).searchParams.get("pane_id") === "b");
     await select("b", "remote-pc");
-    const deadline = Date.now() + 10_000;
-    while (!pending.some((request) => request.key === "remote-pc/b")) {
-      assert.ok(Date.now() < deadline, "missing delayed B request");
-      await Bun.sleep(20);
-    }
+    await delayedRequest;
     await select("a", "remote-pc");
     await page.getByText("history remote-pc/a", { exact: true }).waitFor();
     held.delete("remote-pc/b");

@@ -39,12 +39,14 @@ function Fixture() {
   window.qa.chat = (pane, machine = "local") => { setPane(pane); setMachine(machine); };
   window.qa.refresh = () => setRefresh((value) => value + 1);
   return <><button id="fetch-output" onClick={() => { output.load(); output.load(); }}>Load output</button><output id="output">{output.state}:{output.text}</output>
-    <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><ChatView key={machine} paneId={pane} refreshKey={refresh} connected={false} ended={false} agent={null} agentStatus={null} /></MachineContext.Provider></div></>;
+    <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><ChatView key={machine} paneId={pane} refreshKey={refresh} connected={true} ended={false} agent="omo" agentStatus={null} /></MachineContext.Provider></div></>;
 }
 function Product({ pane, machine }: { pane: string; machine: string }) {
+  const [chat, setChat] = useState(true);
+  window.qa.chat = setChat;
   return <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><Profiler id="product-pane" onRender={() => {
     window.qa.commits.push(Array.from(document.querySelectorAll(".chat-turn"), (turn) => turn.textContent ?? ""));
-  }}><PaneTerminal key={machine} paneId={pane} agent="codex" view="chat" terminalFontSize={14} terminalWheelSpeed={1} terminalFontFamily="" theme="dark" palette="amber" /></Profiler></MachineContext.Provider></div>;
+  }}><PaneTerminal key={machine} paneId={pane} agent="codex" view={chat ? "chat" : "terminal"} terminalFontSize={14} terminalWheelSpeed={1} terminalFontFamily="" theme="dark" palette="amber" /></Profiler></MachineContext.Provider></div>;
 }
 function Root() {
   const [selected, setSelected] = useState<{ pane: string; machine: string } | null>(null);

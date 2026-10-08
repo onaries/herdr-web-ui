@@ -5,9 +5,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
+import { answerKeys, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, paneIsCompacting, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
+
+describe("live compaction loader", () => {
+  test("reads manual and automatic loaders but not transcript prose or old output", () => {
+    expect(paneIsCompacting("⠋ Compacting...\n────────\n❯\n────────\nmodel")).toBe(true);
+    expect(paneIsCompacting("⠙ Compacting context... (esc to cancel)\n────────\nmodel")).toBe(true);
+    expect(paneIsCompacting("Auto-compacting…")).toBe(true);
+    expect(paneIsCompacting("── ⠹ Compacting... (esc to cancel) latest summary excerpt ─────\n❯\n─────\nmodel")).toBe(true);
+    expect(paneIsCompacting("── ⠸ Compacting before next prompt... (esc to cancel) ────")).toBe(true);
+    expect(paneIsCompacting("⠋ Context overflow detected, compacting... (esc to cancel)")).toBe(true);
+    expect(paneIsCompacting("The screen says Compacting... while it waits.")).toBe(false);
+    expect(paneIsCompacting("❯ Compacting...")).toBe(false);
+    expect(paneIsCompacting("⠋ Compacting...\n" + "later output\n".repeat(12))).toBe(false);
+    expect(paneIsCompacting("Conversation compacted\n❯")).toBe(false);
+  });
+});
 
 describe("interactive prompt parsing", () => {
   test("invalidates approvals when their command changes, including text beyond the display cap", () => {
@@ -1831,7 +1846,7 @@ Step 4: Credential source
 
 describe("Claude's suggestion on a prompt poll", () => {
   /** a herdr with one Claude pane whose ANSI reads never answer */
-  async function stalledAnsiHerdr(status: string, run: (reads: string[]) => Promise<void>): Promise<void> {
+  async function stalledAnsiHerdr(status: string, run: (reads: string[]) => Promise<void>, screen = "Done.\n\n────────\n❯ \n────────\n"): Promise<void> {
     const root = mkdtempSync(join(tmpdir(), "herdr-prompt-suggestion-"));
     const path = join(root, "herdr.sock");
     const reads: string[] = [];
@@ -1851,7 +1866,7 @@ describe("Claude's suggestion on a prompt poll", () => {
         }
         if (request.method !== "pane.read") throw new Error(`unexpected fixture RPC: ${request.method}`);
         reads.push(request.params.format ?? "");
-        if (request.params.format === "text") answer({ read: { text: "Done.\n\n────────\n❯ \n────────\n" } });
+        if (request.params.format === "text") answer({ read: { text: screen } });
       });
     });
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(path, resolve); });
@@ -1890,6 +1905,14 @@ describe("Claude's suggestion on a prompt poll", () => {
       expect(ms).toBeLessThan(1_000);
     });
   }, 4_000);
+
+  test("carries a compaction loader in the same live-screen read", async () => {
+    await stalledAnsiHerdr("working", async (reads) => {
+      const { body } = await poll();
+      expect(body).toEqual({ prompt: null, suggestion: null, compacting: true });
+      expect(reads).toEqual(["text"]);
+    }, "⠋ Compacting context...\n────────\n❯\n────────\nmodel");
+  });
 });
 
 // Captured from pi 0.87.1 driving its own dialogs: the pane's footer stays under the dialog,

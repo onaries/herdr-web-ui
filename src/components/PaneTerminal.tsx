@@ -123,6 +123,11 @@ export function PaneTerminal({
   const chatView = view === "chat";
   const chatViewRef = useRef(chatView);
   chatViewRef.current = chatView;
+  const [retainedChatPane, setRetainedChatPane] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    if (chatView) setRetainedChatPane(paneId);
+    else if (retainedChatPane !== paneId) setRetainedChatPane(null);
+  }, [chatView, paneId, retainedChatPane]);
   /** read by the wheel handler, which is attached once for the terminal's life */
   const wheelSpeedRef = useRef(terminalWheelSpeed);
   wheelSpeedRef.current = terminalWheelSpeed;
@@ -1715,7 +1720,7 @@ export function PaneTerminal({
       </div>
       <div className="terminal-surface">
         <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
-        {paneId !== null && chatView && (
+        {paneId !== null && (chatView || retainedChatPane === paneId) && (
           <RenderBoundary resetKey={paneId} fallback={(retry) => (
             <div className="chat-view"><div className="chat-empty" role="alert">
               <p>{t("The chat can't be shown. The terminal still works.")}</p>
@@ -1728,6 +1733,7 @@ export function PaneTerminal({
           <ChatView
             key={paneId}
             paneId={paneId}
+            active={chatView}
             refreshKey={chatRefresh}
             sentKey={chatSent}
             connected={connected}

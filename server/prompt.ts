@@ -2584,7 +2584,7 @@ export function parseClaudeSuggestion(ansi: string): string | null {
   return suggestion === "" || CLAUDE_TIP_RE.test(suggestion) ? null : suggestion;
 }
 
-async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[] }> {
+async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[]; screen?: string }> {
   const { panes } = await sessionSnapshot();
   // a closed pane's wait has ended too
   for (const logged of fallbackLogged) if (!panes.some((candidate) => candidate.pane_id === logged)) fallbackLogged.delete(logged);
@@ -2603,7 +2603,7 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
   const settling = Date.now() - (formsAnswered.get(paneId) ?? 0) < FORM_SETTLE_MS;
   if (known.prompt !== null || status !== "blocked" || !agent || settling) {
     fallbackLogged.delete(paneId);
-    return { agent, status, prompt: asked(paneId, known.prompt, turns), pane, panes };
+    return { agent, status, prompt: asked(paneId, known.prompt, turns), pane, panes, screen: known.screen };
   }
   // herdr says the agent waits on the user and no reader knows the screen: the fallback card
   const screen = known.screen ?? await liveScreen(paneId);
@@ -2612,14 +2612,19 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
   // (claudeModelListWaits, codexModelListWaits)
   if ((agent === "codex" && (codexQuestionsCollapsed(screen) || codexModelListWaits(screen))) || claudeModelListWaits(screen) || claudeModelListWaits(screen, CLAUDE_EFFORT_GUARD_RE)) {
     fallbackLogged.delete(paneId);
-    return { agent, status, prompt: asked(paneId, null, turns), pane, panes };
+    return { agent, status, prompt: asked(paneId, null, turns), pane, panes, screen };
   }
   const prompt = asked(paneId, parseFallbackPrompt(agent, screen), turns)!;
   if (!fallbackLogged.has(paneId) && fallbackLogged.size < FALLBACK_LOGGED_MAX) {
     fallbackLogged.add(paneId);
     console.warn(`prompt: ${agent} pane ${paneId} is blocked on a screen no reader knows; fallback card (${prompt.options.length} options)`);
   }
-  return { agent, status, prompt, pane, panes };
+  return { agent, status, prompt, pane, panes, screen };
+}
+
+/** Only the live loader near the input, never a quoted mention in older output. */
+export function paneIsCompacting(screen: string): boolean {
+  return screen.split("\n").slice(-12).some((line) => /^\s*[─━]*\s*[\u2800-\u28ff◐◓◑◒]?\s*(?:Auto[- ]compacting|Compacting(?: context| before next prompt)?|Context overflow detected, compacting)(?:\.{3}|…)(?:\s*\((?:esc|escape|ctrl\+c) to cancel\)[^\n]*)?\s*[─━]*\s*$/i.test(line));
 }
 
 /**
@@ -2793,7 +2798,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
       const paneId = url.searchParams.get("pane_id")?.trim();
       if (!paneId) return badRequest("missing_pane_id", "pane_id is required.");
-      const { agent, status, prompt } = await readPrompt(paneId, options.codexHome);
+      const { agent, status, prompt, screen } = await readPrompt(paneId, options.codexHome);
       // no menu up: what Claude suggests typing next, for the composer's placeholder. Only a
       // nicety: it is read only while Claude waits for the next prompt (a working agent shows
       // none), and a failed or slow read of it (a herdr without ansi reads, a busy one) leaves
@@ -2802,7 +2807,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         ? await paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
           .then((read) => parseClaudeSuggestion(read.text), () => null)
         : null;
-      return jsonResponse({ prompt, suggestion });
+      return jsonResponse({ prompt, suggestion, ...(screen && paneIsCompacting(screen) ? { compacting: true } : {}) });
     }
 
     if (request.method !== "POST") return badRequest("method_not_allowed", "POST is required.");
