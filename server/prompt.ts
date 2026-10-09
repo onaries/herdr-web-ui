@@ -515,7 +515,14 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   const rows = menuRows(lines, Math.max(0, hintIndex - 64), end);
   if (!sequentialRows(rows) || rows.filter((row) => row.selected).length !== 1) return null;
   const chatIndex = rows.findIndex((row) => row.label === "Chat about this");
-  const customIndex = rows.findIndex((row) => /^Type something\.?$/i.test(row.label));
+  let customIndex = rows.findIndex((row) => /^Type something\.?$/i.test(row.label));
+  // typed into, the row shows the draft instead of "Type something.", with the cursor on it or
+  // not (2.1.295): in Claude's own form, where the question is named by its chip or tabs and a
+  // rule parts that row from "Chat about this", it is still the typed answer's
+  const drafted = customIndex < 0 && !preview && chatIndex > 1
+    && lines.slice(rows[chatIndex - 1]!.lineIndex + 1, rows[chatIndex]!.lineIndex).some((line) => isDivider(line))
+    && (claudeTabs(lines, rows[0]!.lineIndex) !== null || claudeChip(lines, rows[0]!.lineIndex) !== null);
+  if (drafted) customIndex = chatIndex - 1;
   if (preview) {
     // its notes are no answer of their own: no typed-answer row, the options are the menu
     if (customIndex >= 0 || chatIndex >= 0) return null;
@@ -539,6 +546,14 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
     selectedIndex: rows.findIndex((row) => row.selected),
     checkedOptionIndices: optionRows.flatMap((row, index) => row.checked ? [index] : []),
     customMenuIndex: preview ? null : customIndex, rejectWithEscapeIndex: null,
+    // an answer typed into the draft would join it, so once the cursor is in the row it is
+    // emptied first, after the cursor and before it (ctrl+k, ctrl+u; measured on 2.1.295)
+    ...(drafted ? {
+      customSteps: (text: string) => [
+        ...keySteps([...navigationKeys(customIndex - rows.findIndex((row) => row.selected)), "ctrl+k", "ctrl+u"]),
+        { text }, ...keySteps([KEY.enter]),
+      ],
+    } : {}),
   });
 }
 
@@ -1173,6 +1188,10 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   const hintIndex = findLastIndex(lines, (_, index) => /esc to cancel/i.test(wrapped(lines, index)));
   const rows = parseNumberedRows(lines, questionIndex + 1, hintIndex > questionIndex ? hintIndex : lines.length);
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
+  // a hint of its own under the last row and over the last hint, whole or wrapped by a narrow
+  // pane: the panel was answered, and what ends the screen now is another prompt ("Password:"
+  // over a bare "Esc to cancel"); an option's own words may name the keys
+  if (/esc to\s+cancel/i.test(lines.slice(rows.at(-1)!.lineIndex + 1, hintIndex).map(cleanLine).join(" "))) return null;
   let title: string;
   let body: string;
   if (approvalIndex >= 0 && approvalIndex < questionIndex) {
@@ -1189,12 +1208,25 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     const callIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^●\s+[\w.:-]+(?:\s[\w.:-]+)*(?:\s\(MCP\))?\(/.test(cleanLine(line)));
     const rules = lines.slice(0, questionIndex).flatMap((line, index) => index > callIndex && SOLID_RULE_RE.test(cleanLine(line)) ? [index] : []);
     const ruleIndex = callIndex >= 0 ? rules[0] ?? -1 : rules.at(-1) ?? -1;
-    if (ruleIndex < 0 || questionIndex - ruleIndex > 60) return null;
-    const panel = lines.slice(ruleIndex + 1, questionIndex).map(cleanLine)
-      .filter((line) => line && !isDivider(line) && !/^Tip:/i.test(line));
+    // a long command pushes the panel's rule and tool name off the top of the screen: the
+    // numbered rows and Claude's own key hint under them, with what is left of the panel above
+    // them (its `│` command block and the dashed rule under that), still say it is an approval
+    // the dashed rule is the last divider over the question, the block right above it, and
+    // only the panel's own few lines (never Claude's or the user's text) between it and the question
+    const above = lines.slice(0, questionIndex).map((line) => line.replace(ANSI_RE, "").trim());
+    const dashIndex = findLastIndex(above, (line) => isDivider(line));
+    const scrolled = ruleIndex < 0 && callIndex < 0 && hintIndex > questionIndex && /^esc to cancel\b/i.test(cleanLine(lines[hintIndex]!))
+      && dashIndex >= 1 && questionIndex - dashIndex <= 8 && /^╌{8,}$/.test(above[dashIndex]!) && /^│\s/.test(above[dashIndex - 1]!)
+      && above.slice(dashIndex + 1).every((line) => !/^[●⏺❯>›]/.test(line));
+    if (!scrolled && (ruleIndex < 0 || questionIndex - ruleIndex > 60)) return null;
+    // all of a scrolled panel is the body: a command line changed far above the question is another asking
+    // Claude's own tip is a line of the panel; a `│ Tip:` line is the command's
+    const panel = lines.slice(scrolled ? 0 : ruleIndex + 1, questionIndex)
+      .filter((line) => !/^Tip:/i.test(line.replace(ANSI_RE, "").trim())).map(cleanLine)
+      .filter((line) => line && !isDivider(line));
     if (panel.length === 0) return null;
-    title = panel[0]!;
-    body = panel.slice(1).join("\n");
+    title = scrolled ? "Command approval" : panel[0]!;
+    body = (scrolled ? panel : panel.slice(1)).join("\n");
   }
   return finishPrompt("claude", {
     kind: "approval", title, question: cleanLine(lines[questionIndex]!),
@@ -1823,7 +1855,9 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   // the last row carries the cursor once a move has put it there
   if (prompt.responder === "codex-approval") return ends(/press enter to confirm|esc to cancel|enter continue.*esc back|^(?:[›>❯]\s*)?\d+\.\s+(?:No|Reject|Cancel|Deny)\b/i);
   if (prompt.responder === "omp-approval") return ends(/^(?:[›>❯•]\s*)?(?:Approve|Deny)$|esc.*cancel/i);
-  if (prompt.responder === "claude-approval") return ends(/esc to cancel.*(?:tab|ctrl\+e)|ctrl\+e to explain/i);
+  // Claude Code 2.1.29x ends with "Esc to cancel", optionally followed by its stop-agents
+  // chord. Anchor that suffix so arbitrary trailing text cannot keep an old approval live.
+  if (prompt.responder === "claude-approval") return ends(/esc to cancel.*(?:tab|ctrl\+e)|ctrl\+e to explain|^esc to cancel(?:\s*·\s*ctrl\+x ctrl\+k twice to stop background agents)?$/i);
   if (prompt.responder === "claude-confirm") return ends(CLAUDE_CONFIRM_HINT_RE);
   // its parser already found the hint over the input box with only the footer under it
   if (prompt.responder === "claude-held") return true;
@@ -2691,6 +2725,83 @@ function claudeGreyInput(ansi: string): string | null {
   if (cursor && !sgrRuns(lines[index]!).some(([run, dim]) => dim && run.trim() !== "")) return null;
   const suggestion = text.replace(/\u00a0/g, " ").trim();
   return suggestion === "" ? null : suggestion;
+}
+
+/**
+ * Claude Code's input box: the rows between the screen's last two rules (a named session labels
+ * its rule). "clipped" when only the bottom rule is on screen, as under a draft taller than the
+ * pane; null when the screen has no rule at all.
+ */
+function claudeInputBox(screen: string): { plain: string[]; raw: string[] } | "clipped" | null {
+  const raw = screen.split("\n").map((line) => line.replace(/\r$/, ""));
+  const plain = raw.map((line) => line.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").trimEnd());
+  const rule = (line: string): boolean => SOLID_RULE_RE.test(line.trim()) || LABELED_RULE_RE.test(line.trim());
+  let end = plain.length - 1;
+  while (end >= 0 && !rule(plain[end]!)) end--;
+  if (end < 0) return null;
+  let start = end - 1;
+  while (start >= 0 && !rule(plain[start]!)) start--;
+  if (start < 0) return "clipped";
+  return { plain: plain.slice(start + 1, end), raw: raw.slice(start + 1, end) };
+}
+
+/**
+ * Whether Claude Code's input box is not known to be empty, so that a paste would land in what is
+ * there and the Enter after it send both, or run it as a command: typed text, bash mode (`!`), a
+ * box clipped by the pane, or a box that is not a `❯` input. Claude's own grey text (a suggested
+ * prompt, its tip, on any number of rows) and its drawn cursor are not a draft. The box is read
+ * from the live screen (`live`, a detection read, as the other pending checks); only the viewport
+ * read carries colors (`colors`), and the caller passes it only once it is verified to show that
+ * live screen (null otherwise): equal words do not prove it, since an older box in a scrolled
+ * viewport, or a grey suggestion the user then typed out, reads the same. Without verified colors a
+ * box that is not empty is a draft. False when the screen shows no rule at all.
+ */
+export function claudeInputDraft(live: string, colors: string | null): boolean {
+  const box = claudeInputBox(live);
+  if (box === null) return false;
+  if (box === "clipped" || !box.plain[0]?.startsWith("❯")) return true;
+  if (box.plain.join("\n").slice(1).replace(/\u00a0/g, " ").trim() === "") return false;
+  // a paste or an image Claude folded into a placeholder is content, however it is colored
+  if (/\[(?:Pasted text #\d+|Image #\d+)/.test(box.plain.join(" "))) return true;
+  if (colors === null) return true;
+  const shown = claudeInputBox(colors);
+  if (shown === null || shown === "clipped" || shown.plain.join("\n") !== box.plain.join("\n")) return true;
+  let prompt = false;
+  let first = true;
+  let cursor = false;
+  let grey = false;
+  for (const row of shown.raw) {
+    for (const [run, dim, inverse] of sgrRuns(row)) {
+      for (const character of run) {
+        if (!prompt) { prompt = character === "❯"; continue; }
+        if (character.trim() === "" || character === "\u00a0") continue;
+        if (dim) grey = true;
+        // the cursor Claude draws itself sits inverse on the first grey character
+        else if (first && inverse) cursor = true;
+        else return true;
+        first = false;
+      }
+    }
+  }
+  // a cursor over a typed character has nothing grey after it
+  return cursor && !grey;
+}
+
+/**
+ * Whether a colored viewport read shows the live screen, so claudeInputDraft may take its colors:
+ * the viewport at the bottom of the pane's history before and after the colored read, or, only when
+ * herdr reports no scroll for either read, the viewport's whole text equal to the live screen; and
+ * the live screen the same before and after it. A scroll known for one read and not the other is
+ * no proof.
+ */
+export function viewportShowsLive(scrollBefore: { offset_from_bottom: number } | null, scrollAfter: { offset_from_bottom: number } | null,
+  colors: string, before: string, live: string): boolean {
+  const lines = (text: string): string => text.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    .split(/\r?\n/).map((line) => line.trimEnd()).join("\n").trimEnd();
+  const atBottom = scrollBefore !== null && scrollAfter !== null
+    ? scrollBefore.offset_from_bottom === 0 && scrollAfter.offset_from_bottom === 0
+    : scrollBefore === null && scrollAfter === null && lines(colors) === lines(live);
+  return atBottom && live === before;
 }
 
 /** Whether a card is the one for a message Claude Code holds back (parseClaudeHeld). */

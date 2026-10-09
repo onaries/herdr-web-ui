@@ -219,6 +219,17 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
   Integration tests have a 15-second default timeout so their bounded process-startup
   probes can finish; individual tests can still specify a longer timeout.
 
+The browser lane prints each script's wall seconds and exit code, including the shared demo
+build, then a summary on success or failure. The first failing script stops the lane.
+Under `CI` or with `CHECK_DIR` set, it creates `UI_EVIDENCE_DIR` at
+`${CHECK_DIR:-.ci}/browser-evidence`. Only the existing sticky-modifier and file-viewer captures
+are enabled automatically: the UI suite and key-bar demo have evidence branches that add
+assertions, viewport changes or font waits, so those remain disabled in the lane. Outside
+`CI`/`CHECK_DIR`, an explicit `UI_EVIDENCE_DIR` still works as before.
+On CI failure, **Preserve failure logs** uploads those PNGs alongside herdr's `test-server.log`.
+These are checkpoints from isolated test fixtures, not captures of every open page at the
+failure point. Playwright traces and timestamps on the web UI test servers' lines are not added.
+
 `scripts/ci-tests.ts` discovers all `.test.ts` files under src/shared/server/scripts.
 Files named `*.contract.test.ts`, tests under `server/herdr/` and `server/pty/`, and
 `server/updater.test.ts` (which includes real bridge restart/rollback cases) belong

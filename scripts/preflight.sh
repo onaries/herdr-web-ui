@@ -2,8 +2,10 @@
 # herdr runs this first when it installs the plugin (herdr-plugin.toml, [[build]]), with its own
 # environment rather than your shell's. It says in one line what is missing, instead of a failed
 # `bun install` some steps later. The startup hook runs with the same PATH, so a bun that is
-# missing here would also keep the app from starting with herdr.
+# missing here would also keep the app from starting with herdr. Also looks in the usual bun and
+# node install places (~/.bun/bin, Homebrew, etc.) to handle GUI app PATH scenarios.
 set -u
+. "$(dirname "$0")/bun-path.sh"
 fail=0
 if command -v bun >/dev/null 2>&1; then
   version=$(bun --version 2>/dev/null || echo unknown)

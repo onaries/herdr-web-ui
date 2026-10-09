@@ -485,6 +485,7 @@ export const KO: Record<string, string> = {
   "Send message": "메시지 보내기",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "보내지 않음: 에이전트가 터미널에서 답을 기다리고 있습니다. 먼저 답하세요.",
   "Not sent: this view only watches the pane.": "보내지 않음: 이 화면은 패널을 보기만 합니다.",
+  "Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.": "보내지 않음: 터미널의 Claude Code 입력란이 비어 있지 않습니다. 그곳에서 보내거나 지운 뒤 이 메시지를 보내세요.",
   "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.": "보내지 않음: 앞선 메시지 뒤에서 너무 오래 기다렸고 아무것도 입력되지 않았습니다. 다시 보내세요.",
   "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.": "확인되지 않음: 패널이 이 메시지를 확인하지 않았습니다. 다시 보내기 전에 터미널을 확인하세요.",
   "Not sent: {message}": "보내지 않음: {message}",
@@ -497,6 +498,7 @@ export const KO: Record<string, string> = {
 
   // ---- chat view ----
   "Copied": "복사됨",
+  "Couldn't copy. Select the text and copy it manually.": "복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.",
   "Output": "출력",
   "thinking": "생각",
   "Working…": "작업 중…",
@@ -833,13 +835,14 @@ export const KO: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "{workspace}의 마지막 탭입니다. 워크스페이스도 함께 닫히고, 그 안의 에이전트와 셸이 멈춥니다.",
   "Tabs of {workspace}": "{workspace}의 탭",
   "{n} panes": "패널 {n}개",
-  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.": "herdr web ui는 설치와 업데이트 때 익명 집계를 보냅니다. 버전, OS, 무작위 ID뿐이며 그 밖에는 보내지 않습니다.",
+  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. The receiver also notes the country it came from, never the address.": "herdr web ui는 설치와 업데이트 때 익명 집계를 보냅니다. 버전, OS, 무작위 ID입니다. 받는 쪽은 보낸 국가도 기록하지만 주소는 기록하지 않습니다.",
   "What is sent": "보내는 내용",
   "Turn off": "끄기",
   "Could not turn it off. Try again.": "이 설정을 끄지 못했습니다. 다시 시도하세요.",
   "Anonymous usage counts": "익명 사용 집계",
   "Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "이 PC에서는 HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK 또는 CI 환경 때문에 꺼져 있습니다.",
   "Send install and update counts": "설치·업데이트 집계 보내기",
-  "Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.": "앱을 설치할 때 한 번, 업데이트할 때마다 한 번 보냅니다. IP 주소는 저장하지 않으며 터미널, 에이전트, 파일에 관한 내용은 보내지 않습니다.",
+  "Once when the app is installed and once per update. The receiver notes the country a message came from but stores no IP address, and nothing about your terminals, agents or files is sent.": "앱을 설치할 때 한 번, 업데이트할 때마다 한 번 보냅니다. 받는 쪽은 메시지를 보낸 국가를 기록하지만 IP 주소는 저장하지 않으며, 터미널, 에이전트, 파일에 관한 내용은 보내지 않습니다.",
+  "The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.": "받는 쪽에서 이 메시지를 보낸 국가(KR 같은 두 글자)를 덧붙입니다. 주소는 저장하지 않습니다.",
   "This version has already been counted. The next event is sent after an update.": "이 버전은 이미 집계되었습니다. 다음 전송은 업데이트 후입니다.",
 };

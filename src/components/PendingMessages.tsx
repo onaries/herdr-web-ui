@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ArrowUp, Copy, X } from "lucide-react";
 import type { PendingMessageView } from "../lib/pendingMessages.ts";
 import { copyText } from "../lib/clipboard.ts";
+import { submitNote } from "../lib/compose.ts";
 import { useT } from "../lib/i18n.ts";
 import "./PendingMessages.css";
 
@@ -55,7 +56,7 @@ export function PendingMessages({ messages, connected, blocked, unsaved, isBusy,
               void onDiscard(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
             }}><X aria-hidden="true" /></button>
         </div>
-        {message.error && !uncertain && <p className="pending-message-note" role="status">{t("Not sent: {message}", { message: message.error.message })}</p>}
+        {message.error && !uncertain && <p className="pending-message-note" role="status">{message.error.code === "input_draft" ? submitNote(message.error.code, message.error.message) : t("Not sent: {message}", { message: message.error.message })}</p>}
       </li>;
     })}
   </ol>;

@@ -11,7 +11,7 @@ import * as herdr from "./herdr/client.ts";
 import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
-import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionPath, paneConversation, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 
 let mockedPanes: HerdrPane[] = [];
 let mockedProcesses: { argv?: unknown }[] = [];
@@ -605,28 +605,44 @@ describe("omo transcript resolution", () => {
   });
 });
 
-describe("omp session path", () => {
+describe("omp session store", () => {
   it("accepts the path herdr reports only inside the user's own store", () => {
     const home = "/home/u", store = "/home/u/.omp/agent/sessions";
-    expect(ompSessionPath(`${store}/project/session.jsonl`, home)).toBe(`${store}/project/session.jsonl`);
-    expect(ompSessionPath(`${store}-evil/project/session.jsonl`, home)).toBeNull();
-    expect(ompSessionPath(`${store}/../../../../etc/session.jsonl`, home)).toBeNull();
-    expect(ompSessionPath(`${store}/project/notes.txt`, home)).toBeNull();
-    expect(ompSessionPath(".omp/agent/sessions/project/session.jsonl", home)).toBeNull();
-    expect(ompSessionPath(undefined, home)).toBeNull();
+    expect(ompSessionStore(`${store}/project/session.jsonl`, home)).toBe(store);
+    expect(ompSessionStore(`${store}-evil/project/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${store}/../../../../etc/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${store}/project/notes.txt`, home)).toBeNull();
+    expect(ompSessionStore(".omp/agent/sessions/project/session.jsonl", home)).toBeNull();
+    expect(ompSessionStore(undefined, home)).toBeNull();
+  });
+
+  it("accepts an `omp --profile` store, and only its sessions directory", () => {
+    const home = "/home/u", profiles = "/home/u/.omp/profiles", store = `${profiles}/personal/agent/sessions`;
+    expect(ompSessionStore(`${store}/-project/session.jsonl`, home)).toBe(store);
+    expect(ompSessionStore(`${store}/session.jsonl`, home)).toBe(store);
+    expect(ompSessionStore(`${profiles}/personal/agent/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${profiles}/personal/agent/logs/x/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${profiles}/personal/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${profiles}/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${profiles}/../agent/sessions-evil/x/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${profiles}/personal/agent/sessions/../../../../../etc/session.jsonl`, home)).toBeNull();
+    expect(ompSessionStore(`${profiles}-evil/personal/agent/sessions/x/session.jsonl`, home)).toBeNull();
   });
 
   it("accepts a Windows PC's native path, and refuses the same ways out", () => {
     const home = "C:\\Users\\u", store = "C:\\Users\\u\\.omp\\agent\\sessions";
     const session = `${store}\\project\\session.jsonl`;
-    expect(ompSessionPath(session, home, win32)).toBe(session);
-    expect(ompSessionPath(session.replaceAll("\\", "/"), home, win32)).toBe(session.replaceAll("\\", "/"));
-    expect(ompSessionPath(`${store}-evil\\project\\session.jsonl`, home, win32)).toBeNull();
-    expect(ompSessionPath(`${store}\\..\\sessions-evil\\session.jsonl`, home, win32)).toBeNull();
-    expect(ompSessionPath(`${store}\\project\\..\\..\\..\\..\\session.jsonl`, home, win32)).toBeNull();
-    expect(ompSessionPath(`D:${session.slice(2)}`, home, win32)).toBeNull();
-    expect(ompSessionPath(`\\\\server\\share\\.omp\\agent\\sessions\\session.jsonl`, home, win32)).toBeNull();
-    expect(ompSessionPath(`${store}\\project\\notes.txt`, home, win32)).toBeNull();
+    expect(ompSessionStore(session, home, win32)).toBe(store);
+    expect(ompSessionStore(session.replaceAll("\\", "/"), home, win32)).toBe(store);
+    expect(ompSessionStore(`${store}-evil\\project\\session.jsonl`, home, win32)).toBeNull();
+    expect(ompSessionStore(`${store}\\..\\sessions-evil\\session.jsonl`, home, win32)).toBeNull();
+    expect(ompSessionStore(`${store}\\project\\..\\..\\..\\..\\session.jsonl`, home, win32)).toBeNull();
+    expect(ompSessionStore(`D:${session.slice(2)}`, home, win32)).toBeNull();
+    expect(ompSessionStore(`\\\\server\\share\\.omp\\agent\\sessions\\session.jsonl`, home, win32)).toBeNull();
+    expect(ompSessionStore(`${store}\\project\\notes.txt`, home, win32)).toBeNull();
+    const profile = "C:\\Users\\u\\.omp\\profiles\\work\\agent\\sessions";
+    expect(ompSessionStore(`${profile}\\project\\session.jsonl`, home, win32)).toBe(profile);
+    expect(ompSessionStore(`C:\\Users\\u\\.omp\\profiles\\work\\session.jsonl`, home, win32)).toBeNull();
   });
 });
 

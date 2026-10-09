@@ -55,7 +55,7 @@ const stills: Array<{ file: string; width: number }> = [{ file: "install.png", w
  * README can change how it presents its videos; a new recording needs its link changed here as well.
  */
 const videos: Array<{ file: string; poster: string; at: string; upload: string }> = [
-  { file: "readme-hero.mp4", poster: "readme-hero.jpg", at: "0.3", upload: "https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d" },
+  { file: "readme-hero.mp4", poster: "readme-hero.jpg", at: "11.8", upload: "https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b" },
 ];
 
 async function run(cmd: string[]): Promise<boolean> {

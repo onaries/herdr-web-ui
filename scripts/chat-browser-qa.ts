@@ -46,9 +46,12 @@ try {
   const paneId = created.root_pane.pane_id;
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "idle", agent_session_path: rollout });
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `printf '%s\\n' '${answer}'\n` });
-  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
-  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
+  // tailscaleOwner null: the plain-HTTP page below reaches the server under a name that is not
+  // loopback, which a PC running Tailscale would otherwise send to pairing
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome, tailscaleOwner: null });
+  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--host-resolver-rules=MAP clipboard.test 127.0.0.1", "--no-proxy-server"] });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
+  const page = await context.newPage();
   // a pane opens its terminal the first time; this QA is about the chat lens
   await page.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
   const errors: string[] = [];
@@ -188,6 +191,72 @@ try {
   await page.screenshot({ path: "evidence/chat-mode/mobile.png", fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.screenshot({ path: "evidence/chat-mode/desktop.png", fullPage: true, animations: "disabled" });
+  // Read back Chromium's actual clipboard from the secure loopback page. The copy itself
+  // runs on an ordinary HTTP hostname, where navigator.clipboard genuinely does not exist.
+  const secureOrigin = `http://127.0.0.1:${server.port}`;
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: secureOrigin });
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const code = "printf 'clipboard ✓'";
+  add(message("assistant", `\`\`\`sh\n${code}\n\`\`\``, "final_answer"), 9);
+  persist();
+  const insecure = await page.context().newPage();
+  await insecure.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
+  insecure.on("pageerror", (error) => errors.push(error.message));
+  await insecure.goto(`http://clipboard.test:${server.port}/?pane=${encodeURIComponent(paneId)}`);
+  const insecureLog = insecure.getByRole("log", { name: `conversation of ${paneId}` });
+  await insecureLog.getByText(answer, { exact: true }).waitFor();
+  assert.equal(await insecure.evaluate(() => window.isSecureContext), false);
+  assert.equal(await insecure.evaluate(() => typeof navigator.clipboard), "undefined");
+  const messageCopy = insecureLog.getByRole("button", { name: "Copy as markdown", exact: true }).first();
+  await messageCopy.focus();
+  await messageCopy.click();
+  assert.deepEqual(errors, [], "copying on HTTP must not throw a browser error");
+  await insecureLog.getByRole("button", { name: "Copied", exact: true }).waitFor();
+  assert.equal(await clipboard(), answer);
+  assert.equal(await insecureLog.getByRole("button", { name: "Copied", exact: true }).evaluate((node) => node === document.activeElement), true, "fallback restores the triggering button's focus");
+  assert.equal(await insecure.locator("textarea[readonly]").count(), 0);
+  await insecureLog.getByRole("button", { name: "Copy code", exact: true }).focus();
+  await insecureLog.getByRole("button", { name: "Copy code", exact: true }).click();
+  await insecureLog.getByRole("button", { name: "Code copied", exact: true }).waitFor();
+  assert.equal(await clipboard(), code);
+  // A rejected secure API still gets the copy-command path. Neither failure may be
+  // advertised as success if the browser refuses both mechanisms.
+  const secureCopy = page.getByRole("button", { name: "Copy as markdown", exact: true }).first();
+  await secureCopy.focus();
+  await secureCopy.click();
+  await page.getByRole("button", { name: "Copied", exact: true }).waitFor();
+  assert.equal(await clipboard(), answer, "the native secure-context API copies the message");
+  await page.getByRole("button", { name: "Copy code", exact: true }).waitFor();
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.reject(new DOMException("Denied", "NotAllowedError")), readText: navigator.clipboard.readText.bind(navigator.clipboard) } }));
+  await page.getByRole("button", { name: "Copy code", exact: true }).focus();
+  await page.getByRole("button", { name: "Copy code", exact: true }).click();
+  await page.getByRole("button", { name: "Code copied", exact: true }).waitFor();
+  assert.equal(await clipboard(), code);
+  await insecure.evaluate(() => { document.execCommand = () => false; });
+  await insecureLog.getByRole("button", { name: "Copy as markdown", exact: true }).first().waitFor();
+  await messageCopy.focus();
+  await messageCopy.click();
+  await insecureLog.getByRole("alert").filter({ hasText: "Couldn't copy. Select the text and copy it manually." }).waitFor();
+  assert.equal(await messageCopy.getAttribute("aria-label"), "Copy as markdown");
+  // the hint outlives the hover/focus that shows the copy controls (reduced motion: no fade to wait out)
+  await insecure.emulateMedia({ reducedMotion: "reduce" });
+  await insecure.mouse.move(0, 0);
+  await insecure.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  const messageHint = insecureLog.getByRole("alert").filter({ hasText: "Couldn't copy. Select the text and copy it manually." }).first();
+  assert.equal(await messageHint.evaluate((node) => {
+    for (let element: Element | null = node; element !== null; element = element.parentElement) if (getComputedStyle(element).opacity === "0") return false;
+    return true;
+  }), true, "the manual-copy hint stays visible after the pointer and focus leave the turn");
+  await insecureLog.getByRole("button", { name: "Copy code", exact: true }).waitFor();
+  await insecureLog.getByRole("button", { name: "Copy code", exact: true }).focus();
+  await insecureLog.getByRole("button", { name: "Copy code", exact: true }).click();
+  await insecureLog.getByRole("alert").filter({ hasText: "Couldn't copy. Select the text and copy it manually." }).nth(1).waitFor();
+  assert.equal(await insecureLog.getByRole("alert").filter({ hasText: "Couldn't copy. Select the text and copy it manually." }).count(), 2);
+  assert.equal(await insecureLog.getByRole("button", { name: "Code copied", exact: true }).count(), 0);
+  assert.equal(await insecure.locator("textarea[readonly]").count(), 0, "temporary copy field is removed");
+  await insecure.screenshot({ path: "evidence/chat-mode/clipboard-refused.png", fullPage: true, animations: "disabled" });
+  await insecure.close();
+  console.log("PASS actual clipboard contents on HTTP, denied API fallback, and refused-copy feedback");
   rmSync(rollout);
   const fallback = log.locator(".chat-terminal-fallback");
   await fallback.waitFor();

@@ -70,12 +70,17 @@ function makeLineReader(onLine: (line: string) => void): (chunk: Uint8Array) => 
  * One request, one connection.
  * The herdr server closes the connection after a single response, so a pooled
  * or reused socket would never see a second reply.
+ *
+ * `guard`, when given, is asked once more right before the request is written: the
+ * connect is awaited, and a caller's right to send can lapse meanwhile. A guard that
+ * answers false sends nothing and rejects with `cancelled`.
  */
 export async function herdrRpc<T = unknown>(
   method: string,
   params: Record<string, unknown>,
   socketPath: string = herdrSocketPath(),
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  guard?: () => boolean,
 ): Promise<T> {
   const id = nextId();
   return await new Promise<T>((resolve, reject) => {
@@ -140,6 +145,10 @@ export async function herdrRpc<T = unknown>(
           } catch {
             /* already gone */
           }
+          return;
+        }
+        if (guard && !guard()) {
+          finish(() => reject(new HerdrError("cancelled", `herdr ${method} was not sent: the sender may no longer send`)));
           return;
         }
         sock.write(`${JSON.stringify({ id, method, params })}\n`);
@@ -366,8 +375,8 @@ export async function paneSelectionRead(paneId: string, anchor: PaneTextPoint, c
   return result.text;
 }
 
-export async function paneSendText(paneId: string, text: string, socketPath?: string): Promise<void> {
-  await herdrRpc("pane.send_text", { pane_id: paneId, text }, socketPath);
+export async function paneSendText(paneId: string, text: string, socketPath?: string, guard?: () => boolean): Promise<void> {
+  await herdrRpc("pane.send_text", { pane_id: paneId, text }, socketPath, undefined, guard);
 }
 
 /**
@@ -379,8 +388,8 @@ export async function agentPrompt(target: string, text: string, socketPath?: str
   await herdrRpc("agent.prompt", { target, text }, socketPath);
 }
 
-export async function paneSendKeys(paneId: string, keys: string[], socketPath?: string): Promise<void> {
-  await herdrRpc("pane.send_keys", { pane_id: paneId, keys }, socketPath);
+export async function paneSendKeys(paneId: string, keys: string[], socketPath?: string, guard?: () => boolean): Promise<void> {
+  await herdrRpc("pane.send_keys", { pane_id: paneId, keys }, socketPath, undefined, guard);
 }
 
 export async function paneClose(paneId: string, socketPath?: string): Promise<void> {

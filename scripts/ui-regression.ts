@@ -28,7 +28,7 @@ import { checkComposerReconnect } from "./composer-reconnect-regression.ts";
 import { checkDroplet } from "./droplet-regression.ts";
 import { checkTakeOver } from "./take-over-regression.ts";
 import { checkAlertSound } from "./alert-sound-regression.ts";
-import { checkChatKeepsTerminalSize, checkPaneSwitchKeepsTerminalSize } from "./chat-size-regression.ts";
+import { checkBackgroundTabKeepsTerminalSize, checkChatKeepsTerminalSize, checkPaneSwitchKeepsTerminalSize } from "./chat-size-regression.ts";
 import { checkCommandBackspace } from "./terminal-command-backspace-regression.ts";
 import { checkCtrlEnter } from "./terminal-ctrl-enter-regression.ts";
 import { checkCommandArrows } from "./terminal-command-arrows-regression.ts";
@@ -181,7 +181,22 @@ try {
   await palette.waitFor({ state: "hidden" });
   assert.equal(await selectedPane(), paneA, "Enter on Close leaves the pane selection alone");
 
+  // A reopened palette starts from an empty search in its first render, the DOM its opening commit
+  // leaves (sampled by the observer before any later task): a render of the last search's results lets
+  // a Tab that lands before the next one focus a row at an index the full list then gives to another (#608).
+  await page.evaluate(() => {
+    const frames: string[] = [];
+    (window as unknown as { paletteFirstFrame: string[] }).paletteFirstFrame = frames;
+    new MutationObserver((_, observer) => {
+      const search = document.querySelector<HTMLInputElement>(".command-palette input[type=search]");
+      if (!search) return;
+      frames.push(search.value);
+      observer.disconnect();
+    }).observe(document.body, { childList: true, subtree: true });
+  });
   await openPalette();
+  assert.deepEqual(await page.evaluate(() => (window as unknown as { paletteFirstFrame: string[] }).paletteFirstFrame), [""],
+    "a reopened palette's first render shows none of the last search's results");
   const otherPalettePane = palette.locator(".palette-pane").filter({ hasText: "herdr-web-ui-test-browser-b" });
   // Walk the actual tab order instead of clicking: pointer hover must not pick the row for us.
   for (const deadline = Date.now() + 5_000; ;) {
@@ -189,7 +204,9 @@ try {
     if (await otherPalettePane.evaluate((button) => document.activeElement === button)) break;
     assert.ok(Date.now() < deadline, "Tab reaches the other pane's option");
   }
-  assert.equal(await otherPalettePane.getAttribute("aria-selected"), "true", "the focused option is highlighted");
+  // bounded: in #608's race the focused row never became the highlighted one, so this still fails there
+  await until(async () => await otherPalettePane.evaluate((button) =>
+    document.activeElement === button && button.getAttribute("aria-selected") === "true"), "the focused option is highlighted");
   await page.keyboard.press("Enter");
   await palette.waitFor({ state: "hidden" });
   await until(async () => await selectedPane() === paneB, "Enter on the focused option selects that pane");
@@ -653,6 +670,7 @@ try {
   await checkAlertSound(browser, origin);
   await checkChatKeepsTerminalSize(browser, origin);
   await checkPaneSwitchKeepsTerminalSize(browser, origin);
+  await checkBackgroundTabKeepsTerminalSize(browser, origin);
   await checkUpdateNotice(browser, origin);
 
   // The pending protocol has a real foreground agent and an owned byte recorder: merely

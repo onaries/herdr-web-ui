@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
-import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { herdrRpc, paneRead, paneScrollInfo, sessionSnapshot } from "./herdr/client.ts";
 import { parseInteractivePrompt } from "./prompt.ts";
 import type { PendingMessage } from "../shared/protocol.ts";
 
@@ -107,6 +107,13 @@ describe("connection-owned pending input", () => {
     expect(receipt.messages.find((message: PendingMessage) => message.id === second.id)?.state).toBe("queued");
     await f.state("working"); await f.state("idle"); await f.removed(second.id); await f.waitBytes(`${paste("second")}\r`);
     expect(f.bytes()).toBe(`${paste(first.text)}\r${paste("second")}\r`);
+  }, 30_000);
+
+  it("closes a trailing @file mention with a space before its Enter", async () => {
+    const f = await setup("mention");
+    const message = await f.queue(1, "look at @/tmp/shot.png");
+    await f.state("idle"); await f.removed(message.id); await f.waitBytes("\r");
+    expect(f.bytes()).toBe(`${paste("look at @/tmp/shot.png ")}\r`);
   }, 30_000);
 
   it("promotes a pending message only once and does not send it again after completion", async () => {
@@ -297,6 +304,45 @@ describe("connection-owned pending input", () => {
     await f.showScreen(`${hint}\n${rule}\n\u276f next message\n${rule}\n  ${footer} \n`, `${footer} `);
     await f.removed(message.id);
     await f.waitBytes(`${paste("next message")}\r`);
+  }, 30_000);
+
+  it("holds a queued message rather than pasting it over a draft typed in Claude's input box", async () => {
+    const f = await setup("draft");
+    const rule = "\u2500".repeat(60);
+    const footer = "[Haiku 4.5] \u2502 project";
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f half a thought typed in the terminal\n${rule}\n  ${footer}\n`, footer);
+    const message = await f.queue(1, "queued message");
+    await f.state("idle");
+    const held = await f.socket.wait((frame) => frame.type === "pending-messages" && frame.pane_id === f.pane
+      && frame.messages.some((item: PendingMessage) => item.id === message.id && item.state === "held"));
+    expect(held.messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("input_draft");
+    expect(f.bytes()).toBe("");
+    // the draft sent or cleared in the terminal, Send now delivers the message
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f \u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer} \n`, `${footer} `);
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true });
+    await f.removed(message.id);
+    await f.waitBytes(`${paste("queued message")}\r`);
+  }, 30_000);
+
+  it("takes no colors from a scrolled viewport: an older grey box with the typed words holds the message", async () => {
+    const f = await setup("draft-scrolled");
+    const rule = "\u2500".repeat(60);
+    // 48 rows on a 30-row pane: the older box, with Claude's grey suggestion, is in the history; the
+    // live box at the bottom holds the same words typed by the user
+    const filler = Array.from({ length: 40 }, (_, index) => `  output line ${index + 1}`).join("\n");
+    await f.showScreen(`${rule}\n\u276f \u001b[2mrun the tests\u001b[0m\n${rule}\n  [Haiku 4.5] older\n${filler}\n${rule}\n\u276f run the tests\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    const message = await f.queue(1, "queued message");
+    // the user scrolls to the top: the viewport now shows the older box, its words equal to the live draft's
+    const top = (await paneScrollInfo(f.pane))!.max_offset_from_bottom;
+    expect(top).toBeGreaterThan(0);
+    await herdrRpc("pane.scroll", { pane_id: f.pane, offset_from_bottom: top });
+    expect((await paneRead({ paneId: f.pane, source: "visible", format: "text" })).text).toContain("[Haiku 4.5] older");
+    await f.state("idle");
+    const held = await f.socket.wait((frame) => frame.type === "pending-messages" && frame.pane_id === f.pane
+      && frame.messages.some((item: PendingMessage) => item.id === message.id && item.state === "held"));
+    expect(held.messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("input_draft");
+    expect(f.bytes()).toBe("");
   }, 30_000);
 
   it("reads the pane's live screen: a menu drawn below a scrolled viewport still stops Send now", async () => {

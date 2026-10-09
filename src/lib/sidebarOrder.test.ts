@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
 import type { PaneInfo } from "../../shared/protocol.ts";
-import { activityOrder, anySeen, carrySeen, forgetSeen, isSeenDone, liveSeqs, loadSeen, markSeen, newSeqMemory, persistableSeen, pruneSeen, saveSeen, seedSeen, shownStatus, stateSeqs } from "./sidebarOrder.ts";
+import { activityOrder, anySeen, carrySeen, forgetSeen, isSeenDone, liveSeqs, loadSeen, markSeen, newSeqMemory, persistableSeen, pruneSeen, saveSeen, seedSeen, seenAfterRestart, shownStatus, stateSeqs } from "./sidebarOrder.ts";
 import { DEFAULT_SETTINGS, sanitizeSettings } from "./settings.ts";
 
 const pane = (id: string, agent_status: string, workspace_id = `w-${id}`) => ({ pane_id: id, workspace_id, agent_status }) as PaneInfo;
@@ -185,6 +185,26 @@ describe("opened finishes", () => {
     expect(shownStatus(pane("a", "done"), new Map([["a", 12]]), pruned)).toBe("done");
     const kept = { a: 2, b: 3 };
     expect(pruneSeen(kept, panes, new Map([["a", 2], ["b", 3]]))).toBe(kept);
+  });
+
+  it("forgets the whole record once herdr restarted, also an entry equal to the new counter (#591)", () => {
+    const roster = (seqs: Record<string, number>) => ({
+      panes: Object.keys(seqs).map((id) => pane(id, "done")),
+      agents: Object.entries(seqs).map(([pane_id, state_change_seq]) => ({ pane_id, state_change_seq })),
+    }) as never;
+    const memory = newSeqMemory();
+    liveSeqs(roster({ a: 2, b: 100 }), memory);
+    const handled = memory.restarts;
+    // herdr restarts and keeps the pane ids: B's counter went back, A has a new DONE at 2 again
+    const seqs = liveSeqs(roster({ a: 2, b: 1 }), memory);
+    expect(memory.restarts).toBe(handled + 1);
+    const record = pruneSeen(seenAfterRestart({ a: 2, b: 100 }, memory.restarts, handled), [pane("a", "done"), pane("b", "done")], seqs);
+    expect(record).toEqual({});
+    expect(shownStatus(pane("a", "done"), seqs, record)).toBe("done");
+    // no restart since the record was kept: it stays, the same object
+    const kept = { a: 2 };
+    liveSeqs(roster({ a: 2, b: 1 }), memory);
+    expect(seenAfterRestart(kept, memory.restarts, memory.restarts)).toBe(kept);
   });
 });
 

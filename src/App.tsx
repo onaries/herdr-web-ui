@@ -54,7 +54,8 @@ import { useScreenWakeLock } from "./lib/wakeLock.ts";
 import { watchDrawerSwipe } from "./lib/edgeSwipe.ts";
 import { Droplet } from "./components/Droplet.tsx";
 import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./lib/droplet.ts";
-import { playAlertSound, unlockAlertSound, type AlertSoundKind } from "./lib/alertSound.ts";
+import { canPlayAlertSound, playAlertSound, unlockAlertSound, type AlertSoundKind } from "./lib/alertSound.ts";
+import { createAlertTurnPlayer } from "./lib/alertTurns.ts";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
@@ -349,11 +350,19 @@ export function App() {
 
   // The alert sound (lib/alertSound.ts): heard also while the tab is hidden and a Focus silences
   // system notifications; never for the pane open in front of the user.
+  const alertTurns = useRef<ReturnType<typeof createAlertTurnPlayer> | null>(null);
+  useEffect(() => {
+    const player = createAlertTurnPlayer({
+      play: (kind) => alertsOnRef.current && alertSoundRef.current && playAlertSound(kind),
+    });
+    alertTurns.current = player;
+    return () => { player.dispose(); alertTurns.current = null; };
+  }, []);
   const chime = useCallback((machine: Machine, pane: HerdrPane, kind: AlertSoundKind) => {
-    if (!alertsOnRef.current || !alertSoundRef.current) return;
+    if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
-    playAlertSound(kind);
+    alertTurns.current?.chime(JSON.stringify([machine.id, pane.pane_id, kind]), kind);
   }, []);
 
   // a page plays audio only after a tap or key on it: each one lets the next chime play. A mouse

@@ -14,7 +14,10 @@
 export type TelemetryEventName = "install" | "update";
 export type InstallMethod = "plugin" | "managed" | "source";
 
-/** One event, exactly as it is sent. The receiver keeps these fields and the day; no IP, no address. */
+/**
+ * One event, exactly as it is sent. The receiver keeps these fields, the day and the country the
+ * request came from (two characters, worked out by its host); no IP, no address.
+ */
 export interface TelemetryEvent {
   event: TelemetryEventName;
   /** random, made on this PC the first time; says nothing about the user */

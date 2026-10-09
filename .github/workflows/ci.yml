@@ -75,5 +75,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: herdr-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .ci/config/herdr/sessions/*/test-server.log
+          path: |
+            .ci/config/herdr/sessions/*/test-server.log
+            .ci/browser-evidence/*.png
+          include-hidden-files: true
           if-no-files-found: ignore

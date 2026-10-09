@@ -16,9 +16,10 @@ describe("claudeProcessSession", () => {
     roots.push(home);
     const dir = join(home, ".claude", "sessions");
     mkdirSync(dir, { recursive: true });
+    // as Claude Code records it: month before day, whatever the user's locale
     const procStart = process.platform === "linux"
       ? readFileSync("/proc/self/stat", "utf8").split(") ").pop()?.split(" ")[19]
-      : Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(process.pid)], { env: { ...process.env, TZ: "UTC" } }).stdout.toString().trim();
+      : Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(process.pid)], { env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }).stdout.toString().trim();
     writeFileSync(join(dir, `${process.pid}.json`), JSON.stringify({
       pid: process.pid, sessionId: SESSION, procStart, kind: "interactive", ...patch,
     }));
@@ -28,6 +29,19 @@ describe("claudeProcessSession", () => {
   it.skipIf(!NATIVE)("reads an exact live PID's session without a cwd guess", async () => {
     const home = nativeRecord();
     expect(await claudeProcessSession(home, process.pid)).toBe(SESSION);
+  });
+
+  it.skipIf(process.platform !== "darwin")("reads it on a Mac whose locale puts the day first", async () => {
+    const home = nativeRecord();
+    const saved = process.env["LC_ALL"];
+    // en_GB's ps prints "Fri  9 Oct …" for the "Fri Oct  9 …" Claude recorded
+    process.env["LC_ALL"] = "en_GB.UTF-8";
+    try {
+      expect(await claudeProcessSession(home, process.pid)).toBe(SESSION);
+    } finally {
+      if (saved === undefined) delete process.env["LC_ALL"];
+      else process.env["LC_ALL"] = saved;
+    }
   });
 
   for (const [name, patch] of [

@@ -31,10 +31,11 @@ export function stateSeqs(snapshot: Pick<SessionSnapshot, "agents"> | null | und
  * What `liveSeqs` remembers between snapshots: each pane's last status, the changes it dated
  * itself (`bumped`), and for each pane the last stand-in herdr's own counter replaced
  * (`promoted`, stand-in → counter), so a record made at the stand-in can follow it (`carrySeen`),
- * and herdr's own counter per pane at the last call (`real`).
+ * herdr's own counter per pane at the last call (`real`), and how many herdr restarts it noticed
+ * (`restarts`).
  */
-export interface SeqMemory { status: Map<string, unknown>; bumped: Map<string, number>; promoted: Map<string, { from: number; to: number }>; real: Map<string, number> }
-export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new Map(), promoted: new Map(), real: new Map() });
+export interface SeqMemory { status: Map<string, unknown>; bumped: Map<string, number>; promoted: Map<string, { from: number; to: number }>; real: Map<string, number>; restarts: number }
+export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new Map(), promoted: new Map(), real: new Map(), restarts: 0 });
 
 /**
  * `stateSeqs`, kept in step with pushed statuses. A pane-status push lands in the snapshot at once
@@ -45,7 +46,7 @@ export const newSeqMemory = (): SeqMemory => ({ status: new Map(), bumped: new M
  * and the swap is kept in `memory.promoted`. A change that arrives with a new counter of herdr's (a
  * roster read that saw it first) keeps that counter, so herdr's order between changes stands, and
  * drops the pane's earlier stand-in, which dated an older change. A counter that went back means
- * herdr restarted: every stand-in is dropped. Mutates `memory`.
+ * herdr restarted: every stand-in is dropped and `memory.restarts` goes up. Mutates `memory`.
  */
 export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | null | undefined, memory: SeqMemory): Map<string, number> {
   const seqs = stateSeqs(snapshot);
@@ -53,6 +54,7 @@ export function liveSeqs(snapshot: Pick<SessionSnapshot, "agents" | "panes"> | n
   if ([...seqs].some(([id, real]) => real < (memory.real.get(id) ?? real))) {
     memory.bumped.clear();
     memory.promoted.clear();
+    memory.restarts++;
   }
   let top = Math.max(0, ...seqs.values(), ...memory.bumped.values());
   for (const pane of panes) {
@@ -158,6 +160,15 @@ export function pruneSeen(record: SeenRecord, panes: readonly Pick<PaneInfo, "pa
   const next: Record<string, number> = { ...record };
   for (const id of gone) delete next[id];
   return next;
+}
+
+/**
+ * The record once herdr restarted (`SeqMemory.restarts` went past `handled`, the count the record
+ * was last kept at): none of it. `pruneSeen` drops only entries above a pane's new counter, and one
+ * that happens to equal it would mark a finish of the new session as looked at (#591).
+ */
+export function seenAfterRestart(record: SeenRecord, restarts: number, handled: number): SeenRecord {
+  return restarts > handled && Object.keys(record).length > 0 ? {} : record;
 }
 
 /**

@@ -190,7 +190,9 @@ The bridge claims the same message ID for Send now and an automatic send, so the
 deliver it. Older bridges keep the draft and ask for an update instead of changing queueing into
 an immediate send. Connection loss pauses automatic delivery; uncertain text can be copied or
 discarded after checking the terminal. Previously held browser messages still need **Send now**
-or **Discard**.
+or **Discard**. A message is never pasted over text typed in Claude Code's own input box: while
+that box holds a draft the message stays in the list with the reason, and **Send now** delivers it
+once the draft is sent or cleared in the terminal.
 
 ## Subscription usage
 
@@ -441,9 +443,9 @@ This is for Linux and macOS. On Windows, and for a remote PC, update herdr on th
 
 ## Anonymous usage counts
 
-The app tells its maintainer how many installs there are and which versions they run, and nothing else. It sends one small message when it is first installed and one each time it runs a new version, never in between. The first time you open the app, a line under the header says so, with **What is sent** and **Turn off**. Nothing is sent before that line has been shown, and the first message waits ten minutes after it, so **Turn off** on that line stops it.
+The app tells its maintainer how many installs there are, which versions they run and which countries they are in, and nothing else. It sends one small message when it is first installed and one each time it runs a new version, never in between. The first time you open the app, a line under the header says so, with **What is sent** and **Turn off**. Nothing is sent before that line has been shown, and the first message waits ten minutes after it, so **Turn off** on that line stops it.
 
-A message holds the event (`install` or `update`), a random ID made on this PC, the app's version and the version an update replaced, the OS and CPU architecture, and how the app was installed (herdr plugin, `bun run start`, or `bun run server`). Nothing about your terminals, agents, files, workspaces or accounts is in it. The receiver ([`telemetry/`](../telemetry/README.md)) keeps those fields and the day, and never stores your IP address.
+A message holds the event (`install` or `update`), a random ID made on this PC, the app's version and the version an update replaced, the OS and CPU architecture, and how the app was installed (herdr plugin, `bun run start`, or `bun run server`). Nothing about your terminals, agents, files, workspaces or accounts is in it. The receiver ([`telemetry/`](../telemetry/README.md)) keeps those fields, the day and the country the message came from (two letters, such as `KR`, worked out by its host from the connection), and never stores your IP address or anything finer than the country.
 
 **Settings → About → Anonymous usage counts** shows the next message exactly as it would be sent, and its switch turns the counts off for this PC. `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` in the server's environment turns them off whatever the switch says, and they are always off in CI. A remote PC's bridge sends nothing.
 

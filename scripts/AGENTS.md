@@ -16,6 +16,8 @@ Build, code generation, CI orchestration and the browser QA harness. Only `build
 
 ## BROWSER LANE
 - The lane builds the demo client once into `HERDR_DEMO_BUILD` and every script copies it (`demo-build.ts`). Run with a directory, `demo-build.ts` always builds into it whatever `HERDR_DEMO_BUILD` says, which is what makes that directory the one the others copy; a script run on its own builds its own.
+- `ci-browser.sh` times each script, including the shared demo build, in wall seconds. Its EXIT summary lists every completed script, including a failing one; the first failure still stops the lane, cleanup still runs, and the original exit code is kept.
+- Automatic evidence is limited to existing captures in `sticky-modifiers-regression.ts` and `file-viewer-regression.ts`. The evidence branches in `ui-regression.ts` and `key-bar-customization-demo-regression.ts` add assertions, viewport changes or font waits, so the lane disables those under `CI` or `CHECK_DIR`. There is no shared browser launcher to capture all open pages at failure.
 - `CHROME_PATH` is the lockfile's `playwright-core` Chromium. Only under `CI` are its system libraries installed (`install-deps`, as root through `ci-bounded-retry.sh`, which bounds each apt attempt and tries three times), because a PC is never asked for sudo.
 - `ui-regression.ts` runs its checks in one process behind one outer try/finally: the first failure skips every later check (cleanup still runs), and a check that waits without a deadline stops the rest of the suite instead of failing it.
 

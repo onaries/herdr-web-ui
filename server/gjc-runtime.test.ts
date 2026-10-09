@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSy
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { forgetTranscriptState } from "./conversation.ts";
-import { boundGjcTranscript, gjcAnswerAmong, gjcSessionTitle, gjcStatusTitle, gjcTitles, gjcBreadcrumbPath, gjcDisplayCandidates, gjcPidUnderShell, gjcSessionFile, isGjcProcess, matchGjcTranscript, parseGjcPs, recentProcessTable, storeRelative } from "./gjc-runtime.ts";
+import { boundGjcTranscript, gjcAnswerAmong, gjcSessionTitle, gjcStatusTitle, gjcTitles, gjcDisplayCandidates, gjcPidUnderShell, gjcSessionFile, isGjcProcess, matchGjcTranscript, parseGjcPs, recentProcessTable, storeRelative, terminalBreadcrumb } from "./gjc-runtime.ts";
 
 // Session paths come back canonical and the store root is passed in canonical; macOS's tmpdir is a symlink into /private.
 const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -35,15 +35,16 @@ it("validates breadcrumbs against process age, canonical cwd and the native sess
     const path = join(store, "session.jsonl"), marker = join(markers, "ttys003");
     writeFileSync(path, JSON.stringify({ type: "session", cwd: home }) + "\n");
     writeFileSync(marker, `${home}\n${path}\n`);
-    expect(gjcBreadcrumbPath(home, home, "ttys003", Date.now() - 1000)).toBe(path);
-    expect(gjcBreadcrumbPath(home, "/", "ttys003", 0)).toBeNull();
-    expect(gjcBreadcrumbPath(home, home, "../sessions/session.jsonl", 0)).toBeNull();
+    const agent = join(home, ".gjc/agent");
+    expect(terminalBreadcrumb(agent, home, "ttys003", Date.now() - 1000)).toBe(path);
+    expect(terminalBreadcrumb(agent, "/", "ttys003", 0)).toBeNull();
+    expect(terminalBreadcrumb(agent, home, "../sessions/session.jsonl", 0)).toBeNull();
     utimesSync(marker, new Date(0), new Date(0));
-    expect(gjcBreadcrumbPath(home, home, "ttys003", Date.now())).toBeNull();
+    expect(terminalBreadcrumb(agent, home, "ttys003", Date.now())).toBeNull();
     const outside = join(home, "outside.jsonl"), escape = join(store, "escape.jsonl");
     writeFileSync(outside, JSON.stringify({ type: "session", cwd: home })); symlinkSync(outside, escape);
     writeFileSync(marker, `${home}\n${escape}\n`);
-    expect(gjcBreadcrumbPath(home, home, "ttys003", 0)).toBeNull();
+    expect(terminalBreadcrumb(agent, home, "ttys003", 0)).toBeNull();
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -57,12 +58,12 @@ it("reads a breadcrumb left on a subagent's file as the session that ran it", ()
     const session = join(store, "2026-09-29_session.jsonl"), subagent = join(store, "2026-09-29_session", "2-Worker.jsonl");
     writeFileSync(session, header); writeFileSync(subagent, header);
     writeFileSync(join(markers, "pts-3"), `${home}\n${subagent}\n`);
-    expect(gjcBreadcrumbPath(home, home, "pts-3", 0)).toBe(session);
+    expect(terminalBreadcrumb(join(home, ".gjc/agent"), home, "pts-3", 0)).toBe(session);
     expect(gjcSessionFile(root, session)).toBe(session);
     expect(gjcSessionFile(root, subagent)).toBe(session);
     // a subagent whose session file is gone, or any other depth, stands for nothing
     rmSync(session);
-    expect(gjcBreadcrumbPath(home, home, "pts-3", 0)).toBeNull();
+    expect(terminalBreadcrumb(join(home, ".gjc/agent"), home, "pts-3", 0)).toBeNull();
     expect(gjcSessionFile(root, subagent)).toBeNull();
     expect(gjcSessionFile(root, join(root, "top.jsonl"))).toBeNull();
     expect(gjcSessionFile(root, join(store, "a", "b", "c.jsonl"))).toBeNull();

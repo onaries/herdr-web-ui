@@ -487,6 +487,7 @@ export const JA: Record<string, string> = {
   "Send message": "メッセージを送信",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "未送信: エージェントがターミナルで回答を待っています。先に回答してください。",
   "Not sent: this view only watches the pane.": "未送信: この画面はペインを閲覧するだけです。",
+  "Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.": "未送信: ターミナルの Claude Code の入力欄が空ではありません。そこで送信するか消してから、このメッセージを送ってください。",
   "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.": "未送信: 前のメッセージの後で長く待ちすぎたため、何も入力されませんでした。もう一度送信してください。",
   "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.": "未確認: ペインがこのメッセージを確認しませんでした。再送信する前にターミナルを確認してください。",
   "Not sent: {message}": "未送信: {message}",
@@ -499,6 +500,7 @@ export const JA: Record<string, string> = {
 
   // ---- chat view ----
   "Copied": "コピーしました",
+  "Couldn't copy. Select the text and copy it manually.": "コピーできませんでした。テキストを選択して手動でコピーしてください。",
   "Output": "出力",
   "thinking": "思考",
   "Working…": "作業中…",
@@ -835,13 +837,14 @@ export const JA: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "{workspace} の最後のタブです。ワークスペースも一緒に閉じ、その中のエージェントとシェルが停止します。",
   "Tabs of {workspace}": "{workspace} のタブ",
   "{n} panes": "{n} 個のペイン",
-  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.": "herdr web ui はインストール時と更新時に匿名の集計を送ります。送るのはバージョン、OS、ランダムな ID だけです。",
+  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. The receiver also notes the country it came from, never the address.": "herdr web ui はインストール時と更新時に匿名の集計を送ります。送るのはバージョン、OS、ランダムな ID です。受信側は送信元の国も記録しますが、アドレスは記録しません。",
   "What is sent": "送信内容",
   "Turn off": "オフにする",
   "Could not turn it off. Try again.": "オフにできませんでした。もう一度お試しください。",
   "Anonymous usage counts": "匿名の利用集計",
   "Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "この PC では HERDR_WEB_TELEMETRY=0、DO_NOT_TRACK または CI 環境によりオフになっています。",
   "Send install and update counts": "インストールと更新の集計を送る",
-  "Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.": "アプリのインストール時に 1 回、更新のたびに 1 回送ります。IP アドレスは保存せず、ターミナル、エージェント、ファイルについては何も送りません。",
+  "Once when the app is installed and once per update. The receiver notes the country a message came from but stores no IP address, and nothing about your terminals, agents or files is sent.": "アプリのインストール時に 1 回、更新のたびに 1 回送ります。受信側はメッセージの送信元の国を記録しますが IP アドレスは保存せず、ターミナル、エージェント、ファイルについては何も送りません。",
+  "The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.": "受信側が、このメッセージの送信元の国（KR のような 2 文字）を付け加えます。アドレスは保存しません。",
   "This version has already been counted. The next event is sent after an update.": "このバージョンは集計済みです。次の送信は更新の後です。",
 };

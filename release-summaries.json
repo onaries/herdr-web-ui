@@ -1,4 +1,70 @@
 {
+  "0.4.3": {
+    "en": {
+      "improved": [
+        "omp panes started with a profile, or running for a long time, show their chat",
+        "A remote PC lists a pane's new agent at once, after its bridge is updated"
+      ],
+      "fixed": [
+        "Claude panes show their chat on Macs with a non-US time format, such as Korean",
+        "A queued chat message is no longer pasted over what you are typing in Claude Code's box",
+        "Arrow keys work in less, git log and man, and clicks reach programs that read the mouse",
+        "Claude Code 2.1.29x approvals and questions show as cards again",
+        "Copy buttons in the chat work on plain-HTTP LAN addresses",
+        "An alert chimes once across open tabs, and is still heard if that tab closes",
+        "A tab left open in the background no longer resizes the pane you are using elsewhere",
+        "The plugin finds Bun when herdr starts from a GUI app; reinstall the plugin through herdr"
+      ]
+    },
+    "ko": {
+      "improved": [
+        "프로필로 시작했거나 오래 실행 중인 omp pane도 채팅에서 대화로 보입니다",
+        "원격 PC pane의 새 에이전트가 바로 보입니다. 그 PC의 브리지를 업데이트한 뒤부터입니다"
+      ],
+      "fixed": [
+        "시간 형식이 미국식이 아닌 Mac(한국어 포함)에서도 Claude pane이 채팅으로 보입니다",
+        "대기 중인 채팅 메시지가 Claude Code 입력란에 쓰던 글 위에 붙여 넣어지지 않습니다",
+        "less, git log, man에서 화살표 키가 동작하고, 마우스를 읽는 프로그램에 클릭이 전달됩니다",
+        "Claude Code 2.1.29x의 승인과 질문이 다시 카드로 보입니다",
+        "채팅의 복사 버튼이 일반 HTTP LAN 주소에서도 동작합니다",
+        "알림 하나는 열린 탭들 사이에서 한 번만 울리고, 그 탭이 닫혀도 들립니다",
+        "뒤에 열어 둔 탭이 다른 곳에서 쓰는 pane의 크기를 바꾸지 않습니다",
+        "herdr를 GUI 앱에서 시작해도 플러그인이 Bun을 찾습니다. herdr로 플러그인을 다시 설치하세요"
+      ]
+    },
+    "ja": {
+      "improved": [
+        "プロファイル付きで起動した omp や長く動いている omp のペインも、チャットで会話として表示されます",
+        "リモート PC のペインに新しいエージェントがすぐ表示されます。その PC のブリッジ更新後から有効です"
+      ],
+      "fixed": [
+        "時刻の形式が米国式でない Mac(韓国語を含む)でも、Claude のペインがチャットで表示されます",
+        "待機中のチャットメッセージが、Claude Code の入力欄で書きかけの文の上に貼り付けられません",
+        "less、git log、man で矢印キーが効き、マウスを読むプログラムにクリックが届きます",
+        "Claude Code 2.1.29x の承認と質問が、再びカードで表示されます",
+        "チャットのコピーボタンが、プレーン HTTP の LAN アドレスでも動きます",
+        "ひとつの通知は開いたタブ全体で一度だけ鳴り、そのタブが閉じても聞こえます",
+        "裏で開いたままのタブが、別の場所で使っているペインのサイズを変えません",
+        "herdr を GUI アプリから起動してもプラグインが Bun を見つけます。herdr でプラグインを再インストールしてください"
+      ]
+    },
+    "zh": {
+      "improved": [
+        "以配置文件启动或长时间运行的 omp 窗格也会在聊天中显示为对话",
+        "远程 PC 窗格中的新代理会立即显示,需先更新该 PC 的 bridge"
+      ],
+      "fixed": [
+        "时间格式不是美式的 Mac(包括韩语)上,Claude 窗格也能在聊天中显示",
+        "排队的聊天消息不再粘贴到你在 Claude Code 输入框中正在输入的文字上",
+        "less、git log、man 中方向键可用,点击也能传到读取鼠标的程序",
+        "Claude Code 2.1.29x 的批准和提问再次显示为卡片",
+        "聊天中的复制按钮在纯 HTTP 局域网地址上也能使用",
+        "同一提醒在所有打开的标签页中只响一次,该标签页关闭后仍能听到",
+        "在后台打开的标签页不再改变你在别处使用的窗格大小",
+        "herdr 从图形界面应用启动时插件也能找到 Bun;请通过 herdr 重新安装插件"
+      ]
+    }
+  },
   "0.4.2": {
     "en": {
       "new": [

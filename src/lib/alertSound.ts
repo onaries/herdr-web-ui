@@ -10,9 +10,9 @@
  * One chime sounds at a time in a tab. Alerts that come together - several panes finishing at
  * once - would otherwise sound over each other. An alert that comes while a chime sounds is
  * already told by it, except a question after a finish: the question's chime starts where the
- * finish's ends, so a question is never lost. Open tabs of the app do not take turns: each
- * chimes for an alert they all hear, since a tab cannot tell which alert another tab's chime
- * was for, and staying quiet on a guess could leave a question told by no tab.
+ * finish's ends, so a question is never lost. `alertTurns.ts` coordinates eligible tabs by
+ * machine, pane and kind. An alert deferred to another tab stays pending until that tab
+ * confirms it chimed, or a local deadline/withdrawal lets this tab tell it instead.
  */
 
 export type AlertSoundKind = "blocked" | "done";
@@ -29,7 +29,7 @@ const PEAK_GAIN = 0.25;
 let context: AudioContext | null = null;
 // this tab's chimes that have not ended, on its context's clock: when the last of them ends,
 // and when the last question's does (a preview queued behind a question does not move that)
-let sounding: { audio: AudioContext; until: number; question: number } | null = null;
+let sounding: { audio: AudioContext; until: number; question: number; questionStart: number } | null = null;
 
 function contextClass(): typeof AudioContext | undefined {
   return globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -53,10 +53,25 @@ export async function unlockAlertSound(): Promise<boolean> {
   return context.state === "running";
 }
 
-/** An alert: chimes, unless a chime this tab is playing already tells it. */
-export function playAlertSound(kind: AlertSoundKind): void {
+export function canPlayAlertSound(): boolean {
+  return context?.state === "running";
+}
+
+/** Confirms only audio that started, not a question scheduled behind a finish or preview. */
+export function playAlertSound(kind: AlertSoundKind): boolean | Promise<boolean> {
   const audio = context;
-  if (audio?.state === "running") chime(audio, kind);
+  if (audio?.state !== "running") return false;
+  const start = chime(audio, kind);
+  if (start <= audio.currentTime) return true;
+  return new Promise((resolve) => {
+    const check = () => {
+      if (audio.state !== "running" || context !== audio) { resolve(false); return; }
+      const remaining = start - audio.currentTime;
+      if (remaining <= 0) resolve(true);
+      else setTimeout(check, Math.ceil(remaining * 1_000));
+    };
+    check();
+  });
 }
 
 /** Settings' preview of the chime: always played, after a chime of this tab that still sounds. */
@@ -66,11 +81,11 @@ export function previewAlertSound(): void {
 }
 
 /** Plays `kind` unless this tab's last chime still sounds; a preview then starts where it ends. */
-function chime(audio: AudioContext, kind: AlertSoundKind, preview = false): void {
+function chime(audio: AudioContext, kind: AlertSoundKind, preview = false): number {
   const now = audio.currentTime;
   const current = sounding !== null && sounding.audio === audio && sounding.until > now ? sounding : null;
   // already told by a chime that sounds or waits its turn: a finish by any, a question by a question's
-  if (current && !preview && (kind === "done" || current.question > now)) return;
+  if (current && !preview && (kind === "done" || current.question > now)) return kind === "blocked" ? Math.max(now, current.questionStart) : now;
   const start = current ? current.until : now;
   const notes = CHIME_NOTES[kind];
   notes.forEach((frequency, index) => {
@@ -88,5 +103,10 @@ function chime(audio: AudioContext, kind: AlertSoundKind, preview = false): void
     oscillator.stop(at + NOTE_LENGTH_S);
   });
   const until = start + (notes.length - 1) * NOTE_GAP_S + NOTE_LENGTH_S;
-  sounding = { audio, until, question: kind === "blocked" && !preview ? until : current?.question ?? 0 };
+  sounding = {
+    audio, until,
+    question: kind === "blocked" && !preview ? until : current?.question ?? 0,
+    questionStart: kind === "blocked" && !preview ? start : current?.questionStart ?? 0,
+  };
+  return start;
 }

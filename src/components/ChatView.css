@@ -136,6 +136,17 @@
   pointer-events: auto;
 }
 
+.chat-copy-error,
+.markdown-code-error {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--fs-xs);
+}
+
+.markdown-code-error {
+  padding: var(--space-2) var(--space-3) 0;
+}
+
 .chat-copy {
   width: var(--chip-h);
   height: var(--chip-h);

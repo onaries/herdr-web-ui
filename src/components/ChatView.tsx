@@ -15,6 +15,7 @@ import { turnRevision } from "../lib/turnRevision.ts";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
+import { copyText } from "../lib/clipboard.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
 import { isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
@@ -107,13 +108,14 @@ function plainText(markdown: string): string {
 }
 
 /** A quiet text button that copies and says "Copied" for a moment. */
-function CopyButton({ text, label, className = "icon-button chat-copy", children }: { text: string; label: string; className?: string; children?: React.ReactNode }) {
+function CopyButton({ text, label, className = "icon-button chat-copy", children, onResult }: { text: string; label: string; className?: string; children?: React.ReactNode; onResult: (ok: boolean) => void }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    const ok = await copyText(text);
+    setCopied(ok);
+    onResult(ok);
+    if (ok) window.setTimeout(() => setCopied(false), 1500);
   };
   return (
     <button type="button" className={copied ? `${className} is-copied` : className} onClick={() => void copy()} aria-label={copied ? t("Copied") : label} title={copied ? t("Copied") : label}>
@@ -457,6 +459,10 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 // a turn that did not change keeps its object across polls: skip re-rendering it
 const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: TurnProps) {
   const t = useT();
+  // under the turn, not in its meta row: that row fades out once the pointer and focus leave
+  const [copyFailed, setCopyFailed] = useState(false);
+  const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
+  const copied = (ok: boolean): void => setCopyFailed(!ok);
   const time = formatTime(turn.ts);
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
@@ -489,8 +495,9 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: T
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
         {text.length > 0 && <div className="chat-bubble"><Markdown>{text}</Markdown></div>}
-        <div className="chat-turn-meta">{time !== null && <time dateTime={turn.ts ?? undefined}>{time}</time>}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} />}</div>
+        <div className="chat-turn-meta">{time !== null && <time dateTime={turn.ts ?? undefined}>{time}</time>}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
       </div>
+      {copyError}
       {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
       <SkillActivityList parts={turn.parts} />
     </article>;
@@ -505,10 +512,11 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: T
     {answer.map((part, index) => <Markdown key={index}>{part.text}</Markdown>)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
-      <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")}><span className="chat-meta-fmt">MD</span></CopyButton>
-      <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>
+      <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
+      <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")} onResult={copied}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>
       {time !== null && <time dateTime={turn.ts ?? undefined}>{time}</time>}
     </div>}
+    {copyError}
   </article>;
 });
 

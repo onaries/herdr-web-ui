@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Machine } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
-import { MachineManager } from "./machines.ts";
+import { bridgeAgentNews, MachineManager } from "./machines.ts";
 import type { PushService } from "./push.ts";
 
 const cleanups: (() => void)[] = [];
@@ -446,5 +446,49 @@ describe("machine snapshot refresh races", () => {
     expect(local.calls()).toBe(2);
     expect(manager.list()[0]?.snapshot?.panes[0]?.agent_status).toBe("blocked");
     expect(rosters).toEqual([]);
+  });
+});
+
+describe("a bridge's agent news (#555)", () => {
+  const pane = (agent: string | null) => [{ pane_id: "p1", agent }];
+  const bridge = () => { let told = 0; return { news: bridgeAgentNews(() => { told++; }), told: () => told }; };
+
+  it("tells its connection server of an agent first seen in a reconciled snapshot, once", () => {
+    const { news, told } = bridge();
+    // a pane first seen as a shell is what the roster's own read showed
+    news.reconciled(pane(null));
+    expect(told()).toBe(0);
+    // herdr names an agent there with no status event: only a reconcile shows it
+    news.reconciled(pane("claude"));
+    expect(told()).toBe(1);
+    news.reconciled(pane("claude"));
+    expect(told()).toBe(1);
+  });
+
+  it("leaves an agent named in a status event to that event's own frame", () => {
+    const { news, told } = bridge();
+    news.reconciled(pane(null));
+    news.status(pane("codex"));
+    news.reconciled(pane("codex"));
+    expect(told()).toBe(0);
+  });
+
+  it("forgets no pane a reconcile left out for being newer than its snapshot", () => {
+    const { news, told } = bridge();
+    news.reconciled(pane("claude"));
+    expect(told()).toBe(1);
+    // the collector filters out a pane heard of while its snapshot was read
+    news.reconciled([]);
+    news.status(pane("claude"));
+    news.reconciled(pane("claude"));
+    expect(told()).toBe(1);
+  });
+
+  it("hears a pane's id anew once the pane ended", () => {
+    const { news, told } = bridge();
+    news.reconciled(pane("claude"));
+    news.ended("p1");
+    news.reconciled(pane("claude"));
+    expect(told()).toBe(2);
   });
 });

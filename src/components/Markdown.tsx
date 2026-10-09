@@ -5,6 +5,7 @@ import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBl
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
 import { fileUriPath } from "../lib/terminalFileLinks.ts";
 import { useT } from "../lib/i18n.ts";
+import { copyText } from "../lib/clipboard.ts";
 
 type Katex = typeof import("katex").default;
 /** KaTeX is a fifth of the app's script: the first expression loads it (lib/katex.ts), and every later one has it at once. */
@@ -105,14 +106,16 @@ function List({ block }: { block: ListBlock }) {
 function CodeBlock({ language, value }: { language: string; value: string }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const block = useRef<HTMLDivElement>(null);
   // no inner scroll: a long block folds, with a visible "Show all" row
   const fold = useMemo(() => foldCode(value), [value]);
   const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    const ok = await copyText(value);
+    setCopied(ok);
+    setCopyFailed(!ok);
+    if (ok) window.setTimeout(() => setCopied(false), 1500);
   };
   const folding = useRef(false);
   const toggle = (): void => {
@@ -136,6 +139,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
           {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         </button>
       </div>
+      {copyFailed && <p className="markdown-code-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>}
       <pre><code>{fold !== null && !expanded ? fold.head : value}</code></pre>
       {fold !== null && (
         <button type="button" className="markdown-code-more" aria-expanded={expanded} onClick={toggle}>

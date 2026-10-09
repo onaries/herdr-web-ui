@@ -27,9 +27,9 @@
 
 ---
 
-https://github.com/user-attachments/assets/db788c07-cd68-486d-8ce9-e676a2889c2d
+https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 
-<p align="center"><sub>Claude Code asks in herdr's terminal; the browser and the phone show the same question, and one tap on the phone answers it · recorded live, no cuts</sub></p>
+<p align="center"><sub>One Claude Code session: in herdr's terminal, then the browser's Terminal and Chat, then the phone, where a new worktree starts beside it · recorded live, no cuts</sub></p>
 
 **Claude Code and Codex, from your phone.**
 
@@ -38,36 +38,36 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="https://github.com/user-attachments/assets/33ed2183-9b94-4677-8980-edd90d45750a"><img src="docs/media/readme/terminal.webp" width="100%" alt="Live recording. The browser shows Claude Code's reply in Chat; a click on Terminal shows the same pane as Claude Code's own terminal, with its edit adding the test &quot;unknown refund is 404&quot; to src/server.test.ts. On the phone, in the tests tab's terminal, ↑ on the key bar brings back bun test and the input line's Enter button runs it: 5 pass, 0 fail."></a>
+      <a href="https://github.com/user-attachments/assets/32ca9aa4-960f-4629-9fb5-17c12ba35c80"><img src="docs/media/readme/terminal.webp" width="100%" alt="Live recording. The browser shows Claude Code's reply in Chat; a click on Terminal shows the same pane as Claude Code's own terminal, with its edit adding the test &quot;unknown refund is 404&quot; to src/server.test.ts. On the phone, in the tests tab's terminal, ↑ on the key bar brings back bun test and the key bar's Enter runs it: 5 pass, 0 fail."></a>
       <br><b>Switch to the live terminal</b>
-      <br><sub>One click turns the chat into the pane's real terminal; on the phone, ↑ on the key bar brings back the test command and Enter runs it again.</sub>
+      <br><sub>One click turns the chat into the pane's real terminal; on the phone, ↑ on the key bar brings back the test command and Enter beside it runs it again.</sub>
     </td>
     <td width="50%" valign="top">
-      <a href="https://github.com/user-attachments/assets/ac8dbf34-5c27-441b-8e49-e3850eac0c27"><img src="docs/media/readme/layout.webp" width="100%" alt="Live recording. The browser shows herdr's layout: four workspaces in the sidebar with their agent states (checkout-api DONE, web-dashboard RUN, infra READY, release), and checkout-api's tabs payments and dev. A click on the dev tab shows its first pane, bun test with 4 pass; the tab's pane menu lists the split's two panes, tests and git, and a click on git shows its git log. On the phone, ☰ opens the same four workspaces with the same states, and a tap on checkout-api opens Claude's chat: &quot;What does this repo do? Answer in one line.&quot; and its answer."></a>
+      <a href="https://github.com/user-attachments/assets/22d10639-9aa6-4953-a5f3-a1b743f4053b"><img src="docs/media/readme/layout.webp" width="100%" alt="Live recording. The browser shows herdr's layout: four workspaces in the sidebar, each row ending in its agent's state (a green dot on checkout-api, whose Claude has finished, a turning arc on web-dashboard, whose Codex is working, nothing on infra and release), and checkout-api's tabs payments and dev. A click on the dev tab shows its first pane, tests, with bun test's 4 pass; the tab's pane menu lists the split's two panes, tests and git, and a click on git shows its git log while checkout-api's row names git. On the phone, ☰ opens the same four workspaces with the same states, and a tap on checkout-api opens Claude's chat: &quot;What does this repo do? Answer in one line.&quot; and its answer."></a>
       <br><b>Your herdr layout, in the browser</b>
       <br><sub>Every workspace, tab and split pane, with each agent's state: click a tab, pick a pane of a split, or switch workspaces from the phone.</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="https://github.com/user-attachments/assets/804ed0e1-54e6-4c1a-9d87-bd769a970315"><img src="docs/media/readme/alerts.webp" width="100%" alt="Live recording. The phone shows another workspace's terminal while Claude works on checkout-api in the browser. When Claude asks which rate limit to use, an alert reading &quot;checkout-api Needs input&quot; drops in on the phone and a tap opens the question as a card; the browser lists checkout-api under Needs you with the same card."></a>
+      <a href="https://github.com/user-attachments/assets/b228a2b8-6db5-4546-a15b-972056000cab"><img src="docs/media/readme/alerts.webp" width="100%" alt="Live recording. The phone shows another workspace's terminal while Claude works on checkout-api in the browser. When Claude asks which rate limit to use, an alert reading &quot;checkout-api Needs input&quot; drops in on the phone and a tap opens the question as a card; in the browser, checkout-api's row and its row under Agents show a red question mark, and the same card waits in its chat."></a>
       <br><b>Know when an agent needs you</b>
       <br><sub>On another workspace, an alert drops in when Claude asks; one tap opens its question.</sub>
     </td>
     <td width="50%" valign="top">
-      <a href="https://github.com/user-attachments/assets/25e55478-354b-4c5d-a33a-c1158f4b819a"><img src="docs/media/readme/attach.webp" width="100%" alt="Live recording. On the phone, the paperclip attaches a screenshot of a receipt showing $NaN and inserts its path, then &quot;Fix this, with a test.&quot; is sent; the same message with the image appears in the desktop's chat, and Claude starts by reading src/routes/receipt.ts."></a>
+      <a href="https://github.com/user-attachments/assets/a193b426-259c-47d9-bd73-10acc2594265"><img src="docs/media/readme/attach.webp" width="100%" alt="Live recording. On the phone, checkout-api's empty chat asks &quot;What should Claude do in checkout-api?&quot;. The + button attaches a screenshot of a receipt whose total reads $NaN and inserts its path, then &quot;Fix this, with a test.&quot; is typed and sent. The camera pulls back as the message with the screenshot appears on the phone and in the desktop's chat, then moves in on the desktop's chat. In the full video, Claude then runs its first command, which reads src/routes/receipt.ts and src/server.ts."></a>
       <br><b>Send a screenshot from your phone</b>
-      <br><sub>The paperclip uploads it into the pane's folder and adds its path; Claude reads the image.</sub>
+      <br><sub>The + button uploads it into the pane's folder and adds its path; Claude reads the image.</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="https://github.com/user-attachments/assets/b410d41c-a822-47fe-94a5-88becab9b235"><img src="docs/media/readme/open.webp" width="100%" alt="Live recording. In the browser's terminal, Claude Code has written bench/p95.svg; a click on the path opens the chart in the file viewer, and a tap on the same path in the phone's chat opens it full screen."></a>
+      <a href="https://github.com/user-attachments/assets/bc419d3e-ebda-4fb5-acc5-e498609559fe"><img src="docs/media/readme/open.webp" width="100%" alt="Live recording. In the browser's terminal, Claude Code has written bench/p95.svg; a click on the path in its answer opens the chart in the file viewer, and a tap on the same path in the phone's chat opens it full screen."></a>
       <br><b>Open what the agent made</b>
       <br><sub>Click a path in the terminal, or tap it in the chat: the file opens right there.</sub>
     </td>
     <td width="50%" valign="top">
-      <a href="https://github.com/user-attachments/assets/3a50f082-d13a-4a88-b2a4-7bc050e8a47a"><img src="docs/media/readme/worktree.webp" width="100%" alt="Live recording. On the phone, checkout-api's ⋯ menu → New worktree opens a form with the branch worktree/clear-forest-3580 already filled in; Claude Code is picked and Create worktree is tapped, and in the browser a new row appears nested under checkout-api, becomes Claude Code and shows READY."></a>
+      <a href="https://github.com/user-attachments/assets/150a4c9d-7667-4f63-ba56-8f91e6a25878"><img src="docs/media/readme/worktree.webp" width="100%" alt="Live recording. On the phone, checkout-api's ⋯ menu → New worktree opens a form with the branch worktree/clear-field-23e0 already filled in; Claude Code is picked and Create worktree is tapped. The camera moves to the browser, where checkout-api's folder is open with the new checkout nested under it, marked as Claude; its row then reads Claude Code over worktree-clear-field-23e0, and the Agents list shows it as a fourth agent."></a>
       <br><b>Branch off a second agent</b>
       <br><sub>From the phone, ⋯ → New worktree: the branch is filled in, pick an agent, and it starts beside the first.</sub>
     </td>
@@ -76,7 +76,7 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 
 <p align="center"><sub>Each clip is a live recording of the desktop and a phone at once, in real time with no cuts. Click one for the full video.</sub></p>
 
-- **Chat and terminal, one pane** — native Claude Code, Codex, omp, omo, gjc and pi transcripts, plus OpenCode 2 sessions herdr identifies, with the live terminal a click away. Write the next message while the agent works: it goes in with the next turn, or at once with Send now. [Supported agents →](docs/guide.md#supported-agents)
+- **Chat and terminal, one pane** — native Claude Code, Codex, omp, omo, gjc and pi transcripts, plus OpenCode 2 and Devin CLI sessions herdr identifies, with the live terminal a click away. Write the next message while the agent works: it goes in with the next turn, or at once with Send now. [Supported agents →](docs/guide.md#supported-agents)
 - **Approve with a tap** — approvals, questions and plan menus become cards, checked to be current before your answer is sent.
 - **Know when you're needed** — live status for every pane, an alert that drops in while the app is open, and push alerts when an agent needs input or finishes, even with the app closed.
 - **Install it on your phone** — a PWA with a key bar above the keyboard (Esc, Tab, Ctrl, Alt, Shift, Enter, arrows) that you can rearrange and extend with your own combinations in Settings, and a QR code to your Tailscale address. [Phone setup →](docs/guide.md#on-your-phone)
@@ -123,7 +123,7 @@ Yes. Run the agent in a [herdr](https://github.com/herdrdev/herdr) pane on your 
 
 **Which agents does the chat view support?**
 
-Claude Code, Codex, omp, omo, gjc and pi are read from their own session files. For OpenCode 2, the chat reads the session herdr reports from OpenCode's database; the home screen and OpenCode 1.x use the live terminal instead. Any other program in a herdr pane gets the live terminal and its status. [Supported agents →](docs/guide.md#supported-agents)
+Claude Code, Codex, omp, omo, gjc and pi are read from their own session files. For OpenCode 2, the chat reads the session herdr reports from OpenCode's database; the home screen and OpenCode 1.x use the live terminal instead. Devin CLI is a chat when herdr or the running process names its session, as `devin --resume <id>` does; a plain `devin` shows the live terminal. Any other program in a herdr pane gets the live terminal and its status. [Supported agents →](docs/guide.md#supported-agents)
 
 **Does it replace herdr's own TUI?**
 
@@ -135,7 +135,7 @@ No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route 
 
 **Does my code or conversation leave my machine?**
 
-Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
+Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and **Settings → About → Anonymous usage counts** shows what is sent and turns it off. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
 
 **Does it work on Windows?**
 

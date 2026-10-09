@@ -16,12 +16,19 @@ import { descendantArgv, windowsProcessTable, type ProcessRow } from "./windows-
 
 export interface GjcTerminal { id: string; startedAt: number }
 
-/** Native gjc and interpreter-launched gjc scripts both occur in process_info. */
-export function isGjcProcess(argv: readonly string[]): boolean {
-  // a Windows process comes with backslashes and `.exe`
-  const executable = /(^|[\\/])gjc(?:\.exe|\.[cm]?js)?$/i;
+/**
+ * An agent run natively or as a bun/node script, as process_info names either: `executable`
+ * matches its binary or script path (a Windows process comes with backslashes and `.exe`).
+ */
+export function runsAgent(argv: readonly string[], executable: RegExp): boolean {
   return executable.test(argv[0] ?? "") ||
     (/(^|[\\/])(?:bun|node)(?:\.exe)?$/i.test(argv[0] ?? "") && executable.test(argv[1] ?? ""));
+}
+
+const GJC_EXECUTABLE = /(^|[\\/])gjc(?:\.exe|\.[cm]?js)?$/i;
+
+export function isGjcProcess(argv: readonly string[]): boolean {
+  return runsAgent(argv, GJC_EXECUTABLE);
 }
 
 const PROCESS_TABLE_MS = 5000;
@@ -339,9 +346,9 @@ export function parseGjcPs(output: string): GjcTerminal | null {
 }
 
 /**
- * The cwd a gjc transcript names in its first line (`{"type":"session",...}`),
- * or null when the file is not one. Read bounded: only the header decides, and
- * a rejected candidate can be megabytes.
+ * The cwd a gjc or omp transcript names in its header (`{"type":"session",...}`), or null when
+ * the file is not one. omp writes a title record before the header. Read bounded: only the
+ * header decides, and a rejected candidate can be megabytes.
  */
 function transcriptCwd(path: string): string | null {
   let fd: number;
@@ -353,7 +360,9 @@ function transcriptCwd(path: string): string | null {
   try {
     const buffer = Buffer.alloc(4096);
     const size = readSync(fd, buffer, 0, buffer.length, 0);
-    const header = JSON.parse(buffer.subarray(0, size).toString("utf8").split("\n")[0] ?? "") as { type?: string; cwd?: unknown };
+    const lines = buffer.subarray(0, size).toString("utf8").split("\n");
+    let header = JSON.parse(lines[0] ?? "") as { type?: string; cwd?: unknown };
+    if (header.type === "title") header = JSON.parse(lines[1] ?? "") as { type?: string; cwd?: unknown };
     return header.type === "session" && typeof header.cwd === "string" ? header.cwd : null;
   } catch {
     return null; // not a gjc transcript, or a header longer than the read
@@ -433,16 +442,19 @@ export function gjcSessionFile(root: string, path: string, paths: PlatformPath =
   try { return statSync(session).isFile() ? session : null; } catch { return null; }
 }
 
-/** Validate the native two-line terminal breadcrumb and reject reused-terminal leftovers. */
-export function gjcBreadcrumbPath(home: string, cwd: string, terminalId: string, startedAt: number): string | null {
+/**
+ * Validate the native two-line terminal breadcrumb under `agentDir/terminal-sessions` and reject
+ * reused-terminal leftovers. GJC and omp both keep one per terminal.
+ */
+export function terminalBreadcrumb(agentDir: string, cwd: string, terminalId: string, startedAt: number): string | null {
   if (!/^(?:pts-\d+|tty[\w-]+|tmux-%\d+)$/.test(terminalId) || !Number.isFinite(startedAt)) return null;
   try {
-    const marker = join(home, ".gjc", "agent", "terminal-sessions", terminalId);
+    const marker = join(agentDir, "terminal-sessions", terminalId);
     const stat = statSync(marker);
     if (!stat.isFile() || stat.size > 8192 || stat.mtimeMs < startedAt - 1000) return null;
     const [savedCwd, savedPath] = readFileSync(marker, "utf8").split("\n");
     if (!savedCwd || !savedPath || realpathSync(savedCwd) !== realpathSync(cwd)) return null;
-    const root = realpathSync(join(home, ".gjc", "agent", "sessions"));
+    const root = realpathSync(join(agentDir, "sessions"));
     const saved = realpathSync(savedPath);
     if (!statSync(saved).isFile()) return null;
     const path = gjcSessionFile(root, saved);
@@ -453,9 +465,41 @@ export function gjcBreadcrumbPath(home: string, cwd: string, terminalId: string,
 }
 
 /**
- * A directory descriptor or cwd proves only the store, not the active session.
- * Prefer an exact open transcript, then GJC's terminal-scoped breadcrumb written
- * during this process lifetime. Never infer ownership from cwd or session recency.
+ * The transcript an agent's processes show, from its store under `agentDir` (GJC and omp lay
+ * theirs out alike): an exact open transcript first, then the terminal-scoped breadcrumb written
+ * during the process's lifetime. A directory descriptor or cwd proves only the store, not the
+ * active session; never infer ownership from cwd or session recency. `path` is null unless
+ * exactly one transcript qualifies; `found` says how many did.
+ */
+export function heldTranscript(agentDir: string, cwd: string, pids: readonly number[]): { path: string | null; found: number } {
+  let root: string;
+  try { root = realpathSync(join(agentDir, "sessions")); }
+  catch { return { path: null, found: 0 }; }
+  const open = new Set<string>();
+  const breadcrumbs = new Set<string>();
+  for (const pid of pids) {
+    const terminal = gjcTerminal(pid);
+    if (terminal) {
+      const path = terminalBreadcrumb(agentDir, cwd, terminal.id, terminal.startedAt);
+      if (path) breadcrumbs.add(path);
+    }
+    let fds: string[] = [];
+    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { /* macOS uses the native breadcrumb */ }
+    for (const fd of fds) {
+      try {
+        const file = realpathSync(readlinkSync(`/proc/${pid}/fd/${fd}`));
+        const target = statSync(file).isFile() ? gjcSessionFile(root, file) : null;
+        if (target && transcriptCwd(target) === cwd) open.add(target);
+      } catch { /* closed, deleted or unreadable descriptor */ }
+    }
+  }
+  const candidates = open.size > 0 ? open : breadcrumbs;
+  return { path: candidates.size === 1 ? [...candidates][0]! : null, found: candidates.size };
+}
+
+/**
+ * gjc's transcript: what its processes hold (heldTranscript), else visible assistant text
+ * matched against the cwd's sessions.
  */
 export async function gjcTranscriptForPane(paneId: string, cwd: string, home = process.env["HOME"] ?? ""): Promise<string | null> {
   let root: string;
@@ -465,31 +509,15 @@ export async function gjcTranscriptForPane(paneId: string, cwd: string, home = p
     "pane.process_info",
     { pane_id: paneId },
   ).catch(() => null);
-  const paths = new Set<string>();
-  const breadcrumbs = new Set<string>();
-  let running = false;
+  const pids: number[] = [];
   for (const process of info?.process_info?.foreground_processes ?? []) {
     const argv = Array.isArray(process.argv) ? process.argv.map(String) : [];
-    if (typeof process.pid !== "number" || !isGjcProcess(argv)) continue;
-    running = true;
-    const terminal = gjcTerminal(process.pid);
-    if (terminal) {
-      const path = gjcBreadcrumbPath(home, cwd, terminal.id, terminal.startedAt);
-      if (path) breadcrumbs.add(path);
-    }
-    let fds: string[] = [];
-    try { fds = readdirSync(`/proc/${process.pid}/fd`); } catch { /* macOS uses the native breadcrumb */ }
-    for (const fd of fds) {
-      try {
-        const open = realpathSync(readlinkSync(`/proc/${process.pid}/fd/${fd}`));
-        const target = statSync(open).isFile() ? gjcSessionFile(root, open) : null;
-        if (target && transcriptCwd(target) === cwd) paths.add(target);
-      } catch { /* closed, deleted or unreadable descriptor */ }
-    }
+    if (typeof process.pid === "number" && isGjcProcess(argv)) pids.push(process.pid);
   }
-  const candidates = paths.size > 0 ? paths : breadcrumbs;
-  if (candidates.size === 1) return [...candidates][0]!;
-  if (candidates.size > 1) return null;
+  const running = pids.length > 0;
+  const held = heldTranscript(join(home, ".gjc", "agent"), cwd, pids);
+  if (held.path !== null) return held.path;
+  if (held.found > 1) return null;
   // Some GJC builds publish neither a file descriptor nor a terminal breadcrumb.
   // Match substantial assistant text in this pane against every same-cwd candidate.
   const look = async (): Promise<GjcScreen | null> => {

@@ -489,6 +489,7 @@ export const ZH: Record<string, string> = {
   "Send message": "发送消息",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "未发送：Agent 正在终端中等待回答。请先回答。",
   "Not sent: this view only watches the pane.": "未发送：此视图仅用于查看窗格。",
+  "Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.": "未发送：终端中 Claude Code 的输入框不是空的。请先在那里发送或清除，再发送这条消息。",
   "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.": "未发送：在前一条消息之后等待过久，且未输入任何内容。请重新发送。",
   "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.": "未确认：窗格未确认此消息。重新发送前请检查终端。",
   "Not sent: {message}": "未发送：{message}",
@@ -501,6 +502,7 @@ export const ZH: Record<string, string> = {
 
   // ---- chat view ----
   "Copied": "已复制",
+  "Couldn't copy. Select the text and copy it manually.": "无法复制。请选中文本并手动复制。",
   "Output": "输出",
   "thinking": "思考",
   "Working…": "正在工作…",
@@ -837,13 +839,14 @@ export const ZH: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "这是 {workspace} 的最后一个标签页：工作区会随之关闭，其中的代理和 shell 会停止。",
   "Tabs of {workspace}": "{workspace} 的标签页",
   "{n} panes": "{n} 个窗格",
-  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.": "herdr web ui 会在安装和更新时发送一次匿名统计：仅包含版本、操作系统和一个随机 ID。",
+  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. The receiver also notes the country it came from, never the address.": "herdr web ui 会在安装和更新时发送一次匿名统计：版本、操作系统和一个随机 ID。接收端还会记录消息来自的国家，但不记录地址。",
   "What is sent": "发送的内容",
   "Turn off": "关闭统计",
   "Could not turn it off. Try again.": "未能关闭，请重试。",
   "Anonymous usage counts": "匿名使用统计",
   "Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "此电脑因 HERDR_WEB_TELEMETRY=0、DO_NOT_TRACK 或 CI 环境而已关闭。",
   "Send install and update counts": "发送安装和更新统计",
-  "Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.": "安装应用时发送一次，每次更新再发送一次。不保存 IP 地址，也不发送任何关于终端、代理或文件的内容。",
+  "Once when the app is installed and once per update. The receiver notes the country a message came from but stores no IP address, and nothing about your terminals, agents or files is sent.": "安装应用时发送一次，每次更新再发送一次。接收端会记录消息来自的国家，但不保存 IP 地址，也不发送任何关于终端、代理或文件的内容。",
+  "The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.": "接收端会附加这条消息来自的国家（两个字母，例如 KR）。不保存地址。",
   "This version has already been counted. The next event is sent after an update.": "此版本已统计。下一次发送在更新之后。",
 };

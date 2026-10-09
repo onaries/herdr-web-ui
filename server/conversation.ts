@@ -7,7 +7,9 @@
  * - Claude Code: herdr's agent.get names the session id, the transcript lives
  *   at ~/.claude/projects/<project>/<session>.jsonl (claude-store.ts finds it).
  * - omp: herdr's agent.get hands us the session jsonl path outright under
- *   ~/.omp/agent/sessions/<cwd-slug>/ — same shape of truth, one less hop.
+ *   ~/.omp/agent/sessions/<cwd-slug>/, or ~/.omp/profiles/<name>/agent/sessions/<cwd-slug>/
+ *   for `omp --profile <name>` — same shape of truth, one less hop. When herdr names none, the
+ *   pane's omp process does, as gjc's does (omp.ts).
  * - omo: herdr knows nothing about its store and its label for the pane flips
  *   between `pi` and `claude` as omo spawns model CLIs, so the pane's process
  *   tree routes it and process/session evidence selects a unique transcript
@@ -46,8 +48,9 @@ import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoSessionForPane } from "./omo.ts";
+import { ompHeldTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
-import { piTranscriptPath, unwrittenSession } from "./pi.ts";
+import { piTranscriptInStore, piTranscriptPath, unwrittenSession } from "./pi.ts";
 import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchSegments } from "./pi-tree.ts";
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { trimOutput } from "./tool-output.ts";
@@ -1005,25 +1008,43 @@ async function claudeTranscriptPath(paneId: string, cwds: readonly (string | nul
 }
 
 /**
- * The path herdr reports for an omp session, or null unless it is a transcript inside the
- * user's own store. A Windows PC reports it in its own form (drive letter, backslashes).
+ * The store holding the omp session herdr reports, or null unless the path is a transcript
+ * inside one of the user's own stores: ~/.omp/agent/sessions, or the one `omp --profile <name>`
+ * keeps at ~/.omp/profiles/<name>/agent/sessions. A Windows PC reports it in its own form
+ * (drive letter, backslashes).
  */
-export function ompSessionPath(value: unknown, home: string, paths: PlatformPath = nodePath): string | null {
+export function ompSessionStore(value: unknown, home: string, paths: PlatformPath = nodePath): string | null {
   if (typeof value !== "string" || !value.endsWith(".jsonl") || !paths.isAbsolute(value) || !paths.isAbsolute(home)) return null;
-  return storeRelative(paths.join(home, ".omp", "agent", "sessions"), value, paths) ? value : null;
+  const store = paths.join(home, ".omp", "agent", "sessions");
+  if (storeRelative(store, value, paths)) return store;
+  const profiles = paths.join(home, ".omp", "profiles");
+  const parts = storeRelative(profiles, value, paths);
+  if (!parts || parts.length < 4 || parts[1] !== "agent" || parts[2] !== "sessions") return null;
+  return paths.join(profiles, parts[0]!, "agent", "sessions");
 }
 
-/** omp's transcript: herdr hands over the absolute path, accepted only inside the user's own store. */
-async function ompTranscriptPath(paneId: string): Promise<string> {
+/**
+ * omp's transcript: herdr hands over the absolute path, accepted only inside the user's own
+ * stores. When herdr names none (or another agent's session), the pane's omp process does.
+ */
+async function ompTranscriptPath(paneId: string, cwd: string): Promise<string> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: unknown; value?: unknown } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
+  const path = session?.kind === "path" && typeof session.value === "string" ? session.value : null;
   // a Windows bridge starts with HOME set to the profile directory (remote-entry.ts)
-  const path = ompSessionPath(session?.kind === "path" ? session.value : undefined, process.env["HOME"] ?? "");
-  if (!path) throw new ConversationUnavailable("no_session_path");
+  const store = ompSessionStore(path, process.env["HOME"] ?? "");
+  if (path === null || store === null) {
+    const held = await ompHeldTranscript(paneId, cwd);
+    if (held === null) throw new ConversationUnavailable("no_session_path");
+    return held;
+  }
   // omp names its session file at start and writes it with the first answer
-  const unwritten = unwrittenSession(path, nodePath.join(process.env["HOME"] ?? "", ".omp", "agent", "sessions"));
+  const unwritten = unwrittenSession(path, store);
   if (unwritten !== null) throw new ConversationNotStarted(unwritten.id, "omp-transcript", unwritten.path);
-  return path;
+  // the check above is lexical: a link out of the store is no transcript of this pane
+  const inStore = piTranscriptInStore(path, store);
+  if (inStore === null) throw new ConversationUnavailable("no_session_path");
+  return inStore;
 }
 
 /** Where a pane's conversation is: a transcript file, or a session in OpenCode's database. */
@@ -1058,6 +1079,9 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
   if ((agent === "omo" || agent === "pi" || agent === "claude") && await paneRunsOmo(paneId)) {
     return { source: "omo-transcript", path: await omoTranscriptPath(paneId, cwd, panes) };
   }
+  // omp and GJC can change their own cwd without changing the pane's shell directory; their
+  // session headers name the one they run in
+  const sessionCwd = typeof pane.foreground_cwd === "string" && pane.foreground_cwd.length > 0 ? pane.foreground_cwd : cwd;
   try {
     if (agent === "agy") {
       const info = await herdrRpc<{ agent: { agent_session?: { agent?: string; kind?: string; value?: string } } }>("agent.get", { target: paneId });
@@ -1083,12 +1107,8 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
     }
     // Claude's project is the directory it started in, the process's own cwd more often than the pane's
     if (agent === "claude") return { source: "claude-transcript", path: await claudeTranscriptPath(paneId, [cwd, pane.foreground_cwd]) };
-    if (agent === "omp") return { source: "omp-transcript", path: await ompTranscriptPath(paneId) };
-    if (agent === "gjc") {
-      // GJC can change its own cwd without changing the pane's shell directory.
-      const sessionCwd = typeof pane.foreground_cwd === "string" && pane.foreground_cwd.length > 0 ? pane.foreground_cwd : cwd;
-      return { source: "gjc-transcript", path: await gjcTranscriptPath(paneId, sessionCwd) };
-    }
+    if (agent === "omp") return { source: "omp-transcript", path: await ompTranscriptPath(paneId, sessionCwd) };
+    if (agent === "gjc") return { source: "gjc-transcript", path: await gjcTranscriptPath(paneId, sessionCwd) };
     // pi's own label only routes pi: an omo pane was taken above, by its process tree.
     if (agent === "pi") {
       const found = await piTranscriptPath(paneId);
@@ -1162,8 +1182,7 @@ export function devinSessionForPane(pane: HerdrPane, panes: HerdrPane[], argv: s
 /**
  * pane -> agent session -> transcript turns. Read-only, same-user files only.
  * Claude sessions are looked up by id under ~/.claude/projects; omp sessions
- * come as an absolute path from herdr, accepted only under the user's own
- * ~/.omp/agent/sessions dir; omo sessions are resolved from its own store by
+ * come from herdr or the pane's omp process (ompTranscriptPath); omo sessions are resolved from its own store by
  * process/session evidence (omoTranscriptForPane). Throws ConversationUnavailable when the pane has
  * no recognized agent store (the caller falls back to the scrollback
  * transcript view, like chatmux).

@@ -76,7 +76,7 @@ const [home, sessionId, port] = process.argv.slice(2);
 if (process.platform === "linux" || !process.env.CLAUDE_CONFIG_DIR) process.title = "claude";
 const procStart = process.platform === "linux"
   ? fs.readFileSync("/proc/self/stat", "utf8").split(") ").pop().split(" ")[19]
-  : require("node:child_process").execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(process.pid)], { env: { ...process.env, TZ: "UTC" }, encoding: "utf8" }).trim();
+  : require("node:child_process").execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(process.pid)], { env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, encoding: "utf8" }).trim();
 const store = process.env.CLAUDE_CONFIG_DIR || home + "/.claude";
 fs.mkdirSync(store + "/sessions", { recursive: true });
 fs.writeFileSync(store + "/sessions/" + process.pid + ".json", JSON.stringify({

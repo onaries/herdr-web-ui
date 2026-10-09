@@ -84,6 +84,50 @@ export class MachineActionRequired extends Error {
   constructor(message: string, readonly action: MachineAction) { super(message); }
 }
 
+
+/**
+ * Which agent each pane runs, as a status collector heard it, and whether a report of it is news:
+ * an agent named anew, or another one. A pane first heard of as a shell is not: the roster's own
+ * read of it showed as much. The roster is read on a timer and patched by status frames, which
+ * name no agent, so news is the one cue to read it again at once (#537, #555).
+ */
+export class AgentNews {
+  private heard = new Map<string, string | null>();
+  hear(panes: readonly Pick<HerdrPane, "pane_id" | "agent">[]): boolean {
+    let news = false;
+    for (const pane of panes) {
+      const agent = pane.agent ?? null;
+      const before = this.heard.get(pane.pane_id);
+      this.heard.set(pane.pane_id, agent);
+      if (before !== agent && !(before === undefined && agent === null)) news = true;
+    }
+    return news;
+  }
+  /** a pane that ended: its id used again is a pane heard of for the first time */
+  forget(paneId: string): void { this.heard.delete(paneId); }
+  /** only the panes a roster still lists */
+  keepOnly(panes: readonly Pick<HerdrPane, "pane_id">[]): void {
+    const open = new Set(panes.map((pane) => pane.pane_id));
+    for (const paneId of [...this.heard.keys()]) if (!open.has(paneId)) this.heard.delete(paneId);
+  }
+}
+
+/**
+ * A bridge's part (createServer without `machines`): its connection server reads this PC's roster
+ * again on every pane-status, pane-exited and session-changed frame (MachineManager.observe), so an
+ * agent named in a status event reaches it with that event's frame. An agent first seen in a
+ * snapshot the status collector reconciles from has no frame behind it: `tell` sends one (#555).
+ * A reconcile leaves out panes heard of since its snapshot was asked for, so it never prunes.
+ */
+export function bridgeAgentNews(tell: () => void) {
+  const news = new AgentNews();
+  return {
+    status(panes: readonly Pick<HerdrPane, "pane_id" | "agent">[]): void { news.hear(panes); },
+    reconciled(panes: readonly Pick<HerdrPane, "pane_id" | "agent">[]): void { if (news.hear(panes)) tell(); },
+    ended(paneId: string): void { news.forget(paneId); },
+  };
+}
+
 export class MachineManager {
   private machines = new Map<string, Runtime>();
   private jobs = new Map<string, JobState>();
@@ -93,7 +137,7 @@ export class MachineManager {
   private localRefreshQueued = false;
   private localRevision = 0;
   /** each local pane's agent as herdr last named it to the status collector */
-  private heardAgents = new Map<string, string | null>();
+  private heardAgents = new AgentNews();
   private localTimer: ReturnType<typeof setInterval>;
   private saveTimer?: ReturnType<typeof setTimeout>;
   private statePath: string;
@@ -147,7 +191,7 @@ export class MachineManager {
     }
     this.emit({ type: "machine-message", machine_id: LOCAL_MACHINE, message });
     // its id used again is a pane heard of for the first time
-    if (message.type === "pane-exited") this.heardAgents.delete(message.pane_id);
+    if (message.type === "pane-exited") this.heardAgents.forget(message.pane_id);
     if (message.type === "pane-status" && this.local.snapshot) {
       this.local.snapshot = { ...this.local.snapshot, panes: this.local.snapshot.panes.map((p: HerdrPane) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
     }
@@ -161,15 +205,7 @@ export class MachineManager {
    * there fits the shared grid to that page. Read again now.
    */
   localAgents(panes: readonly Pick<HerdrPane, "pane_id" | "agent">[]): void {
-    let news = false;
-    for (const pane of panes) {
-      const agent = pane.agent ?? null;
-      const before = this.heardAgents.get(pane.pane_id);
-      this.heardAgents.set(pane.pane_id, agent);
-      // a pane first heard of as a shell is what the roster's own read of it showed
-      if (before !== agent && !(before === undefined && agent === null)) news = true;
-    }
-    if (news) void this.refreshLocal();
+    if (this.heardAgents.hear(panes)) void this.refreshLocal();
   }
   async refreshLocal(): Promise<void> {
     if (this.stopped) return;
@@ -186,7 +222,7 @@ export class MachineManager {
           if (revision !== this.localRevision) { this.localRefreshQueued = true; continue; }
           this.local.snapshot = snapshot; this.local.state = "connected"; this.local.error = null;
           // a pane the roster no longer lists is gone: the same id later is a pane heard of anew
-          for (const paneId of [...this.heardAgents.keys()]) if (!snapshot.panes.some((pane: HerdrPane) => pane.pane_id === paneId)) this.heardAgents.delete(paneId);
+          this.heardAgents.keepOnly(snapshot.panes);
         } catch (e) {
           if (this.stopped) break;
           if (revision !== this.localRevision) { this.localRefreshQueued = true; continue; }

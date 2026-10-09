@@ -34,7 +34,10 @@ const LENGTH = 0.16 + 0.3;
 
 const saved = (globalThis as { AudioContext?: unknown }).AudioContext;
 Object.assign(globalThis, { AudioContext: FakeAudioContext });
-afterAll(() => { Object.assign(globalThis, { AudioContext: saved }); });
+afterAll(() => {
+  for (const audio of made) audio.state = "closed";
+  Object.assign(globalThis, { AudioContext: saved });
+});
 
 /** Lets the chime of the tab's last test end, and forgets what it played. */
 function quiet(): FakeAudioContext {
@@ -129,6 +132,28 @@ describe("one chime at a time", () => {
     audio.currentTime += LENGTH;
     playAlertSound("done");
     expect(started).toEqual([...CHIME_NOTES.done, ...CHIME_NOTES.done]);
+  });
+
+  it("confirms a queued question only after its audio clock reaches its start", async () => {
+    const audio = made.at(-1)!;
+    playAlertSound("done");
+    const pending = playAlertSound("blocked");
+    expect(pending).toBeInstanceOf(Promise);
+    let confirmed = false;
+    void Promise.resolve(pending).then(() => { confirmed = true; });
+    await Promise.resolve();
+    expect(confirmed).toBe(false);
+    audio.currentTime += LENGTH;
+    expect(await pending).toBe(true);
+  });
+
+  it("does not confirm a queued question if audio was interrupted before starting", async () => {
+    const audio = made.at(-1)!;
+    playAlertSound("done");
+    const pending = playAlertSound("blocked");
+    audio.state = "interrupted";
+    expect(await pending).toBe(false);
+    await unlockAlertSound();
   });
 
   it("previews the chime in Settings, after the chime that sounds", () => {

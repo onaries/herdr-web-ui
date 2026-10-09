@@ -55,7 +55,7 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
     }).finally(() => setTurningOff(false));
   };
   return <div className="update-notice" role="status">
-    <span>{t("herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.")}</span>
+    <span>{t("herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. The receiver also notes the country it came from, never the address.")}</span>
     {offFailed && <span role="alert">{t("Could not turn it off. Try again.")}</span>}
     <button type="button" className="btn btn-ghost" onClick={() => { setClosed(true); onOpen(); }}>{t("What is sent")}</button>
     <button type="button" className="btn btn-ghost" onClick={turnOff} disabled={turningOff}>{t("Turn off")}</button>
@@ -86,7 +86,7 @@ export function TelemetryControls() {
     <SettingsGroup title={t("Anonymous usage counts")} className="settings-telemetry">
       {status.blocked_by_env
         ? <p className="settings-item settings-hint">{t("Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.")}</p>
-        : <SettingsRow label={t("Send install and update counts")} description={t("Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.")}>
+        : <SettingsRow label={t("Send install and update counts")} description={t("Once when the app is installed and once per update. The receiver notes the country a message came from but stores no IP address, and nothing about your terminals, agents or files is sent.")}>
           <Toggle label={t("Send install and update counts")} checked={status.enabled} onChange={toggle} disabled={saving} />
         </SettingsRow>}
       {error && <p className="settings-item settings-hint" role="alert">{error}</p>}
@@ -95,6 +95,7 @@ export function TelemetryControls() {
         {status.next
           ? <pre className="update-output">{JSON.stringify(status.next, null, 2)}</pre>
           : <p className="settings-hint">{t("This version has already been counted. The next event is sent after an update.")}</p>}
+        <p className="settings-hint">{t("The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.")}</p>
       </details>
     </SettingsGroup>
   );

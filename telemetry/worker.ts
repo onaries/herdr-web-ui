@@ -1,7 +1,8 @@
 /**
  * The receiver of herdr web ui's anonymous install and update counts (server/telemetry.ts).
  * A Cloudflare Worker over one D1 table. It never reads the visitor's address or any header
- * beyond the content type, keeps the day rather than the time, and stores each
+ * beyond the content type; of where a request came from it keeps the country Cloudflare names
+ * and nothing finer. It keeps the day rather than the time, and stores each
  * (install, event, version) once, so a replayed event counts once. Deploy: telemetry/README.md.
  */
 
@@ -27,6 +28,17 @@ const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9a-z.]{1,24})?$/;
 const WORD = /^[a-z0-9_]{1,16}$/;
 const EVENTS = new Set(["install", "update"]);
 const METHODS = new Set(["plugin", "managed", "source"]);
+/** ISO 3166-1 alpha-2 */
+const COUNTRY = /^[A-Z]{2}$/;
+
+/**
+ * The country Cloudflare worked out for this request; null off Cloudflare or when it names none.
+ * Its two non-countries are dropped too: XX (unknown), and T1, which would say the sender uses Tor.
+ */
+export function requestCountry(request: Request): string | null {
+  const country = (request as { cf?: { country?: unknown } }).cf?.country;
+  return typeof country === "string" && COUNTRY.test(country) && country !== "XX" ? country : null;
+}
 
 /** the event as it is stored, or null when the body is not one */
 export function readEvent(body: unknown, now: Date): StoredEvent | null {
@@ -78,8 +90,8 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
   const stored = readEvent(body, now);
   if (!stored) return new Response(null, { status: 400 });
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO events (day, event, install_id, version, previous_version, os, arch, install_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(stored.day, stored.event, stored.install_id, stored.version, stored.previous_version, stored.os, stored.arch, stored.install_method).run();
+    "INSERT OR IGNORE INTO events (day, event, install_id, version, previous_version, os, arch, install_method, country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(stored.day, stored.event, stored.install_id, stored.version, stored.previous_version, stored.os, stored.arch, stored.install_method, requestCountry(request)).run();
   return new Response(null, { status: 204 });
 }
 
