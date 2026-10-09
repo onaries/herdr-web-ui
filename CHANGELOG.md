@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-09
+
 ### Added
 - Devin CLI panes with an explicitly identified native session show their active conversation
   branch and tool activity in Chat. Unresolved or unreadable sessions keep the terminal-text
@@ -35,9 +37,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - **Settings → Terminal → Clipboard from a pane** is on again: vim, tmux and Claude Code copy to
   your clipboard from a pane without a trip to Settings. It is also on for anyone 0.4.1 left off
   without asking (it saved the switch with any other setting). Turn it off if a pane runs output
-  you do not trust.
+  you do not trust. ([#598](https://github.com/devswha/herdr-web-ui/pull/598))
 - A GitHub release opens with its patch notes, short lines under New features, Improvements and
   Bug fixes as an install shows them, with the full changelog folded underneath.
+  ([#598](https://github.com/devswha/herdr-web-ui/pull/598))
 - The website moved to <https://herdrweb.dev/>, and the install commands with it:
   `curl -fsSL https://herdrweb.dev/install.sh | sh` and
   `irm https://herdrweb.dev/install.ps1 | iex`. Every address under
@@ -2518,7 +2521,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/devswha/herdr-web-ui/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/devswha/herdr-web-ui/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/devswha/herdr-web-ui/compare/v0.3.52...v0.4.0
 [0.3.52]: https://github.com/devswha/herdr-web-ui/compare/v0.3.51...v0.3.52

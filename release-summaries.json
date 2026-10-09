@@ -1,4 +1,94 @@
 {
+  "0.4.2": {
+    "en": {
+      "new": [
+        "Installs and updates are counted anonymously; Settings → About shows it and turns it off",
+        "Clicking an agent's notification opens that pane on its chat, where the answer is",
+        "Devin CLI panes show their conversation in the chat",
+        "OpenCode 2 panes read as a conversation in the chat; OpenCode 1.x keeps the terminal text",
+        "A message Claude Code holds back for invisible characters shows a card to send or discard"
+      ],
+      "improved": [
+        "The phone key bar starts with Esc, Tab and Ctrl+C; saved layouts keep their order",
+        "Settings → Shortcuts explains the app's keys and marks keys the browser or OS keeps",
+        "vim, tmux and Claude Code in a pane copy to your clipboard again, no trip to Settings",
+        "The website moved to herdrweb.dev and reads in Simplified Chinese; old links still work",
+        "GitHub releases open with short patch notes like these"
+      ],
+      "fixed": [
+        "Typing Korean in Safari no longer loses syllables, also after switching from English",
+        "An unknown slash command in a Claude Code chat shows Claude's answer instead of vanishing",
+        "Palette shortcut hints follow your bindings, and shortcuts work on non-Latin keyboards",
+        "Quiet opened finishes works even if the browser kept a damaged record of opened agents"
+      ]
+    },
+    "ko": {
+      "new": [
+        "앱이 설치와 업데이트를 익명으로 집계합니다. 설정 → 정보에서 내용을 보고 끌 수 있습니다",
+        "에이전트 알림을 누르면 답이 있는 그 pane의 채팅이 열립니다",
+        "Devin CLI pane이 채팅에서 대화로 보입니다",
+        "OpenCode 2 pane이 채팅에서 대화로 보입니다. OpenCode 1.x는 터미널 텍스트를 그대로 씁니다",
+        "Claude Code가 보이지 않는 문자 때문에 보류한 메시지는 보내기·버리기 카드로 보입니다"
+      ],
+      "improved": [
+        "폰 키 바가 Esc, Tab, Ctrl+C로 시작합니다. 저장한 배치는 순서를 그대로 유지합니다",
+        "설정 → 단축키가 앱 키를 설명하고, 브라우저나 OS가 쓰는 키를 표시합니다",
+        "pane 안 vim, tmux, Claude Code가 설정을 거치지 않고 다시 클립보드에 복사합니다",
+        "웹사이트가 herdrweb.dev로 옮겼고 중국어 간체로도 읽을 수 있습니다. 옛 링크도 그대로 됩니다",
+        "GitHub 릴리스가 이런 짧은 패치 노트로 시작합니다"
+      ],
+      "fixed": [
+        "Safari에서 한글을 입력할 때 음절이 사라지지 않습니다. 영어에서 전환한 뒤에도 마찬가지입니다",
+        "Claude Code 채팅에서 모르는 슬래시 명령을 보내면 사라지지 않고 Claude의 답이 보입니다",
+        "팔레트의 단축키 표시가 바꾼 키를 따르고, 라틴 문자가 아닌 자판에서도 단축키가 됩니다",
+        "브라우저에 열어 본 기록이 깨져 있어도 '열어 본 완료 표시 끄기'가 제대로 동작합니다"
+      ]
+    },
+    "ja": {
+      "new": [
+        "インストールと更新を匿名で数えます。設定 → 情報で内容を確認し、オフにできます",
+        "エージェントの通知をクリックすると、答えのあるそのペインのチャットが開きます",
+        "Devin CLI のペインがチャットで会話として表示されます",
+        "OpenCode 2 のペインがチャットで会話として読めます。OpenCode 1.x は端末のテキストのままです",
+        "見えない文字のせいで Claude Code が保留したメッセージは、送信・破棄のカードで表示されます"
+      ],
+      "improved": [
+        "スマホのキーバーが Esc、Tab、Ctrl+C から始まります。保存した並びはそのままです",
+        "設定 → ショートカットがアプリのキーを説明し、ブラウザや OS が使うキーを示します",
+        "ペイン内の vim、tmux、Claude Code が、設定を経ずに再びクリップボードへコピーできます",
+        "ウェブサイトは herdrweb.dev に移り、簡体字中国語でも読めます。古いリンクも使えます",
+        "GitHub のリリースが、このような短いパッチノートで始まります"
+      ],
+      "fixed": [
+        "Safari で韓国語を入力しても音節が消えません。英語から切り替えた後も同じです",
+        "Claude Code のチャットで未知のスラッシュコマンドを送っても消えず、Claude の答えが表示されます",
+        "パレットのショートカット表示が変更したキーに従い、非ラテン配列でもショートカットが効きます",
+        "開いた記録がブラウザで壊れていても、「開いた完了の印を消す」が正しく動きます"
+      ]
+    },
+    "zh": {
+      "new": [
+        "应用会匿名统计安装和更新次数;在 设置 → 关于 中可查看内容并关闭",
+        "点击代理的通知会打开该窗格的聊天,答案就在那里",
+        "Devin CLI 窗格在聊天中显示为对话",
+        "OpenCode 2 窗格在聊天中显示为对话;OpenCode 1.x 仍显示终端文本",
+        "Claude Code 因不可见字符而暂留的消息会显示为卡片,可发送或丢弃"
+      ],
+      "improved": [
+        "手机按键栏以 Esc、Tab 和 Ctrl+C 开头;已保存的布局保持原有顺序",
+        "设置 → 快捷键 会说明应用的按键,并标出浏览器或系统占用的按键",
+        "窗格中的 vim、tmux 和 Claude Code 无需进入设置即可再次复制到剪贴板",
+        "网站迁移到 herdrweb.dev,并提供简体中文版;旧链接仍然有效",
+        "GitHub 发布页以这样的简短更新说明开头"
+      ],
+      "fixed": [
+        "在 Safari 中输入韩文不再丢失音节,从英文切换后也是如此",
+        "在 Claude Code 聊天中发送未知的斜杠命令不再消失,而是显示 Claude 的回答",
+        "命令面板的快捷键提示跟随你改过的绑定,非拉丁键盘布局下快捷键也可用",
+        "即使浏览器中已打开的记录损坏,“清除已打开的完成标记”也能正常工作"
+      ]
+    }
+  },
   "0.4.1": {
     "en": {
       "new": [
