@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
+import type {} from "./chat-history-fixture.tsx";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -17,6 +18,7 @@ try {
     const path = new URL(request.url).pathname;
     if (path === "/ws") return new Response(null, { status: 404 });
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
+    if (path.endsWith("/pane/omo-tasks")) return Response.json({ tasks: [], runs: [] });
     // a desktop's composer asks whether dictation can work here before it shows the mic
     if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
@@ -241,8 +243,15 @@ try {
   assert.equal(await page.locator(".work-row-name").filter({ hasText: "synthetic_tool" }).count(), 1);
   await page.locator(".work-row-head").click();
   await page.getByText("synthetic result", { exact: true }).waitFor();
+  const claudeTasks = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname.endsWith("/pane/omo-tasks") && url.searchParams.get("pane_id") === "claude";
+  });
   await select("claude", "local", "claude");
   await page.getByText("Synthetic Claude prompt", { exact: true }).waitFor();
+  const activity = await claudeTasks;
+  assert.equal(activity.status(), 200, "Claude task discovery is answered by the fixture");
+  assert.deepEqual(await activity.json(), { tasks: [], runs: [] });
   assert.equal(await page.getByText("Synthetic Devin answer", { exact: true }).count(), 0);
   assert.ok((await page.evaluate(() => window.qa.commits)).every((turns) => !turns.some((turn) => turn.includes("Synthetic Devin"))), "switch to Claude cannot commit Devin history");
   assert.deepEqual(errors, []);

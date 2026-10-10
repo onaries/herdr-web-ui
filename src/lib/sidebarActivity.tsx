@@ -7,7 +7,7 @@
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Machine } from "../../shared/machines.ts";
-import type { AgentStatus, PaneInfo } from "../../shared/protocol.ts";
+import type { AgentStatus, HerdrPane } from "../../shared/protocol.ts";
 import { useSettings } from "./settings.ts";
 import { anySeen, carrySeen, forgetSeen, liveSeqs, loadSeen, markSeen, newSeqMemory, persistableSeen, pruneSeen, saveSeen, seedSeen, seenAfterRestart, shownStatus, type SeenRecord, type SeqMemory } from "./sidebarOrder.ts";
 
@@ -15,11 +15,11 @@ export interface SidebarActivity {
   /** herdr's state_change_seq per pane on a PC, a pushed status change dated at once */
   seqs(machineId: string): ReadonlyMap<string, number>;
   /** the status a row draws for a pane: with Quiet opened finishes on, a DONE looked at here reads as ready */
-  status(machineId: string, pane: Pick<PaneInfo, "pane_id" | "agent_status">): AgentStatus | undefined;
+  status(machineId: string, pane: Pick<HerdrPane, "pane_id" | "agent_status" | "background_wait">): AgentStatus | undefined;
 }
 
 const NO_SEQS: ReadonlyMap<string, number> = new Map();
-const SidebarActivityContext = createContext<SidebarActivity>({ seqs: () => NO_SEQS, status: (_machineId, pane) => pane.agent_status });
+const SidebarActivityContext = createContext<SidebarActivity>({ seqs: () => NO_SEQS, status: (_machineId, pane) => shownStatus(pane, NO_SEQS, null) });
 export const SidebarActivityProvider = SidebarActivityContext.Provider;
 export const useSidebarActivity = (): SidebarActivity => useContext(SidebarActivityContext);
 
@@ -100,8 +100,6 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
   };
   return useMemo<SidebarActivity>(() => ({
     seqs: (machineId) => seqsByMachine.get(machineId) ?? NO_SEQS,
-    status: (machineId, pane) => settings.quietOpenedDone
-      ? shownStatus(pane, seqsByMachine.get(machineId) ?? NO_SEQS, carryOpened(machineId))
-      : pane.agent_status,
+    status: (machineId, pane) => shownStatus(pane, seqsByMachine.get(machineId) ?? NO_SEQS, settings.quietOpenedDone ? carryOpened(machineId) : null),
   }), [seqsByMachine, seen, settings.quietOpenedDone]);
 }

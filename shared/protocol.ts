@@ -27,8 +27,11 @@ import type { AgentStatus, PaneInfo, SessionSnapshot, TabInfo, WorkspaceInfo } f
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
 export type HerdrTab = TabInfo;
-/** `background_tasks`: an OmO pane's `task` children still running, counted by the server; absent when none */
-export type HerdrPane = PaneInfo & { background_tasks?: number };
+/**
+ * `background_tasks`: an OmO pane's `task` children, or a Claude Code pane's subagents and background commands, still running, counted by the server; absent when none.
+ * `background_wait`: the pane is at rest while work its turn started still runs, and the turn goes on when it ends (server/background-wait.ts); absent when not.
+ */
+export type HerdrPane = PaneInfo & { background_tasks?: number; background_wait?: true };
 
 export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
 
@@ -84,9 +87,9 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  GET    /api/pane/commands?pane_id=   -> { commands: SlashCommand[] } (the agent's slash
  *         commands: built-ins per agent kind + the user's and the project's custom commands)
  *  GET    /api/pane/omo-tasks?pane_id=  -> OmoActivity (the background tasks and workflows the
- *         pane's OmO session started: running ones, then those that ended in the last day; empty
- *         for a pane that is not OmO or whose session is not known yet. server_time: that PC's
- *         clock, which the times are on)
+ *         pane's OmO session started, or a Claude Code pane's subagents (no workflows): running ones, then
+ *         those that ended in the last day; empty for any other pane or one whose session is not
+ *         known yet. server_time: that PC's clock, which the times are on)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
  *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null, compacting?: true }
@@ -289,7 +292,7 @@ export type ConversationPart =
   /** a message the agent's runtime put in the user's seat (gjc's background-job result): it starts a turn, nobody typed it.
    * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable") */
   | { kind: "notice"; text: string; source?: string }
-  /** OmO's background tasks that ended, as OmO reported them back to the agent: it starts a turn, nobody typed it */
+  /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
   | { kind: "task_result"; tasks: OmoTaskResult[] };
 
 /** One OmO background task that ended (the `senpi-task.completion` OmO wakes its agent with). */
@@ -323,7 +326,7 @@ export interface ConversationMetadata {
   context?: { used: number; window: number | null };
 }
 
-/** One background task of an OmO session (GET /api/pane/omo-tasks), from OmO's task record. */
+/** One background task of an OmO session, or one subagent of a Claude Code session (GET /api/pane/omo-tasks), from OmO's task record or the subagent's files. */
 export interface OmoTask {
   id: string;
   /** the task's summary, else its description or name */
@@ -331,7 +334,7 @@ export interface OmoTask {
   /** the category or agent type it ran as */
   category: string | null;
   model: string | null;
-  /** `lost`: OmO's process that ran it is gone */
+  /** `lost`: OmO's process that ran it is gone, or the pane no longer runs the Claude Code session that started it */
   status: "running" | "completed" | "failed" | "cancelled" | "lost";
   started_at: string | null;
   ended_at: string | null;
@@ -607,8 +610,9 @@ export interface PushPayload {
  *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
  *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | role {mode}
  *    | pty-ack {pane_id, stream_id, offset} | secret {id, pane_id, prompt, secret}
+ *    | watch {pane_id, cols, rows} | unwatch {pane_id}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
- *    | pane-status | pane-exited | session-changed | secret-result | error
+ *    | pane-status | pane-exited | session-changed | secret-result | watch-data | watch-end | error
  *
  *  attach {flow_control:"ack"} opts into per-subscription output credit.
  *  pty-data.flow carries a stream_id and cumulative UTF-8 payload offset;
@@ -622,6 +626,12 @@ export interface PushPayload {
  *  re-sends its role before the attach replay on reconnect.
  *  secret requires the "secret-input" feature, an interact attachment, a matching fresh
  *  prompt and an idle input queue. Its result contains only ok/code, never the value.
+ *  watch requires the "watch" feature: a read-only view of the pane drawn for the client's grid
+ *  (`herdr terminal session observe`), which, unlike an attach, leaves the pane at the size herdr's
+ *  own window gives it. It is not an attach: no input, resize, ACK or input-ready. A tab out of use
+ *  detaches and watches; it attaches again when the user is back. One watch per pane and connection;
+ *  a second watch for the same pane starts it again at the new grid. watch-end: the view ended
+ *  (unwatch does not answer one), and a pane the view could not start for gets one at once.
  */
 
 /** A connection's authority over the shared ptys: `interact` types and resizes, `observe` only watches. */
@@ -663,10 +673,13 @@ export type ClientMessage =
   | { type: "resize"; pane_id: string; cols: number; rows: number }
   /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
   | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
-  | { type: "role"; mode: ClientRole };
+  | { type: "role"; mode: ClientRole }
+  /** a read-only view of the pane at this grid, for a tab out of use (feature "watch"); never resizes the pane */
+  | { type: "watch"; pane_id: string; cols: number; rows: number }
+  | { type: "unwatch"; pane_id: string };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over";
+export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "watch";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
@@ -687,11 +700,15 @@ export type ServerMessage =
   | { type: "pending-messages"; pane_id: string; messages: PendingMessage[]; removed?: Array<{ id: string; outcome: "sent" | "discarded" }> }
   | { type: "secret-result"; id: number; pane_id: string; ok: boolean; code?: string }
   /** agent-status push for ANY pane, attached or not (server-side status collector) */
-  | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; /** an OmO pane's running background tasks, when the frame is about one */ background_tasks?: number }
+  | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true }
   /** a pane's process exited (pushed even when nobody is attached to it) */
   | { type: "pane-exited"; pane_id: string }
   /** session structure changed (pane created/closed): refetch /api/session */
   | { type: "session-changed" }
+  /** a watched pane's screen as herdr draws it for the watch's grid: whole screens and changes, written as they come; never acknowledged */
+  | { type: "watch-data"; pane_id: string; data: string }
+  /** the watch ended (pane gone, herdr closed it, or this herdr has no read-only view); the client keeps its last screen */
+  | { type: "watch-end"; pane_id: string }
   /** `pane_id` names the pane an error is about, when it is about one (`attach_held`) */
   | { type: "error"; code: string; message: string; pane_id?: string };
 

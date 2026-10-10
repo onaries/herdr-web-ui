@@ -265,6 +265,25 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   opacity: 0.55;
 }
 
+/* a finger's drag (lib/touchReorder.ts): the held row rises over the list and follows the finger */
+.workspace.is-lifted {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+/* where the held row lands: a line at the edge of the row, or of a group's worktrees, it goes past */
+.workspace-group[data-drop="before"],
+.worktree-children[data-drop="before"] {
+  box-shadow: inset 0 calc(2 * var(--hairline)) 0 var(--accent);
+}
+
+.workspace-group[data-drop="after"],
+.worktree-children[data-drop="after"] {
+  box-shadow: inset 0 calc(-2 * var(--hairline)) 0 var(--accent);
+}
+
 /* the field's text stays where the title was, and its edge clear of the mark */
 .workspace-rename-input,
 .pane-rename-input {
@@ -373,8 +392,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--space-4);
 }
 
+/* a stepped rotation draws its steps and nothing else, so the count is the frame rate: at this
+   arc's 6px radius, 48 steps over --dur-spin move it under a pixel every 33ms, which the eye
+   reads as a turn rather than a tick */
 .sidebar-status[data-status="working"] svg {
-  animation: sidebar-working var(--dur-pulse) steps(8, end) infinite;
+  animation: sidebar-working var(--dur-spin) steps(48, end) infinite;
 }
 
 /* A question mark asks for an answer; a dot, as an unread mark is, has finished and was not

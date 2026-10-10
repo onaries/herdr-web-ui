@@ -2,7 +2,7 @@
  * What only a real Windows PC can show: its process table as PowerShell answers it, and a
  * session store on its own file system with its own path rules. Everything else about the
  * Windows branches is tested with rows and paths handed in (gjc-runtime.test.ts); these run
- * on the Windows runner of the remote-bundle workflow and nowhere else (#271).
+ * on the Windows runners of reusable CI and the remote-bundle workflow (#271).
  */
 import { expect, it } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";

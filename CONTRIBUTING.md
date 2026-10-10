@@ -29,6 +29,10 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
 
 - Fork, branch from `main` (`feat/…`, `fix/…`, `chore/…`, `docs/…`) and open the PR against `main`.
   There is no `develop` branch; releases are `vX.Y.Z` tags on `main`.
+- Independent changes should use independent PRs from `main`. The only exception is a stack explicitly
+  managed by a maintainer for a genuine code dependency; code conflicts and approval gates are
+  scheduling constraints, not reasons to stack. See the [coordinated-work procedure](docs/development.md#coordinated-work).
+  Contributors must not assume elevated permissions or that a stack has been authorized.
 - One change per PR. PRs are squash merged, so the PR title becomes the commit:
   `type(scope): summary`, for example `fix(chat): keep the finished turn finished after Send`.
   The merge adds `(#N)`.

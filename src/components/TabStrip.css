@@ -74,6 +74,8 @@
 .tab-strip-dot[data-status="working"] { background: var(--status-working); }
 .tab-strip-dot[data-status="blocked"] { background: var(--status-blocked); }
 .tab-strip-dot[data-status="done"] { background: var(--status-done); }
+/* waiting on its background work: something still runs, the agent does not */
+.tab-strip-dot[data-status="waiting"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-working); }
 
 /* a tab's menu, its x, and the + : small square buttons on the strip's centre line */
 .tab-strip-panes,

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentStatus } from "../../shared/protocol.ts";
-import { alertsAllow, shouldNotifyStatus } from "./notifications.ts";
+import { alertStatus, alertsAllow, shouldNotifyStatus } from "./notifications.ts";
+
+describe("alertStatus", () => {
+  it("takes a pane at rest that waits on its turn's background work for working, and leaves the rest as they are", () => {
+    expect(["done", "idle", "unknown"].map((status) => alertStatus(status, true))).toEqual(["working", "working", "working"]);
+    expect(alertStatus("blocked", true)).toBe("blocked");
+    expect(alertStatus("done", false)).toBe("done");
+    expect(alertStatus("done", undefined)).toBe("done");
+    // a wait that ends with no new turn is a finish
+    expect(shouldNotifyStatus(alertStatus("done", true), alertStatus("done", false))).toBe(true);
+  });
+});
 
 describe("shouldNotifyStatus", () => {
   it("notifies when a known pane becomes blocked", () => {

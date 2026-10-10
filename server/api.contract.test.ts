@@ -784,6 +784,52 @@ describe("workspace and discovery endpoints", () => {
     }
   }, 30_000);
 
+  it("starts a worktree asked from a workspace on a linked checkout at the repository's own workspace", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "herdr-web-ui-worktree-linked-"));
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-c", "user.name=herdr-web-ui test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, stdout: "pipe", stderr: "pipe" });
+    expect(git("init", "-q", "-b", "main").exitCode).toBe(0);
+    writeFileSync(join(repo, "README.md"), "worktree fixture\n");
+    expect(git("add", "README.md").exitCode).toBe(0);
+    expect(git("commit", "-q", "-m", "fixture").exitCode).toBe(0);
+    const checkouts = `${repo}-checkouts`;
+    // a checkout git made, opened as a plain workspace: herdr does not mark it as a worktree
+    expect(git("worktree", "add", "-q", "-b", "herdr-web-ui-test-linked", join(checkouts, "linked")).exitCode).toBe(0);
+    const linked = await workspaceCreate({ cwd: join(checkouts, "linked"), label: "herdr-web-ui-test-worktree-linked" });
+    const owned = [linked.workspace.workspace_id];
+    const post = (path: string, body: unknown) => fetch(`${base()}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    try {
+      expect((await sessionSnapshot()).workspaces.find((workspace) => workspace.workspace_id === linked.workspace.workspace_id)?.worktree?.is_linked_worktree).not.toBeTrue();
+      // the repository's own workspace is not open: herdr's refusal is the answer
+      const alone = await post("/api/worktree/create", { workspace_id: linked.workspace.workspace_id, branch: "herdr-web-ui-test-alone", path: join(checkouts, "alone") });
+      expect(alone.status).toBe(404);
+      expect(((await alone.json()) as ApiError).error.code).toBe("linked_worktree_source");
+      expect(existsSync(join(checkouts, "alone"))).toBeFalse();
+
+      const parent = await workspaceCreate({ cwd: repo, label: "herdr-web-ui-test-worktree-linked-parent" });
+      owned.push(parent.workspace.workspace_id);
+      const create = await post("/api/worktree/create", { workspace_id: linked.workspace.workspace_id, branch: "herdr-web-ui-test-from-linked", path: join(checkouts, "from-linked") });
+      expect(create.status).toBe(200);
+      const opened = (await create.json()) as WorktreeOpened;
+      owned.push(opened.workspace_id);
+      expect(opened.branch).toBe("herdr-web-ui-test-from-linked");
+      expect(existsSync(join(checkouts, "from-linked"))).toBeTrue();
+      expect((await sessionSnapshot()).workspaces.find((workspace) => workspace.workspace_id === opened.workspace_id)?.worktree?.is_linked_worktree).toBeTrue();
+
+      const again = await post("/api/worktree/open", { workspace_id: linked.workspace.workspace_id, path: join(checkouts, "from-linked") });
+      expect(again.status).toBe(200);
+      expect((await again.json()) as WorktreeOpened).toMatchObject({ workspace_id: opened.workspace_id, already_open: true });
+    } finally {
+      const repoRoot = realpathSync(repo);
+      const snapshot = await sessionSnapshot().catch(() => null);
+      for (const workspace of snapshot?.workspaces ?? []) {
+        if (workspace.worktree?.is_linked_worktree && workspace.worktree.repo_root === repoRoot) await herdrRpc("worktree.remove", { workspace_id: workspace.workspace_id, force: true }).catch(() => undefined);
+      }
+      for (const id of owned) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
+      rmSync(checkouts, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("starts another agent of a kind whose name is already taken", async () => {
     // muse stands in for the agent: herdr answers agent.start once the launch is typed into the
     // pane, so the kind needs no program behind it and no real agent runs

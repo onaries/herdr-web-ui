@@ -15,10 +15,16 @@ const codexHome = join(root, "codex-home");
 const thread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc11";
 mkdirSync(join(codexHome, "sessions"), { recursive: true });
 const transcript = join(codexHome, "sessions", `rollout-2026-09-28T00-00-00-${thread}.jsonl`);
+const fidelitySources = ["const last = 7;\n\n", "first\n", "first\n\nlast", "\n"];
 writeFileSync(transcript, [
   { type: "session_meta", payload: { id: thread, cwd: root } },
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Show me the demo video." }] } },
-  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}` }] } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`` }] } },
+  // a block the highlighter is quadratic on (a line of dashes in YAML): seconds on the page
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Dashes:\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`` }] } },
+  // more lines than are drawn one element each (LINE_ELEMENT_LIMIT): 30 000 elements held the page
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Lines:\n\n\`\`\`\n${"x\n".repeat(30_000)}\`\`\`` }] } },
+  ...fidelitySources.map((source, index) => ({ type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `\`\`\`${index === 0 ? "ts" : "text"}\n${source}\n\`\`\`` }] } })),
 ].map((row) => JSON.stringify(row)).join("\n"));
 const db = new Database(join(codexHome, "state_5.sqlite"));
 db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER, source TEXT, first_user_message TEXT)");
@@ -50,7 +56,15 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
-  await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  // seeded once: a later step changes a setting and reloads. Long tasks are recorded from the first
+  // paint: nothing an agent writes may hold the page for a second
+  await page.addInitScript(() => {
+    if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+    const record = window as unknown as { longTasks: number[] };
+    record.longTasks = [];
+    new PerformanceObserver((list) => { for (const entry of list.getEntries()) record.longTasks.push(entry.duration); }).observe({ type: "longtask" });
+  });
+  const frozen = async () => (await page.evaluate(() => (window as unknown as { longTasks?: number[] }).longTasks ?? [])).filter((duration) => duration >= 1_000);
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -60,6 +74,41 @@ try {
   await page.locator(".conn-live").waitFor();
   const videoLink = page.getByRole("button", { name: "demo video", exact: true });
   await videoLink.waitFor();
+  await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
+  await page.locator(".markdown-code .hl-number", { hasText: "42" }).waitFor();
+  console.log("PASS Chat fenced code block is syntax highlighted");
+  // a blank line must survive in the text a copy picks up
+  const codeText = await page.locator(".markdown-code .hl-code").first().innerText();
+  if (codeText !== "const answer = 42;\n\nexport { answer };") throw new Error(`Chat code block text lost its blank line: ${JSON.stringify(codeText)}`);
+  console.log("PASS Chat code block keeps its blank line in the text");
+  const checkCodeFidelity = async (mode: string) => {
+    for (const [index, source] of fidelitySources.entries()) {
+      const block = page.locator(".markdown-code").nth(3 + index);
+      assert.equal(await block.locator("code").textContent(), source, `${mode}: source whitespace`);
+      const selections = await block.locator("pre").evaluate((pre, source) => {
+        const selection = window.getSelection()!;
+        const select = (node: Node) => {
+          const range = document.createRange(); range.selectNodeContents(node);
+          selection.removeAllRanges(); selection.addRange(range);
+          return selection.toString();
+        };
+        const actual = select(pre);
+        const baseline = document.createElement("pre");
+        const code = document.createElement("code"); code.textContent = source;
+        baseline.append(code); document.body.append(baseline);
+        const expected = select(baseline);
+        baseline.remove(); selection.removeAllRanges();
+        return { actual, expected };
+      }, source);
+      assert.equal(selections.actual, selections.expected, `${mode}: selection matches native pre/code`);
+    }
+    if (process.env.UI_EVIDENCE_DIR) {
+      mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+      await page.locator(".markdown-code").nth(3).screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `code-fidelity-${mode}.png`) });
+    }
+    console.log(`PASS ${mode}: trailing and interior blank lines match source and native selection`);
+  };
+  await checkCodeFidelity("highlight-on");
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await composer.fill("Keep my mobile draft");
   const chatUrl = page.url();
@@ -291,6 +340,36 @@ try {
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat plain file URI opens content through touch");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // a chat code block the highlighter gives up on stays plain and says so, and the page runs on
+  await page.locator(".markdown-code .hl-note", { hasText: "Too long to highlight" }).waitFor();
+  assert.equal(await page.locator(".markdown-code").nth(1).locator("code span:not(.hl-line)").count(), 0, "the slow block is plain");
+  await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
+  console.log("PASS A chat code block too slow to highlight stays plain, the others are colored");
+  // a block of more lines than are drawn one element each opens whole as one text
+  const many = page.locator(".markdown-code").nth(2);
+  await many.getByRole("button", { name: "Show all 30000 lines", exact: true }).click();
+  await many.getByRole("button", { name: "Show less", exact: true }).waitFor();
+  assert.equal(await many.locator(".hl-line").count(), 0, "no element per line");
+  assert.equal((await many.locator(".hl-code").innerText()).split("\n").length, 30_000);
+  assert.deepEqual(await frozen(), [], "no task held the page for a second");
+  console.log("PASS A chat code block of 30 000 lines opens as one text, and the page never freezes");
+
+  // Settings → Highlight code, off: code in the chat is plain text
+  await page.evaluate(() => {
+    const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}") as Record<string, unknown>;
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, highlightCode: false }));
+  });
+  await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+  await page.locator(".conn-live").waitFor();
+  await page.locator(".markdown-code .hl-code").first().waitFor();
+  assert.equal(await page.locator(".markdown-code .hl-keyword, .markdown-code .hl-number").count(), 0, "chat code is plain");
+  assert.equal(await page.locator(".markdown-code .hl-note").count(), 0, "plain by choice is not too long");
+  await checkCodeFidelity("highlight-off");
+  console.log("PASS Settings → Highlight code off shows chat code plain");
+  assert.deepEqual(errors, []);
 } finally {
   await browser?.close();
   server?.stop();

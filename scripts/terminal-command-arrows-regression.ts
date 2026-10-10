@@ -3,7 +3,7 @@ import type { Browser } from "playwright-core";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { paneRead, paneSendKeys, paneSendText } from "../server/herdr/client.ts";
+import { paneRead, paneSendKeys } from "../server/herdr/client.ts";
 
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -101,9 +101,10 @@ process.stdin.on("data", (data) => {
 });
 `);
       try {
-        await paneSendKeys(paneId, ["ctrl+c"]);
-        await paneSendText(paneId, `node '${script.replaceAll("'", "'\\''")}'`);
-        await paneSendKeys(paneId, ["Enter"]);
+        // Keep cleanup and launch behind the earlier browser keystrokes on the same input stream.
+        await input.press("Control+c");
+        await input.pressSequentially(`node '${script.replaceAll("'", "'\\''")}'`);
+        await input.press("Enter");
         await until(async () => (await paneRead({ paneId, source: "visible" })).text.includes("Owned macOS Cmd+Left"), "readline fixture must start");
         const probe = async (line: string, cursor: number) => {
           await input.press("Control+g");

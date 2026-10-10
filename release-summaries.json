@@ -1,4 +1,116 @@
 {
+  "0.4.5": {
+    "en": {
+      "improved": [
+        "Desktop tabs keep updating unless you opt in to sharing panes with herdr's own window."
+      ],
+      "fixed": [
+        "Claude background counts recover from transcript changes and temporary lookup failures.",
+        "Delayed Claude history keeps the turn's background wait; day-old task badges expire.",
+        "Claude completion cards no longer repeat within a chat page after incremental updates.",
+        "Selecting chat code preserves its trailing newlines, with highlighting on or off."
+      ]
+    },
+    "ko": {
+      "improved": [
+        "herdr 창과 패널을 함께 쓰는 옵션을 켜지 않으면 다른 창으로 이동해도 터미널 갱신을 유지합니다."
+      ],
+      "fixed": [
+        "Claude 백그라운드 작업 수가 기록 변경이나 일시적인 조회 실패 후에도 갱신됩니다.",
+        "Claude 기록을 늦게 찾아도 턴의 백그라운드 대기를 유지하고 하루 지난 작업 배지는 만료됩니다.",
+        "채팅을 갱신할 때 같은 페이지에 Claude 완료 카드가 중복으로 나타나지 않습니다.",
+        "코드 강조 설정과 관계없이 채팅 코드를 선택할 때 마지막 줄바꿈을 보존합니다."
+      ]
+    },
+    "ja": {
+      "improved": [
+        "herdrのウィンドウとペインを共有する設定を有効にしない限り、別のウィンドウに移っても表示を更新します。"
+      ],
+      "fixed": [
+        "Claudeのバックグラウンド件数が、記録の変更や一時的な取得失敗の後も更新されます。",
+        "Claudeの履歴取得が遅れてもターンの待機状態を保ち、1日経ったタスクのバッジは消えます。",
+        "チャットの差分更新で、同じページにClaudeの完了カードが重複しなくなりました。",
+        "コードの色分け設定にかかわらず、チャットのコード選択で末尾の改行を保持します。"
+      ]
+    },
+    "zh": {
+      "improved": [
+        "除非开启与 herdr 窗口共用窗格的设置，否则切换窗口后桌面标签页仍会持续更新。"
+      ],
+      "fixed": [
+        "Claude 后台任务数在记录变化或临时查询失败后仍能恢复更新。",
+        "延迟找到 Claude 历史记录时仍保留回合的后台等待，超过一天的任务徽标会过期。",
+        "增量更新聊天时，同一页中不再出现重复的 Claude 完成卡片。",
+        "无论是否开启代码高亮，选择聊天代码时都会保留末尾换行。"
+      ]
+    }
+  },
+  "0.4.4": {
+    "en": {
+      "new": [
+        "Follow Claude Code subagents and background commands directly in chat.",
+        "Choose a dictation language and give each PC's installed app its own name.",
+        "Reorder workspaces by touch and read highlighted code and task lists in chat."
+      ],
+      "improved": [
+        "Find slash commands by name fragments, descriptions or matching letters."
+      ],
+      "fixed": [
+        "Claude turns waiting for background work no longer announce an early finish.",
+        "Inactive browser tabs release panes so herdr's terminal view keeps its size.",
+        "Fast typing around chat completions keeps every key and selection in place.",
+        "Open worktrees from linked checkouts and read short, identifiable Codex sessions."
+      ]
+    },
+    "ko": {
+      "new": [
+        "Claude Code의 하위 에이전트와 백그라운드 명령을 채팅에서 확인할 수 있습니다.",
+        "받아쓰기 언어를 선택하고 PC마다 설치된 앱에 다른 이름을 붙일 수 있습니다.",
+        "터치로 작업 공간 순서를 바꾸고 채팅에서 코드 강조와 작업 목록을 볼 수 있습니다."
+      ],
+      "improved": [
+        "이름 일부, 설명, 순서대로 맞는 글자로 슬래시 명령을 찾을 수 있습니다."
+      ],
+      "fixed": [
+        "백그라운드 작업을 기다리는 Claude 턴이 완료 알림을 너무 일찍 보내지 않습니다.",
+        "사용하지 않는 브라우저 탭이 패널 연결을 놓아 herdr 터미널 화면 크기를 유지합니다.",
+        "채팅 자동 완성 전후에 빠르게 입력해도 글자 순서와 선택 영역이 유지됩니다.",
+        "연결된 체크아웃에서 워크트리를 열고 식별 가능한 짧은 Codex 세션을 읽습니다."
+      ]
+    },
+    "ja": {
+      "new": [
+        "Claude Codeのサブエージェントとバックグラウンドコマンドをチャットで確認できます。",
+        "音声入力の言語を選び、PCごとにインストールしたアプリに別の名前を付けられます。",
+        "タッチでワークスペースを並べ替え、チャットでコードの色分けとタスクリストを確認できます。"
+      ],
+      "improved": [
+        "名前の一部、説明、順に一致する文字からスラッシュコマンドを探せます。"
+      ],
+      "fixed": [
+        "バックグラウンド処理を待つClaudeのターンが、早すぎる完了通知を出さなくなりました。",
+        "使っていないブラウザータブがペインを解放し、herdrのターミナル表示サイズを保ちます。",
+        "チャットの補完前後に素早く入力しても、文字の順序と選択範囲が維持されます。",
+        "リンクされたチェックアウトからワークツリーを開き、識別できる短いCodexセッションを読めます。"
+      ]
+    },
+    "zh": {
+      "new": [
+        "可在聊天中查看 Claude Code 子代理和后台命令。",
+        "可选择听写语言，并为每台电脑上安装的应用设置不同的名称。",
+        "可通过触摸调整工作区顺序，并在聊天中查看代码高亮和任务列表。"
+      ],
+      "improved": [
+        "可通过名称片段、描述或按顺序匹配的字母查找斜杠命令。"
+      ],
+      "fixed": [
+        "等待后台任务的 Claude 回合不再过早发出完成通知。",
+        "未使用的浏览器标签页会释放窗格，保持 herdr 终端的显示尺寸。",
+        "在聊天补全前后快速输入时，字符顺序和选区不再被打乱。",
+        "可从关联的检出目录打开工作树，并读取能够明确识别的短 Codex 会话。"
+      ]
+    }
+  },
   "0.4.3": {
     "en": {
       "improved": [

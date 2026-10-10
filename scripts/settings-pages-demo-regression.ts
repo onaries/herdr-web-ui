@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { KO } from "../src/lib/i18n.ko.ts";
+import { JA } from "../src/lib/i18n.ja.ts";
+import { ZH } from "../src/lib/i18n.zh.ts";
 
 // Settings on the unmodified app over the demo's fixture transport: every page fits a phone, and
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
@@ -22,7 +25,7 @@ const openSettings = async (page: Page): Promise<void> => {
 const entryOf = (page: Page): Promise<{ page: string | null; keyBar: boolean; depth: number } | null> =>
   page.evaluate(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] as never ?? null);
 /** Controls and text that reach past their card, and cards past the page's box: a row wider than its card is cut there. */
-const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body").evaluate((body) => {
+const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body:not([hidden]), .settings-key-bar-body").evaluate((body) => {
   const edge = body.getBoundingClientRect();
   const out = [...body.querySelectorAll<HTMLElement>("button, input, select, a, .settings-card, .settings-row")]
     .filter((node) => {
@@ -56,33 +59,116 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      for (const width of [390, 320]) {
-        const context = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, locale: "en-US" });
+      for (const [width, language] of [[390, "en"], [320, "en"], [320, "ko"], [320, "ja"], [320, "zh"]] as const) {
+        const started = performance.now();
+        const strings: Record<string, string> = language === "ko" ? KO : language === "ja" ? JA : language === "zh" ? ZH : {};
+        const label = (name: string): string => strings[name] ?? name;
+        const context = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, locale: language });
         try {
-          await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify(SETTINGS));
+          await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
           await page.goto(url);
           await page.locator(".conn-live").waitFor({ state: "attached" });
+          const terminal = page.locator(".pane-terminal");
+          await terminal.waitFor({ state: "attached" });
+          const lens = page.getByRole("group", { name: "Pane view", exact: true });
+          await lens.getByTitle(label("Live terminal (⌘⇧J)"), { exact: true }).tap();
+          assert.equal(await terminal.getAttribute("role"), "region");
+          assert.equal(await terminal.getAttribute("aria-roledescription"), label("Terminal"));
+          assert.equal(await terminal.getAttribute("aria-label"), label("Terminal for {title}").replace("{title}", "Idempotent payments"));
+          assert.equal(await terminal.getAttribute("tabindex"), null, "the wrapper adds no empty keyboard stop");
+          await lens.getByTitle(label("Chat transcript (⌘⇧J)"), { exact: true }).tap();
+          assert.equal(await terminal.getAttribute("role"), null, "chat exposes no empty terminal landmark");
+          assert.equal(await terminal.getAttribute("aria-label"), null);
           await openSettings(page);
           for (const name of PAGES) {
-            await openSettingsPage(page, name);
+            await openSettingsPage(page, label(name), label("Back to settings"));
             // what a page asks the server for (devices, the phone address, the accounts) has arrived
-            await page.waitForFunction(() => ![...document.querySelectorAll(".settings-body [role='status']")].some((node) => /Loading…|Asking this PC/.test(node.textContent ?? "")));
+            await page.waitForFunction((loading) => ![...document.querySelectorAll(".settings-body [role='status']")].some((node) => loading.includes(node.textContent?.trim() ?? "")),
+              [label("Loading…"), label("Asking this PC about Tailscale…")]);
             if (name === "Subscription usage") await page.locator(".usage-accounts-row").first().waitFor();
-            assert.deepEqual(await cutOff(page), [], `${name} fits a ${width}px phone`);
+            if (name === "Voice input") {
+              await page.locator(".voice-key").waitFor();
+              const dictation = page.getByLabel(label("Dictation language"), { exact: true });
+              await dictation.selectOption("hu-HU");
+              await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).voiceLanguage === "hu-HU");
+              assert.equal(await dictation.inputValue(), "hu-HU");
+              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).language), language,
+                "dictation selection does not change the display language");
+              await dictation.selectOption("auto");
+            }
+            assert.deepEqual(await cutOff(page), [], `${name} fits a ${width}px phone (${language})`);
           }
+          await openSettingsPage(page, label("Terminal"), label("Back to settings"));
+          await page.getByRole("button", { name: label("Edit key bar"), exact: true }).tap();
+          await page.locator(".key-bar-settings").waitFor();
+          assert.deepEqual(await cutOff(page), [], `Key bar fits a ${width}px phone (${language})`);
+          await page.getByRole("button", { name: label("Back to settings"), exact: true }).tap();
           // the quick replies are text fields beside a Remove button each: both stay in the card
-          await openSettingsPage(page, "Chat");
-          const replies = page.locator(".quick-replies-list li");
-          assert.ok(await replies.count() > 0);
-          await page.getByRole("button", { name: "Remove quick reply 1", exact: true }).tap();
-          assert.equal(await replies.count(), (JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:settings")!)) as { quickReplies: string[] }).quickReplies.length);
-          await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();
+          if (language === "en") {
+            await openSettingsPage(page, "Chat");
+            const replies = page.locator(".quick-replies-list li");
+            assert.ok(await replies.count() > 0);
+            await page.getByRole("button", { name: "Remove quick reply 1", exact: true }).tap();
+            assert.equal(await replies.count(), (JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:settings")!)) as { quickReplies: string[] }).quickReplies.length);
+            await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();
+          }
           assert.deepEqual(errors, []);
-          await page.getByRole("button", { name: "Close settings", exact: true }).tap();
-          console.log(`PASS every Settings page fits a ${width}px phone, quick replies and their Remove buttons included`);
+          await page.getByRole("button", { name: label("Close settings"), exact: true }).tap();
+          if (language === "en") {
+            const composer = page.locator(".composer textarea");
+            await composer.fill("/");
+            const menu = page.getByRole("listbox", { name: "Slash commands" });
+            await menu.getByRole("option").last().waitFor();
+            await composer.press("ArrowUp");
+            await page.waitForFunction(() => {
+              const menu = document.querySelector(".composer-menu");
+              const active = menu?.querySelector('[aria-selected="true"]');
+              if (!menu || !active) return false;
+              const box = menu.getBoundingClientRect(), row = active.getBoundingClientRect();
+              return active.textContent?.includes("vim") && row.top >= box.top && row.bottom <= box.bottom;
+            });
+            // Enter right after the keystroke that narrows the list, before React's next render, completes the row
+            await page.evaluate(async () => {
+              const box = document.querySelector<HTMLTextAreaElement>(".composer textarea")!;
+              Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, "/comments");
+              box.selectionStart = box.selectionEnd = box.value.length;
+              box.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+              await Promise.resolve(); await Promise.resolve();
+              box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+            });
+            await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value === "/pr-comments ");
+            await composer.fill("/comments");
+            await menu.getByRole("option").filter({ hasText: "pr-comments" }).waitFor();
+            assert.equal(await menu.getByRole("option").count(), 1);
+            await composer.press("Tab");
+            await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value === "/pr-comments ");
+            assert.equal(await composer.inputValue(), "/pr-comments ");
+            // a key typed after a completion, before the next frame (a busy phone), stays where it was typed
+            await composer.fill("/comments");
+            await menu.getByRole("option").filter({ hasText: "pr-comments" }).waitFor();
+            await page.evaluate(() => {
+              const real = window.requestAnimationFrame, held: FrameRequestCallback[] = [];
+              window.requestAnimationFrame = (callback) => { held.push(callback); return 0; };
+              addEventListener("release-frames", () => {
+                window.requestAnimationFrame = real;
+                for (const callback of held) callback(performance.now());
+              }, { once: true });
+            });
+            await composer.press("Tab");
+            await page.keyboard.type("a");
+            await page.evaluate(() => dispatchEvent(new Event("release-frames")));
+            await page.keyboard.type("b");
+            assert.equal(await composer.inputValue(), "/pr-comments ab");
+            await composer.fill("/rln");
+            await menu.getByRole("option").filter({ hasText: "release-notes" }).waitFor();
+            assert.equal(await menu.getByRole("option").count(), 1);
+            await composer.fill("");
+            console.log(`PASS fuzzy commands and offscreen keyboard selection (${width}px)`);
+          }
+          console.log(`PASS every Settings page and key bar fit a ${width}px phone (${language}); ${(performance.now() - started).toFixed(0)}ms`);
         } finally {
           await context.close();
         }

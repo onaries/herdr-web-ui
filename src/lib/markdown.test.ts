@@ -403,6 +403,29 @@ describe("numbered lists as agents write them", () => {
   };
   const lists = (source: string) => parseMarkdown(source).map((block) => block.type === "list" ? { start: block.start ?? 1, items: block.items.length } : block.type);
 
+  it("reads a task list item's box as checked or open, and keeps the rest as its text", () => {
+    const [block] = parseMarkdown("- [x] done\n- [ ] open\n- [X] also done\n- [ ]\n- [y] not a box\n- plain");
+    expect((block as ListBlock).items.map((item) => [item.checked, item.content])).toEqual([
+      [true, [{ type: "text", value: "done" }]],
+      [false, [{ type: "text", value: "open" }]],
+      [true, [{ type: "text", value: "also done" }]],
+      [false, []],
+      [undefined, [{ type: "text", value: "[y] not a box" }]],
+      [undefined, [{ type: "text", value: "plain" }]],
+    ]);
+    const html = render("1. step\n   - [x] done\n   - [ ] open");
+    // the box is named by the item's text, so a screen reader says "done, checkbox, checked"
+    const done = /<li class="markdown-task"><span class="markdown-task-box" role="checkbox" aria-checked="true" aria-disabled="true" aria-labelledby="([^"]+)"><svg[^]*?<\/svg><\/span><span id="([^"]+)"><span>done<\/span><\/span><\/li>/.exec(html);
+    expect(done?.[1]).toBe(done?.[2]!);
+    const open = /<li class="markdown-task"><span class="markdown-task-box" role="checkbox" aria-checked="false" aria-disabled="true" aria-labelledby="([^"]+)"><\/span><span id="([^"]+)"><span>open<\/span><\/span><\/li>/.exec(html);
+    expect(open?.[1]).toBe(open?.[2]!);
+    expect(done).not.toBeNull();
+    expect(open).not.toBeNull();
+    expect(open?.[1]).not.toBe(done?.[1]);
+    // a task with no text has nothing to be labelled by: it is named as an empty task
+    expect(render("- [ ]")).toContain('<span class="markdown-task-box" role="checkbox" aria-checked="false" aria-disabled="true" aria-label="Empty task"></span>');
+  });
+
   it("keeps one list across blank lines between its items", () => {
     expect(lists("1. a\n\n2. b\n\n3. c")).toEqual([{ start: 1, items: 3 }]);
   });

@@ -299,6 +299,37 @@
   margin: var(--space-1) 0 0;
 }
 
+/* a task item: its box takes the bullet's place, on the text's first line */
+.markdown-task {
+  list-style: none;
+}
+
+.markdown-task-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 1em;
+  height: 1em;
+  margin: 0 var(--space-2) 0 calc(-1em - var(--space-2));
+  vertical-align: -0.125em;
+  border: var(--hairline) solid var(--text-dim);
+  /* half the small radius: a 1em box with the full one reads as a round radio button */
+  border-radius: calc(var(--radius-sm) / 2);
+}
+
+.markdown-task-box[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.markdown-task-box svg {
+  width: 0.8em;
+  height: 0.8em;
+  stroke-width: 3.5;
+}
+
 .markdown-list li + li {
   margin-top: var(--space-1);
 }
@@ -414,14 +445,10 @@
 }
 
 /* no height cap: an inner scroll hid the rest of the block on phones */
-.markdown-code pre {
-  margin: 0;
+.markdown-code .hl-code {
   padding: var(--space-3) var(--space-4);
-  overflow-x: auto;
-  font-family: var(--font-mono);
   font-size: var(--fs-sm);
   line-height: var(--lh-code);
-  white-space: pre;
 }
 
 .markdown-code-more {

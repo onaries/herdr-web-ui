@@ -1,5 +1,6 @@
 /** Shared native-record rules keep paging, rendering and on-demand results consistent. */
 import type { ConversationPart, ConversationTurn, OmoTaskResult } from "../shared/protocol.ts";
+import type { SubagentDetail, TaskNotification } from "./claude-subagents.ts";
 import { skillInvocationPrompt } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 
@@ -147,6 +148,29 @@ export function omoTaskResults(value: unknown, titles: ReadonlyMap<string, strin
     }
   }
   return tasks.size > 0 ? [...tasks.values()] : null;
+}
+
+/**
+ * The card for a Claude Code subagent that ended, from its `<task-notification>` alone and the
+ * subagent's meta file (its description and agent type, which never change after it starts), so
+ * that a page reads the same from a cold start as from a warm one. The turns, tool calls and
+ * tokens a subagent's transcript holds grow with it, and the status line's list shows them.
+ */
+export function agentTaskResult(notice: TaskNotification, detail: SubagentDetail | undefined): OmoTaskResult {
+  const result = notice.result;
+  return {
+    id: notice.taskId,
+    title: detail?.title ?? /^Agent "(.*)"/.exec(notice.summary)?.[1]?.trim() ?? notice.taskId,
+    agent: detail?.agent ?? null,
+    model: null,
+    status: notice.status,
+    duration_ms: null,
+    turns: null,
+    tool_calls: null,
+    tokens: null,
+    result: result.slice(0, OMO_TASK_RESULT_MAX),
+    ...(result.length > OMO_TASK_RESULT_MAX ? { result_cut: true } : {}),
+  };
 }
 
 /** The one-line summary a collapsed tool chip shows. */

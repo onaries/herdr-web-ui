@@ -11,7 +11,7 @@ import { ENDED_NOTIFICATION_BODY, paneNotificationTag, statusNotificationBody } 
  * The transition policy is shared with the server (shared/notify-policy.ts).
  */
 
-export { alertsAllow, shouldNotifyStatus } from "../../shared/notify-policy.ts";
+export { alertStatus, alertsAllow, shouldNotifyStatus } from "../../shared/notify-policy.ts";
 
 export type NotificationState = "unsupported" | "default" | "granted" | "denied";
 

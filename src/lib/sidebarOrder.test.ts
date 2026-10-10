@@ -144,6 +144,14 @@ describe("activity order", () => {
 describe("opened finishes", () => {
   const seqs = new Map([["a", 10], ["b", 12]]);
 
+  it("shows BG over a quiet opened finish until its background hold ends", () => {
+    const held = { ...pane("a", "done"), background_wait: true as const };
+    expect(shownStatus(held, seqs, { a: 10 })).toBe("waiting");
+    expect(shownStatus(held, seqs, null)).toBe("waiting");
+    expect(shownStatus({ ...held, agent_status: "blocked" }, seqs, { a: 10 })).toBe("blocked");
+    expect(shownStatus(pane("a", "done"), seqs, { a: 10 })).toBe("idle");
+  });
+
   it("counts a DONE as looked at while its counter is still the one recorded", () => {
     expect(isSeenDone(pane("a", "done"), seqs, { a: 10 })).toBe(true);
     expect(isSeenDone(pane("a", "done"), seqs, { a: 9 })).toBe(false);

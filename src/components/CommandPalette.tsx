@@ -4,7 +4,8 @@ import { Bell, FolderOpen, LockKeyhole, MessageSquarePlus, Monitor, PanelLeft, P
 
 import "./CommandPalette.css";
 
-import type { PaneInfo, SessionSnapshot } from "../../shared/protocol.ts";
+import type { HerdrPane, PaneInfo, SessionSnapshot } from "../../shared/protocol.ts";
+import { paneStatus } from "../lib/status.ts";
 import type { AppActions, PaneView } from "../lib/actions.ts";
 import { rankPanes } from "../lib/paletteSearch.ts";
 import { shortcutDisplayKeys, formatKeys, type ShortcutId } from "../lib/shortcuts.ts";
@@ -202,7 +203,7 @@ export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, 
               <button key={pane.pane_id} id={`palette-item-${index}`} type="button" role="option" className="menu-item palette-pane" aria-selected={activeIndex === index} onFocus={() => setActiveIndex(index)} onMouseMove={() => setActiveIndex(index)} onClick={() => runPane(pane)}>
                 <span className="palette-mark"><AgentMark agent={pane.agent ?? "shell"} /></span>
                 <span className="menu-item-main"><span className="palette-row-title">{displayPaneTitle(pane)}{selected && <span className="palette-selected">{t("Selected")}</span>}</span><span className="palette-row-subtitle">{placeLine(workspace?.label ?? t("Unknown workspace"), cwdBasename(pane.foreground_cwd ?? pane.cwd))}</span></span>
-                <StatusBadge status={pane.agent_status} />
+                <StatusBadge status={paneStatus(pane as HerdrPane)} />
               </button>
             );
           })}

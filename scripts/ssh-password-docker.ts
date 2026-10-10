@@ -31,7 +31,8 @@ async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> 
   return response.json();
 }
 try {
-  await docker(["run", "--rm", "-d", "--name", name, "-p", "127.0.0.1::22", "debian:bookworm-slim", "sleep", "infinity"]);
+  // Docker's official ECR mirror avoids Docker Hub's shared-runner anonymous pull limit.
+  await docker(["run", "--rm", "-d", "--name", name, "-p", "127.0.0.1::22", "public.ecr.aws/docker/library/debian:bookworm-slim", "sleep", "infinity"]);
   console.log("Preparing a disposable SSH PC (OpenSSH + Python, no Bun/Node/build tools)…");
   await docker(["exec", name, "sh", "-c", "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server python3 >/dev/null && useradd -m -s /bin/sh testpc && mkdir -p /run/sshd"]);
   await docker(["exec", "-i", name, "chpasswd"], `testpc:${password}\n`);

@@ -189,11 +189,16 @@ for (const name of pages) {
   // the FAQ as structured data, read from the rows the page shows
   // (a row's closing "… →" link is navigation, not part of the answer)
   const text = (html: string) => html.replace(/<a [^>]*>[^<]*→<\/a>/g, "").replace(/<[^>]+>/g, "").replaceAll("&amp;", "&").replace(/\s+/g, " ").trim();
-  const questions = [...page.matchAll(/<div class="qa">\s*<dt>(.*?)<\/dt>\s*<dd>(.*?)<\/dd>\s*<\/div>/gs)].map(([, question, answer]) => ({
-    "@type": "Question",
-    name: text(question),
-    acceptedAnswer: { "@type": "Answer", text: text(answer) },
-  }));
+  const questions = [...page.matchAll(/<div class="qa">\s*<dt>(.*?)<\/dt>\s*<dd>(.*?)<\/dd>\s*<\/div>/gs)].map((match) => {
+    const question = match[1];
+    const answer = match[2];
+    if (question === undefined || answer === undefined) throw new Error(`site/${name} has a FAQ row without a question or answer`);
+    return {
+      "@type": "Question",
+      name: text(question),
+      acceptedAnswer: { "@type": "Answer", text: text(answer) },
+    };
+  });
   const rowCount = [...page.matchAll(/<div class="qa">/g)].length;
   if (questions.length === 0 || questions.length !== rowCount) throw new Error(`site/${name} has missing or unparseable FAQ rows (<div class="qa">)`);
   const faq = JSON.stringify({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: questions }).replaceAll("<", "\\u003c");

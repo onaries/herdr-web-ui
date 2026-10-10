@@ -1,0 +1,33 @@
+/* Highlighted code (chat code blocks). The host sets padding and background. */
+.hl-code {
+  margin: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+  white-space: pre;
+}
+
+/*
+ * The lines are inline: the "\n" between them is real text, so the text of the block is the code and
+ * an empty line is still a line. A block line would add a line break of its own, which drops the
+ * blank lines from a copy or doubles them.
+ */
+
+.hl-keyword { color: var(--syntax-keyword); }
+.hl-string { color: var(--syntax-string); }
+.hl-number { color: var(--syntax-number); }
+.hl-comment { color: var(--syntax-comment); }
+.hl-function { color: var(--syntax-function); }
+.hl-type { color: var(--syntax-type); }
+.hl-variable { color: var(--syntax-variable); }
+.hl-meta { color: var(--syntax-meta); }
+.hl-inserted { color: var(--syntax-inserted); }
+.hl-deleted { color: var(--syntax-deleted); }
+
+.hl-note {
+  margin: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: center;
+}

@@ -35,6 +35,7 @@ import {
   notificationState,
   requestNotificationPermission,
   shouldNotifyStatus,
+  alertStatus,
   alertsAllow,
   showPaneEndedNotification,
   showPaneStatusNotification,
@@ -378,6 +379,11 @@ export function App() {
   // One SSE subscription watches every PC, even when no terminal is selected.
   useEffect(() => {
     if (locked !== false) return;
+    // the alerts take a pane waiting on its turn's background work for working (shared/notify-policy.ts)
+    const alerting = (list: Machine[]) => list.map((machine) => ({
+      id: machine.id,
+      snapshot: machine.snapshot && { panes: machine.snapshot.panes.map((pane) => ({ pane_id: pane.pane_id, agent_status: alertStatus(pane.agent_status, (pane as HerdrPane).background_wait) })) },
+    }));
     const events = new EventSource("/api/machines/events");
     events.onmessage = (event) => {
       let payload: MachineEvent;
@@ -385,7 +391,7 @@ export function App() {
       // A poll started before this event can carry an older roster or pane status.
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
-        seedStatuses(statusRef.current, payload.machines, { started: turnStartRef.current, lasted: lastTurnRef.current });
+        seedStatuses(statusRef.current, alerting(payload.machines), { started: turnStartRef.current, lasted: lastTurnRef.current });
         setMachines((previous) => sameData(previous, payload.machines) ? previous : payload.machines);
         return;
       }
@@ -395,21 +401,22 @@ export function App() {
       if (message.type === "pane-status") {
         const key = paneStorageId(machine.id, message.pane_id);
         const previous = statusRef.current.get(key);
-        statusRef.current.set(key, message.agent_status);
+        const status = alertStatus(message.agent_status, message.background_wait);
+        statusRef.current.set(key, status);
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
-        const worked = trackTurn(turnStartRef.current, key, previous, message.agent_status, Date.now());
+        const worked = trackTurn(turnStartRef.current, key, previous, status, Date.now());
         if (worked !== null) lastTurnRef.current.set(key, worked);
-        if (pane && shouldNotifyStatus(previous, message.agent_status) && dropletAllows(alertsRef.current, message.agent_status, worked)) {
-          const kind = message.agent_status === "blocked" ? "blocked" : "done";
+        if (pane && shouldNotifyStatus(previous, status) && dropletAllows(alertsRef.current, status, worked)) {
+          const kind = status === "blocked" ? "blocked" : "done";
           dropIn(machine, pane, kind);
           chime(machine, pane, kind);
         }
-        if (pane && shouldNotifyStatus(previous, message.agent_status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, message.agent_status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${displayPaneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id, "chat"), machine.id);
+        if (pane && shouldNotifyStatus(previous, status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${displayPaneTitle(pane)}`, status, () => selectTargetRef.current(machine.id, message.pane_id, "chat"), machine.id);
         setMachines((list) => {
           let changed = false;
           const next = list.map((m) => {
             if (m.id !== machine.id || !m.snapshot) return m;
-            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status, message.background_tasks);
+            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status, message.background_tasks, message.background_wait === true);
             if (snapshot === m.snapshot) return m;
             changed = true;
             return { ...m, snapshot };
@@ -900,11 +907,13 @@ export function App() {
           <div id={PANE_TABPANEL_ID} className="terminal-tabpanel" role={tabPanelLabel === null ? undefined : "tabpanel"} aria-label={tabPanelLabel ?? undefined}>
           <PaneTerminal
             key={selectedMachineId}
+            title={selectedTitle}
             paneId={selectedPane?.restore_error ? null : selectedPaneId}
             restoreError={selectedPane?.restore_error ?? null}
             agent={selectedAgent}
             agentStatus={selectedPane?.agent_status}
             backgroundTasks={(selectedPane as HerdrPane | null)?.background_tasks ?? 0}
+            backgroundWait={(selectedPane as HerdrPane | null)?.background_wait === true}
             cwd={selectedPane?.cwd ?? null}
             machineName={selectedMachine?.name ?? selectedMachineId}
             view={view}

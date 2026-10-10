@@ -490,6 +490,7 @@ describe("connection-owned pending input", () => {
     f.socket.send({ type: "role", mode: "interact" });
     await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact");
     expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "pending_lease_lost" });
+    await f.waitBytes("barrier\r");
     expect(f.socket.seen.some((frame) => frame.type === "pending-messages")).toBe(false);
     expect(f.bytes()).toBe("barrier\r");
   }, 30_000);

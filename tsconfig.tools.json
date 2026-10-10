@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "files": [
+    "scripts/check.ts",
+    "scripts/build-site.ts",
+    "scripts/ci-lanes.ts",
+    "scripts/ci-tests.ts",
+    "scripts/release-notes.ts",
+    "site/demo/transport.ts"
+  ],
+  "include": []
+}

@@ -1,7 +1,7 @@
 /** Antigravity CLI 1.3 stores gemini_coder.Step protobufs in a per-conversation SQLite database. */
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { readdirSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readlinkSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -31,6 +31,33 @@ export function agyTranscriptPath(id: string, store?: string): string | null {
       const path = realpathSync(join(root, `${id}.db`));
       if (dirname(path) === root && statSync(path).isFile()) return path;
     } catch { continue; }
+  }
+  return null;
+}
+
+/** Resumed agy sessions may omit the terminal session report; its own open log names them. */
+export function agySessionFromPids(pids: readonly number[], procRoot = "/proc"): string | null {
+  for (const pid of pids) {
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    let fds: string[];
+    try { fds = readdirSync(join(procRoot, String(pid), "fd")); } catch { continue; }
+    for (const fd of fds) {
+      let file: number | undefined;
+      try {
+        const log = readlinkSync(join(procRoot, String(pid), "fd", fd));
+        if (!/\/antigravity-cli\/log\/cli-[^/]+\.log$/.test(log)) continue;
+        file = openSync(log, "r");
+        const size = statSync(log).size;
+        const bytes = Buffer.alloc(Math.min(size, 64 * 1024));
+        const length = readSync(file, bytes, 0, bytes.length, size - bytes.length);
+        const lines = bytes.subarray(0, length).toString("utf8").split("\n");
+        for (const line of lines.reverse()) {
+          const id = /(?:Streaming conversation|Starting conversation update stream for) ([0-9a-f-]{36})(?:\s|$)/i.exec(line)?.[1];
+          if (id) return agyTranscriptPath(id, join(dirname(dirname(log)), "conversations"));
+        }
+      } catch { continue; }
+      finally { if (file !== undefined) closeSync(file); }
+    }
   }
   return null;
 }

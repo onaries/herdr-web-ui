@@ -114,6 +114,8 @@ const DEFAULT_DEPS: StatusCollectorDeps = {
 };
 
 export interface StatusCollector {
+  /** Initial baselines are reconciled after the status subscription has started. */
+  ready: Promise<void>;
   stop: () => void;
 }
 
@@ -212,6 +214,7 @@ function logSubscriptionError(error: Error): void {
 
 export function startStatusCollector(handlers: StatusCollectorHandlers, overrides: Partial<StatusCollectorDeps> = {}): StatusCollector {
   const deps: StatusCollectorDeps = { ...DEFAULT_DEPS, ...overrides };
+  const ready = Promise.withResolvers<void>();
   let stopped = false;
   let statusSubscription: Subscription | null = null;
   let subscribedPaneIds = new Set<string>();
@@ -381,7 +384,10 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       for (const paneId of [...heard.keys()]) if (!paneIds.includes(paneId) && (lastEventOf.get(paneId) ?? 0) <= askedAt) heard.delete(paneId);
       for (const [paneId, seq] of actedOn) if (seq <= askedAt && !paneIds.includes(paneId)) actedOn.delete(paneId);
       for (const [paneId, seq] of focusedAt) if (seq <= askedAt && !paneIds.includes(paneId)) focusedAt.delete(paneId);
-      if (sameSet) return;
+      if (sameSet) {
+        if (statusStarted || paneIds.length === 0) ready.resolve();
+        return;
+      }
       closeStatusSubscription();
       openStatusSubscription(paneIds);
       // no pane left to listen for: nothing can have been missed
@@ -476,6 +482,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
   backstopTimer = setInterval(() => void reconcile(), deps.backstopMs);
 
   return {
+    ready: ready.promise,
     stop() {
       stopped = true;
       if (reconcileTimer !== null) clearTimeout(reconcileTimer);

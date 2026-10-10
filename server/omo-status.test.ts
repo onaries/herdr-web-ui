@@ -437,6 +437,14 @@ describe("OmO panes' status in place of herdr's", () => {
     expect("background_tasks" in paneAfterStatus(two, frame(0))).toBe(false);
   });
 
+  it("takes whether a remote pane waits on its turn's background work from every frame", () => {
+    const waiting = paneAfterStatus(pane("omo", "claude", "working"), { type: "pane-status", pane_id: "omo", agent_status: "done", background_tasks: 1, background_wait: true });
+    expect(waiting).toMatchObject({ agent_status: "done", background_tasks: 1, background_wait: true });
+    // a frame about the count alone still says it: one that does not name the wait ended it
+    const over = paneAfterStatus(waiting, { type: "pane-status", pane_id: "omo", agent_status: "done", background_tasks: 1 });
+    expect(["background_wait" in over, over.background_tasks]).toEqual([false, 1]);
+  });
+
   it("looks the panes up once per refresh, and not again while nothing changed", async () => {
     const { omo, state } = setup();
     await omo.refresh(herdr().panes);

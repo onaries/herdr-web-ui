@@ -70,6 +70,19 @@
   --term-cursor: #f0a830;
   --term-selection: #4a3d26;
 
+  /* syntax highlighting (components/HighlightedCode.css): the four derived roles follow the
+     palette because they are resolved on <html>, where data-theme and data-palette sit */
+  --syntax-comment: var(--text-dim);
+  --syntax-function: var(--accent);
+  --syntax-inserted: var(--status-done);
+  --syntax-deleted: var(--status-blocked);
+  --syntax-keyword: #e8875f;
+  --syntax-string: #a8c17c;
+  --syntax-number: #d6a0c9;
+  --syntax-type: #6cb8d6;
+  --syntax-variable: #e0c08f;
+  --syntax-meta: #b49dd6;
+
   /* type (comfortable density; compact overrides below) */
   --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
   /* "JetBrains Mono Web" is the bundled face (fonts/fonts.css): after the icon font, which draws
@@ -150,6 +163,9 @@
   --dur-fast: 120ms;
   --dur-base: 180ms;
   --dur-pulse: 1600ms;
+  /* one turn of the working arc: a stepped rotation draws its steps and nothing else, so the
+     step count in Sidebar.css is the frame rate and this only sets how fast it looks */
+  --dur-spin: 1600ms;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
   /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
@@ -213,6 +229,12 @@
   --term-fg: #2a251f;
   --term-cursor: #8c5000;
   --term-selection: #f0d9ae;
+  --syntax-keyword: #a33a17;
+  --syntax-string: #4b6b18;
+  --syntax-number: #8a3f7a;
+  --syntax-type: #155a72;
+  --syntax-variable: #7a5418;
+  --syntax-meta: #5d4791;
 }
 
 /* Dark report palette (Settings → Appearance → Colors): a near-black blue-grey canvas
@@ -261,6 +283,12 @@
   --term-fg: #c9d1dc;
   --term-cursor: #4c9aff;
   --term-selection: #1f3a66;
+  --syntax-keyword: #f78c6c;
+  --syntax-string: #3ddc97;
+  --syntax-number: #f5b544;
+  --syntax-type: #7fd4ff;
+  --syntax-variable: #c9d1dc;
+  --syntax-meta: #b392f0;
 }
 
 /* Report and charcoal share plain paper in light; charcoal's own light block below
@@ -290,6 +318,12 @@
   --term-fg: #242424;
   --term-cursor: #1f5fcc;
   --term-selection: #cfe0fb;
+  --syntax-keyword: #b3261e;
+  --syntax-string: #22743a;
+  --syntax-number: #8a5300;
+  --syntax-type: #0b6e8a;
+  --syntax-variable: #3b3b3b;
+  --syntax-meta: #6f42c1;
 }
 
 /* Charcoal: neutral charcoal, a Ghostty-style terminal (the panel is its #171717), no
@@ -327,6 +361,12 @@
   --term-fg: #cbc7c0;
   --term-cursor: #cbc7c0;
   --term-selection: #49443d;
+  --syntax-keyword: #d7a08a;
+  --syntax-string: #a7b789;
+  --syntax-number: #c2a2af;
+  --syntax-type: #9fb4c2;
+  --syntax-variable: #dcd8d0;
+  --syntax-meta: #b8a5c9;
 }
 
 [data-theme="light"][data-palette="charcoal"] {
@@ -379,6 +419,14 @@
   --term-fg: #cdd6f4;
   --term-cursor: #f5e0dc;
   --term-selection: #3b3d4f;
+  /* Catppuccin's own mapping: keywords mauve, so functions take blue instead of --accent */
+  --syntax-keyword: #cba6f7;
+  --syntax-string: #a6e3a1;
+  --syntax-number: #fab387;
+  --syntax-type: #f9e2af;
+  --syntax-variable: #f5e0dc;
+  --syntax-meta: #f5c2e7;
+  --syntax-function: #89b4fa;
 }
 
 [data-theme="light"][data-palette="catppuccin"] {
@@ -415,6 +463,13 @@
   --term-fg: #4c4f69;
   --term-cursor: #dc8a78;
   --term-selection: #d2d4dc;
+  --syntax-keyword: #712fc6;
+  --syntax-string: #2f7620;
+  --syntax-number: #b44201;
+  --syntax-type: #905c13;
+  --syntax-variable: #4c4f69;
+  --syntax-meta: #bc1d91;
+  --syntax-function: #0b59f4;
 }
 
 /* Lilac: one quiet lavender. Light is the look it was drawn for: a lavender canvas (`--bg`)
@@ -1138,6 +1193,12 @@ button {
 .badge-done {
   color: var(--status-done);
   background: var(--status-done-tint);
+}
+
+/* BG: the turn ended on work still running in the background. The working colours, holding still */
+.badge-waiting {
+  color: var(--status-working);
+  background: var(--status-working-tint);
 }
 
 /* unknown keeps the dim text color (contrast) and is told apart by the dashed edge */

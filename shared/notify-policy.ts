@@ -13,6 +13,15 @@ export function shouldNotifyStatus(previous: AgentStatus | undefined, next: Agen
   return next === "blocked" || next === "done";
 }
 
+/**
+ * The status the alerts take a pane for. One at rest whose turn's background work still runs
+ * (`background_wait`, server/background-wait.ts) is working: that work's notice starts the next
+ * turn by itself, and the finish is told once, when the work's turn ends.
+ */
+export function alertStatus(status: AgentStatus, waiting: boolean | undefined): AgentStatus {
+  return waiting === true && status !== "working" && status !== "blocked" ? "working" : status;
+}
+
 /** The name a pane goes by in the sidebar and in every notification. */
 export function paneTitle(pane: Pick<PaneInfo, "pane_id" | "cwd" | "terminal_title" | "terminal_title_stripped">): string {
   return pane.terminal_title_stripped ?? pane.terminal_title ?? pane.cwd ?? pane.pane_id;

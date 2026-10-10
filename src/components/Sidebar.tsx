@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { Ellipsis, Folder, FolderOpen, GitBranch, Layers, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Ellipsis, Folder, FolderOpen, GitBranch, Layers, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -18,7 +18,9 @@ import { useT } from "../lib/i18n.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { useSettings } from "../lib/settings.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
+import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
 
@@ -69,11 +71,12 @@ export function StatusBadge({ status, compact = false }: { status?: AgentStatus;
   const t = useT();
   const value = knownStatus(status);
   const label = t(STATUS_WORD[value]);
-  const description = t("Agent {status}", { status: label });
+  const description = value === "waiting" ? t("Agent waiting on background work") : t("Agent {status}", { status: label });
   // a compact cell draws only the states that ask for a look: a red question mark while the agent
   // waits for an answer, a green dot once it has finished and was not looked at, a dim arc while
-  // it runs. Ready and unknown keep the cell, its label and its tooltip
-  const Icon = { idle: null, working: LoaderCircle, blocked: null, done: null, unknown: null }[value];
+  // it runs, the same arc held still in the working colour while its turn waits on background work.
+  // Ready and unknown keep the cell, its label and its tooltip
+  const Icon = { idle: null, working: LoaderCircle, blocked: null, done: null, waiting: LoaderCircle, unknown: null }[value];
   return (
     <span
       className={`badge badge-${value}${compact ? " sidebar-status" : ""}`}
@@ -148,6 +151,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const [workspaceLabel, setWorkspaceLabel] = useState("");
   const [workspaceOrder, setWorkspaceOrder] = useState<string[]>([]);
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
+  // a finger's drag (lib/touchReorder.ts): the row it holds and the row it is over
+  const [touchDrag, setTouchDrag] = useState<{ source: string; over: string | null } | null>(null);
+  // the browser's drag and drop is a mouse's: on a touch screen a long press lifts the row instead
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
   const [inlineError, setInlineError] = useState<InlineError | null>(null);
   const rosterId = useId();
   const workspaceRoot = useRef<HTMLDivElement>(null);
@@ -275,8 +282,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
 
   // A right-click on a row opens the menu its ⋯ opens, under that button, which also takes the
   // focus back when the menu goes. A name being edited keeps the browser's own menu, for its paste.
-  // A finger's long press is left alone: it is how a row is picked up to be dragged, and the ⋯
-  // is always there on touch.
+  // A finger's long press is left alone: it picks the row up to be moved (lib/touchReorder.ts),
+  // and the ⋯ is always there on touch.
   const onRowContextMenu = (event: MouseEvent<HTMLElement>, toggle: (anchor: HTMLElement) => void): void => {
     if ((event.target as HTMLElement).closest("input")) return;
     // Chrome and Safari say what pressed; Firefox does not, so there the device's main pointer decides
@@ -320,6 +327,11 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
         { id: "open-worktree", label: t("Open worktree…"), icon: FolderOpen, run: () => setWorktreeDialog({ mode: "open", workspace }) },
       ] satisfies RowMenuItem[]),
     ];
+    // the touch screen's way to move a row without a drag, and the menu's for everyone
+    const moveItems: RowMenuItem[] = [
+      ...(moveIndex(workspace.workspace_id, -1) === null ? [] : [{ id: "move-up", label: t("Move up"), icon: ArrowUp, divider: true, run: () => moveVisible(workspace.workspace_id, -1) }]),
+      ...(moveIndex(workspace.workspace_id, 1) === null ? [] : [{ id: "move-down", label: t("Move down"), icon: ArrowDown, divider: moveIndex(workspace.workspace_id, -1) === null, run: () => moveVisible(workspace.workspace_id, 1) }]),
+    ];
     const deleteItems: RowMenuItem[] = linked ? [{
       id: "delete-worktree", label: t("Delete worktree checkout…"), icon: Trash2, danger: true,
       run: () => setConfirm({
@@ -337,7 +349,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
       body: worktrees.length > 0 ? t("{n} panes and {m} worktree workspaces close with it; the agents in them stop, and the checkouts stay.", { n: paneCount, m: worktrees.length }) : t("{n} panes close with it, and the agents in them stop.", { n: paneCount }),
       run: () => leave(() => closeWorkspace(workspace.workspace_id, worktrees.length > 0)),
     }) };
-    return [...items, closeItem, ...deleteItems];
+    return [...items, ...moveItems, closeItem, ...deleteItems];
   };
 
   // the roster moves under an open menu: a row that left takes its menu with it, and focus
@@ -435,19 +447,22 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   // The roster shows groups: a repository's workspace moves past the next or previous group as
   // one (herdr keeps its worktrees packed behind it), and a worktree moves among its siblings.
   // The index herdr gets is the edge of the group the move lands on.
-  const moveVisible = (workspaceId: string, direction: -1 | 1): void => {
+  const moveIndex = (workspaceId: string, direction: -1 | 1): number | null => {
     const groupIndex = worktreeGroups.findIndex((group) => group.workspace.workspace_id === workspaceId);
     if (groupIndex >= 0) {
       const target = worktreeGroups[groupIndex + direction];
-      if (!target) return;
+      if (!target) return null;
       const edge = direction === 1 ? (target.children[target.children.length - 1] ?? target.workspace) : target.workspace;
-      reorderWorkspace(workspaceId, workspaceOrder.indexOf(edge.workspace_id));
-      return;
+      return workspaceOrder.indexOf(edge.workspace_id);
     }
     const parent = worktreeGroups.find((group) => group.children.some((child) => child.workspace_id === workspaceId));
-    if (!parent) return;
+    if (!parent) return null;
     const sibling = parent.children[parent.children.findIndex((child) => child.workspace_id === workspaceId) + direction];
-    if (sibling) reorderWorkspace(workspaceId, workspaceOrder.indexOf(sibling.workspace_id));
+    return sibling ? workspaceOrder.indexOf(sibling.workspace_id) : null;
+  };
+  const moveVisible = (workspaceId: string, direction: -1 | 1): void => {
+    const index = moveIndex(workspaceId, direction);
+    if (index !== null) reorderWorkspace(workspaceId, index);
   };
 
   /** where a dropped workspace lands, in the flat order, or nowhere when the drop crosses a group's edge */
@@ -464,13 +479,51 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     return parent && parent.children.some((child) => child.workspace_id === targetId) ? workspaceOrder.indexOf(targetId) : null;
   };
 
+  // a finger's drag lands where the mouse's does: the same groups, the same index for herdr
+  const touchHandlers = useRef<Parameters<typeof watchTouchReorder>[1] | null>(null);
+  touchHandlers.current = {
+    canLift: (id) => editingWorkspaceId !== id && !(editingPaneId !== null && roster.some((pane) => pane.pane_id === editingPaneId && pane.workspace_id === id)),
+    onLift: (id) => { setMenu(null); setTouchDrag({ source: id, over: id }); },
+    onOver: (id) => setTouchDrag((current) => current && { ...current, over: id }),
+    onDrop: (id, target) => {
+      setTouchDrag(null);
+      const index = target === null || target === id ? null : dropIndex(id, target);
+      if (index !== null) reorderWorkspace(id, index);
+    },
+    onCancel: () => setTouchDrag(null),
+  };
+  useEffect(() => {
+    const root = workspaceRoot.current;
+    if (!root) return;
+    return watchTouchReorder(root, {
+      canLift: (id) => touchHandlers.current?.canLift(id) ?? false,
+      onLift: (id) => touchHandlers.current?.onLift(id),
+      onOver: (id) => touchHandlers.current?.onOver(id),
+      onDrop: (id, target) => touchHandlers.current?.onDrop(id, target),
+      onCancel: () => touchHandlers.current?.onCancel(),
+    });
+  }, []);
+
+  /** where a held row would land, drawn as a line: before or after a row, or after a group's worktrees */
+  const dropMark = ((): { id: string; side: "before" | "after"; children: boolean } | null => {
+    if (!touchDrag?.over || touchDrag.over === touchDrag.source || dropIndex(touchDrag.source, touchDrag.over) === null) return null;
+    const down = workspaceOrder.indexOf(touchDrag.source) < workspaceOrder.indexOf(touchDrag.over);
+    const sourceGroup = worktreeGroups.some((group) => group.workspace.workspace_id === touchDrag.source);
+    const targetGroup = sourceGroup ? worktreeGroups.find((group) => group.workspace.workspace_id === touchDrag.over || group.children.some((child) => child.workspace_id === touchDrag.over)) : undefined;
+    if (targetGroup) {
+      const groupDown = workspaceOrder.indexOf(touchDrag.source) < workspaceOrder.indexOf(targetGroup.workspace.workspace_id);
+      return { id: targetGroup.workspace.workspace_id, side: groupDown ? "after" : "before", children: groupDown && targetGroup.children.length > 0 };
+    }
+    return { id: touchDrag.over, side: down ? "after" : "before", children: false };
+  })();
+
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, workspaceId: string): void => {
     if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
     event.preventDefault();
     moveVisible(workspaceId, event.key === "ArrowUp" ? -1 : 1);
   };
 
-  const renderWorkspaceRow = (workspace: WorkspaceInfo, children: WorkspaceInfo[] = [], nested = false) => {
+  const renderWorkspaceRow = (workspace: WorkspaceInfo, children: WorkspaceInfo[] = [], nested = false, drop?: "before" | "after") => {
     const panes = roster.filter((pane) => pane.workspace_id === workspace.workspace_id);
     if (panes.length === 0) return null;
     const pane = currentPane(workspace, panes);
@@ -499,10 +552,11 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const contentsId = `${rosterId}-worktrees-${encodeURIComponent(repoKey ?? workspace.workspace_id)}`;
     const toggleMenu = (anchor: HTMLElement): void => setMenu(menuOpen ? null : { anchor, workspace, pane, title: rowTitle, place: [branchNote, ...paths].filter(Boolean).join(" · ") || workspace.label });
     return <li
-      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${collapsed ? " is-collapsed" : ""}${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}`}
+      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${collapsed ? " is-collapsed" : ""}${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}${touchDrag?.source === workspace.workspace_id ? " is-lifted" : ""}`}
       key={workspace.workspace_id}
       data-workspace={workspace.workspace_id}
       data-branch={branchTitle ?? undefined}
+      data-drop={drop}
       onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
       onDrop={(event) => onDrop(event, workspace.workspace_id)}
     >
@@ -521,7 +575,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           className="pane-select workspace-select"
           role="button"
           tabIndex={0}
-          draggable={!editingWorkspace && !editingPane}
+          draggable={!coarsePointer && !editingWorkspace && !editingPane}
           onDragStart={(event) => { if (!editingWorkspace && !editingPane) onDragStart(event, workspace.workspace_id); }}
           onDragEnd={() => setDragWorkspaceId(null)}
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
@@ -605,18 +659,22 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
               <button type="button" className="btn" onClick={actions.openNewSession}><Plus aria-hidden="true" />{t("New workspace")}</button>
             </div>
           )}
-          <ul className="workspace-list">{worktreeGroups.map(({ workspace, children }) => (
-            <Fragment key={workspace.workspace_id}>
-              {renderWorkspaceRow(workspace, children)}
+          <ul className="workspace-list">{worktreeGroups.map(({ workspace, children }) => {
+            const childrenHidden = collapsedWorktrees.has(workspace.worktree?.repo_key ?? "") && !children.some((child) => roster.some((pane) => pane.workspace_id === child.workspace_id && pane.pane_id === selectedPaneId));
+            // a group moved below this one lands after its worktrees, and the line says so
+            const afterChildren = dropMark?.id === workspace.workspace_id && dropMark.children;
+            return <Fragment key={workspace.workspace_id}>
+              {renderWorkspaceRow(workspace, children, false, dropMark?.id === workspace.workspace_id && (!dropMark.children || childrenHidden) ? dropMark.side : undefined)}
               {children.length > 0 && <li
                 className="worktree-children"
                 id={`${rosterId}-worktrees-${encodeURIComponent(workspace.worktree!.repo_key)}`}
-                hidden={collapsedWorktrees.has(workspace.worktree!.repo_key) && !children.some((child) => roster.some((pane) => pane.workspace_id === child.workspace_id && pane.pane_id === selectedPaneId))}
+                hidden={childrenHidden}
+                data-drop={afterChildren && !childrenHidden ? "after" : undefined}
               ><ul className="workspace-list">
-                {children.filter((child) => !collapsedWorktrees.has(workspace.worktree!.repo_key) || roster.some((pane) => pane.workspace_id === child.workspace_id && pane.pane_id === selectedPaneId)).map((child) => renderWorkspaceRow(child, [], true))}
+                {children.filter((child) => !collapsedWorktrees.has(workspace.worktree!.repo_key) || roster.some((pane) => pane.workspace_id === child.workspace_id && pane.pane_id === selectedPaneId)).map((child) => renderWorkspaceRow(child, [], true, dropMark?.id === child.workspace_id ? dropMark.side : undefined))}
               </ul></li>}
-            </Fragment>
-          ))}</ul>
+            </Fragment>;
+          })}</ul>
           {inlineError && inlineError.workspaceId === undefined && (
             <p className="sidebar-inline-error" role="alert">{inlineError.message}</p>
           )}

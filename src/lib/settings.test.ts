@@ -4,7 +4,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
-import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+
+it("keeps a tab's pane while out of use until this device turns the pause on", () => {
+  expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
+  expect(sanitizeSettings({}).releasePaneAway).toBe(false);
+  expect(sanitizeSettings({ releasePaneAway: true }).releasePaneAway).toBe(true);
+  expect(sanitizeSettings({ releasePaneAway: "true" }).releasePaneAway).toBe(false);
+});
 
 it("keeps the screen wake lock off until this device explicitly enables it", () => {
   expect(DEFAULT_SETTINGS.keepScreenOn).toBe(false);
@@ -313,6 +320,13 @@ describe("microphone button", () => {
     for (const voiceInput of [null, 1, "yes", "ON"]) expect(sanitizeSettings({ voiceInput }).voiceInput).toBe("auto");
   });
 
+  it("listens for the browser's language until another is chosen from the list", () => {
+    expect(DEFAULT_SETTINGS.voiceLanguage).toBe("auto");
+    expect(sanitizeSettings({}).voiceLanguage).toBe("auto");
+    for (const voiceLanguage of DICTATION_LANGUAGES) expect(sanitizeSettings({ voiceLanguage }).voiceLanguage).toBe(voiceLanguage);
+    for (const voiceLanguage of [null, 1, "", "hu", "hu-hu", "xx-XX", "auto "]) expect(sanitizeSettings({ voiceLanguage }).voiceLanguage).toBe("auto");
+  });
+
   it("is asked for in the chat off a phone on auto, everywhere when on and nowhere when off", () => {
     expect(wantsVoiceInput("auto", "chat", false)).toBe(true);
     expect(wantsVoiceInput("auto", "chat", true)).toBe(false);
@@ -494,4 +508,11 @@ describe("default lens", () => {
     expect(forgetPaneViews(storage)).toBe(2);
     expect([...data.keys()]).toEqual(["herdr-web-ui:settings"]);
   });
+});
+
+it("highlights code unless turned off, and keeps a stored choice only when it is a boolean", () => {
+  expect(DEFAULT_SETTINGS.highlightCode).toBe(true);
+  expect(sanitizeSettings({ highlightCode: false }).highlightCode).toBe(false);
+  expect(sanitizeSettings({ highlightCode: "no" }).highlightCode).toBe(true);
+  expect(sanitizeSettings({}).highlightCode).toBe(true);
 });

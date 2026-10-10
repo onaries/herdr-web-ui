@@ -16,7 +16,7 @@ import { ChevronDown, Pencil, Plus, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
 
-import type { HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { HerdrPane, HerdrTab, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
@@ -26,7 +26,7 @@ import { STRIP_AT_REST, stripPlaced, stripScrolled, stripSelected, type StripScr
 import { PANE_TABPANEL_ID, paneTabPanelLabel } from "../lib/paneRegion.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
-import { knownStatus } from "../lib/status.ts";
+import { paneStatus, rollupStatus } from "../lib/status.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
@@ -197,7 +197,8 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   };
   const requestClose = (tab: HerdrTab): void => {
     setError(null);
-    const busy = panesOf(tab).some((pane) => { const status = knownStatus(pane.agent_status); return status === "working" || status === "blocked"; });
+    // a turn that waits on its background work would lose that work too
+    const busy = panesOf(tab).some((pane) => { const status = paneStatus(pane as HerdrPane); return status === "working" || status === "blocked" || status === "waiting"; });
     if (tabs.length > 1 && !busy) {
       void close(tab).catch((reason: unknown) => setError(t("Close failed: {reason}", { reason: said(reason) })));
       return;
@@ -264,7 +265,8 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
         {tabs.map((tab) => {
           const active = tab.tab_id === selectedPane.tab_id;
           const own = panesOf(tab);
-          const status = knownStatus(tab.agent_status);
+          // Settle each pane's wait before rolling up, so a sibling's RUN or DONE stays visible.
+          const status = rollupStatus(own.map((pane) => paneStatus(pane as HerdrPane)));
           const pickerOpen = picker?.tab.tab_id === tab.tab_id;
           const name = nameOf(tab);
           return (
@@ -308,7 +310,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                   // the middle button closes a tab, as it does a browser's
                   onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); requestClose(tab); } }}
                 >
-                  {(status === "working" || status === "blocked" || status === "done") && <span className="tab-strip-dot" data-status={status} aria-hidden="true" />}
+                  {(status === "working" || status === "blocked" || status === "waiting" || status === "done") && <span className="tab-strip-dot" data-status={status} aria-hidden="true" />}
                   <span className="tab-strip-label">{name}</span>
                 </button>
               )}

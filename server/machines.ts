@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { BRIDGE_PROTOCOL, LOCAL_MACHINE, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type Machine, type MachineAction, type MachineEvent, type MachineSettings, type SetupAction, type SetupJob, type SetupProgress, type SetupRequest, type SshTarget } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot, HerdrPane } from "../shared/protocol.ts";
 import type { PushService } from "./push.ts";
+import { alertStatus } from "../shared/notify-policy.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { sessionSnapshot } from "./herdr/client.ts";
 import { labelOmoPanes } from "./conversation.ts";
@@ -550,7 +551,7 @@ export class MachineManager {
           if (revision !== runtime.snapshotRevision) { runtime.refreshQueued = true; continue; }
           runtime.machine.snapshot = snapshot; runtime.machine.error = null;
           this.saveSoon();
-          this.push.seed(snapshot.panes, runtime.machine.id, runtime.machine.name);
+          this.push.seed(forAlerts(snapshot.panes), runtime.machine.id, runtime.machine.name);
           this.emit();
         } catch (e) {
           if (generation !== runtime.generation || this.stopped) return;
@@ -582,10 +583,10 @@ export class MachineManager {
       let message: ServerMessage;
       try { message = JSON.parse(String(event.data)); } catch { return; }
       if (["snapshot", "pane-status", "pane-exited", "session-changed"].includes(message.type)) runtime.snapshotRevision++;
-      if (message.type === "snapshot") { runtime.machine.snapshot = message.snapshot; this.push.seed(message.snapshot.panes, runtime.machine.id, runtime.machine.name); this.emit(); }
+      if (message.type === "snapshot") { runtime.machine.snapshot = message.snapshot; this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name); this.emit(); }
       if (message.type === "pane-status") {
         if (runtime.machine.snapshot) runtime.machine.snapshot = { ...runtime.machine.snapshot, panes: runtime.machine.snapshot.panes.map((p) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
-        void this.push.onStatus(message.pane_id, message.agent_status, runtime.machine.id).catch(() => {});
+        void this.push.onStatus(message.pane_id, alertStatus(message.agent_status, message.background_wait), runtime.machine.id).catch(() => {});
       }
       if (message.type === "pane-exited") void this.push.onEnded(message.pane_id, runtime.machine.id).catch(() => {});
       this.emit({ type: "machine-message", machine_id: runtime.machine.id, message });
@@ -679,9 +680,17 @@ export class MachineManager {
   }
 }
 
-/** A pane after a status frame: a frame that names a count of background tasks replaces it; one that names none leaves it. */
+/**
+ * A pane after a status frame: a frame that names a count of background tasks replaces
+ * it; one that names none leaves it. Every frame says whether the pane waits on its turn's work.
+ */
 export function paneAfterStatus(p: HerdrPane, message: Extract<ServerMessage, { type: "pane-status" }>): HerdrPane {
-  const { background_tasks: before, ...pane } = p;
+  const { background_tasks: before, background_wait: _waited, ...pane } = p;
   const tasks = message.background_tasks === undefined ? before : message.background_tasks > 0 ? message.background_tasks : undefined;
-  return { ...pane, agent_status: message.agent_status, ...(tasks === undefined ? {} : { background_tasks: tasks }) };
+  return { ...pane, agent_status: message.agent_status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}) };
+}
+
+/** A remote PC's panes as its alerts take them: one waiting on its turn's background work is working. */
+function forAlerts(panes: readonly HerdrPane[]): HerdrPane[] {
+  return panes.map((pane) => pane.background_wait ? { ...pane, agent_status: alertStatus(pane.agent_status, true) } : pane);
 }

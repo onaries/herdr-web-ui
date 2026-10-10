@@ -7,7 +7,82 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-09
+
 ### Changed
+- A desktop tab no longer pauses its terminal a second after you switch to another window, as
+  0.4.4 started doing: it keeps updating, as before 0.4.4. If this PC also shows herdr in a
+  terminal window, turn on **Settings → Terminal → Use alongside herdr's own window**: a second
+  after you leave the tab, it lets go of the pane so herdr's window keeps the pane at its own size,
+  and it keeps showing the pane read-only (drawn at herdr's size) until you click it to type again.
+  A server older than this one pauses the tab instead.
+  ([#699](https://github.com/devswha/herdr-web-ui/pull/699), [#700](https://github.com/devswha/herdr-web-ui/pull/700))
+- Remote PCs use runtime bundle v24 for these fixes. Choose **Update bridge…** once on each
+  connected PC after updating the app. ([#711](https://github.com/devswha/herdr-web-ui/pull/711))
+
+### Fixed
+- Claude background counts reread concurrent transcript appends and replaced transcript files
+  instead of keeping a stale count until another write. ([#701](https://github.com/devswha/herdr-web-ui/pull/701))
+- Claude process identity lookups recover after transient failures, so tasks left by an earlier
+  process stop counting as running when the process boundary becomes available. ([#702](https://github.com/devswha/herdr-web-ui/pull/702))
+- Delayed Claude transcript discovery preserves an observed turn's background wait and original
+  deadline; a replacement session does not inherit the old session's wait. ([#703](https://github.com/devswha/herdr-web-ui/pull/703))
+- Claude background badges expire day-old subagent files even when no transcript changes. ([#706](https://github.com/devswha/herdr-web-ui/pull/706))
+- Claude completion cards deduplicate consistently within each chat page, whether its turns
+  were read incrementally or loaded from scratch. ([#708](https://github.com/devswha/herdr-web-ui/pull/708))
+- Chat code blocks preserve trailing source newlines in manual text selections, with highlighting
+  on or off. The Copy code button continues to copy the original source. ([#710](https://github.com/devswha/herdr-web-ui/pull/710))
+
+### Maintenance
+- Include TanStack Highlight's MIT license in the notices shipped with the app.
+  ([#704](https://github.com/devswha/herdr-web-ui/pull/704))
+- Update source-map-js to 1.2.2 for its security fix.
+  ([#705](https://github.com/devswha/herdr-web-ui/pull/705))
+- Run native Windows and macOS session identity regressions in release validation and order
+  the browser readline fixture's input consistently. Use Debian's official ECR mirror for the
+  Docker SSH fixture to avoid Docker Hub's anonymous pull limit.
+  ([#709](https://github.com/devswha/herdr-web-ui/pull/709), [#701](https://github.com/devswha/herdr-web-ui/pull/701))
+
+## [0.4.4] - 2026-10-09
+
+### Added
+- A Claude Code pane's subagents (the `Agent` tool) now show where OmO's background tasks do:
+  the status line lists what runs and what ended in the last day, the pane's badge counts the
+  running ones, and a subagent that ends leaves a card in the chat with its answer instead of
+  being hidden. They are read from the session's own `subagents/` files and its transcript.
+  ([#527](https://github.com/devswha/herdr-web-ui/pull/527) by @kilhyeonjun)
+- A Claude Code pane's background commands are listed with its subagents and end with their
+  notification or a successful `TaskStop`/`KillShell`.
+  ([#534](https://github.com/devswha/herdr-web-ui/pull/534) by @kilhyeonjun)
+- **Settings → Voice input → Dictation language** picks the language dictation listens for. On Auto,
+  a browser whose first language the app is not translated into (Hungarian, German, …) is heard in
+  that language rather than in English; every other case listens for the app's language as before.
+  ([#612](https://github.com/devswha/herdr-web-ui/pull/612) by @kratam)
+- `HERDR_WEB_APP_NAME` names the installed app, so the apps of two PCs on one phone no longer
+  both read `herdr`. Unset, nothing changes.
+  ([#684](https://github.com/devswha/herdr-web-ui/pull/684) by @sma505)
+- Workspaces can be reordered on a phone or tablet: hold a row until it lifts, drag it, and let
+  go where the line shows. Before, a long press on iOS showed the system's drag preview but
+  dropped nothing. The row's ⋯ menu also has Move up and Move down.
+  ([#679](https://github.com/devswha/herdr-web-ui/pull/679) by @jiunshinn)
+- A task list (`- [x] done`, `- [ ] open`) in the chat shows a checked or empty box in place of
+  its bullet, instead of the brackets.
+  ([#669](https://github.com/devswha/herdr-web-ui/pull/669) by @aNNdii)
+- Code blocks in the chat are highlighted by their language (TanStack Highlight). Anything longer
+  than a few lines is highlighted in a worker, so no reply can freeze the page: a block that takes
+  longer than 2 s, or is over 100 KB, stays plain and says so. **Settings → Chat → Highlight code**
+  turns it off.
+  ([#671](https://github.com/devswha/herdr-web-ui/pull/671) by @aNNdii)
+
+### Changed
+- Website and installer publishing waits for CI and the site build to pass on the same commit.
+  Local checks retain source-bound results and failure evidence, and critical build scripts
+  and the demo transport are typechecked alongside the app.
+  ([#692](https://github.com/devswha/herdr-web-ui/pull/692))
+- The chat's `/` command list also matches a word of a command's name, any part of it, its letters
+  in order and its description, so a plugin command is found without typing its prefix. Prefix
+  matches still come first.
+  ([#617](https://github.com/devswha/herdr-web-ui/pull/617) by @lyonbot)
 - A size under 10 MB shows one decimal (`1.3 MB`), in the file viewer, the Files list and a bridge
   update's progress: a 1.3 MB file no longer reads as 1 MB.
   ([#670](https://github.com/devswha/herdr-web-ui/pull/670) by @aNNdii)
@@ -17,6 +92,31 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#663](https://github.com/devswha/herdr-web-ui/pull/663))
 
 ### Fixed
+- The working arc in the sidebar is drawn thirty times a second instead of five, so a working
+  agent reads as work in progress and not as a stutter. The arc is the same size and the turn
+  still takes 1.6 s; only its eight 45° steps became forty-eight 7.5° ones.
+  ([#622](https://github.com/devswha/herdr-web-ui/pull/622) by @iwangjie)
+- A Claude turn awaiting background work shows **BG**, even with **Quiet opened finishes** on,
+  instead of prematurely alerting "work finished". Automatic resumes share the first rest's
+  30-minute limit; a dev server started by the same prompt can hold the finish until that limit.
+  Work from an earlier prompt holds nothing, and restarting the bridge does not rehold an old
+  finish or send it again.
+  ([#534](https://github.com/devswha/herdr-web-ui/pull/534) by @kilhyeonjun)
+- A key typed right after a chat completion (Tab or Enter on a `/` command, a suggestion, an
+  image's mention) stays where it was typed. The caret was put back on the next frame, so on a
+  busy phone the next key could land before the one typed just after the completion
+  (`/pr-comments ba` for `ab`), and a select-all made in that time was undone.
+  ([#688](https://github.com/devswha/herdr-web-ui/pull/688))
+- Enter or Tab pressed right after the keystroke that narrows the `/` or `@` list completes the
+  highlighted row. With a row lower in the list chosen before, the key could arrive before the
+  list caught up and did nothing at all. ([#688](https://github.com/devswha/herdr-web-ui/pull/688))
+- The terminal announces itself: it is a labelled region named after the pane — "Terminal for
+  Idempotent payments" — so a screen reader names the pane before its content. The label is
+  translated and appears only in the terminal view, not over the chat.
+  ([#633](https://github.com/devswha/herdr-web-ui/pull/633) by @radicor)
+- Settings keeps a slow browser-history traversal from closing the key bar editor by itself,
+  and no longer retries an unanswered traversal every second.
+  ([#630](https://github.com/devswha/herdr-web-ui/pull/630))
 - A Claude Code approval asked while background agents run shows its card instead of the numbered
   fallback: its hint goes on after `Esc to cancel` with the chord that stops them.
   ([#659](https://github.com/devswha/herdr-web-ui/pull/659) by @Haeminway1)
@@ -33,6 +133,18 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Immediate chat sends to Claude Code are refused when its input box contains a draft or is in
   bash mode, preserving the existing terminal input.
   ([#677](https://github.com/devswha/herdr-web-ui/pull/677))
+- herdr in your terminal shows a pane whole again once you leave the browser tab that had it
+  open. herdr holds a pane at the size of a web UI attach until that attach ends, so a desktop
+  tab left open on a pane kept it at the browser's size, and herdr drew it cut off at its split's
+  edge with the bottom rows out of reach; a phone hid this, since it disconnects in the background
+  and its grid is narrow. A tab you are not using now lets go of the pane after a second, says it
+  is paused, and takes the pane again when the tab regains focus or receives pointer input.
+  Mirrored, embedded, and ended panes are not released. A message it queued is still sent first.
+  ([#660](https://github.com/devswha/herdr-web-ui/pull/660) by @jiunshinn)
+- **New worktree** and **Open worktree…** work from a workspace that sits on a git worktree herdr
+  did not open itself: the request goes to the repository's own workspace when it is open, instead
+  of failing with "New and open worktree actions start from the repo parent workspace".
+  ([#685](https://github.com/devswha/herdr-web-ui/pull/685))
 
 ## [0.4.3] - 2026-10-09
 

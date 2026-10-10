@@ -50,14 +50,17 @@ The app is only a bridge: herdr owns every pty, scrollback and agent state.
 - Shortcuts are Mod+Shift+key so the pty keeps Ctrl+key. To add one, update `SHORTCUTS`, `KEY_TO_ID` and the switch in `src/lib/shortcuts.ts`.
 - Icons come from lucide-react only; brand marks live in `AgentMark.tsx`. When icon files change, bump the `?v=` query in `index.html` and `CACHE_NAME` in `public/sw.js` together.
 - UI wording: "New workspace", not "New session". "Session" means the herdr server session or an agent's history.
-- There is no linter or formatter. `scripts/` and `site/` are not typechecked (only `scripts/build-xterm.ts`, through `vite.config.ts`), so run what you change there.
+- There is no linter or formatter. Through `tsconfig.tools.json`, `bun run typecheck` also checks
+  these critical tooling entrypoints and their imports: `scripts/check.ts`, `scripts/build-site.ts`,
+  `scripts/ci-lanes.ts`, `scripts/ci-tests.ts`, `scripts/release-notes.ts` and `site/demo/transport.ts`.
+  Other files in `scripts/` and `site/` are not broadly typechecked, so run what you change there.
 - `vite.config.ts` reads `THIRD_PARTY_NOTICES.md` at build time and ships it in `dist/`.
 
 ## Testing
 
 - `bun:test` only, with no DOM. `src/` tests cover pure logic in `lib/*.test.ts`; component behavior is covered by the Playwright scripts. A `.test.tsx` file is not discovered.
 - A test that needs a live herdr is named `*.contract.test.ts`; without that name it runs in the unit suite, except the paths `scripts/ci-tests.ts` lists. Unit tests run with `HERDR_TEST_MODE=unit` and never touch herdr.
-- `bun run check fast` is CI's Fast checks and `bun run check full` adds its two lanes, on a herdr of the run's own that reads nothing from the user's config. Only one run with a lane at a time on a PC: a second one exits and names the first. `bun run check run <command…>` gives one test file or browser script the same herdr.
+- `bun run check fast` is CI's Fast checks and `bun run check full` adds its two lanes, on a herdr of the run's own that reads nothing from the user's config. Separate lane and `check run` invocations share one PC-wide lock: a second one exits and names the first. Reports and browser build provenance follow [Checks](docs/development.md#checks); an old report does not verify edited or restacked code.
 - Single file: `HERDR_TEST_MODE=unit bun test ./server/prompt.test.ts`. The `./` is required.
 - The unit suite is `bun run test:unit`. A bare `bun test` also loads every `*.contract.test.ts`; under `HERDR_TEST_MODE=unit` those fail, since unit mode points `HERDR_SOCKET` at a socket that does not exist.
 - `bun run test:ui` does not run `scripts/file-viewer-regression.ts`; CI does.
@@ -72,7 +75,10 @@ The app is only a bridge: herdr owns every pty, scrollback and agent state.
 
 ## Maintainer workflow
 
-- PRs only, squash merged; the title is `type(scope): summary` and the merge adds `(#N)`. `main` requires the "Fast checks" and "Integration and browser" checks and every review thread resolved.
+- PRs only, squash merged; the title is `type(scope): summary` and the merge adds `(#N)`. `main`
+  requires the "Fast checks", "Integration and browser" and "Native Windows install" (GitHub App
+  ID `15368`) checks, plus every review thread resolved.
+- Contributors branch from `main`; the only exception is an explicitly maintainer-managed stack for genuinely dependent work. See [coordinated work](docs/development.md#coordinated-work) for task ownership, restacking, and authorization rules.
 - Release steps are in `docs/development.md#releasing`. NEVER push a `v*` tag by hand: installed updaters act on tags alone.
 - Changelog entries end with the PR link, plus `by @login` for an outside contributor: `… ([#208](https://github.com/devswha/herdr-web-ui/pull/208) by @login)`.
   - Write the full link (GitHub leaves a bare `#208` unlinked in CHANGELOG.md) and keep `@login` bare (it is what lists the contributor in the GitHub release).

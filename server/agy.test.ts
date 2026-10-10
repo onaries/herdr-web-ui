@@ -1,16 +1,33 @@
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { agyConversation, AgyHistoryChanged, agyToolOutput, agyTranscriptPath, parseAgySteps, type AgyStep } from "./agy.ts";
+import { agyConversation, AgyHistoryChanged, agySessionFromPids, agyToolOutput, agyTranscriptPath, parseAgySteps, type AgyStep } from "./agy.ts";
 import { HistoryChanged, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-agy-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 const id = "12345678-1234-1234-1234-123456789abc";
 const stamp = "2026-10-07T00:00:00.000Z";
+
+it("finds only the latest resumed conversation from the pane process's open agy log", () => {
+  const app = join(root, "resumed", "antigravity-cli");
+  const proc = join(root, "proc");
+  const resumed = "6d1609c2-58c0-410d-bf76-032e8217e0f4";
+  mkdirSync(join(app, "log"), { recursive: true });
+  mkdirSync(join(app, "conversations"));
+  mkdirSync(join(proc, "123", "fd"), { recursive: true });
+  const log = join(app, "log", "cli-test.log");
+  writeFileSync(log, `Streaming conversation ${id}\nStarting conversation update stream for ${resumed}\n`);
+  writeFileSync(join(app, "conversations", `${resumed}.db`), "");
+  symlinkSync(log, join(proc, "123", "fd", "1"));
+  expect(agySessionFromPids([123], proc)).toBe(join(app, "conversations", `${resumed}.db`));
+  expect(agySessionFromPids([456], proc)).toBeNull();
+  writeFileSync(log, `GetConversationDetail: found conversation ${resumed} (active=false)\n`);
+  expect(agySessionFromPids([123], proc)).toBeNull();
+});
 
 function integer(value: number): Buffer {
   const bytes: number[] = [];

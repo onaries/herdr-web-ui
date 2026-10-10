@@ -7,6 +7,7 @@
  * or shell pins the installed PWA to a build the user can no longer get rid of.
  */
 
+import type { BunFile } from "bun";
 import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
 
@@ -120,6 +121,37 @@ function cspHeader(): Record<string, string> {
     : { "content-security-policy": policy };
 }
 
+/**
+ * HERDR_WEB_APP_NAME names the installed app. Each PC is its own origin, so two PCs installed
+ * on one phone are two apps, and both would be called "herdr" (#476). Unset or blank, every
+ * file is served as built. Read on every request, like HERDR_WEB_CSP; the manifest and the
+ * shell revalidate on every load, so an installed app learns a new name without a reinstall.
+ */
+export function appName(): string | null {
+  const name = process.env["HERDR_WEB_APP_NAME"]?.trim();
+  return name ? name : null;
+}
+
+/** The manifest under another name: `short_name` is the home-screen label, `name` the rest. */
+export function renameManifest(manifest: string, name: string): string {
+  return JSON.stringify({ ...JSON.parse(manifest), name, short_name: name }, null, 2);
+}
+
+const APPLE_TITLE = /(<meta name="apple-mobile-web-app-title" content=")[^"]*(")/;
+
+/** The shell under another name: an iOS home-screen install takes its label from this meta. */
+export function renameShell(html: string, name: string): string {
+  const content = name.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return html.replace(APPLE_TITLE, (_, start: string, end: string) => `${start}${content}${end}`);
+}
+
+/** The file as built, or the manifest and the shell under HERDR_WEB_APP_NAME. */
+async function body(file: BunFile, kind: "manifest" | "shell" | null): Promise<BunFile | string> {
+  const name = appName();
+  if (!name || !kind) return file;
+  return kind === "manifest" ? renameManifest(await file.text(), name) : renameShell(await file.text(), name);
+}
+
 export async function serveStatic(pathname: string): Promise<Response> {
   const indexPath = join(DIST_DIR, "index.html");
   if (!existsSync(indexPath)) {
@@ -133,12 +165,13 @@ export async function serveStatic(pathname: string): Promise<Response> {
   if (candidate.startsWith(DIST_DIR) && relative !== "/" && existsSync(candidate)) {
     const file = Bun.file(candidate);
     if ((await file.exists()) && !(await file.stat()).isDirectory()) {
-      return new Response(file, {
+      const kind = pathname === "/manifest.webmanifest" ? "manifest" : candidate === indexPath ? "shell" : null;
+      return new Response(await body(file, kind), {
         headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader() },
       });
     }
   }
-  return new Response(Bun.file(indexPath), {
+  return new Response(await body(Bun.file(indexPath), "shell"), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader() },
   });
 }

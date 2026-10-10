@@ -487,6 +487,154 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  describe("subagent notifications", () => {
+    const roots: string[] = [];
+    afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); forgetTranscriptState(); });
+    const block = (summary: string, extra = "<result>found two issues</result>") =>
+      `<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n<summary>${summary}</summary>\n${extra}\n</task-notification>`;
+    /** the three records one completion is written as */
+    const carriers = (content: string, timestamp: string) => [
+      { type: "queue-operation", operation: "enqueue", timestamp, content },
+      { type: "user", timestamp, message: { role: "user", content } },
+      { type: "attachment", timestamp, attachment: { type: "queued_command", commandMode: "task-notification", prompt: content } },
+    ];
+    const read = (entries: unknown[], subagents?: Parameters<typeof parseClaudeTranscript>[2]) =>
+      parseClaudeTranscript(entries.map((entry) => JSON.stringify(entry)).join("\n"), MAX_TURNS, subagents);
+    const start = { type: "user", timestamp: "2026-10-05T00:00:00.000Z", message: { role: "user", content: "review it" } };
+
+    it("deduplicates across settled/live boundaries without suppressing resumed completions or later pages", () => {
+      const root = mkdtempSync(join(tmpdir(), "herdr-subagent-page-")); roots.push(root);
+      const path = join(root, "s1.jsonl");
+      const write = (...entries: unknown[]) => appendFileSync(path, entries.map((entry) => JSON.stringify(entry) + "\n").join(""));
+      const prompt = (n: number) => ({ ...start, message: { role: "user", content: `prompt ${n}` } });
+      const notices = carriers(block('Agent "Review" finished'), "2026-10-05T00:01:00.000Z");
+      const cards = (answer: ReturnType<typeof transcriptPage>) => answer.turns.flatMap((turn) => turn.parts).filter((part) => part.kind === "task_result");
+      write(prompt(1), notices[0], prompt(2), notices[1]);
+      expect(cards(transcriptPage("claude-transcript", path))).toHaveLength(1);
+      write(notices[2]);
+      expect(cards(transcriptPage("claude-transcript", path))).toHaveLength(1);
+      write(prompt(3));
+      const warm = transcriptPage("claude-transcript", path);
+      forgetTranscriptState();
+      expect(transcriptPage("claude-transcript", path).turns).toEqual(warm.turns);
+      write(...carriers(block('Agent "Review" finished').replace("toolu_1", "toolu_2"), "2026-10-05T00:02:00.000Z"));
+      expect(cards(transcriptPage("claude-transcript", path))).toHaveLength(2);
+      // Reparse the live suffix after another append; its dedup set must not persist across polls.
+      write({ type: "assistant", message: { content: [{ type: "text", text: "answer" }] } });
+      expect(cards(transcriptPage("claude-transcript", path))).toHaveLength(2);
+      // Slide the page start past the first carrier. Deduplication belongs to the requested page.
+      for (let n = 4; n < MAX_TURNS + 4; n++) write(prompt(n));
+      write(notices[1]);
+      const newest = transcriptPage("claude-transcript", path);
+      expect(cards(newest)).toHaveLength(1);
+      const older = transcriptPage("claude-transcript", path, { before: newest.cursor! });
+      forgetTranscriptState();
+      expect(transcriptPage("claude-transcript", path).turns).toEqual(newest.turns);
+      expect(transcriptPage("claude-transcript", path, { before: newest.cursor! }).turns).toEqual(older.turns);
+    });
+
+    it("draws a queue-only completion before the active turn, but not its removal", () => {
+      const content = block('Agent "Review the parser" finished');
+      const turn = { type: "assistant", timestamp: "2026-10-05T00:00:01.000Z", message: { role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", id: "toolu_1", name: "Agent", input: {} }] } };
+      const queued = { type: "queue-operation", operation: "enqueue", timestamp: "2026-10-05T00:01:00.000Z", content };
+      const turns = read([start, turn, queued]);
+      expect(turns.map((entry) => entry.parts.map((part) => part.kind).join())).toEqual(["text", "task_result", "tool"]);
+      expect(turns[1]?.parts[0]).toMatchObject({ kind: "task_result", tasks: [{ id: "a1", status: "completed", result: "found two issues" }] });
+      expect(read([start, turn, { ...queued, operation: "remove" }]).flatMap((entry) => entry.parts).filter((part) => part.kind === "task_result")).toEqual([]);
+    });
+
+    it("skips garbled lines and incomplete notification envelopes without a success card", () => {
+      const content = block('Agent "Review the parser" finished').replace("</task-notification>", "");
+      const transcript = `null\n42\n{garbled\n${JSON.stringify(start)}\n${JSON.stringify({ type: "user", message: { content } })}\n{"type":`;
+      expect(parseClaudeTranscript(transcript)).toEqual(read([start]));
+    });
+
+    it("becomes one task_result however many records carry it, and starts a turn of its own", () => {
+      const turns = read([
+        start,
+        { type: "assistant", timestamp: "2026-10-05T00:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "started a reviewer" }] } },
+        ...carriers(block('Agent "Review the parser" finished'), "2026-10-05T00:01:00.000Z"),
+        { type: "assistant", timestamp: "2026-10-05T00:01:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "it found two" }] } },
+      ], { subagents: new Map([["a1", { title: "Review parser fix", agent: "reviewer" }]]) });
+      expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant", "user", "assistant"]);
+      expect(turns[2]).toEqual({ role: "user", ts: "2026-10-05T00:01:00.000Z", parts: [{ kind: "task_result", tasks: [{
+        id: "a1", title: "Review parser fix", agent: "reviewer", model: null, status: "completed",
+        duration_ms: null, turns: null, tool_calls: null, tokens: null, result: "found two issues",
+      }] }] });
+    });
+
+    it("draws a notice that shares an entry with a tool's result once, before the turn still at work", () => {
+      const notice = block('Agent "Review the parser" finished');
+      const entries = [
+        start,
+        { type: "assistant", timestamp: "2026-10-05T00:00:01.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_9", name: "Bash", input: { command: "ls" } }] } },
+        { type: "user", timestamp: "2026-10-05T00:01:00.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_9", content: "a.ts" }, { type: "text", text: notice }] } },
+        { type: "assistant", timestamp: "2026-10-05T00:01:01.000Z", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "finished" }] } },
+      ];
+      for (const turns of [read(entries), read([...entries, ...carriers(notice, "2026-10-05T00:01:00.000Z")])]) {
+        expect(turns.map((turn) => turn.parts.map((part) => part.kind).join())).toEqual(["text", "task_result", "tool,text"]);
+        const tool = turns[2]?.parts[0];
+        expect(tool?.kind === "tool" ? tool.output : tool).toBe("a.ts");
+      }
+    });
+
+    it("takes a page's card from the subagent's meta file alone, so it reads the same however the subagent's transcript has grown", () => {
+      const root = mkdtempSync(join(tmpdir(), "herdr-subagent-page-")); roots.push(root);
+      const path = join(root, "s1.jsonl");
+      mkdirSync(join(root, "s1", "subagents"), { recursive: true });
+      writeFileSync(join(root, "s1", "subagents", "agent-a1.meta.json"), JSON.stringify({ agentType: "reviewer", description: "Review parser fix", toolUseId: "toolu_1", requestShape: "background" }));
+      const work = join(root, "s1", "subagents", "agent-a1.jsonl");
+      writeFileSync(work, JSON.stringify({ type: "assistant", timestamp: "2026-10-05T00:00:20.000Z", message: { id: "m1", content: [] } }) + "\n");
+      writeFileSync(path, [start, ...carriers(block('Agent "Review the parser" finished'), "2026-10-05T00:01:00.000Z")].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      const card = () => { forgetTranscriptState(); return transcriptPage("claude-transcript", path).turns.flatMap((turn) => turn.parts).find((candidate) => candidate.kind === "task_result"); };
+      const before = card();
+      expect(before?.kind === "task_result" ? before.tasks[0] : before).toMatchObject({ title: "Review parser fix", agent: "reviewer", turns: null, tokens: null, duration_ms: null });
+      // the agent goes on working: the card does not change with it
+      appendFileSync(work, JSON.stringify({ type: "assistant", timestamp: "2026-10-05T00:09:00.000Z", message: { id: "m2", content: [] } }) + "\n");
+      expect(card()).toEqual(before);
+    });
+
+    it("reads no file for an id that a tool's output quoted with the tag", () => {
+      const root = mkdtempSync(join(tmpdir(), "herdr-subagent-page-")); roots.push(root);
+      const path = join(root, "s1.jsonl");
+      mkdirSync(join(root, "s1", "subagents"), { recursive: true });
+      writeFileSync(join(root, "secret.meta.json"), JSON.stringify({ description: "SECRET", agentType: "x" }));
+      const quoted = block('Agent "Hostile" finished').replace("<task-id>a1", "<task-id>x/../../secret");
+      writeFileSync(path, [start,
+        { type: "user", timestamp: "2026-10-05T00:00:30.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: quoted }] } },
+        ...carriers(block('Agent "Real" finished'), "2026-10-05T00:01:00.000Z"),
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      const cards = transcriptPage("claude-transcript", path).turns.flatMap((turn) => turn.parts).filter((part) => part.kind === "task_result");
+      expect(JSON.stringify(cards)).not.toContain("SECRET");
+      expect(cards).toHaveLength(1);
+    });
+
+    it("falls back to the summary's name and leaves out what no file told", () => {
+      const turns = read(carriers(block('Agent "Security review" finished'), "2026-10-05T00:01:00.000Z"));
+      expect(turns).toHaveLength(1);
+      expect(turns[0]?.parts).toEqual([{ kind: "task_result", tasks: [{ id: "a1", title: "Security review", agent: null, model: null, status: "completed", duration_ms: null, turns: null, tool_calls: null, tokens: null, result: "found two issues" }] }]);
+    });
+
+    it("counts a resumed agent's next notification, which carries another tool-use id", () => {
+      const again = block('Agent "Review" finished').replace("toolu_1", "toolu_2");
+      const turns = read([...carriers(block('Agent "Review" finished'), "2026-10-05T00:01:00.000Z"), ...carriers(again, "2026-10-05T00:05:00.000Z")]);
+      expect(turns.map((turn) => turn.ts)).toEqual(["2026-10-05T00:01:00.000Z", "2026-10-05T00:05:00.000Z"]);
+    });
+
+    it("cuts a long answer at the same limit as OmO's", () => {
+      const turns = read(carriers(block('Agent "Long" finished', `<result>${"x".repeat(16_001)}</result>`), "2026-10-05T00:01:00.000Z"));
+      const part = turns[0]?.parts[0];
+      expect(part?.kind === "task_result" ? [part.tasks[0]?.result.length, part.tasks[0]?.result_cut] : part).toEqual([16_000, true]);
+    });
+
+    it("keeps a failed or stopped agent's status and hides a background command's notice", () => {
+      const stopped = block('Agent "Cleanup" was stopped by Claude', "").replace("<status>completed", "<status>killed");
+      const turns = read([...carriers(stopped, "2026-10-05T00:01:00.000Z"), ...carriers(block('Background command "sleep 5" completed (exit code 0)', ""), "2026-10-05T00:02:00.000Z")]);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]?.parts[0]).toMatchObject({ kind: "task_result", tasks: [{ title: "Cleanup", status: "cancelled", result: "" }] });
+    });
+  });
+
   it("preserves array user text, including mixed tool results, without exposing bookkeeping", () => {
     const transcript = [
       { type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } },

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
+
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 
 /** A browser's history, as far as this module uses it: a stack, a cursor, and popstate after `go`. */
 function fakeWindow() {
@@ -90,4 +92,272 @@ describe("recordSettings", () => {
     await settled();
     expect(fake.held()).toEqual([null]);
   });
+});
+
+// Slow traversals need a cursor that moves only when they land, and a clock under the test's
+// control. Restore globals so this import-time browser stub cannot leak into another file.
+const baselineWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
+afterEach(() => {
+  if (baselineWindow) Object.defineProperty(globalThis, "window", baselineWindow);
+  else Reflect.deleteProperty(globalThis, "window");
+  globalThis.setTimeout = originalSetTimeout;
+  globalThis.clearTimeout = originalClearTimeout;
+});
+afterAll(() => {
+  if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+  else Reflect.deleteProperty(globalThis, "window");
+});
+
+let loadId = 0;
+async function delayedHistory(initial: unknown[] = [null]) {
+  const stack = [...initial];
+  let index = stack.length - 1;
+  let now = 0;
+  let timerId = 0;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  const listeners: Array<(event: { state: unknown }) => void> = [];
+  const requests: number[] = [];
+  const history = {
+    get state() { return stack[index]; },
+    pushState(state: unknown) { stack.splice(index + 1); stack.push(state); index++; },
+    replaceState(state: unknown) { stack[index] = state; },
+    go(by: number) { requests.push(index + by); },
+  };
+  Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: {
+    history,
+    addEventListener(type: string, listener: (event: { state: unknown }) => void) {
+      if (type === "popstate") listeners.push(listener);
+    },
+  } });
+  Object.defineProperty(globalThis, "setTimeout", { configurable: true, writable: true, value: (run: () => void, ms: number) => {
+    timers.set(++timerId, { at: now + ms, run });
+    return timerId;
+  } });
+  Object.defineProperty(globalThis, "clearTimeout", { configurable: true, writable: true, value: (id: number) => timers.delete(id) });
+  const module: typeof import("./settingsHistory.ts") = await import(`./settingsHistory.ts?delayed=${++loadId}`);
+  const dispatch = async () => {
+    await new Promise<void>((resolve) => queueMicrotask(() => {
+      for (const listener of listeners) listener({ state: history.state });
+      resolve();
+    }));
+  };
+  return {
+    ...module, history, requests,
+    get index() { return index; },
+    async land() {
+      const target = requests.shift();
+      if (target === undefined) throw new Error("no requested traversal to land");
+      if (target >= 0 && target < stack.length && target !== index) { index = target; await dispatch(); }
+    },
+    async move(by: number) { index += by; await dispatch(); },
+    dispatch,
+    advance(ms: number) {
+      const end = now + ms;
+      for (;;) {
+        const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next || next[1].at > end) break;
+        now = next[1].at;
+        timers.delete(next[0]);
+        next[1].run();
+      }
+      now = end;
+    },
+  };
+}
+
+describe("history traversal races", () => {
+  it("keeps a late width-change traversal its own after the landing deadline", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+    browser.advance(500);
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    browser.advance(501);
+    await browser.land();
+    expect(moves).toEqual([true]);
+    expect(browser.settingsEntry(browser.history.state)).toEqual({ page: "terminal", keyBar: true, depth: 3 });
+  });
+
+  it("does not retry a traversal every second when no landing arrives", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    browser.recordSettings([]);
+    browser.advance(10_000);
+    expect(browser.requests).toHaveLength(1);
+  });
+
+  it("waits for the same pending destination across updates after the deadline", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+    browser.advance(1001);
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    expect(browser.requests).toHaveLength(1);
+    await browser.land();
+    expect(browser.settingsEntry(browser.history.state)).toEqual({ page: "terminal", keyBar: true, depth: 3 });
+  });
+
+  it("reconciles the latest levels after a delayed traversal lands", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+    browser.advance(1001);
+    browser.recordSettings(browser.settingsLevels(false, "appearance", false));
+    expect(browser.requests).toHaveLength(1);
+    await browser.land();
+    expect(browser.requests).toHaveLength(1);
+    await browser.land();
+    expect(browser.settingsEntry(browser.history.state)).toEqual({ page: "appearance", keyBar: false, depth: 1 });
+    expect(browser.requests).toEqual([]);
+  });
+
+  it("completes an unmount reset after a pending width traversal lands late", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+    browser.advance(1001);
+    // SettingsDialog unmounts before its width-change traversal has landed.
+    browser.recordSettings([]);
+    expect(browser.requests).toHaveLength(1);
+    await browser.land();
+    expect(moves).toEqual([true]);
+    expect(browser.requests).toHaveLength(1);
+    await browser.land();
+    expect(browser.settingsEntry(browser.history.state)).toBeNull();
+    expect(browser.requests).toEqual([]);
+  });
+
+  it("does not notify an unsubscribed listener when a traversal lands", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    const moves: boolean[] = [];
+    const unsubscribe = browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+    unsubscribe();
+    await browser.land();
+    expect(moves).toEqual([]);
+  });
+
+  it("characterizes markerless landing leaving the old Settings depth reachable by Back", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    const moves: Array<[ReturnType<typeof browser.settingsEntry>, boolean]> = [];
+    browser.onSettingsHistory((entry, own) => moves.push([entry, own]));
+    browser.history.pushState({ route: "markerless" });
+    browser.history.pushState({ route: "after-markerless" });
+
+    // Back lands on a state without our marker. Closing cannot tell that older Settings entries
+    // are still in history, so it does not rewind them; another Back restores their old depth.
+    await browser.move(-1);
+    expect(moves).toEqual([[null, false]]);
+    browser.recordSettings([]);
+    expect(browser.requests).toEqual([]);
+    await browser.move(-1);
+    expect(moves[1]).toEqual([{ page: "terminal", keyBar: true, depth: 3 }, false]);
+  });
+
+  it("records a deeper reopening after an unanswered close traversal", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, null, false));
+    browser.recordSettings([]);
+    browser.advance(1001);
+    browser.recordSettings(browser.settingsLevels(true, "terminal", false));
+    expect(browser.settingsEntry(browser.history.state)).toEqual({ page: "terminal", keyBar: false, depth: 2 });
+    expect(browser.requests).toHaveLength(1);
+  });
+
+  it("does not replace an unanswered traversal with another rewind", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    browser.recordSettings([]);
+    browser.advance(1001);
+    browser.recordSettings(browser.settingsLevels(false, "appearance", false));
+    expect(browser.requests).toHaveLength(1);
+  });
+
+  it("does not consume Back after a timed-out close and reopening", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, null, false));
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.recordSettings([]);
+    browser.advance(1001);
+    browser.recordSettings(browser.settingsLevels(true, null, false));
+    await browser.move(-1);
+    expect(moves).toEqual([false]);
+    expect(browser.settingsEntry(browser.history.state)).toBeNull();
+  });
+
+  it("does not consume Back when reopening precedes the timeout", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, null, false));
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.recordSettings([]);
+    browser.advance(500);
+    browser.recordSettings(browser.settingsLevels(true, null, false));
+    browser.advance(501);
+    await browser.move(-1);
+    expect(moves).toEqual([false]);
+    expect(browser.settingsEntry(browser.history.state)).toBeNull();
+  });
+
+  it("steps out of reload entries even when the traversal lands late", async () => {
+    const browser = await delayedHistory([null,
+      { "herdr-web-ui:settings": { page: "terminal", keyBar: false, depth: 1 } },
+      { "herdr-web-ui:settings": { page: "terminal", keyBar: true, depth: 2 } },
+    ]);
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.advance(1001);
+    await browser.land();
+    expect(moves).toEqual([true]);
+    expect(browser.index).toBe(0);
+    expect(browser.requests).toEqual([]);
+  });
+
+  it("expires pending ownership when an unrelated landing wins", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+    await browser.move(-2); // depth 1 is not the requested depth 2
+    await browser.land();
+    expect(moves).toEqual([false, false]);
+  });
+
+  for (const method of ["pushState", "replaceState"] as const) {
+    it(`releases pending ownership after foreign ${method}`, async () => {
+      const browser = await delayedHistory();
+      browser.recordSettings(browser.settingsLevels(true, null, false));
+      browser.recordSettings([]);
+      browser.advance(1001);
+      browser.history[method]({ route: "other" });
+      browser.recordSettings(browser.settingsLevels(true, null, false));
+      expect(browser.settingsEntry(browser.history.state)).toEqual({ page: null, keyBar: false, depth: 1 });
+      const beforeClose = browser.requests.length;
+      browser.recordSettings([]);
+      expect(browser.requests).toHaveLength(beforeClose + 1);
+    });
+
+    it(`does not claim Back after silent foreign ${method}`, async () => {
+      const browser = await delayedHistory();
+      browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+      const moves: boolean[] = [];
+      browser.onSettingsHistory((_entry, own) => moves.push(own));
+      browser.recordSettings(browser.settingsLevels(false, "terminal", true));
+      browser.recordSettings(browser.settingsLevels(true, "terminal", true));
+      browser.advance(1001);
+      browser.history[method]({ route: "other" });
+      await browser.move(method === "pushState" ? -2 : -1);
+      expect(moves).toEqual([false]);
+    });
+  }
 });

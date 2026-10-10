@@ -25,7 +25,17 @@ async function run(lane: { name: string; command: string }): Promise<{ name: str
     rest = lines.pop() ?? "";
     for (const line of lines) console.log(`[${lane.name}] ${line}`);
   };
-  for await (const chunk of child.stdout) print(decoder.decode(chunk, { stream: true }));
+  const reader = child.stdout.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      print(decoder.decode(value, { stream: true }));
+    }
+    print(decoder.decode());
+  } finally {
+    reader.releaseLock();
+  }
   if (rest) console.log(`[${lane.name}] ${rest}`);
   return { name: lane.name, code: await child.exited, seconds: (Date.now() - startedAt) / 1000 };
 }

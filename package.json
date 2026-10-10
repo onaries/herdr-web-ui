@@ -1,7 +1,7 @@
 {
   "name": "herdr-web-ui",
   "private": true,
-  "version": "0.4.3",
+  "version": "0.4.5",
   "type": "module",
   "description": "Browser version of the herdr terminal - live herdr workspaces, panes and agents in a web UI",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "build": "vite build",
     "server": "bun run server/index.ts",
     "start": "bun run build && bun run server/managed.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tools.json",
     "check": "bun scripts/check.ts",
     "test": "bun test",
     "test:unit": "bun scripts/ci-tests.ts unit",
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@lydell/node-pty": "1.1.0",
+    "@tanstack/highlight": "^1.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-unicode-graphemes": "0.4.0",
     "@xterm/addon-web-links": "0.11.0",

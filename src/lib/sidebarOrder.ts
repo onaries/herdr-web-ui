@@ -11,8 +11,8 @@
  * `state_change_seq` each pane had when it was last on screen. A DONE whose counter has not moved
  * past that was looked at, and is drawn as ready.
  */
-import type { AgentStatus, PaneInfo, SessionSnapshot } from "../../shared/protocol.ts";
-import { knownStatus } from "./status.ts";
+import type { AgentStatus, HerdrPane, PaneInfo, SessionSnapshot } from "../../shared/protocol.ts";
+import { knownStatus, paneStatus } from "./status.ts";
 
 /** pane id → the `state_change_seq` it had when last viewed */
 export type SeenRecord = Readonly<Record<string, number>>;
@@ -100,7 +100,8 @@ export function isSeenDone(pane: Pick<PaneInfo, "pane_id" | "agent_status">, seq
 }
 
 /** The status to draw: a DONE already looked at here reads as ready, as herdr's own idle after a view. */
-export function shownStatus(pane: Pick<PaneInfo, "pane_id" | "agent_status">, seqs: ReadonlyMap<string, number>, seen: SeenRecord | null): AgentStatus | undefined {
+export function shownStatus(pane: Pick<HerdrPane, "pane_id" | "agent_status" | "background_wait">, seqs: ReadonlyMap<string, number>, seen: SeenRecord | null): AgentStatus | undefined {
+  if (pane.background_wait) return paneStatus(pane);
   return seen && isSeenDone(pane, seqs, seen) ? "idle" : pane.agent_status;
 }
 

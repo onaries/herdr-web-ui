@@ -392,6 +392,66 @@ it("attaches a grid the chat lens covers without resizing the shared pty, on a r
   client.close();
 });
 
+it("sends no resize for a pane it let go of, and does not attach it again on a reconnect", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  client.attach("w1:p1", 100, 30);
+  // a tab out of use lets go of its pane: herdr gives the pane back to its own TUI
+  client.detach("w1:p1");
+  const after = socket.sent.length;
+  // the server would apply this to the attach of whoever holds the pane now
+  client.resize("w1:p1", 120, 40, true);
+  socket.open();
+  expect(socket.sent.slice(after).filter((m) => m.type === "attach" || m.type === "resize")).toEqual([]);
+  // the user is back: it attaches at its own size again
+  client.attach("w1:p1", 120, 40);
+  expect(socket.sent.at(-1)).toEqual({ type: "attach", pane_id: "w1:p1", cols: 120, rows: 40, flow_control: "ack" });
+  client.close();
+});
+
+it("watches a pane it let go of only on a server that can, again after a reconnect, and ends the watch on one that cannot", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  const ended: string[] = [];
+  client.on((message) => { if (message.type === "watch-end") ended.push(message.pane_id); });
+  client.connect();
+  let socket = FakeSocket.last;
+  socket.open();
+  // asked before the snapshot says what the server can: it goes out once the snapshot does
+  expect(client.watch("w1:p1", 100, 30)).toBe(true);
+  expect(socket.sent.filter((m) => m.type === "watch")).toEqual([]);
+  socket.receive(snapshot(["watch"]));
+  expect(socket.sent.filter((m) => m.type === "watch")).toEqual([{ type: "watch", pane_id: "w1:p1", cols: 100, rows: 30 }]);
+  // a reconnect watches again, at the grid last asked for, and attaches nothing
+  expect(client.watch("w1:p1", 120, 40)).toBe(true);
+  socket.disconnect();
+  client.connect();
+  socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["watch"]));
+  expect(socket.sent.filter((m) => m.type !== "role")).toEqual([{ type: "watch", pane_id: "w1:p1", cols: 120, rows: 40 }]);
+  // the server ended it: a later reconnect does not ask for it again
+  socket.receive({ type: "watch-end", pane_id: "w1:p1" });
+  socket.disconnect();
+  client.connect();
+  socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["watch"]));
+  expect(socket.sent.filter((m) => m.type === "watch")).toEqual([]);
+  // a reconnect to a bridge without the view ends the tab's watch instead of sending a frame it does not know
+  expect(client.watch("w1:p2", 80, 24)).toBe(true);
+  socket.disconnect();
+  client.connect();
+  socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit"]));
+  expect(socket.sent.filter((m) => m.type === "watch")).toEqual([]);
+  expect(ended).toEqual(["w1:p1", "w1:p2"]);
+  expect(client.watch("w1:p2", 80, 24)).toBe(false);
+  client.close();
+});
+
 it("waits for capabilities when output precedes snapshot, and supports old bridges", () => {
   for (const features of [["input-ready"], []]) {
     const client = new HerdrSocket("ws://test/ws"); client.connect();

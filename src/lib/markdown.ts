@@ -11,6 +11,8 @@ export type InlineNode =
 
 export interface ListItem {
   content: InlineNode[];
+  /** a task list item (`- [x] done`, `- [ ] open`): whether its box is checked */
+  checked?: boolean;
   /** what is indented under the item's text, in order: a nested list, a table */
   blocks?: MarkdownBlock[];
 }
@@ -256,6 +258,13 @@ function startsBlock(lines: string[], index: number): boolean {
     || startsTable(lines, index);
 }
 
+/** An item's text, with a GitHub task box (`[x]`, `[X]`, `[ ]`) read off its start. */
+function listItem(text: string): ListItem {
+  const task = /^\[([ xX])\](?:\s+(.*))?$/.exec(text);
+  if (task === null) return { content: parseInline(text) };
+  return { content: parseInline(task[2] ?? ""), checked: task[1] !== " " };
+}
+
 function parseList(lines: string[], start: number): { block: ListBlock; next: number } {
   const first = listLine.exec(lineAt(lines, start));
   if (first === null) return { block: { type: "list", ordered: false, items: [] }, next: start + 1 };
@@ -314,7 +323,7 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
       continue;
     }
     if ((match[1] ?? "").length !== baseIndent || /\d/.test(match[2] ?? "") !== ordered) break;
-    block.items.push({ content: parseInline(match[3] ?? "") });
+    block.items.push(listItem(match[3] ?? ""));
     index += 1;
   }
   return { block, next: index };
