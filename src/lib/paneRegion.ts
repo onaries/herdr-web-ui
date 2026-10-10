@@ -16,7 +16,8 @@ export const PANE_TABPANEL_ID = "pane-tabpanel";
  */
 export function paneTabPanelLabel(snapshot: SessionSnapshot | null, pane: PaneInfo | null, t: Translate): string | null {
   if (snapshot === null || pane === null) return null;
-  const tabs = snapshot.tabs.filter((tab) => tab.workspace_id === pane.workspace_id).sort((a, b) => a.number - b.number);
+  // snapshot order, as TabStrip labels them: after a reorder a tab's number no longer says its place
+  const tabs = snapshot.tabs.filter((tab) => tab.workspace_id === pane.workspace_id);
   const tab = tabs.find((candidate) => candidate.tab_id === pane.tab_id);
   return tab === undefined ? null : tabLabel(tab, t, tabs.indexOf(tab) + 1);
 }

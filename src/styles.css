@@ -708,6 +708,16 @@ button {
   min-height: 0;
 }
 
+/* a refusal of a palette layout call, over the pane for a moment: the tab strip's own line, with no strip to sit at the end of */
+.pane-notice {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+}
+
 .terminal-host {
   position: relative;
   flex: 1 1 auto;

@@ -1,0 +1,8 @@
+.terminal-viewport-tools { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.terminal-find-hit { position: absolute; background: color-mix(in srgb, var(--accent) 25%, transparent); pointer-events: none; }
+.terminal-find-hit.is-current { background: color-mix(in srgb, var(--accent) 38%, transparent); outline: var(--hairline) solid var(--accent); outline-offset: calc(-1 * var(--hairline)); }
+.terminal-history-scrollbar { position: absolute; right: 0; width: var(--terminal-history-gutter); background: var(--bg-panel); pointer-events: auto; touch-action: none; cursor: default; }
+.terminal-history-scrollbar:focus-visible { outline: var(--ring); outline-offset: calc(-1 * var(--ring-offset)); }
+.terminal-history-scrollbar[aria-disabled="true"] { opacity: 0.5; }
+.terminal-history-thumb { position: absolute; left: var(--space-1); right: var(--space-1); min-width: var(--hairline); border-radius: var(--radius-sm); background: var(--border-strong); }
+.terminal-history-scrollbar:hover .terminal-history-thumb, .terminal-history-scrollbar:focus-visible .terminal-history-thumb { background: var(--text-dim); }

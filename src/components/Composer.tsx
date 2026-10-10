@@ -52,6 +52,7 @@ export interface ComposerProps {
   paneId: string;
   /** false: appearing must not take the keyboard (App switched to this pane on its own) */
   autoFocus?: boolean;
+  active?: boolean;
   agent: string | null;
   agentStatus?: AgentStatus;
   /** an OmO pane's running background tasks: the status line opens their list */
@@ -212,6 +213,7 @@ export function Composer({
   connected,
   paneId,
   autoFocus = true,
+  active = true,
   agent,
   agentStatus,
   backgroundTasks = 0,
@@ -225,6 +227,8 @@ export function Composer({
   onUploadImage,
 }: ComposerProps) {
   const t = useT();
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const machineId = useMachineId();
   const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
@@ -531,6 +535,7 @@ export function Composer({
   // dictation lands at the caret without taking focus (a phone's keyboard stays as it was)
   const dictation = useDictation({
     mode: "chat",
+    active,
     connected,
     phone: mobile,
     polish: settings.voicePolishChat,
@@ -567,7 +572,7 @@ export function Composer({
     const element = textareaRef.current;
     if (!element) return;
     element.selectionStart = element.selectionEnd = clampedCaret;
-    element.focus();
+    if (activeRef.current) element.focus();
   }, []);
 
   const insertMentionAtCursor = useCallback(

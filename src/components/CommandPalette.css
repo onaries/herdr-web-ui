@@ -32,11 +32,133 @@
   height: var(--icon-size);
 }
 
+/* herdr's Goto picker filters as chips: All, then each state in its badge colours, each with its count.
+   One row that scrolls sideways where it does not fit, so a phone keeps every chip in reach. */
+.palette-filters {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--bg-panel);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.palette-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.palette-filter {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  height: calc(var(--control-h) - var(--space-2));
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+/* a chip no pane answers to is still there to choose, quieter */
+.palette-filter[data-empty] {
+  border-style: dashed;
+}
+
+.palette-filter-count {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+}
+
+@media (hover: hover) {
+  .palette-filter:hover {
+    background: var(--bg-hover);
+    color: var(--text-strong);
+  }
+}
+
+/* the chosen chip reads as its badge does: the state's tint and text, All and READY in the neutral fill */
+.palette-filter[aria-checked="true"] {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.palette-filter[data-status="blocked"][aria-checked="true"] {
+  background: var(--status-blocked-tint);
+  border-color: transparent;
+  color: var(--status-blocked);
+}
+
+.palette-filter[data-status="working"][aria-checked="true"],
+.palette-filter[data-status="waiting"][aria-checked="true"] {
+  background: var(--status-working-tint);
+  border-color: transparent;
+  color: var(--status-working);
+}
+
+.palette-filter[data-status="done"][aria-checked="true"] {
+  background: var(--status-done-tint);
+  border-color: transparent;
+  color: var(--status-done);
+}
+
 .palette-results {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--space-1);
+}
+
+/* a workspace's heading: its name, a linked worktree's branch when the name does not say it, its row count */
+.palette-section-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.palette-section-name,
+.palette-section-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-section-name {
+  flex: 0 1 auto;
+}
+
+.palette-section-branch,
+.palette-section-count {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.palette-section-branch {
+  flex: 1 1 auto;
+}
+
+.palette-section-count {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 /* every row is the full menu width: the hover fill and the right-aligned badge/shortcut line up */
@@ -98,6 +220,42 @@
   margin-left: auto;
 }
 
+/* a plugin action that failed: said above the list, which stays open to run it again. A traceback
+   scrolls inside a quarter of the screen a phone's keyboard leaves (--app-height), so the list
+   below keeps its room. */
+.palette-error {
+  flex: 0 0 auto;
+  max-height: calc(var(--app-height, 100dvh) * 0.25);
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  background: var(--danger-tint);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.palette-plugin-action.is-running svg {
+  animation: palette-spin var(--dur-spin) steps(8) infinite;
+}
+
+.palette-plugin-action[aria-disabled="true"]:not(.is-running) {
+  color: var(--text-dim);
+}
+
+@keyframes palette-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette-plugin-action.is-running svg {
+    animation: none;
+  }
+}
+
 .palette-empty {
   margin: var(--space-6) var(--space-3);
   color: var(--text-dim);
@@ -105,9 +263,70 @@
   text-align: center;
 }
 
+/* where the picked row goes: its workspace and tab, and its path, as herdr's picker says under its list */
+.palette-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-panel);
+  border-top: var(--hairline) solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.palette-footer-where {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.palette-footer-place,
+.palette-footer-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-footer-place {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.palette-footer-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+.palette-footer-keys {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-3);
+}
+
+.palette-footer-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 @media (pointer: coarse) {
   .command-palette .menu-item {
     min-height: var(--touch-target);
+  }
+
+  /* the chip keeps its size; the finger gets the row's full height */
+  .palette-filter {
+    height: calc(var(--control-h) - 2px);
+  }
+
+  .palette-filter::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--control-h) - 2px - var(--touch-target)) / 2) 0;
   }
 }
 
@@ -117,8 +336,10 @@
     padding-top: 0;
   }
 
+  /* a sheet of one height: the chips and the footer stay where the thumb learnt them while the list changes */
   .command-palette {
     width: 100%;
+    height: calc(100% - var(--space-8));
     max-height: calc(100% - var(--space-8));
     padding-bottom: env(safe-area-inset-bottom, 0px);
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
@@ -139,4 +360,26 @@
 /* a phone-width screen is touched, not typed on: the key hints only take the row's room */
 @media (max-width: 480px) {
   .palette-shortcut { display: none; }
+}
+
+@media (max-width: 640px) {
+  .palette-footer-keys { display: none; }
+}
+
+/* The PC stays visible beside its workspace, including matching names on different PCs. */
+.palette-section-machine {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.palette-section-machine::after {
+  content: "›";
+  margin-left: var(--space-2);
+  color: var(--text-dim);
 }

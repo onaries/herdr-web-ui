@@ -51,6 +51,17 @@
   padding: var(--space-2) var(--space-3) calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
 }
 
+/* the actions, between the head and Cancel, which stay put: the sheet is held to the screen
+   (`.modal` at <=640px) and hides its overflow, so a tab's menu of a dozen actions scrolls here */
+.row-sheet-items {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .row-sheet-grip {
   align-self: center;
   width: 36px;

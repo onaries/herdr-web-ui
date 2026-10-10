@@ -60,7 +60,7 @@ The app is only a bridge: herdr owns every pty, scrollback and agent state.
 
 - `bun:test` only, with no DOM. `src/` tests cover pure logic in `lib/*.test.ts`; component behavior is covered by the Playwright scripts. A `.test.tsx` file is not discovered.
 - A test that needs a live herdr is named `*.contract.test.ts`; without that name it runs in the unit suite, except the paths `scripts/ci-tests.ts` lists. Unit tests run with `HERDR_TEST_MODE=unit` and never touch herdr.
-- `bun run check fast` is CI's Fast checks and `bun run check full` adds its two lanes, on a herdr of the run's own that reads nothing from the user's config. Separate lane and `check run` invocations share one PC-wide lock: a second one exits and names the first. Reports and browser build provenance follow [Checks](docs/development.md#checks); an old report does not verify edited or restacked code.
+- `bun run check fast` is CI's Fast checks and `bun run check full` adds its two lanes, on a herdr of the run's own that reads nothing from the user's config. Lane and `check run` invocations take one of a few PC-wide slots (`CHECK_MAX_RUNS`), one per checkout: a run that finds no slot, or another run in its checkout, exits and names the holders. Reports and browser build provenance follow [Checks](docs/development.md#checks); an old report does not verify edited or restacked code.
 - Single file: `HERDR_TEST_MODE=unit bun test ./server/prompt.test.ts`. The `./` is required.
 - The unit suite is `bun run test:unit`. A bare `bun test` also loads every `*.contract.test.ts`; under `HERDR_TEST_MODE=unit` those fail, since unit mode points `HERDR_SOCKET` at a socket that does not exist.
 - `bun run test:ui` does not run `scripts/file-viewer-regression.ts`; CI does.

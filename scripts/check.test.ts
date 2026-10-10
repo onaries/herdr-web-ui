@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isolate, lock, needsLock, plan, sanitizeCommand } from "./check.ts";
+import { acquire, describeHolders, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand } from "./check.ts";
 
 const made: string[] = [];
 afterEach(() => { for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -78,7 +79,7 @@ describe("isolate", () => {
     expect(() => isolate({ HERDR_TEST_LIVE: "1" }, scratch())).toThrow("HERDR_TEST_LIVE");
     // as a shell inside one of the user's panes has them
     const { env } = isolate({ HERDR_SOCKET: "/live.sock", HERDR_SOCKET_PATH: "/live.sock", HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_TAB_ID: "w1:t1", HERDR_WORKSPACE_ID: "w1", HERDR_WEB_HERDR_BIN: "/bin/herdr" }, scratch());
-    expect(Object.keys(env).filter((name) => name.startsWith("HERDR_")).sort()).toEqual(["HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "HERDR_WEB_HERDR_BIN", "HERDR_WEB_STATE_DIR"]);
+    expect(Object.keys(env).filter((name) => name.startsWith("HERDR_")).sort()).toEqual(["HERDR_TEST_DISPOSABLE_CONFIG", "HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "HERDR_WEB_HERDR_BIN", "HERDR_WEB_STATE_DIR"]);
   });
 });
 
@@ -110,6 +111,287 @@ describe("lock", () => {
       other.stop(true);
     }
   });
+
+  it("is free again once the run that held it is killed", async () => {
+    const port = await freePort();
+    const holder = Bun.spawn([process.execPath, "-e", `const { lock } = await import(${JSON.stringify(fileURLToPath(new URL("./check.ts", import.meta.url)))}); await lock(${port}, 111, "/a"); console.log("HELD"); setInterval(() => {}, 1000);`], { stdout: "pipe" });
+    try {
+      const reader = holder.stdout.getReader();
+      let said = "";
+      while (!said.includes("HELD")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("the holder ended before it held the lock");
+        said += new TextDecoder().decode(value);
+      }
+      expect(await lock(port, 222)).toEqual({ heldBy: 111, checkout: "/a" });
+      holder.kill("SIGKILL");
+      await holder.exited;
+      const next = await lock(port, 222);
+      expect("release" in next).toBe(true);
+      (next as { release: () => void }).release();
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+});
+
+describe("slots", () => {
+  /** `count` consecutive ports nothing listens on, held for a moment to make sure, then given back */
+  const freeRange = async (count: number): Promise<number> => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const base = 20_000 + Math.floor(Math.random() * 30_000);
+      const held: { stop: (force?: boolean) => void }[] = [];
+      try {
+        for (let index = 0; index <= count; index++) held.push(Bun.listen({ hostname: "127.0.0.1", port: base + index, socket: { data() {} } }));
+        return base;
+      } catch { /* taken: another base */ } finally {
+        for (const listener of held) listener.stop(true);
+      }
+    }
+    throw new Error("no free port range");
+  };
+  const release = (result: Awaited<ReturnType<typeof acquire>> | Awaited<ReturnType<typeof lock>>): void => {
+    if ("release" in result) result.release();
+  };
+
+  it("takes the first free slot when another checkout holds an earlier one", async () => {
+    const base = await freeRange(3);
+    const other = await lock(base, 111, "/other");
+    try {
+      const mine = await acquire({ slots: 3, scan: 3, base, pid: 222, checkout: "/mine" });
+      expect(mine).toMatchObject({ port: base + 1 });
+      expect(await lock(base + 1, 333)).toEqual({ heldBy: 222, checkout: "/mine" });
+      release(mine);
+    } finally {
+      release(other);
+    }
+  });
+
+  it("refuses when every slot is taken and names each holder", async () => {
+    const base = await freeRange(3);
+    const first = await lock(base, 111, "/a");
+    const second = await lock(base + 1, 333, "/c");
+    try {
+      const refused = await acquire({ slots: 2, scan: 3, base, pid: 222, checkout: "/b" });
+      expect(refused).toEqual({ refused: "busy", holders: [{ port: base, heldBy: 111, checkout: "/a" }, { port: base + 1, heldBy: 333, checkout: "/c" }] });
+      expect(describeHolders((refused as { holders: Parameters<typeof describeHolders>[0] }).holders)).toBe(`port ${base}: pid 111 in /a; port ${base + 1}: pid 333 in /c`);
+      // what it refused it does not keep: the third port is still free
+      const third = await lock(base + 2, 444);
+      expect("release" in third).toBe(true);
+      release(third);
+    } finally {
+      release(first);
+      release(second);
+    }
+  });
+
+  it("refuses a second run in the same checkout while slots are free, also past its own slot count", async () => {
+    const base = await freeRange(3);
+    const same = await lock(base + 2, 111, "/mine");
+    try {
+      const refused = await acquire({ slots: 2, scan: 3, base, pid: 222, checkout: "/mine" });
+      expect(refused).toEqual({ refused: "same-checkout", holders: [{ port: base + 2, heldBy: 111, checkout: "/mine" }] });
+      // the slot it took on the way is given back
+      const first = await lock(base, 333);
+      expect("release" in first).toBe(true);
+      release(first);
+      const elsewhere = await acquire({ slots: 2, scan: 3, base, pid: 222, checkout: "/elsewhere" });
+      expect(elsewhere).toMatchObject({ port: base });
+      release(elsewhere);
+    } finally {
+      release(same);
+    }
+  });
+
+  it("reads CHECK_MAX_RUNS as 1 to 8, else one slot per eight cores, from 1 to 2", () => {
+    expect(maxRuns({}, 32)).toBe(2);
+    expect(maxRuns({}, 64)).toBe(2);
+    expect(maxRuns({}, 16)).toBe(2);
+    expect(maxRuns({}, 15)).toBe(1);
+    expect(maxRuns({}, 4)).toBe(1);
+    expect(maxRuns({ CHECK_MAX_RUNS: "" }, 32)).toBe(2);
+    expect(maxRuns({ CHECK_MAX_RUNS: "1" }, 32)).toBe(1);
+    expect(maxRuns({ CHECK_MAX_RUNS: "8" }, 4)).toBe(8);
+    for (const value of ["0", "9", "-1", "1.5", "two", " 3"]) expect(() => maxRuns({ CHECK_MAX_RUNS: value }, 32)).toThrow("CHECK_MAX_RUNS");
+  });
+
+  it("refuses the paused contender when an earlier holder turns over to its checkout", async () => {
+    const base = await freeRange(4);
+    let resume: () => void = () => {};
+    let observed: () => void = () => {};
+    const paused = new Promise<void>((resolve) => { observed = resolve; });
+    const old = createServer((socket) => {
+      resume = () => socket.end("111\n/other");
+      old.close();
+      observed();
+    });
+    await new Promise<void>((resolve) => old.listen(base, "127.0.0.1", resolve));
+    let replacement: Awaited<ReturnType<typeof lock>> | undefined;
+    const contender = acquire({ slots: 2, scan: 3, base, pid: 222, checkout: "/mine" });
+    try {
+      await paused;
+      replacement = await lock(base, 333, "/mine");
+      expect("release" in replacement).toBe(true);
+      resume();
+      const result = await contender;
+      try {
+        expect(result).toMatchObject({ refused: "same-checkout", holders: [{ port: base, heldBy: 333, checkout: "/mine" }] });
+      } finally { release(result); }
+    } finally {
+      resume();
+      old.close();
+      if (replacement) release(replacement);
+    }
+  });
+
+  it("counts a higher slot when a new run lowers the PC-wide capacity", async () => {
+    const base = await freeRange(4);
+    const higher = await lock(base + 1, 111, "/other");
+    try {
+      const result = await acquire({ slots: 1, scan: 3, base, pid: 222, checkout: "/mine" });
+      try {
+        expect(result).toEqual({ refused: "busy", holders: [{ port: base + 1, heldBy: 111, checkout: "/other" }] });
+      } finally { release(result); }
+      const first = await lock(base, 333);
+      expect("release" in first).toBe(true);
+      release(first);
+    } finally { release(higher); }
+  });
+
+  for (const resource of ["CHECK_DIR", "CHECK_REPORT"]) {
+    it(`refuses different checkouts sharing a canonical ${resource}`, async () => {
+      const base = await freeRange(4);
+      const dir = scratch();
+      const alias = join(scratch(), "alias");
+      symlinkSync(dir, alias, process.platform === "win32" ? "junction" : "dir");
+      const path = resource === "CHECK_DIR" ? dir : join(dir, "report.json");
+      const aliasPath = resource === "CHECK_DIR" ? alias : join(alias, "report.json");
+      const first = await acquire({ slots: 2, scan: 3, base, checkout: "/first", resources: [path] });
+      try {
+        expect("release" in first).toBe(true);
+        const second = await acquire({ slots: 2, scan: 3, base, checkout: "/second", resources: [aliasPath] });
+        try { expect(second).toMatchObject({ refused: "resource" }); }
+        finally { release(second); }
+      } finally { release(first); }
+      const next = await acquire({ slots: 2, scan: 3, base, checkout: "/second", resources: [aliasPath] });
+      expect("release" in next).toBe(true);
+      release(next);
+    });
+  }
+
+  it("reclaims only a dead owner's marker and rolls back partial resource claims", async () => {
+    const base = await freeRange(3);
+    const dir = scratch();
+    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+    expect(finished.status).toBe(0);
+    const marker = join(dir, ".check-lock");
+    writeFileSync(marker, JSON.stringify({ pid: Number(finished.stdout.trim()), checkout: "/dead" }));
+    const first = await acquire({ slots: 0, scan: 3, base, checkout: "/first", resources: [dir] });
+    try {
+      expect("release" in first).toBe(true);
+      expect(JSON.parse(readFileSync(marker, "utf8")).pid).toBe(process.pid);
+      const free = join(scratch(), "report.json");
+      const refused = await acquire({ slots: 0, scan: 3, base, checkout: "/second", resources: [free, dir] });
+      try {
+        expect(refused).toMatchObject({ refused: "resource" });
+        expect(existsSync(`${free}.check-lock`)).toBe(false);
+        expect(existsSync(marker)).toBe(true);
+      } finally { release(refused); }
+    } finally { release(first); }
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("recovers from a corrupt resource marker instead of crashing", async () => {
+    const base = await freeRange(3);
+    const dir = scratch();
+    const marker = join(dir, ".check-lock");
+    writeFileSync(marker, "{ truncated");
+    const result = await acquire({ slots: 0, scan: 3, base, checkout: "/mine", resources: [dir] });
+    try {
+      expect("release" in result).toBe(true);
+      expect(JSON.parse(readFileSync(marker, "utf8")).pid).toBe(process.pid);
+    } finally { release(result); }
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("locks a file resource by its name, not a symlink target that renameSync replaces", async () => {
+    const base = await freeRange(3);
+    const dir = scratch();
+    const target = join(dir, "previous.json");
+    const link = join(dir, "latest.json");
+    writeFileSync(target, "{}");
+    symlinkSync(target, link);
+    const first = await acquire({ slots: 0, scan: 3, base, checkout: "/first", reports: [link] });
+    try {
+      expect("release" in first).toBe(true);
+      // Simulate persistReport replacing the symlink with a regular file
+      rmSync(link);
+      writeFileSync(link, '{"replaced": true}');
+      const second = await acquire({ slots: 0, scan: 3, base, checkout: "/second", reports: [link] });
+      try { expect(second).toMatchObject({ refused: "resource" }); }
+      finally { release(second); }
+    } finally { release(first); }
+  });
+
+  it("locks a report by its name when the name is a symlink to a directory", async () => {
+    const base = await freeRange(3);
+    const dir = scratch();
+    const target = join(dir, "previous");
+    const link = join(dir, "latest.json");
+    mkdirSync(target);
+    symlinkSync(target, link);
+    const first = await acquire({ slots: 0, scan: 3, base, checkout: "/first", reports: [link] });
+    try {
+      expect("release" in first).toBe(true);
+      expect(existsSync(join(target, ".check-lock"))).toBe(false);
+      // persistReport's rename puts a regular file where the symlink was
+      rmSync(link);
+      writeFileSync(link, '{"replaced": true}');
+      const second = await acquire({ slots: 0, scan: 3, base, checkout: "/second", reports: [link] });
+      try { expect(second).toMatchObject({ refused: "resource" }); }
+      finally { release(second); }
+    } finally { release(first); }
+  });
+
+  it("leaves a marker it cannot read where it is, and does not claim the resource", async () => {
+    const base = await freeRange(3);
+    const dir = scratch();
+    const marker = join(dir, ".check-lock");
+    // a read that fails for a reason other than its content, whoever runs the test: the name
+    // exists and can be unlinked, but reading it answers EISDIR
+    mkdirSync(join(dir, "elsewhere"));
+    symlinkSync(join(dir, "elsewhere"), marker);
+    await expect(acquire({ slots: 0, scan: 3, base, checkout: "/mine", resources: [dir] })).rejects.toThrow();
+    expect(lstatSync(marker).isSymbolicLink()).toBe(true);
+  });
+
+  it("leaves the PC to a run from before slots, which names no checkout", async () => {
+    const base = await freeRange(3);
+    const old = await lock(base, 111);
+    if (!("release" in old)) throw new Error("the first slot was free");
+    try {
+      const refused = await acquire({ slots: 2, scan: 3, base, checkout: "/mine" });
+      try { expect(refused).toEqual({ refused: "busy", holders: [{ port: base, heldBy: 111 }] }); }
+      finally { release(refused); }
+      // the candidate slot it took while asking is free again
+      const next = await lock(base + 1, 222, "/other");
+      expect("release" in next).toBe(true);
+      if ("release" in next) next.release();
+    } finally { old.release(); }
+  });
+
+  it("serializes simultaneous admission without leaving a candidate slot behind", async () => {
+    const base = await freeRange(3);
+    const results = await Promise.all([
+      acquire({ slots: 1, scan: 3, base, checkout: "/first" }),
+      acquire({ slots: 1, scan: 3, base, checkout: "/second" }),
+    ]);
+    try { expect(results.filter((result) => "release" in result)).toHaveLength(1); }
+    finally { for (const result of results) release(result); }
+    const next = await acquire({ slots: 1, scan: 3, base, checkout: "/third" });
+    expect("release" in next).toBe(true);
+    release(next);
+  });
 });
 
 describe("check CLI", () => {
@@ -139,7 +421,7 @@ describe("check CLI", () => {
     writeFileSync(actionlint, "#!/bin/sh\nexit 0\n");
     chmodSync(actionlint, 0o755);
 
-    const env = { ...process.env, CHECK_DIR: ".check" };
+    const env: Record<string, string | undefined> = { ...process.env, CHECK_DIR: ".check" };
     delete env["CHECK_REPORT"];
     delete env["GITHUB_EVENT_NAME"];
     delete env["GITHUB_EVENT_PATH"];

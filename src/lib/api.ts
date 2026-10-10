@@ -1,31 +1,57 @@
 import { machinePath, type BridgeHealth, type HerdrIdentity, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
+  AgentRenameRequest,
   ConversationResponse,
   CreateWorktreeRequest,
   CreateTabRequest,
   CreateWorkspaceRequest,
   DirectoryListing,
   FileInfo,
+  FocusPaneRequest,
   HealthAuth,
+  IntegrationsResponse,
   InteractivePrompt,
+  MovePaneDestination,
+  MovePaneRequest,
+  MoveTabRequest,
+  TabMoved,
   OmoActivity,
   OpenWorktreeRequest,
   PairedDevice,
   PairingCode,
+  PaneMoved,
+  PaneDirection,
+  PaneInfo,
   PaneReadResult,
+  PaneResized,
+  PaneSplit,
+  PaneSwapped,
+  PaneZoomed,
+  PaneFindRequest,
+  PaneFindResponse,
   PromptAnswer,
   PushKey,
   RemoteAccess,
   RemoveWorktreeRequest,
+  ResizePaneRequest,
   SessionSnapshot,
+  SetSplitRatioRequest,
   SlashCommand,
+  SplitPaneDirection,
+  SplitPaneRequest,
+  SwapPaneRequest,
   TabCreated,
   UsageReport,
   WorkspaceCreated,
+  PluginActionRequest,
+  PluginActionResult,
+  PluginActions,
+  PluginActionsResponse,
   WorktreeListing,
   WorktreeOpened,
   WorktreeRemoved,
+  ZoomPaneRequest,
 } from "../../shared/protocol.ts";
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
@@ -108,6 +134,13 @@ export class ApiError extends Error {
     this.detail = detail;
   }
 }
+
+/**
+ * A 404 for the route itself, not for what it was asked about: a PC whose bridge is from before
+ * the route, whose answer the local server passes through (server/machine-api.ts). What herdr
+ * refuses comes with a code of its own (pane_not_found).
+ */
+export const routeMissing = (error: unknown): boolean => error instanceof ApiError && error.status === 404 && error.code === "not_found";
 
 async function errorFrom(url: string, response: Response): Promise<ApiError> {
   let detail = response.statusText;
@@ -347,6 +380,22 @@ async function sendJson(url: string, method: "POST" | "PATCH" | "DELETE", body: 
   return response;
 }
 
+/** GET /api/plugins/actions: the PC's herdr plugins and the actions it can run. */
+export async function fetchPluginActions(machineId = "local"): Promise<PluginActions[]> {
+  return (await getJson<PluginActionsResponse>(machinePath(machineId, "plugins/actions"))).plugins;
+}
+
+/** POST /api/plugin/action: runs one plugin action, against the pane named when there is one. */
+export async function runPluginAction(request: PluginActionRequest, machineId = "local"): Promise<PluginActionResult> {
+  const response = await sendJson(machinePath(machineId, "plugin/action"), "POST", request);
+  return (await response.json()) as PluginActionResult;
+}
+
+/** GET /api/plugin/action: where a run the POST answered `running` for stands now. */
+export async function fetchPluginActionStatus(pluginId: string, logId: string, machineId = "local"): Promise<PluginActionResult> {
+  return getJson<PluginActionResult>(machinePath(machineId, `plugin/action?plugin_id=${encodeURIComponent(pluginId)}&log_id=${encodeURIComponent(logId)}`));
+}
+
 /** GET /api/pane/scroll: where the pane's viewport sits in its history (null: herdr reports none). */
 export async function fetchPaneScroll(paneId: string, machineId = "local"): Promise<PaneScrollInfo | null> {
   return (await getJson<{ scroll: PaneScrollInfo | null }>(machinePath(machineId, `pane/scroll?pane_id=${encodeURIComponent(paneId)}`))).scroll;
@@ -356,6 +405,10 @@ export async function fetchPaneScroll(paneId: string, machineId = "local"): Prom
 export async function scrollPane(paneId: string, offsetFromBottom: number, machineId = "local"): Promise<PaneScrollInfo | null> {
   const response = await sendJson(machinePath(machineId, "pane/scroll"), "POST", { pane_id: paneId, offset_from_bottom: offsetFromBottom });
   return ((await response.json()) as { scroll: PaneScrollInfo | null }).scroll;
+}
+
+export async function findPane(request: PaneFindRequest, machineId = "local"): Promise<PaneFindResponse> {
+  return (await sendJson(machinePath(machineId, "pane/find"), "POST", request)).json();
 }
 
 /** A cell in a pane's whole history: rows count from the top of the scrollback. */
@@ -380,14 +433,83 @@ export async function closePane(paneId: string, machineId = "local"): Promise<vo
   await sendJson(machinePath(machineId, "pane/close"), "POST", { pane_id: paneId });
 }
 
+/** POST /api/pane/focus: herdr brings this pane and its tab/workspace to the front. */
+export async function focusPane(paneId: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/focus"), "POST", { pane_id: paneId } satisfies FocusPaneRequest);
+}
+
 /** POST /api/pane/rename: sets the pane's label in herdr (an empty label clears it). */
 export async function renamePane(paneId: string, label: string, machineId = "local"): Promise<void> {
   await sendJson(machinePath(machineId, "pane/rename"), "POST", { pane_id: paneId, label });
 }
 
+/** POST /api/agent/rename: the live name of the agent in the pane, what `herdr agent prompt <name>` addresses; null clears it. */
+export async function renameAgent(paneId: string, name: string | null, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "agent/rename"), "POST", { pane_id: paneId, name } satisfies AgentRenameRequest);
+}
+
+/**
+ * POST /api/pane/move: the pane into another tab, a new tab (of its workspace or another) or a
+ * new workspace, herdr's `pane move`. A pane that leaves its workspace answers to a new id:
+ * `pane.pane_id`, beside `previous_pane_id`, which is the one sent. herdr's own focus stays.
+ */
+export async function movePane(paneId: string, destination: MovePaneDestination, machineId = "local"): Promise<PaneMoved> {
+  const response = await sendJson(machinePath(machineId, "pane/move"), "POST", { pane_id: paneId, destination } satisfies MovePaneRequest);
+  return (await response.json()) as PaneMoved;
+}
+
+/**
+ * POST /api/pane/split: a new pane beside this one in herdr (its prefix+v / prefix+-), answered as
+ * herdr lists it. herdr's focus stays put unless `focus` asks for the new pane; the sidebar and the
+ * tab strip learn of it from the server's session-changed broadcast.
+ */
+export async function splitPane(paneId: string, direction: SplitPaneDirection, focus = false, machineId = "local"): Promise<PaneInfo> {
+  const response = await sendJson(machinePath(machineId, "pane/split"), "POST", { pane_id: paneId, direction, ...(focus ? { focus: true } : {}) } satisfies SplitPaneRequest);
+  return ((await response.json()) as PaneSplit).pane;
+}
+
+/** POST /api/pane/zoom: herdr's prefix+z on that pane; `zoomed` is the tab's state after it. */
+export async function zoomPane(paneId: string, mode: ZoomPaneRequest["mode"] = "toggle", machineId = "local"): Promise<PaneZoomed> {
+  const response = await sendJson(machinePath(machineId, "pane/zoom"), "POST", { pane_id: paneId, mode } satisfies ZoomPaneRequest);
+  return (await response.json()) as PaneZoomed;
+}
+
+/** POST /api/pane/swap: the pane and its neighbour on that side change places; `changed` false when it has none there. */
+export async function swapPane(paneId: string, direction: PaneDirection, machineId = "local"): Promise<PaneSwapped> {
+  const response = await sendJson(machinePath(machineId, "pane/swap"), "POST", { pane_id: paneId, direction } satisfies SwapPaneRequest);
+  return (await response.json()) as PaneSwapped;
+}
+
+/** POST /api/pane/swap: swap this pane with an explicit pane, keeping herdr's same-tab rule. */
+export async function swapPaneWith(paneId: string, targetPaneId: string, machineId = "local"): Promise<PaneSwapped> {
+  const response = await sendJson(machinePath(machineId, "pane/swap"), "POST", { pane_id: paneId, target_pane_id: targetPaneId } satisfies SwapPaneRequest);
+  return (await response.json()) as PaneSwapped;
+}
+
+/** POST /api/layout/ratio: set the split identified by its binary path to the dragged ratio. */
+export async function setSplitRatio(tabId: string, path: boolean[], ratio: number, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "layout/ratio"), "POST", { tab_id: tabId, path, ratio } satisfies SetSplitRatioRequest);
+}
+
+/** POST /api/pane/resize: the border the pane shares with a neighbour moves that way, by herdr's default share (0.05) of the split the border belongs to. */
+export async function resizePane(paneId: string, direction: PaneDirection, machineId = "local"): Promise<PaneResized> {
+  const response = await sendJson(machinePath(machineId, "pane/resize"), "POST", { pane_id: paneId, direction } satisfies ResizePaneRequest);
+  return (await response.json()) as PaneResized;
+}
+
+/** POST /api/pane/clear: clears the pane's terminal screen in herdr. */
+export async function clearPane(paneId: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/clear"), "POST", { pane_id: paneId });
+}
+
 /** GET /api/agents: the agent kinds herdr can start, for the new-session dialog. */
 export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]> {
   return (await getJson<{ agents: AgentKind[] }>(machinePath(machineId, "agents"))).agents;
+}
+
+/** GET /api/integrations: herdr's agent integrations on that PC and whether each is installed. */
+export async function fetchIntegrations(machineId = "local"): Promise<IntegrationsResponse["integrations"]> {
+  return (await getJson<IntegrationsResponse>(machinePath(machineId, "integrations"))).integrations;
 }
 
 /** GET /api/workspace/directories: the folders in `path` (empty: home), for the folder browser. */
@@ -458,6 +580,13 @@ export async function createTab(request: CreateTabRequest, machineId = "local"):
 /** POST /api/tab/rename: the tab's name in herdr; an empty one is refused. */
 export async function renameTab(tabId: string, label: string, machineId = "local"): Promise<void> {
   await sendJson(machinePath(machineId, "tab/rename"), "POST", { tab_id: tabId, label });
+}
+
+/** Move within its workspace without changing the selected pane or tab. */
+export async function moveTab(tabId: string, insertIndex: number, machineId = "local"): Promise<TabMoved> {
+  const request: MoveTabRequest = { tab_id: tabId, insert_index: insertIndex };
+  const response = await sendJson(machinePath(machineId, "tab/move"), "POST", request);
+  return (await response.json()) as TabMoved;
 }
 
 /** POST /api/tab/close: the tab and every pane in it; a workspace's last tab takes the workspace with it. */

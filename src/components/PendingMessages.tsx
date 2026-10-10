@@ -8,6 +8,7 @@ import "./PendingMessages.css";
 
 interface Props {
   messages: PendingMessageView[];
+  active?: boolean;
   connected: boolean;
   blocked: boolean;
   unsaved: boolean;
@@ -17,13 +18,15 @@ interface Props {
 }
 
 /** Pending text is separate from the transcript; Send now acts on its ID, never on its text. */
-export function PendingMessages({ messages, connected, blocked, unsaved, isBusy, onSendNow, onDiscard }: Props) {
+export function PendingMessages({ messages, active = true, connected, blocked, unsaved, isBusy, onSendNow, onDiscard }: Props) {
   const t = useT();
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const rootRef = useRef<HTMLOListElement | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const restoreFocus = (keyboard: boolean, target: HTMLButtonElement, stack: Element | null, owner: string | null): void => {
     const root = rootRef.current;
-    if (!keyboard || target.isConnected || !stack?.isConnected || stack.getAttribute("data-pane-owner") !== owner) return;
+    if (!activeRef.current || !keyboard || target.isConnected || !stack?.isConnected || stack.getAttribute("data-pane-owner") !== owner) return;
     const next = root?.querySelector<HTMLButtonElement>("button:not(:disabled)")
       ?? stack.querySelector<HTMLTextAreaElement>(".composer-text");
     next?.focus({ preventScroll: true });

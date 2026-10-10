@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { runMoreItem } from "./header-more.ts";
 
 // Settings → Agents order (Activity) and Quiet opened finishes, on the unmodified app over the
 // demo's fixture transport, whose agents carry herdr's state_change_seq and bump it on every state
@@ -32,8 +33,11 @@ const waitAgentAt = (page: Page, index: number, title: string) => page.waitForFu
  * is open at the first roster as opened, and a page slower than the demo's 4.5s self-finish would
  * count that finish too (#529 review): a record there already makes the run independent of load time.
  */
-async function withPage(browser: Browser, settings: object, run: (page: Page) => Promise<void>, seen?: Record<string, number>): Promise<void> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
+async function withPage(browser: Browser, settings: object, run: (page: Page) => Promise<void>, seen?: Record<string, number>, mobile = false): Promise<void> {
+  const context = await browser.newContext({
+    viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+    isMobile: mobile, hasTouch: mobile, locale: "en-US",
+  });
   try {
     await context.addInitScript(([stored, record]) => {
       localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", ...stored }));
@@ -45,7 +49,7 @@ async function withPage(browser: Browser, settings: object, run: (page: Page) =>
     // the shell pane is on screen, so the demo's own finish happens out of sight
     await page.goto(`${url}?pane=${encodeURIComponent(panes.shell)}`);
     await page.locator(".conn-live").waitFor({ state: "attached" });
-    await agents(page).first().waitFor();
+    await agents(page).first().waitFor({ state: "attached" });
     await run(page);
     assert.deepEqual(errors, []);
   } finally {
@@ -77,16 +81,98 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
     try {
+      // Workspace menus no longer mix in pane operations; header More keeps pane movement.
+      await withPage(browser, {}, async (page) => {
+        await runMoreItem(page, "Move pane to…");
+        const move = page.getByRole("menu", { name: /^Move .* to$/ });
+        await move.waitFor();
+        assert.equal(await move.getByRole("menuitem", { name: "New tab", exact: true }).count(), 1);
+        const previousTab = await page.locator('.tab-strip-tab[aria-selected="true"]').getAttribute("data-tab-id");
+        await move.getByRole("menuitem", { name: "New tab", exact: true }).click();
+        await page.waitForFunction((previous) => {
+          const active = document.querySelector('.tab-strip-tab[aria-selected="true"]');
+          return active !== null && active.getAttribute("data-tab-id") !== previous;
+        }, previousTab);
+        assert.equal(await page.evaluate(() => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id), panes.shell, "header More moves the selected pane");
+        const movedTab = await page.evaluate(async (paneId) => {
+          const { snapshot } = await (await fetch("/api/session")).json();
+          return snapshot.panes.find((pane: { pane_id: string }) => pane.pane_id === paneId)?.tab_id;
+        }, panes.shell);
+        assert.equal(await page.locator('.tab-strip-tab[aria-selected="true"]').getAttribute("data-tab-id"), movedTab);
+        // A stale menu must disappear if another client closes its target.
+        await runMoreItem(page, "Move pane to…");
+        await move.waitFor();
+        await page.evaluate(async (paneId) => {
+          const response = await fetch("/api/pane/close", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pane_id: paneId }) });
+          if (!response.ok) throw new Error(`Close fixture failed: ${response.status}`);
+        }, panes.shell);
+        await move.waitFor({ state: "detached" });
+      });
+      console.log("PASS header More moves the selected pane and closes stale targets");
+
       // Default: herdr's order before and after a finish, and an opened DONE keeps herdr's dot
       await withPage(browser, {}, async (page) => {
+        const selected = await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection"));
+        await page.locator(".header-more-button").focus();
+        const workspace = page.locator(`.workspace-select[data-pane="${panes.api}"]`);
+        const bounds = (await workspace.boundingBox())!;
+        await workspace.click({ button: "right", position: { x: 32, y: bounds.height / 2 } });
+        const menu = page.getByRole("menu", { name: "checkout-api", exact: true });
+        await menu.waitFor();
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "right-click uses native workspace scope");
+        const opened = (await menu.boundingBox())!;
+        assert.ok(Math.abs(opened.x - bounds.x - 32) <= 1 && Math.abs(opened.y - bounds.y - bounds.height / 2) <= 1, "the menu opens at the pointer");
+        assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selected, "right-click leaves the selected pane alone");
+        await page.keyboard.press("Escape");
+        assert.equal(await page.locator(".header-more-button").evaluate((button) => document.activeElement === button), true, "dismissal returns the prior keyboard focus");
+        await workspace.locator("..").locator(".row-menu-toggle").click();
+        await menu.waitFor();
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "the ⋯ button and right-click have identical items");
+        await page.keyboard.press("Escape");
+        const agentRow = agent(page, API);
+        const agentSelect = agentRow.locator(".agent-select");
+        await agentRow.hover();
+        assert.equal(await agentRow.getByRole("button").count(), 1, "hover leaves only the agent selection button");
+        assert.equal(await agentRow.locator('.agent-actions, .row-menu-toggle, [aria-haspopup="menu"]').count(), 0, "hover exposes no agent menu trigger");
+        await agentSelect.focus();
+        assert.equal(await agentRow.getByRole("button").count(), 1, "keyboard focus exposes no agent menu trigger");
+        await page.keyboard.press("Shift+F10");
+        assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "the agent has no keyboard context menu");
+        await page.keyboard.press("Escape");
+        await agentSelect.click({ button: "right" });
+        assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "agent right-click has no custom menu");
+        assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selected, "agent right-click does not select the agent");
+        await page.keyboard.press("Escape");
+        console.log("PASS workspace right-click scope, pointer anchor and focus; matching ⋯ menu and existing sidebar layout retained");
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER);
         await waitStatus(page, API, "done");
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER, "a finish does not move an agent");
-        await agent(page, API).locator(".agent-select").click();
-        await page.waitForTimeout(500);
+        await agentSelect.click();
+        await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.api, { timeout: 5_000 });
+        assert.equal(await agentSelect.getAttribute("aria-current"), "true", "ordinary click still selects the agent");
+        assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "selecting the agent does not open a menu");
         assert.equal(await agentStatus(page, API), "done", "herdr's DONE stands until herdr itself shows the pane");
       });
       console.log("PASS by default the Agents list keeps herdr's order, and an opened DONE keeps its dot");
+
+      await withPage(browser, {}, async (page) => {
+        const drawerToggle = page.locator('button[aria-controls="workspace-drawer"]');
+        await drawerToggle.tap();
+        const agentToggle = page.locator(".agents-sidebar .agent-section-toggle");
+        assert.equal(await agentToggle.getAttribute("aria-expanded"), "false", "the phone's Agents section still starts folded");
+        await agentToggle.tap();
+        const agentRow = agent(page, API);
+        const agentSelect = agentRow.locator(".agent-select");
+        await agentSelect.waitFor();
+        assert.equal(await agentRow.getByRole("button").count(), 1, "touch rows have only an agent selection button");
+        assert.equal(await agents(page).locator('.agent-actions, .row-menu-toggle, [aria-haspopup="menu"]').count(), 0, "touch does not expose an agent menu trigger");
+        await agentSelect.tap();
+        await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.api, { timeout: 5_000 });
+        assert.equal(await agentSelect.getAttribute("aria-current"), "true", "a tap still selects the agent");
+        assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "a tap opens no agent action sheet");
+        assert.equal(await drawerToggle.getAttribute("aria-expanded"), "false", "selecting an agent closes the phone drawer");
+      }, undefined, true);
+      console.log("PASS Agents has no hover, focus, right-click or touch menu; click and tap still select");
 
       await withPage(browser, { agentOrder: "activity", quietOpenedDone: true }, async (page) => {
         assert.equal((await agentTitles(page))[0], WEB, "the blocked agent is pinned on top");

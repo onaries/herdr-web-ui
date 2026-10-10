@@ -20,12 +20,13 @@
 }
 
 .tab-strip-item {
+  position: relative;
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
 }
 
-/* the underline runs under the whole tab, its x included */
+/* the underline spans the name and the optional touch menu */
 .tab-strip-item.is-active {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
@@ -77,9 +78,8 @@
 /* waiting on its background work: something still runs, the agent does not */
 .tab-strip-dot[data-status="waiting"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-working); }
 
-/* a tab's menu, its x, and the + : small square buttons on the strip's centre line */
-.tab-strip-panes,
-.tab-strip-close,
+/* The touch menu and + share the strip's small square controls. */
+.tab-strip-menu,
 .tab-strip-add {
   display: inline-flex;
   align-items: center;
@@ -96,46 +96,8 @@
   cursor: pointer;
 }
 
-/* the menu shows on a tab with several panes (it lists them); a touch screen shows it on the
-   open tab too, where it stands in for the x, the double-click and the right-click */
-.tab-strip-panes {
-  display: none;
-  margin-left: calc(-1 * var(--space-2));
-}
-
-.tab-strip-item.has-panes .tab-strip-panes {
-  display: inline-flex;
-}
-
-/* the x keeps its place in every tab, so a tab does not change width under the pointer; it
-   shows on the open tab, and on the one the pointer or the focus is in */
-.tab-strip-close {
-  width: 20px;
-  height: 20px;
-  margin: 0 var(--space-1) 0 calc(-1 * var(--space-2));
-  visibility: hidden;
-}
-
-.tab-strip-item.has-panes .tab-strip-close {
-  margin-left: 0;
-}
-
-.tab-strip-item.is-active .tab-strip-close,
-.tab-strip-item:hover .tab-strip-close,
-.tab-strip-item:focus-within .tab-strip-close {
-  visibility: visible;
-}
-
-/* while the name is typed the field stands alone: a press on the x would put it away first */
-.tab-strip-item.is-editing .tab-strip-close,
-.tab-strip-item.is-editing .tab-strip-panes {
-  display: none;
-}
-
-.tab-strip-close svg {
-  width: 14px;
-  height: 14px;
-}
+/* Desktop tabs use their context menu; only touch or narrow layouts expose the ellipsis. */
+.tab-strip-menu { display: none; }
 
 .tab-strip-error {
   align-self: center;
@@ -162,56 +124,30 @@
   background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--strip-bg);
 }
 
-.tab-strip-panes:hover,
-.tab-strip-panes:focus-visible,
-.tab-strip-close:hover,
-.tab-strip-close:focus-visible,
+.tab-strip-menu:hover,
+.tab-strip-menu:focus-visible,
 .tab-strip-add:hover,
 .tab-strip-add:focus-visible {
   background: var(--bg-hover);
   color: var(--text-strong);
 }
 
-.tab-strip-panes svg,
+.tab-strip-menu svg,
 .tab-strip-add svg {
   width: 16px;
   height: 16px;
 }
 
-.tab-strip-close:hover,
-.tab-strip-close:focus-visible {
-  color: var(--status-blocked);
-}
-
-@media (pointer: coarse) {
-  .tab-strip-panes,
+@media (pointer: coarse), (max-width: 768px) {
+  .tab-strip-menu,
   .tab-strip-add {
     width: var(--touch-target);
     height: var(--touch-target);
   }
 
-  .tab-strip-tab {
-    min-height: var(--touch-target);
-  }
-
-  .tab-strip-item.is-active .tab-strip-panes {
-    display: inline-flex;
-  }
-
-  /* a finger closes a tab from its menu: an x this small beside the name would be hit by mistake */
-  .tab-strip-close {
-    display: none;
-  }
-
-  /* at touch size the picker pulled over its tab would take taps meant for the name */
-  .tab-strip-panes {
-    margin-left: 0;
-  }
-
-  .tab-strip-item.has-panes .tab-strip-tab,
-  .tab-strip-item.is-active .tab-strip-tab {
-    padding-right: var(--space-1);
-  }
+  .tab-strip-tab { min-height: var(--touch-target); }
+  .tab-strip-menu { display: inline-flex; }
+  .tab-strip-item.is-active .tab-strip-tab { padding-right: var(--space-1); }
 }
 
 /* From 769px the header over the pane is the pane's surface (styles.css), and the strip under
@@ -227,3 +163,18 @@
     --strip-bg: var(--bg);
   }
 }
+
+/* Only the insertion line moves before herdr acknowledges a drop. */
+.tab-strip-item.is-dragging { opacity: 0.55; }
+.tab-strip-item.is-drop-before::before,
+.tab-strip-item.is-drop-after::after {
+  content: "";
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.tab-strip-item.is-drop-before::before { left: 0; }
+.tab-strip-item.is-drop-after::after { right: 0; }

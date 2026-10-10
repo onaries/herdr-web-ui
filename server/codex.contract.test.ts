@@ -75,7 +75,7 @@ it("answers an unchanged conversation with a bodyless 304 and a changed one in f
   const first = await fetch(url);
   const etag = first.headers.get("etag");
   expect(first.status).toBe(200);
-  expect(etag).toMatch(/^"[\w-]+"$/);
+  expect(etag).toMatch(/^W\/"[\w-]+"$/);
   expect(first.headers.get("cache-control")).toBe("no-store");
   await first.json();
   const unchanged = await fetch(url, { headers: { "if-none-match": etag! } });

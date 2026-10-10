@@ -13,7 +13,7 @@ The HTTP/WS contract plus the few policy modules the browser and the server have
 ## ROUTE SHAPES
 - Legacy paths and a missing machine ID still mean the local PC. `/ws?machine_id=` fixes the target for the life of the socket, with the role and output-ACK protocol unchanged.
 - `GET /api/health?scope=bridge` answers without waiting for herdr, which is what makes it usable while herdr is down.
-- `/api/pane/scroll` reports where the viewport sits as `max_offset_from_bottom - offset_from_bottom`, and posting an offset makes herdr redraw every attached terminal: it is not a client-local scroll.
+- `/api/pane/scroll` reports where the viewport sits as `max_offset_from_bottom - offset_from_bottom`, and posting an offset makes herdr redraw every attached terminal: it is not a client-local scroll. `/api/pane/find` returns native inclusive cell ranges (at most 1024 around the result), an exact total and scroll metrics. `matches` and `scroll` stay optional for older bridges; their presence on an explicit response is what permits automatic `jump:false` refreshes. Never probe an older bridge with `jump:false`: it may ignore that field and move the shared view.
 - `/api/pane/selection` takes both cells inclusive, counts rows from the top of the history and joins soft-wrapped lines, so a selection outlives one screen.
 - `/api/agents` lists herdr's own agent manifests plus omo and gjc when they are on the server's PATH, so the dialog can offer a kind `agent.start` would refuse.
 - `UsageReport` names only the providers a CLI on this PC is signed in to, once per account, and a provider that could not answer is reported as a `UsageProblem` (`expired`, `rate_limited`, `failed`, `locked`) rather than left out.

@@ -6,7 +6,7 @@ import type { HerdrTab } from "../../shared/protocol.ts";
  */
 export function customTabLabel(tab: Pick<HerdrTab, "label" | "number">, place: number = tab.number): string | null {
   const label = tab.label.trim();
-  return label === "" || label === String(tab.number) || label === String(place) ? null : label;
+  return label === "" || label === String(place) ? null : label;
 }
 
 /** herdr names a tab by its place until it is renamed: the strip says so in words. */

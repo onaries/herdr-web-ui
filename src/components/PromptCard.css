@@ -382,6 +382,12 @@
   font-size: var(--fs-xs);
 }
 
+/* a desktop always shows the tab strip (as herdr's TUI): the card's 60% is of what is under it,
+   so the transcript keeps two lines at 800x600. A phone hides a lone tab and keeps the rule above */
+@media (min-width: 769px) {
+  .prompt-card { max-height: max(calc((var(--app-height, 100dvh) - var(--control-h)) * 0.6), calc(var(--touch-target) * 6)); }
+}
+
 @media (pointer: coarse) {
   .prompt-card-option {
     min-height: var(--touch-target);

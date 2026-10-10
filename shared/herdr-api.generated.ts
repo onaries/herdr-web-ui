@@ -126,6 +126,46 @@ export interface PaneLayoutSplit {
   rect: PaneLayoutRect;
 }
 
+export type PaneMoveDestination = {
+  ratio?: number | null;
+  split: SplitDirection;
+  tab_id: string;
+  target_pane_id?: string | null;
+  type: string;
+} | {
+  label?: string | null;
+  type: string;
+  workspace_id?: string | null;
+} | {
+  label?: string | null;
+  tab_label?: string | null;
+  type: string;
+};
+
+export interface PaneMoveParams {
+  destination: PaneMoveDestination;
+  focus?: boolean;
+  pane_id: string;
+}
+
+export type PaneMoveReason = "same_tab" | "zoomed_tab" | (string & {});
+
+export interface PaneMoveResult {
+  changed: boolean;
+  closed_tab_id?: string | null;
+  closed_workspace_id?: string | null;
+  created_tab?: TabInfo | null;
+  created_workspace?: WorkspaceInfo | null;
+  focused_pane_id: string;
+  pane: PaneInfo;
+  previous_pane_id: string;
+  previous_tab_id: string;
+  previous_workspace_id: string;
+  reason?: PaneMoveReason | null;
+  source_layout?: PaneLayoutSnapshot | null;
+  target_layout: PaneLayoutSnapshot;
+}
+
 export interface PaneReadParams {
   format?: ReadFormat;
   lines?: number | null;

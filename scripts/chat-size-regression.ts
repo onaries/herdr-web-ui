@@ -12,7 +12,7 @@ import { herdrRpc, herdrSocketPath, type WorkspaceCreateResult, paneRead, paneSe
 /** how long a resize that should not happen gets to show up */
 const NO_RESIZE_WAIT_MS = 400;
 
-type Frame = { dir: "in" | "out"; type: string; keep_size?: boolean };
+type Frame = { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string };
 const framesOf = (page: Page) => page.evaluate(() => (window as unknown as { frames_: Frame[] }).frames_);
 
 async function stopHolder(holder: PtySession): Promise<void> {
@@ -51,16 +51,20 @@ async function openRecording(browser: Browser, contexts: BrowserContext[], origi
   await context.addInitScript((stored) => {
     localStorage.setItem("herdr-web-ui:settings", JSON.stringify(stored));
     // every frame this page's socket sends and receives, to wait on the server's answers
-    const frames: { dir: "in" | "out"; type: string; keep_size?: boolean }[] = [];
+    const frames: { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string }[] = [];
     (window as unknown as { frames_: typeof frames }).frames_ = frames;
     const Native = window.WebSocket;
     class Recording extends Native {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols);
         (window as unknown as { socket_: WebSocket }).socket_ = this;
+        frames.push({ dir: "in", type: "socket-opened" });
         this.addEventListener("message", (event) => { try { frames.push({ dir: "in", type: JSON.parse(String(event.data)).type }); } catch {} });
+        // Navigation releases a pane with detach while the PC connection retains receipts.
+        // Physical closes remain separate evidence for the explicit reconnect scenarios.
+        this.addEventListener("close", () => frames.push({ dir: "in", type: "socket-closed" }));
       }
-      override send(data: string): void { try { const frame = JSON.parse(data); frames.push({ dir: "out", type: frame.type, keep_size: frame.keep_size }); } catch {} super.send(data); }
+      override send(data: string): void { try { const frame = JSON.parse(data); frames.push({ dir: "out", type: frame.type, keep_size: frame.keep_size, ...(frame.type === "detach" ? { pane_id: frame.pane_id } : {}) }); } catch {} super.send(data); }
     }
     Object.assign(window, { WebSocket: Recording });
   }, settings);
@@ -274,6 +278,28 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     await keeping.context().close();
     console.log("PASS by default a desktop window out of use keeps its pane and its output");
 
+    // a phone put away lets go of the pane at once, with the default settings and no timer run:
+    // its page can freeze before one does, and its attach would keep herdr's window at its size
+    const pocket = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { language: "en", defaultView: "terminal" });
+    await attached(pocket);
+    await pocket.clock.install();
+    await pocket.clock.pauseAt(new Date());
+    const pocketVisibility = (hidden: boolean) => pocket.evaluate((hide) => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => hide ? "hidden" : "visible" });
+      Object.defineProperty(document, "hasFocus", { configurable: true, value: () => !hide });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }, hidden);
+    await pocketVisibility(true);
+    const pocketFrames = async () => (await framesOf(pocket)).filter((f) => f.dir === "out");
+    assert.ok((await pocketFrames()).some((f) => f.type === "detach"), "a hidden phone detaches before any timer runs");
+    assert.ok((await pocketFrames()).some((f) => f.type === "watch"), "a hidden phone watches the pane it let go of");
+    const pocketAttaches = (await pocketFrames()).filter((f) => f.type === "attach").length;
+    await pocketVisibility(false);
+    await pocket.clock.resume();
+    await pocket.waitForFunction((count) => (window as unknown as { frames_: { dir: string; type: string }[] }).frames_.filter((f) => f.dir === "out" && f.type === "attach").length > count, pocketAttaches, { timeout: 10_000 });
+    await pocket.context().close();
+    console.log("PASS a phone put away lets go of the pane at once and attaches again when it is back");
+
     // a font the user chose loads after every attach and refits the grid: one no device has falls
     // back to the built-in fonts, so the grid keeps its size
     const desktop = await open({ viewport: { width: 1280, height: 800 } }, { terminalFontFamily: "herdr-web-ui-test-no-such-font" });
@@ -350,12 +376,15 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     const nextBefore = await nextSize();
     assert.notEqual(nextBefore, desktopSize, "the next pane starts at a size the window would change");
     const switching = (await sizing(desktop)).length;
+    const watchesBeforeSwitch = (await framesOf(desktop)).filter((frame) => frame.dir === "out" && frame.type === "watch").length;
     await workspaceClose(created.workspace.workspace_id);
     await desktop.locator(`.terminal-stack[data-pane-owner="${nextPane}"]`).waitFor({ state: "attached", timeout: 15_000 });
     await Bun.sleep(NO_RESIZE_WAIT_MS);
     assert.deepEqual((await sizing(desktop)).slice(switching), [], "a background move to the next pane attaches nothing");
     assert.equal(await nextSize(), nextBefore, "a background move to the next pane leaves its grid");
     assert.equal(await viewOnly(desktop).count(), 1, "the window on the next pane is still view only");
+    assert.ok((await framesOf(desktop)).filter((frame) => frame.dir === "out" && frame.type === "watch").length > watchesBeforeSwitch,
+      "the replacement keyed terminal starts a watch without acquiring an attach");
     console.log(`PASS a desktop window moving on to the next pane in the background leaves its grid at ${nextBefore}`);
 
     // the user comes back to it: the window takes the focus, attaches, and takes the grid
@@ -401,6 +430,16 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
     const waitDetach = (page: Page, count = 1) => page.waitForFunction((n) =>
       (window as unknown as { frames_: Frame[] }).frames_.filter((f) => f.dir === "out" && f.type === "detach").length >= n,
     count, { timeout: 10_000 });
+    const waitPaneDetach = (page: Page, paneId: string) => page.waitForFunction((pane) =>
+      (window as unknown as { frames_: Frame[] }).frames_.some((frame) => frame.dir === "out" && frame.type === "detach" && frame.pane_id === pane),
+    paneId, { timeout: 10_000 });
+    const detachedPanes = (frames: Frame[]): Array<string | undefined> => frames.filter((frame) => frame.dir === "out" && frame.type === "detach").map((frame) => frame.pane_id);
+    const assertSharedConnection = async (page: Page): Promise<void> => {
+      const frames = await framesOf(page);
+      assert.equal(frames.filter((frame) => frame.type === "socket-opened").length, 1, "pane navigation reuses the PC connection");
+      assert.equal(frames.filter((frame) => frame.type === "socket-closed").length, 0, "the receipt-owning connection stays open");
+      assert.equal(await page.evaluate(() => (window as unknown as { socket_: WebSocket }).socket_.readyState === WebSocket.OPEN), true);
+    };
     const sent = async (page: Page, start = 0) => (await framesOf(page)).slice(start)
       .filter((f) => f.dir === "out" && (f.type === "attach" || f.type === "resize"));
     const scenarios = ["mount", "switch", "resume", "toggles", "held", "queue-switch", "queue-inflight", "writes"] as const;
@@ -425,7 +464,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
         const listeners = new Set<() => void>();
         const record = (raw: string | Buffer, dir: "in" | "out"): void => {
           const frame = JSON.parse(String(raw));
-          wire.push({ dir, type: frame.type, ...(dir === "out" ? { keep_size: frame.keep_size } : {}) });
+          wire.push({ dir, type: frame.type, ...(dir === "out" ? { keep_size: frame.keep_size } : {}), ...(frame.type === "detach" ? { pane_id: frame.pane_id } : {}) });
           for (const listener of listeners) listener();
         };
         const waitWire = (dir: "in" | "out", type: string, count = 1): Promise<void> => new Promise((resolve, reject) => {
@@ -548,9 +587,11 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
               await page.locator(`.pane-select[title^="${next} — "]`).evaluate((button: HTMLElement) => button.click());
               await waitWire("out", "attach", 2);
               await page.locator(`.terminal-stack[data-pane-owner="${next}"]`).waitFor({ state: "attached" });
+              await waitWire("out", "detach", 1);
               await page.clock.runFor(0);
-              assert.equal((await recorded()).filter((f) => f.dir === "out" && f.type === "detach").length, 1,
-                "pane B gets its own release delay, not pane A's queue-held state");
+              assert.deepEqual(detachedPanes(await recorded()), [first],
+                "navigation detaches pane A while pane B starts its own release delay");
+              await assertSharedConnection(page);
               await waitWire("in", "input-ready", 2);
               await page.clock.runFor(900);
               await page.evaluate(() => {
@@ -560,10 +601,12 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
                 window.dispatchEvent(new Event("blur"));
               });
               await page.clock.runFor(100);
-              assert.equal((await recorded()).filter((f) => f.dir === "out" && f.type === "detach").length, 1,
+              assert.deepEqual(detachedPanes(await recorded()), [first],
                 "pane A's orphaned timer cannot shorten pane B's new delay");
               await page.clock.runFor(900);
               await waitWire("out", "detach", 2);
+              assert.deepEqual(detachedPanes(await recorded()), [first, next], "pane B releases only after its full new delay");
+              await assertSharedConnection(page);
             } else {
               assert.ok(releaseSubmit, "the explicit Send is waiting at the server boundary");
               releaseSubmit();
@@ -616,14 +659,23 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             await page.locator(`.pane-select[title^="${next} — "]`).evaluate((button: HTMLElement) => button.click());
             await attached(page, 2);
             assert.deepEqual(await sent(page, before), [{ dir: "out", type: "attach", keep_size: true }]);
+            await waitPaneDetach(page, first);
+            assert.deepEqual(detachedPanes(await framesOf(page)), [first], "navigation releases only the old pane's lease");
+            await assertSharedConnection(page);
             await page.clock.runFor(1000);
-            await waitDetach(page, 2); // old-pane cleanup plus new-pane release
+            await waitDetach(page, 2); // the new pane still releases after its own full delay
+            assert.deepEqual(detachedPanes(await framesOf(page)), [first, next], "the new pane releases its own lease after the delay");
+            await assertSharedConnection(page);
           } else if (scenario === "resume") {
             await page.clock.runFor(1000);
             await waitDetach(page);
             await page.locator(".terminal-banner", { hasText: "View only while you use another window" }).waitFor();
             const before = (await framesOf(page)).length;
-            await page.evaluate(() => window.dispatchEvent(new Event("pointerdown")));
+            // Resume only the pane that was explicitly touched; a window-level event no
+            // longer has a target once several independent terminals can be mounted.
+            await page.locator(`.terminal-stack[data-pane-owner="${first}"]`).evaluate((stack) => {
+              stack.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }));
+            });
             await attached(page, 2);
             assert.deepEqual(await sent(page, before), [{ dir: "out", type: "attach", keep_size: true }],
               "an inactive pointer resume must not resize the shared grid");

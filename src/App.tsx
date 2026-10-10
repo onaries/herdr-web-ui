@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Bell, Ellipsis, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Bell, Ellipsis, FolderInput, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
 
-import type { AgentStatus, ClientRole, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
-import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
+import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
+import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { displayPaneTitle } from "./components/Sidebar.tsx";
+import { PaneCanvas } from "./components/PaneCanvas.tsx";
+import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { PANE_TABPANEL_ID, paneTabPanelLabel } from "./lib/paneRegion.ts";
 import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
+import { MovePaneMenu } from "./components/MovePaneMenu.tsx";
 import { TabStrip } from "./components/TabStrip.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { onSettingsHistory, recordSettings } from "./lib/settingsHistory.ts";
@@ -26,6 +29,7 @@ import { paneStorageId, type Machine, type MachineEvent } from "../shared/machin
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
+import { carryPaneRecords, paneMovePending, paneMovesVersion, subscribePaneMoves } from "./lib/paneMove.ts";
 import { SnapshotRequests } from "./lib/snapshotRequests.ts";
 import { alertPrefs, useSettings, type DefaultView } from "./lib/settings.ts";
 import { useShortcuts } from "./lib/shortcuts.ts";
@@ -51,6 +55,7 @@ import { FileViewer } from "./components/FileViewer.tsx";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { useFileViewer } from "./lib/useFileViewer.ts";
 import { useT } from "./lib/i18n.ts";
+import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
 import { watchDrawerSwipe } from "./lib/edgeSwipe.ts";
 import { Droplet } from "./components/Droplet.tsx";
@@ -170,6 +175,13 @@ export function App() {
   const [newSessionMachineId, setNewSessionMachineId] = useState("local");
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // a palette layout call a PC's bridge could not take: a line over the pane, gone after a moment as the tab strip's is
+  const [layoutNotice, setLayoutNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!layoutNotice) return;
+    const timer = window.setTimeout(() => setLayoutNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [layoutNotice]);
   // null until the server has said whether it wants a token: the shell, and with it
   // the WebSocket, never mounts before that is known
   const [locked, setLocked] = useState<boolean | null>(null);
@@ -202,8 +214,13 @@ export function App() {
   // narrow window opened must not come back (with its scrim) the next time the window narrows
   const wideScreen = useMediaQuery("(min-width: 769px)");
   useEffect(() => { if (wideScreen) setDrawerOpen(false); }, [wideScreen]);
-  const selectionRef = useRef({ machineId: selectedMachineId, paneId: selectedPaneId });
-  selectionRef.current = { machineId: selectedMachineId, paneId: selectedPaneId };
+  // with a generation (lib/selectionMark.ts): a call that answers after the user opened another pane or PC leaves
+  // the selection alone. Marked at commit, not in render: a render React throws away (Strict Mode, a replay)
+  // must not move the generation on, and every reader runs from an event or a reply, after the commit
+  const selectionRef = useRef<SelectionMark>({ machineId: selectedMachineId, paneId: selectedPaneId, generation: 0 });
+  useLayoutEffect(() => {
+    selectionRef.current = markSelection(selectionRef.current, selectedMachineId, selectedPaneId);
+  }, [selectedMachineId, selectedPaneId]);
   // on a phone the drawer follows a swipe in from the left edge, and a swipe back (lib/edgeSwipe.ts)
   useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -211,6 +228,7 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [findRequest, setFindRequest] = useState<{ paneId: string | null; serial: number }>({ paneId: null, serial: 0 });
   // the header's More menu: its button, and whether it opened on a phone-width screen
   const [more, setMore] = useState<{ anchor: HTMLElement; phone: boolean } | null>(null);
   const closeMore = useCallback(() => setMore(null), []);
@@ -226,6 +244,10 @@ export function App() {
   }, [moreOpen]);
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
+  const [movingPane, setMovingPane] = useState<{ machineId: string; paneId: string; anchor: HTMLElement } | null>(null);
+  const movingOwner = movingPane ? machines.find((machine) => machine.id === movingPane.machineId) : null;
+  const movingLivePane = movingOwner?.state === "connected" ? movingOwner.snapshot?.panes.find((pane) => pane.pane_id === movingPane?.paneId) : null;
+  useEffect(() => { if (movingPane && !movingLivePane) setMovingPane(null); }, [movingPane, movingLivePane]);
   const { viewing, openFile, closeFile } = useFileViewer();
   const viewFile = useCallback((path: string) => {
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
@@ -247,8 +269,6 @@ export function App() {
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   const [connected, setConnected] = useState(false);
   const [outputStopped, setOutputStopped] = useState(false);
-  // the connection's role: the server's role-ack confirms it (no UI control today)
-  const [role, setRole] = useState<ClientRole>("interact");
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   // this device has a server-side push subscription: alerts come from the server, not the tab
   const [pushOn, setPushOn] = useState(false);
@@ -535,9 +555,13 @@ export function App() {
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
     setOutputStopped(false);
     setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
+    // this browser's choice only: herdr's focus, its TUI and every other device stay where they are
     storeSelection(machineId, paneId);
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
+  // the moves this client asked for and has no answer to yet (MovePaneMenu): the effect below
+  // looks again when one ends, since a failed move leaves the selection to it after all
+  const movesVersion = useSyncExternalStore(subscribePaneMoves, paneMovesVersion);
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
     // a closed pane (including one remembered across reloads) must release its selection.
@@ -550,21 +574,32 @@ export function App() {
     let cancelled = false;
     void fetchSession(selectedMachineId).then((current) => {
       if (cancelled || current.panes.some((pane) => pane.pane_id === selectedPaneId)) return;
+      // the pane is gone because this client is moving it and the roster outran the answer:
+      // the answer names the id to follow (actions.paneMoved), and herdr's focus is not it
+      if (paneMovePending(selectedMachineId, selectedPaneId)) return;
       setSelectedPaneId(fallback(current));
       setAutoSelected(true);
     }).catch(() => { /* a failed read is not evidence that the pane disappeared */ });
     return () => { cancelled = true; };
-  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state]);
+  }, [snapshot, selectedPaneId, selectedMachineId, selectedMachine?.state, movesVersion]);
   useEffect(() => {
     storeSelection(selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);
 
-  const selectPane = useCallback((paneId: string) => {
+  const selectPane = useCallback((paneId: string, focusInput = true) => {
     setSelectedPaneId(paneId);
     setNotificationViewTarget(null);
-    setAutoSelected(false);
+    setAutoSelected(!focusInput);
     setDrawerOpen(false);
   }, []);
+
+  // a layout call the palette made and the PC refused: a bridge from before the route says so
+  // over the pane (the tab's own menu has a line of its own); anything else is logged, as
+  // other background failures are
+  const layoutRefused = useCallback((what: string, err: unknown): void => {
+    if (routeMissing(err)) setLayoutNotice(t("This PC's bridge does not offer this yet"));
+    else console.warn(what, err);
+  }, [t]);
 
   // a tapped notification focuses this window and names the pane (public/sw.js)
   useEffect(() => onNotificationTarget((target) => selectTargetRef.current(target.machine_id, target.pane_id, target.view)), []);
@@ -579,6 +614,15 @@ export function App() {
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
+  const selectedLayout = snapshot?.layouts.find((layout) => layout.tab_id === selectedPane?.tab_id);
+  useLayoutEffect(() => {
+    if (selectedLayout?.zoomed && selectedLayout.focused_pane_id !== selectedPaneId
+      && snapshot?.panes.some((pane) => pane.pane_id === selectedLayout.focused_pane_id)) {
+      setSelectedPaneId(selectedLayout.focused_pane_id);
+      setAutoSelected(true);
+    }
+    // a pick of another pane of a zoomed tab lands on herdr's zoomed one too: herdr shows only it
+  }, [selectedMachineId, selectedPaneId, selectedLayout?.zoomed, selectedLayout?.focused_pane_id]);
   const targetHerdr = selectedMachineId === "local" ? health?.herdr : selectedMachine?.herdr;
   const selectedTitle = selectedPane ? displayPaneTitle(selectedPane) : null;
   // the tab that governs the pane region, so the strip's tabs and the pane they select are
@@ -694,6 +738,19 @@ export function App() {
         setNewSessionOpen(true);
       },
       openPalette: () => setPaletteOpen(true),
+      paneMoved: (machineId, previousPaneId, paneId) => {
+        if (previousPaneId === paneId) return;
+        carryPaneRecords(machineId, previousPaneId, paneId);
+        // the new id is selected before a snapshot without the old one can fall the selection
+        // back to herdr's focus; a pane moved from the sidebar while another is open stays unselected
+        const current = selectionRef.current;
+        if (current.machineId === machineId && current.paneId === previousPaneId) selectPane(paneId);
+      },
+      openFind: () => {
+        if (selectedPaneId === null) return;
+        setView("terminal");
+        setFindRequest((request) => ({ paneId: selectedPaneId, serial: request.serial + 1 }));
+      },
       openSettings: () => {
         setDrawerOpen(false);
         setSettingsSection(null);
@@ -715,8 +772,28 @@ export function App() {
       enableNotifications: bellVisible && bell.run === enableNotifications ? () => void enableNotifications() : null,
       refresh: () => void load(),
       openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
+      // herdr's layout calls on the selected pane (components/TabStrip.tsx has the same for the
+      // tab's own menu): the new layout reaches every client as session-changed, so only a
+      // refusal is left to say, and that is logged as other background failures are
+      splitPane: selectedPaneId !== null ? (direction, focus = false) => {
+        const asked = selectionRef.current;
+        if (asked.paneId === null) return;
+        void splitPane(asked.paneId, direction, focus, asked.machineId)
+          .then((pane) => {
+            void load();
+            // herdr focused the new pane: the app follows, unless another pane or PC was opened
+            // while herdr answered (over SSH, say): what the user went to is theirs to keep
+            if (focus && selectionStill(asked, selectionRef.current)) selectPane(pane.pane_id);
+          })
+          .catch((err) => layoutRefused("pane split failed", err));
+      } : null,
+      zoomPane: selectedPaneId !== null ? (mode) => {
+        const { machineId, paneId } = selectionRef.current;
+        if (paneId === null) return;
+        void zoomPane(paneId, mode, machineId).then(() => void load()).catch((err) => layoutRefused("pane zoom failed", err));
+      } : null,
     }),
-    [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load],
+    [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load, layoutRefused],
   );
 
   useShortcuts(actions, locked === false);
@@ -726,9 +803,14 @@ export function App() {
   // pane's title, and the palette is the menu's first item.
   const paletteItem: RowMenuItem = { id: "palette", label: t("Command palette"), icon: Search, run: () => setPaletteOpen(true) };
   const moreItems: RowMenuItem[] = [
+    ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
     ...(selectedPane && selectedWorkspace
       ? [{ id: "new-tab", label: t("New tab"), title: t("New tab in {workspace}", { workspace: selectedWorkspace.label }), icon: Plus, run: () => actions.openNewTab() }]
       : []),
+    ...(selectedPane ? [{ id: "move-pane", label: t("Move pane to…"), icon: FolderInput, run: () => {
+      const anchor = document.querySelector<HTMLElement>(".header-more-button");
+      if (anchor) setMovingPane({ machineId: selectedMachineId, paneId: selectedPane.pane_id, anchor });
+    } }] : []),
     ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
   ];
@@ -766,7 +848,7 @@ export function App() {
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
   return (
-    <MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
+    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
       <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}`}>
         {/* is-zoned tells this header from the connecting shell's, which has no zones to draw.
             .header-side is the sidebar's own top row from 769px (styles.css); below that its
@@ -897,6 +979,7 @@ export function App() {
         <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <TelemetryNotice enabled={locked === false} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
+        {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
         {snapshot && selectedPane && selectedWorkspace && (
           <TabStrip snapshot={snapshot} workspace={selectedWorkspace} selectedPane={selectedPane} onSelectPane={selectPane} onNewTab={() => actions.openNewTab()} />
         )}
@@ -905,29 +988,34 @@ export function App() {
         <main className="terminal-host">
           {/* the panel sits inside main, so the page keeps its main landmark; it draws no box */}
           <div id={PANE_TABPANEL_ID} className="terminal-tabpanel" role={tabPanelLabel === null ? undefined : "tabpanel"} aria-label={tabPanelLabel ?? undefined}>
-          <PaneTerminal
-            key={selectedMachineId}
-            title={selectedTitle}
-            paneId={selectedPane?.restore_error ? null : selectedPaneId}
-            restoreError={selectedPane?.restore_error ?? null}
-            agent={selectedAgent}
-            agentStatus={selectedPane?.agent_status}
-            backgroundTasks={(selectedPane as HerdrPane | null)?.background_tasks ?? 0}
-            backgroundWait={(selectedPane as HerdrPane | null)?.background_wait === true}
-            cwd={selectedPane?.cwd ?? null}
-            machineName={selectedMachine?.name ?? selectedMachineId}
-            view={view}
-            autoSelected={autoSelected}
-            terminalFontSize={settings.terminalFontSize}
-            terminalWheelSpeed={settings.terminalWheelSpeed}
-            terminalFontFamily={settings.terminalFontFamily}
-            theme={resolvedTheme}
-            palette={settings.palette}
-            role={role}
-            onRoleAck={setRole}
-            onConnectionChange={(next) => { setConnected(next); if (next) setOutputStopped(false); }}
-            onServerMessage={handleServerMessage}
-          />
+          <PaneCanvas key={selectedMachineId} snapshot={snapshot} pane={selectedPane} selectedPaneId={selectedPaneId} onSelect={selectPane} onChanged={actions.refresh}
+            isTerminal={(item) => (item.pane_id === selectedPaneId ? view : storedView(item.pane_id, selectedMachineId, item.agent !== null, terminalAttach, settings.defaultView)) === "terminal"}
+            renderPane={(item, active) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId: selectedMachineId }) : null}>
+              <PaneTerminal
+                title={item ? displayPaneTitle(item) : selectedTitle}
+                // Wait for the roster before attaching: the loading placeholder is replaced
+                // by the keyed tile, and must never claim the pane on a throwaway connection.
+                paneId={item?.restore_error ? null : item?.pane_id ?? null}
+                restoreError={item?.restore_error ?? null}
+                agent={item?.agent ?? null}
+                agentStatus={item?.agent_status}
+                backgroundTasks={item?.background_tasks ?? 0}
+                backgroundWait={item?.background_wait === true}
+                cwd={item?.cwd ?? null}
+                machineName={selectedMachine?.name ?? selectedMachineId}
+                view={active ? view : storedView(item!.pane_id, selectedMachineId, item!.agent !== null, terminalAttach, settings.defaultView)}
+                active={active}
+                findRequest={findRequest.paneId === item?.pane_id ? findRequest.serial : 0}
+                autoSelected={autoSelected}
+                terminalFontSize={settings.terminalFontSize}
+                terminalWheelSpeed={settings.terminalWheelSpeed}
+                terminalFontFamily={settings.terminalFontFamily}
+                theme={resolvedTheme}
+                palette={settings.palette}
+                onConnectionChange={active ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
+                onServerMessage={active ? handleServerMessage : undefined}
+              />
+            </OpenFileContext.Provider>} />
           </div>
         </main>
         </div>
@@ -955,6 +1043,9 @@ export function App() {
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
+      {movingPane && movingLivePane && movingOwner?.snapshot && <MachineContext.Provider value={movingPane.machineId}><MovePaneMenu anchor={movingPane.anchor} snapshot={movingOwner.snapshot} pane={movingLivePane}
+        paneTitle={displayPaneTitle(movingLivePane)} onMoved={(moved) => actions.paneMoved(movingPane.machineId, moved.previous_pane_id, moved.pane.pane_id)}
+        onError={(reason) => setLayoutNotice(t("Move failed: {reason}", { reason }))} onClose={() => setMovingPane(null)} /></MachineContext.Provider>}
       <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null} />
       {filesOpen && selectedPane && (
         <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} viewing={viewing !== null} onOpenFile={viewFile} onClose={() => setFilesOpen(false)} />
@@ -962,7 +1053,7 @@ export function App() {
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
-      <CommandPalette key={selectedMachineId} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} selectedPaneId={selectedPaneId} view={view} actions={actions} />
-    </div></MachineContext.Provider>
+      <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
+    </div></MachineContext.Provider></MachineSessionsProvider>
   );
 }

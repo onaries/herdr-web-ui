@@ -17,6 +17,11 @@ describe("matchShortcut", () => {
 
   it("matches every terminal-safe key", () => {
     expect(matchShortcut(keyEvent("j", { ctrlKey: true }), false)).toBe("toggle-view");
+    expect(matchShortcut(keyEvent("F", { ctrlKey: true }), false)).toBe("find");
+    expect(matchShortcut(keyEvent("F", { metaKey: true }), true)).toBe("find");
+    expect(matchShortcut(keyEvent("f", { ctrlKey: true, shiftKey: false }), false)).toBeNull();
+    expect(matchShortcut(keyEvent("f", { ctrlKey: true }), false, { find: null })).toBeNull();
+    expect(matchShortcut(keyEvent("g", { ctrlKey: true }), false, sanitizeShortcutOverrides({ find: "g" }))).toBe("find");
     expect(matchShortcut(keyEvent("B", { ctrlKey: true }), false)).toBe("toggle-sidebar");
     expect(matchShortcut(keyEvent("n", { ctrlKey: true }), false)).toBe("new-session");
     expect(matchShortcut(keyEvent("ArrowUp", { ctrlKey: true }), false)).toBe("previous-pane");

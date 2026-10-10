@@ -40,6 +40,10 @@ export function errorResponse(error: unknown): Response {
   return jsonResponse({ error: { code: "internal_error", message: `internal error (${id})` } }, 500);
 }
 
+export function conflictResponse(code: string, message: string): Response {
+  return jsonResponse({ error: { code, message } }, 409);
+}
+
 export function badRequest(code: string, message: string): Response {
   return jsonResponse({ error: { code, message } }, 400);
 }

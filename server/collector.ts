@@ -10,8 +10,9 @@ import { HerdrError, sessionSnapshot, subscribeEvents, type EventFrame, type Sub
  * - A second `events.subscribe` request on an already-open connection is silently
  *   ignored: when the pane set changes the status connection must be re-opened with
  *   the full set (see `reconcile`).
- * - `pane.created` / `pane.closed` / `pane.exited` subscribe globally (no pane_id)
- *   and drive both the pane-set reconciliation and the structure broadcasts.
+ * - Workspace, tab, pane and layout lifecycle events subscribe globally (no pane_id)
+ *   and coalesce structure broadcasts and authoritative pane-set reconciliation.
+ *   `pane.moved` changes pane IDs without emitting close/create events.
  * - `pane.focused` subscribes globally too, and fires for a tab or workspace brought to the
  *   front as well (`{event:"pane_focused", data:{type, pane_id, workspace_id}}`).
  *
@@ -130,7 +131,7 @@ export function parseStatusFrame(frame: EventFrame): { paneId: string; status: A
 export type StructureEvent =
   | { kind: "pane-ended"; paneId: string }
   /** `closed`: the pane a `pane_closed` frame names */
-  | { kind: "structure-changed"; closed?: string };
+  | { kind: "structure-changed"; closed?: string; moved?: { previousPaneId: string; paneId: string; status: AgentStatus; agent: string | null } };
 
 /** The pane a focus frame (`{data:{type:"pane_focused", pane_id}}`) brought to the front. */
 export function parseFocusFrame(frame: EventFrame): string | null {
@@ -138,15 +139,35 @@ export function parseFocusFrame(frame: EventFrame): string | null {
   return data?.type === "pane_focused" && typeof data.pane_id === "string" ? data.pane_id : null;
 }
 
-/** Structure frames: `{event:"pane_exited"|"pane_created"|"pane_closed", data:{type, pane_id?}}`. */
+/** Lifecycle frames carry a snake_case `data.type`; IDs come from the next snapshot. */
 export function parseStructureFrame(frame: EventFrame): StructureEvent | null {
-  const data = frame.data as { type?: unknown; pane_id?: unknown } | undefined;
+  const data = frame.data as { type?: unknown; pane_id?: unknown; previous_pane_id?: unknown; pane?: { pane_id?: unknown; agent_status?: unknown; agent?: unknown } } | undefined;
   switch (data?.type) {
     case "pane_exited":
       return typeof data.pane_id === "string" ? { kind: "pane-ended", paneId: data.pane_id } : null;
     case "pane_closed":
       return typeof data.pane_id === "string" ? { kind: "structure-changed", closed: data.pane_id } : { kind: "structure-changed" };
+    case "pane_moved":
+      return typeof data.previous_pane_id === "string" && typeof data.pane?.pane_id === "string" && typeof data.pane.agent_status === "string"
+        ? { kind: "structure-changed", moved: { previousPaneId: data.previous_pane_id, paneId: data.pane.pane_id, status: data.pane.agent_status as AgentStatus, agent: typeof data.pane.agent === "string" ? data.pane.agent : null } }
+        : { kind: "structure-changed" };
     case "pane_created":
+    case "pane_updated":
+    case "workspace_created":
+    case "workspace_updated":
+    case "workspace_metadata_updated":
+    case "workspace_renamed":
+    case "workspace_moved":
+    case "workspace_reordered":
+    case "workspace_closed":
+    case "worktree_created":
+    case "worktree_opened":
+    case "worktree_removed":
+    case "tab_created":
+    case "tab_closed":
+    case "tab_renamed":
+    case "tab_moved":
+    case "layout_updated":
       return { kind: "structure-changed" };
     default:
       return null;
@@ -221,6 +242,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
   let reconciling = false;
   let reconcilePending = false;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+  let structureTimer: ReturnType<typeof setTimeout> | null = null;
   let backstopTimer: ReturnType<typeof setInterval> | null = null;
   let lifecycleSubscription: { close: () => void } | null = null;
   let focusSubscription: { close: () => void } | null = null;
@@ -247,9 +269,26 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
   let statusStarted = false;
 
   const STRUCTURE_SUBSCRIPTIONS = [
+    { type: "workspace.created" },
+    { type: "workspace.updated" },
+    { type: "workspace.metadata_updated" },
+    { type: "workspace.renamed" },
+    { type: "workspace.moved" },
+    { type: "workspace.reordered" },
+    { type: "workspace.closed" },
+    { type: "worktree.created" },
+    { type: "worktree.opened" },
+    { type: "worktree.removed" },
+    { type: "tab.created" },
+    { type: "tab.closed" },
+    { type: "tab.renamed" },
+    { type: "tab.moved" },
     { type: "pane.created" },
     { type: "pane.closed" },
     { type: "pane.exited" },
+    { type: "pane.updated" },
+    { type: "pane.moved" },
+    { type: "layout.updated" },
   ] as const;
 
   function closeStatusSubscription(): void {
@@ -418,10 +457,13 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
     }
   }
 
-  function scheduleReconcile(): void {
-    if (stopped || reconcileTimer !== null) return;
-    reconcileTimer = setTimeout(() => {
-      reconcileTimer = null;
+  function scheduleStructureChange(): void {
+    // Separate from snapshot retry timers: an unreachable herdr must not delay
+    // the browser's invalidation, and a continuous burst must not starve it.
+    if (stopped || structureTimer !== null) return;
+    structureTimer = setTimeout(() => {
+      structureTimer = null;
+      handlers.onStructureChange();
       void reconcile();
     }, deps.debounceMs);
   }
@@ -439,14 +481,29 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
         handlers.onPaneEnded(parsed.paneId);
       }
       else {
+        // a move inside one workspace keeps the pane ID: its subscription and status history stay as they are
+        if (parsed.moved !== undefined && parsed.moved.previousPaneId !== parsed.moved.paneId) {
+          const { previousPaneId, paneId, status, agent } = parsed.moved;
+          // A move changes the subscription key, not the work. Keep its last
+          // baseline so a finish before the new subscription starts is replayed.
+          // The lifecycle connection can overtake a queued working/blocked event
+          // on the old status connection. The move's active payload advances a
+          // resting baseline; a resting payload must not erase unfinished work.
+          const before = heard.get(previousPaneId);
+          heard.delete(previousPaneId);
+          heard.set(paneId, before === undefined || status === "working" || status === "blocked" ? { status, agent } : before);
+          // A snapshot already in flight still holds the old ID. It must neither
+          // restore that baseline nor prune the one just carried to the new ID.
+          actedOn.set(previousPaneId, ++statusEvents);
+          lastEventOf.set(paneId, statusEvents);
+        }
         // closed with no exit frame: a snapshot on its way that still holds the pane is no news of it either
         if (parsed.closed !== undefined) {
           actedOn.set(parsed.closed, ++statusEvents);
           heard.delete(parsed.closed);
         }
-        handlers.onStructureChange();
-        scheduleReconcile();
       }
+      scheduleStructureChange();
     },
     // panes created or closed meanwhile were not heard of: learn them from a snapshot
     () => {
@@ -486,6 +543,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
     stop() {
       stopped = true;
       if (reconcileTimer !== null) clearTimeout(reconcileTimer);
+      if (structureTimer !== null) clearTimeout(structureTimer);
       if (backstopTimer !== null) clearInterval(backstopTimer);
       lifecycleSubscription?.close();
       focusSubscription?.close();

@@ -29,15 +29,26 @@ and the web UI's state live in a directory made for the run (`XDG_CONFIG_HOME`, 
 `HERDR_WEB_STATE_DIR`), under a session name made for the run. Nothing reads your herdr config,
 so no plugin installed there starts with the test servers, and two runs on one PC share no
 socket and no file. The run stops its herdr servers and removes the directory when it ends, also
-when it is interrupted; `CHECK_DIR=<path>` keeps it there instead. Only one lane or `check run` invocation at a
-time on a PC: the contract and browser tests are bound by timing, and a second run names the
-first and exits (the lock is loopback port 41737, which a run listens on while it runs). The
+when it is interrupted; `CHECK_DIR=<path>` keeps it there instead. A few lane or `check run`
+invocations may run at a time on a PC, each in a slot: a loopback port from 41737 up that the run
+listens on while it runs, so a run that died holds none. `CHECK_MAX_RUNS` sets how many (1 to 8);
+the default is one per eight cores, from 1 to 2. The contract and browser tests are bound by
+timing, so more runs side by side make them fail each other: on a 32-core PC three at once
+already lost Chromium screenshots in the browser lane, so raise it only to look for such failures. A run that finds every slot taken
+names the holders and exits. So does a second run in the same checkout, even with slots free:
+runs in one checkout share `dist/` and the generated types. The
 generated-types check (`bun run generate:types --check`) is read-only, but `test:unit` includes
 `scripts/generate-protocol-types.test.ts`, which rewrites the generated file while it runs. Fast
 checks and the browser lane also build into `dist/`; avoid overlapping runs that write to the same
 checkout. (`check run` runs only its named command unless `--build` is supplied.)
+Admission is serialized briefly on port 41745. After taking a candidate slot, the run checks all
+eight slots again for its checkout and counts every active holder against its requested limit,
+including holders above its candidate range. A busy admission port refuses rather than waits.
+Explicit `CHECK_DIR` and `CHECK_REPORT` paths are claimed exclusively by canonical path, even for
+`fast`, before writing reports, logs or isolated state. Pid markers are released at exit after the
+final report and session cleanup; a dead owner's marker is reclaimed under serialized admission.
 Lock refusal exits with the holder's identity before writing a report, so it cannot overwrite
-an active run's `CHECK_DIR/report.json`.
+an active run's output or stop its sessions.
 
 Each admitted check run writes a JSON verification report and per-command logs. The default report is
 `node_modules/.cache/check/<run-id>/report.json`, or `CHECK_DIR/report.json` when `CHECK_DIR` is set;
@@ -101,6 +112,7 @@ bun scripts/composer-fit-demo-regression.ts   # one Send/Stop control, pending S
 bun scripts/held-rows-demo-regression.ts      # held messages: the fold under an approval card, its button, a row's error
 bun scripts/sidebar-activity-demo-regression.ts # Agents order Activity and Quiet opened finishes: blocked pinned, recency, an opened DONE drawn as ready
 bun scripts/prompt-dock-demo-regression.ts    # the prompt card docked over the input card: its place, its height on a short phone, the grip, a typed pick
+bun scripts/plugin-actions-demo-regression.ts # a plugin action that ends after the server stopped waiting: the late failure said, a traceback's height on a phone with its keyboard up
 bun scripts/font-swap-demo-regression.ts      # the app's faces arriving late on a slow link: a reader at the end of a chat stays there, a tab strip the user scrolled stays put
 ```
 
@@ -242,9 +254,9 @@ explicitly chosen authoritative place before work starts. Use fields `owner`, `s
 a task-history log.
 
 Assign one writer per branch/worktree, including for generated files and build outputs such as
-`dist/`. Keep independent work in separate branches/worktrees. Herdr-backed runs (a lane or `check run`) use a PC-wide
-lock, so only one such `bun run check` run may execute per PC even across separate checkouts; serialize
-other heavy checks when they contend for that PC, runner or shared outputs. The CI workflow's
+`dist/`. Keep independent work in separate branches/worktrees. Herdr-backed runs (a lane or `check run`) take one of
+a few PC-wide slots ([Checks](#checks)) and only one per checkout, so a worktree runs its checks one at a
+time and waits when every slot is taken; serialize other heavy checks when they contend for that PC, runner or shared outputs. The CI workflow's
 within-run lane scheduling remains unchanged. Implementation and independent review are separate
 roles: an implementer may self-check, but another person reviews when review is required. Human
 approvals remain optional under the existing policy; external contributions still need maintainer

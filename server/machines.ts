@@ -31,6 +31,8 @@ interface Runtime {
   refreshQueued: boolean;
   snapshotRevision: number;
   terminals: Set<() => void>;
+  /** the user cancelled this PC's bridge update: it is not started again on its own until the PC connects */
+  updateCancelled?: boolean;
 }
 interface JobState {
   update: boolean;
@@ -77,6 +79,12 @@ async function freePort(): Promise<number> {
 function newerBundle(version: unknown): boolean {
   return typeof version === "string" && /^\d+$/.test(version) && Number(version) > Number(REMOTE_BUNDLE_VERSION);
 }
+/**
+ * ssh's refusals: the PC answered, and only a password or a new host key gets past them. The
+ * remote denial reads "user@host: Permission denied (publickey,…)."; a local key file ssh cannot
+ * read ("Identity file … not accessible: Permission denied.") is only a warning before it connects.
+ */
+const SSH_REFUSED = /Permission denied \(|Host key verification failed|IDENTIFICATION HAS CHANGED|Too many authentication failures/i;
 const newerBridge = (version: string): string => `This PC uses a newer bridge (v${version}); this app requires v${REMOTE_BUNDLE_VERSION}. Update this app, then reconnect. The remote bridge was left running.`;
 const INDEPENDENT_BRIDGE = "This socket uses an independently managed web server. Update it through its own Settings, then reconnect; it was left running.";
 
@@ -186,7 +194,10 @@ export class MachineManager {
     for (const listener of this.listeners) listener(event ?? { type: "machines", machines: this.list() });
   }
   localMessage(message: ServerMessage): void {
-    if (["pane-status", "session-changed", "pane-exited"].includes(message.type)) {
+    // Structural invalidations queue a follow-up below without discarding the
+    // active read: continuous layout changes must not starve roster publication.
+    // Status/exit patches still outrank any snapshot asked for before them.
+    if (["pane-status", "pane-exited"].includes(message.type)) {
       this.localRevision++;
       if (this.localBusy) this.localRefreshQueued = true;
     }
@@ -263,9 +274,11 @@ export class MachineManager {
    * and SSH uses the PC's saved key only. A PC that needs a password fails with the reason,
    * and its dialog stays the way in.
    */
-  updateBridge(id: string): SetupJob {
+  updateBridge(id: string, scheduled = false): SetupJob {
     const runtime = this.machines.get(id);
     if (!runtime) throw new Error("PC not found");
+    // the user's own Update bridge takes back an earlier Cancel; a scheduled one does not
+    if (!scheduled) runtime.updateCancelled = false;
     return this.setup({ ...runtime.machine.target!, machine_id: id, update_remote: true }, { auto: true });
   }
   setup(request: SetupRequest, options: { auto?: boolean } = {}): SetupJob {
@@ -281,6 +294,7 @@ export class MachineManager {
     const auto = options.auto === true && request.update_remote === true && !!existing;
     const job: JobState = { update: request.update_remote === true, auto, public: { id, machine_id: machineId, target, phase: "connecting", step: "Connecting with SSH keys and ssh-agent…", challenge: null, installations: [], error: null, ssh_output: null, progress: null }, abort: new AbortController(), timer: setTimeout(() => this.cancelJob(id), 600_000), stageStartedAt: Date.now(), finished: Promise.resolve() };
     if (job.update && existing) job.runtime = existing;
+    if (job.update && existing && !auto) existing.updateCancelled = false;
     job.timer.unref();
     this.jobs.set(id, job);
     if (this.jobs.size > 40) for (const [key, j] of this.jobs) if (["connected", "failed", "cancelled"].includes(j.public.phase) && key !== id) { this.jobs.delete(key); break; }
@@ -295,6 +309,7 @@ export class MachineManager {
     this.showUpdate(job);
     // ssh's own words reach the dialog while it waits, not only in the error it ends with
     ssh.onOutput = (text) => { if (job.public.phase === "connecting" || job.public.phase === "authentication") job.public.ssh_output = text || null; };
+    let reached = false;
     job.finished = (async () => {
       try {
         // an automatic update never asks: a PC that needs a password says so and waits
@@ -304,6 +319,7 @@ export class MachineManager {
           job.public.step = host ? "Verify the server fingerprint" : "SSH authentication required";
           return this.wait(job);
         });
+        reached = true;
         this.stage(job, "checking", "Checking the remote environment…");
         await this.prepare(runtime, job);
         if (job.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
@@ -315,13 +331,25 @@ export class MachineManager {
         this.emit();
       } catch (e) {
         const ownsRuntime = runtime.generation === generation;
+        const error = e instanceof Error ? e.message : String(e);
+        // an update of a registered PC that could not reach it (switched off, asleep, off the
+        // network, or gone in the middle) learned nothing about its bridge: the PC waits as
+        // offline, and the version check runs again once it answers. Read before disconnect
+        // closes the connection.
+        const unreachable = ownsRuntime && job.update && !!existing && !(e instanceof MachineActionRequired) && (reached ? !ssh.connected() : !SSH_REFUSED.test(error));
         if (ownsRuntime) this.disconnect(runtime);
-        if (job.public.phase !== "cancelled") {
+        // a cancelled update (its Cancel, a closed dialog, the setup's time limit) says nothing
+        // about the bridge either: the PC tries again on its own, and only a version check on a PC
+        // that answers asks for the update again, without starting the cancelled one by itself
+        if (job.public.phase === "cancelled") {
+          if (ownsRuntime && job.update && existing && runtime.machine.enabled && !this.stopped) { runtime.machine.error = null; runtime.machine.action_required = null; runtime.updateCancelled = true; this.retryLater(runtime); }
+        } else {
           job.public.phase = "failed"; job.public.step = "Connection failed";
-          job.public.error = e instanceof Error ? e.message : String(e);
-          // a failed bridge update keeps its button: the bridge is still out of date, and the
-          // error says why this attempt failed (no network, a password needed, …)
-          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : job.update && existing ? "update_bridge" : null; }
+          job.public.error = error;
+          if (ownsRuntime && unreachable && runtime.machine.enabled) { runtime.machine.error = error; runtime.machine.action_required = null; this.retryLater(runtime); }
+          // a failed bridge update on a PC that answered keeps its button: the bridge is still
+          // out of date, and the error says why this attempt failed (a password needed, …)
+          else if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : job.update && existing ? "update_bridge" : null; }
           // the dialog reads the job, not the PC: a first connect that failed on the version
           // check has no machine to carry action_required, and an interrupted update keeps
           // offering itself even when the PC was never registered
@@ -573,7 +601,7 @@ export class MachineManager {
     const generation = runtime.generation;
     await this.refresh(runtime);
     if (generation !== runtime.generation || this.stopped) throw new Error("Connection cancelled");
-    runtime.machine.state = "connected"; runtime.machine.action_required = null; runtime.attempts = 0;
+    runtime.machine.state = "connected"; runtime.machine.action_required = null; runtime.attempts = 0; runtime.updateCancelled = false;
     const endpoint = runtime.endpoint!;
     const ws = authenticatedWebSocket(endpoint.url.replace("http:", "ws:") + "/ws", endpoint.token);
     runtime.observer = ws;
@@ -582,7 +610,8 @@ export class MachineManager {
       if (generation !== runtime.generation || this.stopped) return;
       let message: ServerMessage;
       try { message = JSON.parse(String(event.data)); } catch { return; }
-      if (["snapshot", "pane-status", "pane-exited", "session-changed"].includes(message.type)) runtime.snapshotRevision++;
+      // session-changed queues one follow-up, but lets the active roster publish.
+      if (["snapshot", "pane-status", "pane-exited"].includes(message.type)) runtime.snapshotRevision++;
       if (message.type === "snapshot") { runtime.machine.snapshot = message.snapshot; this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name); this.emit(); }
       if (message.type === "pane-status") {
         if (runtime.machine.snapshot) runtime.machine.snapshot = { ...runtime.machine.snapshot, panes: runtime.machine.snapshot.panes.map((p) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
@@ -606,9 +635,13 @@ export class MachineManager {
       runtime.machine.state = "error"; runtime.machine.action_required = error.action;
       this.emit();
       // SSH itself just worked without a password, so the update can run unattended
-      if (error.action === "update_bridge" && this.preferences.auto_update_bridges) this.queueAutoUpdate(runtime.machine.id);
+      if (error.action === "update_bridge" && this.preferences.auto_update_bridges && !runtime.updateCancelled) this.queueAutoUpdate(runtime.machine.id);
       return;
     }
+    this.retryLater(runtime);
+  }
+  /** a disconnected PC tries again on its own, waiting longer after each failed try */
+  private retryLater(runtime: Runtime): void {
     runtime.machine.state = "reconnecting";
     const delay = Math.min(60_000, 1000 * 2 ** Math.min(runtime.attempts++, 6));
     runtime.retry = setTimeout(() => void this.reconnect(runtime), delay); runtime.retry.unref();
@@ -631,10 +664,11 @@ export class MachineManager {
     this.autoQueued.add(id);
     this.autoChain = this.autoChain.then(async () => {
       const runtime = this.machines.get(id);
-      // still wanted: the PC may have been updated by hand, removed or disabled meanwhile
-      if (this.stopped || !runtime?.machine.enabled || runtime.machine.action_required !== "update_bridge" || !this.preferences.auto_update_bridges) return;
+      // still wanted: the PC may have been updated by hand, removed, disabled or its update
+      // cancelled meanwhile
+      if (this.stopped || !runtime?.machine.enabled || runtime.machine.action_required !== "update_bridge" || runtime.updateCancelled || !this.preferences.auto_update_bridges) return;
       if ([...this.jobs.values()].some((j) => j.public.machine_id === id && !["connected", "failed", "cancelled"].includes(j.public.phase))) return;
-      const job = this.updateBridge(id);
+      const job = this.updateBridge(id, true);
       await this.jobs.get(job.id)?.finished;
     }).catch((e) => { console.error("Automatic bridge update failed:", e instanceof Error ? e.message : String(e)); })
       .finally(() => { this.autoQueued.delete(id); });

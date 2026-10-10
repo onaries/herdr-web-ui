@@ -23,4 +23,14 @@ describe("tab names", () => {
     // a name that only looks like another place is a name
     expect(tabLabel({ label: "7", number: 2 }, t, 1)).toBe("7");
   });
+
+  it("keeps a numeric custom name when its stable number differs from its place", () => {
+    expect(customTabLabel({ label: "3", number: 3 }, 2)).toBe("3");
+    expect(tabLabel({ label: "3", number: 3 }, t, 2)).toBe("3");
+  });
+
+  it("treats an empty label as herdr's automatic name", () => {
+    expect(customTabLabel({ label: "", number: 3 }, 2)).toBeNull();
+    expect(tabLabel({ label: "", number: 3 }, t, 2)).toBe("Tab 2");
+  });
 });

@@ -37,11 +37,28 @@ import { herdrSocketPath } from "./herdr/client.ts";
  * panes still working are not: what became of them while this server was down (finished,
  * and seen at herdr's terminal?) is unknown, and a DONE nobody needs is an alert too.
  */
+/**
+ * Why an OmO pane is at rest, where its session records tell more than `idle` does (#687).
+ * `failed`: its turn ended in an error (the model gave up after its retries, or timed out). The
+ * work is over, but nothing finished: READY, and a DONE still kept from an earlier turn is gone
+ * too, since a turn came after it. `failed-before`: the same, read from a session file found
+ * anew (a restart, /resume): when that error was written against the DONE kept here is not
+ * known, so the DONE stays. `answered`: an answer written after such a rest (a retry that got
+ * through) ended the turn after all. That is a finish, though the work was never told as RUN
+ * (told as RUN now, its turn would be of no length, which the default alerts leave untold), but
+ * only while nothing was told of the pane since the rest: work and a finish told meanwhile from
+ * herdr's word (the session could not be told) were that answer's already. A turn that never read
+ * RUN is of unknown length to the alerts, which tell it even after a short retry.
+ */
+export type OmoRest = "failed" | "failed-before" | "answered";
+
 export class CompletionTracker {
   /** panes that worked (or were blocked) since they were last idle, done or seen, with the agent that did */
   private readonly worked = new Map<string, string | null>();
   /** panes reported here as `done` while herdr says `idle` or `unknown` */
   private readonly finished = new Map<string, string | null>();
+  /** OmO panes at rest after an error with nothing told since: an answer now is that turn's finish */
+  private readonly failedRest = new Set<string>();
   /** Last reported statuses, and changes that must take precedence over an in-flight snapshot. */
   private readonly reported = new Map<string, AgentStatus>();
   private readonly pending = new Map<number, Map<string, AgentStatus | null>>();
@@ -68,9 +85,19 @@ export class CompletionTracker {
     } catch { /* none yet, or unreadable: start empty */ }
   }
 
-  /** A status change as herdr sent it, to the status to report. */
-  observe(paneId: string, status: AgentStatus, agent: string | null = null): AgentStatus {
+  /**
+   * A status change as herdr sent it, to the status to report. `rest` says more of an idle where
+   * the agent's own records do (OmO's, #687); see `OmoRest`.
+   */
+  observe(paneId: string, status: AgentStatus, agent: string | null = null, rest?: OmoRest): AgentStatus {
+    if (status === "idle" && (rest === "failed" || rest === "failed-before")) {
+      this.worked.delete(paneId);
+      if (rest === "failed") this.finished.delete(paneId);
+    }
+    if (status === "idle" && rest === "answered" && this.failedRest.has(paneId)) this.worked.set(paneId, agent);
     const reported = this.settle(paneId, status, agent);
+    if (status === "idle" && (rest === "failed" || rest === "failed-before")) this.failedRest.add(paneId);
+    else if (rest === "answered") this.failedRest.delete(paneId);
     this.record(paneId, reported, ++this.order);
     this.save();
     return reported;
@@ -217,6 +244,7 @@ export class CompletionTracker {
 
   private drop(paneId: string, order: number): void {
     this.worked.delete(paneId);
+    this.failedRest.delete(paneId);
     this.finished.delete(paneId);
     this.record(paneId, null, order);
   }
@@ -263,8 +291,10 @@ export class CompletionTracker {
       case "blocked":
         this.worked.set(paneId, agent);
         this.finished.delete(paneId);
+        this.failedRest.delete(paneId);
         return status;
       case "done":
+        this.failedRest.delete(paneId);
         this.worked.delete(paneId);
         this.finished.delete(paneId);
         return status;

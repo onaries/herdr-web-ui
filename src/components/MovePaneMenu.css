@@ -1,0 +1,29 @@
+/* The menu's head: what is moved, over the places it can go. In the popover a dim micro label and
+   the pane's name under it; in the phone's sheet it stands where the sheet's title does. */
+.move-pane-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.move-pane-head-title {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.move-pane-head-pane {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-menu .move-pane-head-pane {
+  font-size: var(--fs-sm);
+}

@@ -7,7 +7,7 @@ import { buildDemoApp } from "./demo-build.ts";
 
 // A finger reorders the sidebar's workspaces (src/lib/touchReorder.ts), on the unmodified app over
 // the demo's fixture transport at a phone's size with touch: a long press lifts a row, a drag drops
-// it where the line shows, a quick stroke only scrolls, and the row menu's Move up moves it a step.
+// it where the line shows, a quick stroke only scrolls, and Alt+Up moves it a step without pane actions in the workspace menu.
 // All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-touch-reorder-demo-"));
 
@@ -100,14 +100,24 @@ try {
       assert.equal(await page.locator('button[aria-controls="workspace-drawer"]').getAttribute("aria-expanded"), "true", "the drag left the drawer open");
       console.log("PASS a long press lifts a workspace row on a touch screen, and a drag drops it where the line shows");
 
-      // the row menu moves it one step back up
+      // The phone's explicit menu has the same workspace scope as desktop right-click.
       const moved = before[0]!;
-      await page.locator(`.workspace-group[data-workspace="${moved}"] .row-menu-toggle`).click();
-      await page.getByRole("button", { name: "Move up" }).or(page.getByRole("menuitem", { name: "Move up" })).first().click();
+      const movedRow = page.locator(`.workspace-group[data-workspace="${moved}"]`);
+      await movedRow.locator(".row-menu-toggle").click();
+      const workspaceSheet = page.locator(".row-sheet");
+      await workspaceSheet.waitFor();
+      assert.deepEqual(await workspaceSheet.locator(".row-sheet-item").allTextContents(), ["Rename workspace", "Close workspace", "New worktree", "Open worktree…"],
+        "the touch menu contains native workspace actions, with no pane or reorder actions");
+      await workspaceSheet.getByRole("button", { name: "Cancel", exact: true }).click();
+      await workspaceSheet.waitFor({ state: "detached" });
+      // Keyboard reordering remains available on the row itself.
+      await movedRow.locator(".workspace-select").focus();
+      await page.keyboard.press("Alt+ArrowUp");
       const stepped = [before[1]!, before[0]!, before[2]!, ...before.slice(3)];
       await page.waitForFunction((want) => [...document.querySelectorAll<HTMLElement>(".machine-workspaces .sidebar-list > .workspace-list > .workspace-group")].map((row) => row.dataset.workspace).join() === want.join(),
         stepped, { timeout: 5_000 });
-      console.log("PASS the row menu's Move up moves a workspace one step");
+      assert.deepEqual((await serverOrder(page)).filter((id) => before.includes(id)), stepped, "herdr got the keyboard move");
+      console.log("PASS the touch menu keeps workspace scope and Alt+Up still moves a workspace one step");
 
       assert.deepEqual(errors, []);
       await context.close();

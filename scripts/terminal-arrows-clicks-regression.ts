@@ -252,7 +252,17 @@ try {
     await s.page.mouse.click(at.x, at.y);
     await s.page.keyboard.up("Control");
     got = "";
-    await until(() => /\x1b\[<16;\d+;\d+M[\s\S]*\x1b\[<16;\d+;\d+m/.test(got += s.received()), "Ctrl+click received with Ctrl");
+    if (process.platform === "darwin") {
+      // macOS emits a contextmenu for Control-click: it follows the pane menu's rules.
+      const menu = s.page.getByRole("menu", { name: /^Pane actions for / });
+      await menu.waitFor();
+      await s.page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      await Bun.sleep(NO_SEND_WAIT_MS);
+      assert.doesNotMatch(s.received(), /\x1b\[<(?:0|16);/, "Mac Control-click opens the menu without sending a button");
+    } else {
+      await until(() => /\x1b\[<16;\d+;\d+M[\s\S]*\x1b\[<16;\d+;\d+m/.test(got += s.received()), "Ctrl+click received with Ctrl");
+    }
 
     // a later click still arrives at its own cell: none of the above left a drag behind
     const second = await s.point(400, 200);

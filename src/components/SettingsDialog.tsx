@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plus, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -18,13 +18,16 @@ import type { UpdatesModel } from "../lib/updates.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
 import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
-import type { HealthAuth, ProviderUsage, RemoteAccess } from "../../shared/protocol.ts";
+import type { AgentIntegration, HealthAuth, PluginActions, ProviderUsage, RemoteAccess } from "../../shared/protocol.ts";
+import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { loadIntegrations, outcomeFor, type IntegrationsResult } from "../lib/integrations.ts";
 import type { VoiceStatus } from "../../shared/voice.ts";
 import { dictationLocale, VOICE_CONFIG_EVENT } from "../lib/voice.ts";
 import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { DevicesPanel } from "./DevicesPanel.tsx";
 import { PhonePanel } from "./PhonePanel.tsx";
+import { copyText } from "../lib/clipboard.ts";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
@@ -92,7 +95,7 @@ function FontFamilyInput({ value, label, onCommit }: { value: string; label: str
 }
 
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "about";
+type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
 
 /** The pages in the order the list shows them: what is looked at first, then what is set once. */
 const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
@@ -105,6 +108,7 @@ const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
   { id: "shortcuts", icon: Keyboard },
   { id: "devices", icon: Smartphone },
   { id: "remote", icon: Monitor },
+  { id: "integrations", icon: Plug },
   { id: "about", icon: Info },
 ];
 
@@ -486,6 +490,73 @@ function UsagePage() {
   );
 }
 
+/**
+ * herdr's own integrations (`integration.list`), read only: installing one writes into an agent's
+ * hooks or settings, which this app leaves to the user, so a row shows the command to run instead.
+ */
+function IntegrationsPage() {
+  const t = useT();
+  const api = useMachineApi();
+  const machineId = useMachineId();
+  const [result, setResult] = useState<IntegrationsResult | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadIntegrations(api.fetchIntegrations).then((outcome) => { if (live) setResult({ machineId, outcome }); });
+    return () => { live = false; };
+  }, [api, machineId]);
+  const outcome = outcomeFor(result, machineId);
+  const note = t("herdr's integrations let it resume each agent's session after a restart. This page only reads them: run a command in a terminal on the PC herdr runs on, then reopen this page.");
+  if (outcome === null) return <SettingsGroup note={note}><p className="settings-item settings-hint" role="status">{t("Loading…")}</p></SettingsGroup>;
+  if (outcome.kind === "unsupported") return <SettingsGroup><p className="settings-item settings-hint" role="status">{t("This PC's bridge does not offer agent integrations yet. It will after its next runtime update.")}</p></SettingsGroup>;
+  if (outcome.kind === "error") return <SettingsGroup note={note}><p className="settings-item settings-hint" role="alert">{outcome.message}</p></SettingsGroup>;
+  const { integrations } = outcome;
+  // agents on the PC's PATH first, in herdr's order: the rest can wait until one is installed
+  const groups = [
+    { title: undefined, rows: integrations.filter((integration) => integration.available) },
+    { title: t("Not found on this PC"), rows: integrations.filter((integration) => !integration.available) },
+  ].filter((group) => group.rows.length > 0);
+  return (
+    <>
+      {groups.map((group, index) => (
+        <SettingsGroup key={group.title ?? "found"} title={group.title} note={index === 0 ? note : undefined}>
+          {group.rows.map((integration) => <IntegrationRow key={integration.target} integration={integration} />)}
+        </SettingsGroup>
+      ))}
+    </>
+  );
+}
+
+function IntegrationRow({ integration }: { integration: AgentIntegration }) {
+  const t = useT();
+  const commandRef = useRef<HTMLElement>(null);
+  const [copied, setCopied] = useState(false);
+  // the latest Copy owns the label: an earlier press's timer must not clear it early
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+  const name = integration.label;
+  if (integration.state === "current") {
+    return (
+      <SettingsRow label={name} description={t("Installed")}>
+        <Check className="settings-integration-check" aria-hidden="true" />
+      </SettingsRow>
+    );
+  }
+  // the label is the name `herdr integration install` takes (antigravity_cli is antigravity-cli)
+  const command = `herdr integration install ${name}`;
+  const copy = async (): Promise<void> => {
+    if (!(await copyText(command, commandRef.current))) return;
+    setCopied(true);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1600);
+  };
+  const state = integration.state === "outdated" ? t("Installed, but older than this herdr: run this to update it") : t("Not installed");
+  return (
+    <SettingsRow label={name} description={<>{state}<code ref={commandRef} className="settings-integration-command">{command}</code></>}>
+      <button type="button" className="btn" aria-label={t("Copy the command for {name}", { name })} onClick={() => void copy()}>{t(copied ? "Copied" : "Copy")}</button>
+    </SettingsRow>
+  );
+}
+
 const SHORTCUT_KEYS: readonly string[] = [..."abcdefghijklmnopqrstuvwxyz0123456789,", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
 function ShortcutsPage() {
@@ -582,12 +653,38 @@ function RemotePcsPage({ actions, pcSettings, pcSettingsError, onPcSettings }: {
   );
 }
 
+/**
+ * The herdr plugins of the PC on screen and what each can do, to read only: installing, enabling
+ * and removing a plugin stay with herdr. Nothing is drawn where there is none to list.
+ */
+function PluginsGroup() {
+  const t = useT();
+  const api = useMachineApi();
+  const [plugins, setPlugins] = useState<PluginActions[]>([]);
+  useEffect(() => {
+    let current = true;
+    void api.fetchPluginActions().then((list) => { if (current) setPlugins(list); }, () => { if (current) setPlugins([]); });
+    return () => { current = false; };
+  }, [api]);
+  if (plugins.length === 0) return null;
+  return (
+    <SettingsGroup title={t("herdr plugins")} note={t("Run a plugin's actions from the command palette.")} className="settings-plugins">
+      {plugins.map((plugin) => (
+        <SettingsRow key={plugin.plugin_id} label={`${plugin.name} ${plugin.version}`} description={plugin.actions.length > 0 ? plugin.actions.map((action) => action.title).join(" · ") : t("No actions")}>
+          <span className="settings-hint">{plugin.enabled ? t("Enabled") : t("Disabled")}</span>
+        </SettingsRow>
+      ))}
+    </SettingsGroup>
+  );
+}
+
 function AboutPage({ updates, herdrVersion, bridgesFollow }: { updates: UpdatesModel; herdrVersion: string | null; bridgesFollow: boolean }) {
   const t = useT();
   return (
     <>
       <UpdateControls updates={updates} bridgesFollow={bridgesFollow} />
       <HerdrUpdateControls enabled herdrVersion={herdrVersion} />
+      <PluginsGroup />
       <TelemetryControls />
       <SettingsGroup title={t("About")} className="settings-about">
         <div className="settings-row">
@@ -635,7 +732,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
   const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
-    : id === "usage" ? "Subscription usage" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : "About");
+    : id === "usage" ? "Subscription usage" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : id === "integrations" ? "Agent integrations" : "About");
   const openPage = (id: SettingsPage): void => { setKeyBarOpen(false); setChosen(id); };
   const openKeyBar = (): void => {
     settingsScrollRef.current = settingsBodyRef.current?.scrollTop ?? 0;
@@ -713,6 +810,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
       case "shortcuts": return <ShortcutsPage />;
       case "devices": return <DevicesPage auth={auth} />;
       case "remote": return <RemotePcsPage actions={actions} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
+      case "integrations": return <IntegrationsPage />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
       default: return null;
     }

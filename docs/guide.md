@@ -90,7 +90,18 @@ bun run start
 
 </details>
 
-**2. Open it** at **http://localhost:7317**. Every workspace of your herdr session is a row in the sidebar, as in herdr's own; a workspace with several tabs or panes shows them in a strip over the pane. Pick one, start a new agent with **New workspace**, or add a tab to a workspace with **New tab** (the row's **⋯** menu, the header button, or the strip's `+`). A tab is renamed with a double-click on its name and closed with its **x** (or a right-click for both); on a phone the open tab's chevron opens the same menu.
+**2. Open it** at **http://localhost:7317**. Every workspace of your herdr session is a row in the sidebar, as in herdr's own; its tabs are always shown in a strip, and the active tab shows all its split panes together. Pick one, start a new agent with **New workspace**, or add a tab to a workspace with **New tab** (the tab's menu, the header button, or the strip's `+`). Right-click a tab to rename or close it; on a phone, tap the selected tab’s **⋯** for the same menu. A focused tab also opens its menu with Shift+F10, and double-click still renames it.
+
+Drag a tab to change its order within the workspace, or choose **Move tab left / right** from
+its menu (also on a phone). Alt+Shift+Left/Right moves a focused tab. Reordering keeps the
+selected pane and saves the order in herdr.
+
+Right-click a pane to rename it, split right or down, zoom it, or close it. Right-clicking another
+pane keeps the current focus, so **Swap with focused pane** exchanges the two. Drag a boundary
+to resize it. On a phone, the pane header's **⋯** opens the same menu; **Zoom pane** makes a
+small pane fill the screen, and **Unzoom pane** restores the split. A split opens the new pane.
+Each pane keeps its own Chat/Terminal view and unsent draft.
+
 
 **3. Take it with you.** Scan the installer's QR code with a phone signed in to the same Tailscale account, then install the app from the browser. See [On your phone](#on-your-phone).
 
@@ -174,11 +185,13 @@ Background tasks have a button by the message box, with a count while some run: 
 | **Read the conversation** | Prompts and Markdown answers (links, code blocks, tables). Each turn's commands, edits and progress are folded into one "Worked for …" block. Copy an answer as Markdown or plain text. In a pi pane, a picture the agent's own tool opened shows inside that tool's row. |
 | **Follow the plan** | A supported todo-tool call folds into the turn's work block like any tool: it reads as the done count or the step it took, and opened, as the whole list by phase. |
 | **Drop into the real terminal** | xterm.js on the live pane: full-screen TUIs, raw keys and herdr's scrollback, shared with your own herdr TUI. Drag to select and it is copied on release; the wheel or the screen's edge scrolls further back while you drag. Ctrl+C copies a selection instead of interrupting. |
+| **Find in terminal** | **More → Find in terminal** or Mod+Shift+F searches literal text in herdr's history, with a match count, previous/next navigation and visible match highlights. Drag the terminal scrollbar or focus it and use arrows, Page Up/Down, Home or End. Search jumps and scrolling move the same viewport in every attached client, including the TUI. Older bridges retain search navigation without automatic highlights; read-only views cannot move the scrollbar. |
+| **Jump across PCs** | The command palette (Mod+Shift+K) searches all connected PCs at once by PC, workspace, branch, tab, pane title or agent kind. PC names distinguish results, and Recent remembers each pane's PC. Picking a result opens that PC and pane directly. Disconnected PCs are omitted; app and plugin actions remain on the currently selected PC. |
 | **Answer prompts** | Approval, question and plan menus become cards. Tap an option, or type its number in the composer. The server checks that the menu is still current before answering. |
 | **Compose** | `/` commands and `@` file mentions, any file or image up to 8 MB attached by path, and a draft per pane. Send during work schedules a next-turn message; use its ↑ Send now action to send it now. |
 | **Follow every agent** | Live RUN / INPUT / DONE / READY status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
 | **Open what agents make** | A file path in an answer opens in a viewer (images, video, audio, PDF, text), or find it with **Browse files**, and download it to your phone. |
-| **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); open a result, then choose **Use this folder**. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces and panes, reorder workspaces (drag a row, or on a phone long-press it and drag; the row's ⋯ also has Move up and Move down), and jump anywhere from the command palette. |
+| **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); open a result, then choose **Use this folder**. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces from their ⋯/right-click menu and panes from their own menu, move a pane through header More → Move pane to…, reorder workspaces (drag a row, or on a phone long-press it and drag; Alt+Up/Down moves a focused row one step), and jump anywhere from the command palette. |
 | **Speak instead of typing** | A mic beside Attach in the composer and beside Send in the terminal input line. Hold to talk or tap twice; the words land at the caret and are never sent by themselves. See [Voice input](#voice-input). |
 | **Watch your plan limits** | Beside Settings, how much of each AI subscription signed in on the PC is used, or what is left: the week's or the session's limit per account, and every limit with its reset time on a tap. See [Subscription usage](#subscription-usage). |
 | **Make it yours** | English, Korean, Japanese or Simplified Chinese, following the browser or chosen in Settings. Dark, light or system theme, compact density, terminal and chat font sizes, a resizable composer, Enter behavior and thinking visibility. |
@@ -476,6 +489,8 @@ Known browser/OS reservations are marked, but other combinations can also be int
 your browser, OS or extensions. Installed-app mode may behave differently. While an IME is
 composing, keys stay with it. In text fields, Mod+Shift+arrows keep their text-selection behavior.
 List and tab controls also have focus-local keys; those do not become global terminal shortcuts.
+On a focused tab, Alt+Shift+Left/Right reorders it and Shift+F10 opens its menu. On the terminal
+scrollbar, arrows move a line, Page Up/Down a viewport, and Home/End the start/end of history.
 
 On a phone, use the header and More menu for app actions; Command palette is available there
 without a shortcut. The terminal key bar is configured separately under **Settings → Terminal**.

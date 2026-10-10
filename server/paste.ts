@@ -15,7 +15,7 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { HerdrError, sessionSnapshot } from "./herdr/client.ts";
+import { paneGet } from "./herdr/client.ts";
 import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
 
 /** Decode ceiling: the limit the browser checks a file against before it uploads. */
@@ -112,9 +112,7 @@ export async function savePaneImage(options: {
     throw new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
   }
 
-  const snapshot = await sessionSnapshot();
-  const pane = snapshot.panes.find((candidate) => candidate.pane_id === options.paneId);
-  if (!pane) throw new HerdrError("pane_not_found", `pane ${options.paneId} not found`);
+  const pane = await paneGet(options.paneId);
 
   const directory = pasteDirectoryForPane(pane.cwd);
   mkdirSync(directory, { recursive: true });

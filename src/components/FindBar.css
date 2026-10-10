@@ -1,0 +1,60 @@
+.find-bar {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-panel);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.find-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.find-bar-query {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+}
+
+.find-bar-query .input {
+  width: 100%;
+  min-width: 0;
+}
+
+.find-bar-query > svg {
+  flex: 0 0 auto;
+}
+
+.find-bar-count {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.find-bar-hint,
+.find-bar-error {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.find-bar-error {
+  color: var(--status-blocked);
+}
+
+@media (max-width: 480px) {
+  .find-bar-controls {
+    flex-wrap: wrap;
+  }
+  .find-bar-query {
+    flex-basis: 100%;
+  }
+  .find-bar-count {
+    margin-right: auto;
+  }
+}

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { claudeProcessSession, claudeProjectDir, claudeTranscriptFile, configDirInPsLine, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
+import { join, win32 } from "node:path";
+import { AmbiguousClaudeStore, claudeProcessSession, claudeStoreKey, claudeProjectDir, claudeTranscriptFile, configDirInPsLine, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import type { ProcessRow } from "./windows-processes.ts";
 
 const NATIVE = process.platform === "linux" || process.platform === "darwin";
@@ -340,11 +340,42 @@ describe("a Windows Claude's store", () => {
     expect(await storeOf(dir)).toBe(join(dir, ".claude-second"));
   });
 
-  it("answers no store when two stores both claim the process", async () => {
+  it("refuses to pick a store when two stores both claim the process, rather than fall back to ~/.claude (#586)", async () => {
     const dir = home();
     record(join(dir, ".claude"));
     record(join(dir, ".claude-copy"));
-    expect(await storeOf(dir)).toBeNull();
+    await expect(storeOf(dir)).rejects.toBeInstanceOf(AmbiguousClaudeStore);
+    // and asks again: the copy may be removed
+    rmSync(join(dir, ".claude-copy"), { recursive: true });
+    expect(await storeOf(dir)).toBe(join(dir, ".claude"));
+  });
+
+  it("counts one store reached by two names once, rather than as two that claim the process (#586)", async () => {
+    const dir = home();
+    record(join(dir, ".claude"));
+    // CLAUDE_CONFIG_DIR naming ~/.claude another way (on Windows its \\?\ spelling, or a junction to it)
+    symlinkSync(join(dir, ".claude"), join(dir, "claude-link"));
+    const before = process.env["CLAUDE_CONFIG_DIR"];
+    process.env["CLAUDE_CONFIG_DIR"] = join(dir, "claude-link");
+    try {
+      expect(await storeOf(dir)).toBe(join(dir, "claude-link"));
+    } finally {
+      if (before === undefined) delete process.env["CLAUDE_CONFIG_DIR"]; else process.env["CLAUDE_CONFIG_DIR"] = before;
+    }
+  });
+
+  it("knows a store without a file id by its spelling without the \\\\?\\ prefix or the drive letter's case (#586)", () => {
+    const store = "C:\\Users\\u\\.claude";
+    for (const id of [null, { dev: 7n, ino: 0n }]) {
+      expect(claudeStoreKey(`\\\\?\\${store}`, id, win32)).toBe(claudeStoreKey(store, id, win32));
+      expect(claudeStoreKey("\\\\?\\c:\\Users\\u\\.claude", id, win32)).toBe(claudeStoreKey(store, id, win32));
+      // past the drive letter a case-sensitive directory may be another store: both are asked
+      expect(claudeStoreKey("C:\\Users\\u\\.Claude", id, win32)).not.toBe(claudeStoreKey(store, id, win32));
+      expect(claudeStoreKey("C:\\Users\\u\\.claude-Work", id, win32)).not.toBe(claudeStoreKey("C:\\Users\\u\\.claude-work", id, win32));
+      expect(claudeStoreKey("\\\\?\\UNC\\host\\share\\.claude", id, win32)).toBe(claudeStoreKey("\\\\host\\share\\.claude", id, win32));
+      expect(claudeStoreKey(`${store}-work`, id, win32)).not.toBe(claudeStoreKey(store, id, win32));
+    }
+    expect(claudeStoreKey("C:\\a", { dev: 7n, ino: 42n }, win32)).toBe(claudeStoreKey("\\\\?\\D:\\b", { dev: 7n, ino: 42n }, win32));
   });
 
   it("looks again after a miss, since Claude writes its record as it starts", async () => {

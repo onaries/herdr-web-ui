@@ -141,7 +141,7 @@ try {
   const screenshot = async (name: string): Promise<void> => {
     if (evidence) await page.screenshot({ path: join(evidence, `workspace-rows-${name}.png`), animations: "disabled" });
   };
-  // the workspace with two panes in one tab: one row, whose strip and pane picker reach the second
+  // the workspace with two panes in one tab: one row, with both panes on the canvas
   const otherWorkspace = workspaceSelector(other.workspaceId);
 
   await navigate(() => page.goto(`${origin}/?pane=${encodeURIComponent(lone.paneId)}`), lone.paneId);
@@ -153,7 +153,8 @@ try {
   assert.equal(await page.locator(".workspace-toggle").count(), 0, "a legacy workspace fold has nothing to fold");
   assert.equal(await page.locator(".workspace-contents, .sidebar-tab-heading, .sidebar-pane-item").count(), 0,
     "tabs and panes are navigated above the terminal rather than as workspace children");
-  assert.equal(await page.locator(".tab-strip").count(), 0, "no strip over a lone pane's workspace");
+  assert.equal(await page.locator(".tab-strip").count(), 1, "the native tab row remains over a lone pane's workspace");
+  assert.equal(await page.locator('.tab-strip [role="tab"]').count(), 1);
   for (const fixture of [alpha, beta]) {
     const workspace = workspaceSelector(fixture.workspaceId);
     assert.equal(await page.locator(`${workspace} > .workspace-header`).count(), 1);
@@ -172,8 +173,8 @@ try {
   await page.locator(paneSelector(alpha.paneId)).waitFor({ state: "visible" });
   assert.equal(await page.locator(`.workspace:has(${paneSelector(alpha.paneId)}) .workspace-toggle`).count(), 0);
   await page.evaluate((key) => localStorage.removeItem(key), singleFoldKey);
-  // the second pane of a split tab is reached from the strip over the pane: its tab carries a
-  // picker, which lists both panes and opens the other one; the row then shows that pane
+  // A split tab renders both panes. Selecting the second pane on the canvas changes only the
+  // representative pane of the workspace row; the workspace's visible name remains its own.
   await changeState(page, [{ selector: paneSelector(other.paneId), attribute: ["aria-current", "true"] }, { selector: '.tab-strip [role="tab"]', count: 1 }],
     () => page.locator(paneSelector(other.paneId)).click(), "selecting the split workspace shows its strip");
   assert.equal(await page.locator('.tab-strip [role="tab"]').textContent(), "Tab 1", "a tab herdr named by its number reads as Tab 1");
@@ -191,35 +192,60 @@ try {
   assert.equal(surfaces.columnChat, surfaces.headerChat, "the header and the pane column agree on the lens");
   assert.equal(surfaces.strip, surfaces.header, "the strip is the header's surface");
   if (surfaces.headerChat) assert.equal(surfaces.chat, surfaces.header, "which under the chat lens is the transcript's");
-  await page.locator(".tab-strip-panes").click();
-  const picker = page.getByRole("menu", { name: "Panes in Tab 1", exact: true });
-  await picker.waitFor();
-  // both panes, then the tab's own Rename tab and Close tab
-  assert.deepEqual((await picker.getByRole("menuitem").allTextContents()).slice(2), ["Rename tab", "Close tab"]);
-  assert.equal(await picker.getByRole("menuitem").count(), 4);
-  assert.equal(await picker.locator('[role="menuitem"][aria-current="true"]').count(), 1, "the picker marks the open pane");
+  await page.getByRole("tab", { name: "Tab 1", exact: true }).click({ button: "right" });
+  const tabMenu = page.getByRole("menu", { name: "Tab 1", exact: true });
+  await tabMenu.waitFor();
+  assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab", "Rename tab", "Close tab"]);
+  await page.keyboard.press("Escape");
+  await tabMenu.waitFor({ state: "detached" });
+  assert.equal(await page.locator(".pane-frame:visible").count(), 2, "both split panes are visible");
   await changeState(page, [{ selector: `${paneSelector(split.pane.pane_id)}[aria-current="true"]` }, { selector: paneSelector(other.paneId), count: 0 }],
-    () => picker.getByRole("menuitem").nth(1).click(), "the picker opens the split pane, and the row follows it");
+    () => page.locator(`[data-layout-pane=${JSON.stringify(split.pane.pane_id)}] .pane-frame-title`).click(), "the canvas selects the split pane, and the row follows it");
   assert.equal(await page.locator(otherWorkspace).count(), 1);
   assert.equal(await page.locator(`${otherWorkspace} .workspace-name`).textContent(), other.label,
     "selecting a split pane keeps the workspace label in Spaces");
-  await page.locator(`${otherWorkspace} .row-menu-toggle`).click();
-  assert.deepEqual(await page.getByRole("menu").getByRole("menuitem").allTextContents(),
-    ["Rename workspace", "Rename pane", "New tab", "New worktree", "Open worktree…", "Close workspace"],
-    "a workspace row exposes both explicit rename scopes and workspace operations");
-  await changeState(page, [{ selector: ".pane-rename-input:focus" }],
-    () => page.getByRole("menuitem", { name: "Rename pane", exact: true }).click(), "rename targets the representative pane");
+  // Both entry points act on the workspace clicked, without changing the selected pane.
+  const alphaWorkspace = workspaceSelector(alpha.workspaceId);
+  await page.locator(`${alphaWorkspace} .workspace-header`).hover();
+  await page.locator(`${alphaWorkspace} .row-menu-toggle`).click();
+  const workspaceMenu = page.getByRole("menu");
+  await workspaceMenu.waitFor();
+  const workspaceActions = await workspaceMenu.getByRole("menuitem").allTextContents();
+  assert.deepEqual(workspaceActions, ["Rename workspace", "Close workspace"],
+    "a non-Git workspace's explicit menu contains only native workspace actions");
+  assert.equal(await page.locator(paneSelector(split.pane.pane_id)).getAttribute("aria-current"), "true",
+    "opening another workspace's explicit menu keeps the active pane");
+  await page.keyboard.press("Escape");
+  await workspaceMenu.waitFor({ state: "detached" });
+  await page.locator(`${alphaWorkspace} .workspace-select`).click({ button: "right" });
+  await workspaceMenu.waitFor();
+  assert.deepEqual(await workspaceMenu.getByRole("menuitem").allTextContents(), workspaceActions,
+    "right-click and the explicit workspace menu have identical actions and order");
+  assert.equal(await page.locator(paneSelector(split.pane.pane_id)).getAttribute("aria-current"), "true",
+    "right-clicking another workspace keeps the active pane");
+  await page.keyboard.press("Escape");
+  await workspaceMenu.waitFor({ state: "detached" });
+  // Renaming a pane is still available on that pane's own menu.
+  await page.locator(`[data-layout-pane=${JSON.stringify(split.pane.pane_id)}] .pane-frame-menu`).click();
+  await page.getByRole("menuitem", { name: "Rename pane", exact: true }).click();
+  const paneRename = page.getByRole("dialog", { name: "Rename pane", exact: true });
+  const paneName = paneRename.getByRole("textbox", { name: "Pane name", exact: true });
+  await paneName.waitFor();
   const renamedSplit = "workspace-rows-split-task";
-  await page.locator(".pane-rename-input").fill(renamedSplit);
+  await paneName.fill(renamedSplit);
   const splitRenameResponse = page.waitForResponse((response) => response.request().method() === "POST"
     && new URL(response.url()).pathname.endsWith("/pane/rename")
     && response.request().postDataJSON().pane_id === split.pane.pane_id);
-  await changeState(page, [{ selector: ".pane-rename-input", count: 0 }],
-    () => page.locator(".pane-rename-input").press("Enter"), "the representative pane is renamed");
+  await paneName.press("Enter");
+  await paneRename.waitFor({ state: "detached" });
   assert.equal((await splitRenameResponse).status(), 200);
   assert.equal((await sessionSnapshot()).panes.find((pane) => pane.pane_id === split.pane.pane_id)?.label, renamedSplit);
-  assert.equal(await page.locator(`${otherWorkspace} .workspace-name`).textContent(), other.label,
-    "renaming a pane leaves the workspace's displayed name unchanged");
+  assert.equal((await sessionSnapshot()).workspaces.find((workspace) => workspace.workspace_id === other.workspaceId)?.label, other.label,
+    "renaming a pane leaves herdr's workspace name unchanged");
+  await page.waitForFunction(({ selector, title }) => document.querySelector(selector)?.textContent === title,
+    { selector: `${otherWorkspace} .workspace-name`, title: renamedSplit });
+  assert.ok((await page.locator(`${otherWorkspace} .workspace-place`).textContent())?.includes(other.label),
+    "the task row shows its representative pane title and keeps the workspace name beneath it");
   for (const width of [1280, 768, 375]) {
     await page.setViewportSize({ width, height: 900 });
     if (await page.locator(".drawer-toggle").isVisible()
@@ -233,7 +259,7 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
   if (await page.locator(".drawer-toggle").isVisible() && await page.locator(".drawer-toggle").getAttribute("aria-expanded") === "true") await page.locator(".drawer-toggle").click();
   assert.deepEqual(errors, [], "no browser page errors");
-  console.log("PASS one row per workspace, its split pane reached from the tab strip, and rename scopes kept apart");
+  console.log("PASS one row per workspace, identical workspace menu entry points, and pane actions on the canvas");
 } finally {
   // Attempt every cleanup even if an earlier teardown fails; never close an
   // unowned resident workspace from test-herdr or any other invocation.

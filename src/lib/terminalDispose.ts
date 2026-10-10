@@ -15,8 +15,8 @@ const browserScheduler: FrameScheduler = {
  * Disposal removes the renderer, so either callback can throw if it runs afterward. A frame queued
  * here runs after xterm's pending frame; the task scheduled from it runs after xterm's task. Hidden
  * tabs can delay frames while still running tasks, so there is deliberately no timer fallback.
- * Same-PC pane switches normally keep PaneTerminal mounted; PC switches, sign-out and StrictMode
- * cleanup do unmount it, which is when this deferred disposal protects the retiring instance.
+ * Same-tab pane switches keep sibling terminals mounted; leaving a tab, changing PCs, sign-out
+ * and StrictMode cleanup can retire one, which is when deferred disposal protects the instance.
  */
 export function disposeAfterPendingFrame(term: { dispose: () => void }, scheduler: FrameScheduler = browserScheduler): void {
   scheduler.requestAnimationFrame(() => {

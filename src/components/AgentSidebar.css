@@ -74,11 +74,17 @@
   list-style: none;
 }
 
-/* an agent's row */
-.agent-row {
+/* The entire agent row selects its pane; it has no secondary controls. */
+.agent-item {
   display: flex;
   align-items: center;
-  width: 100%;
+}
+
+.agent-row {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
   min-height: var(--side-row-2);
   padding: 0;
   border: 0;
@@ -129,6 +135,12 @@
   font-size: var(--fs-xs);
 }
 
+/* the live name is what a command names the agent by: it reads in the command's face */
+.agent-name {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
 .agent-row-status {
   display: inline-flex;
   flex: 0 0 auto;
@@ -146,6 +158,7 @@
 
 @media (pointer: coarse) {
   .agent-section-caret { opacity: 1; }
+
 }
 
 @media (prefers-reduced-motion: reduce) {

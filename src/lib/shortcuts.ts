@@ -7,6 +7,7 @@ import type { AppActions } from "./actions.ts";
 
 export const SHORTCUTS = [
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
+  { id: "find", label: "Find in terminal", keys: ["Mod", "Shift", "F"] },
   { id: "toggle-view", label: "Switch chat / terminal", keys: ["Mod", "Shift", "J"] },
   { id: "toggle-sidebar", label: "Toggle sidebar", keys: ["Mod", "Shift", "B"] },
   // Mod+Shift+N keeps working where the browser lets it through (the installed app), but Chrome
@@ -34,6 +35,7 @@ export interface ShortcutEventLike {
 
 const KEY_TO_ID: Readonly<Record<string, ShortcutId>> = {
   k: "palette",
+  f: "find",
   j: "toggle-view",
   b: "toggle-sidebar",
   n: "new-session",
@@ -149,6 +151,9 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
       switch (shortcut) {
         case "palette":
           actions.openPalette();
+          break;
+        case "find":
+          actions.openFind();
           break;
         case "toggle-view":
           actions.toggleView();

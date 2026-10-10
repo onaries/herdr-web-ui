@@ -142,4 +142,36 @@ describe("sameOrigin", () => {
   it("lets a request with no Origin through, so a CLI client can use the custom mutation header", () => {
     expect(sameOrigin(new Request("http://host/api/pane/close", { headers: { "x-herdr-machine": "1" } }))).toBe(true);
   });
+
+  it("reads a session cookie with no Origin as cross-site, except the paths such a client must use", () => {
+    const session = { cookie: "herdr_web_token=abc; herdr_web_device=def" };
+    // the origin check is not a complete control until these are refused
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: session }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/workspace/create", { method: "POST", headers: session }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/machines/local/workspace/create", { method: "POST", headers: session }))).toBe(false);
+    // either cookie alone marks it session-bearing
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "herdr_web_device=def" } }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "herdr_web_token=abc" } }))).toBe(false);
+    // the custom mutation header is the non-browser client's proof
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { ...session, "x-herdr-machine": "1" } }))).toBe(true);
+    expect(sameOrigin(new Request("http://host/api/updates/check", { method: "POST", headers: { ...session, "x-herdr-update": "1" } }))).toBe(true);
+    // these carry no header in the cases that need them: the WS handshake (a GET) a
+    // browser cannot add one to, and the two endpoints that manage the sender's own session
+    expect(sameOrigin(new Request("http://host/ws", { headers: session }))).toBe(true);
+    expect(sameOrigin(new Request("http://host/api/auth", { method: "DELETE", headers: session }))).toBe(true);
+    expect(sameOrigin(new Request("http://host/api/push/subscribe", { method: "POST", headers: session }))).toBe(true);
+    // the exemption is the path, not the method: another mutation on a neighbouring path is refused
+    expect(sameOrigin(new Request("http://host/api/push/test", { method: "POST", headers: session }))).toBe(false);
+  });
+
+  it("lets a same-origin read through with no Origin, which a browser leaves off its own GET", () => {
+    // EventSource("/api/machines/events") can add no header, and a same-origin GET states no Origin
+    const page = { cookie: "herdr_web_token=abc; herdr_web_device=def", "sec-fetch-site": "same-origin" };
+    expect(sameOrigin(new Request("http://host/api/machines/events", { headers: page }))).toBe(true);
+    expect(sameOrigin(new Request("http://host/api/machines/local/session", { headers: page }))).toBe(true);
+    expect(sameOrigin(new Request("http://host/api/machines/local/session", { method: "HEAD", headers: page }))).toBe(true);
+    // a mutation from the same page states its Origin; one that does not is still refused
+    expect(sameOrigin(new Request("http://host/api/machines/local/workspace/create", { method: "POST", headers: page }))).toBe(false);
+  });
+
 });

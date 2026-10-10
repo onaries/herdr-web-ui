@@ -6,8 +6,9 @@ import type { SubmitResult } from "../lib/ws.ts";
 import "./SecretInput.css";
 
 /** A DOM-only value: no drafts, queue, React state or retry copy of the secret. */
-export function SecretInput({ prompt, onSend, onCancel }: {
+export function SecretInput({ prompt, active = true, onSend, onCancel }: {
   prompt: string;
+  active?: boolean;
   onSend: (value: string) => Promise<SubmitResult> | null;
   onCancel: () => void;
 }) {
@@ -25,6 +26,7 @@ export function SecretInput({ prompt, onSend, onCancel }: {
     window.addEventListener("pagehide", clear);
     return () => { alive.current = false; clear(); document.removeEventListener("visibilitychange", hidden); window.removeEventListener("pagehide", clear); };
   }, []);
+  useEffect(() => { if (!active && input.current) input.current.value = ""; }, [active]);
   return <form className="secret-input" onSubmit={(event) => {
     event.preventDefault();
     if (busy.current || !input.current) return;

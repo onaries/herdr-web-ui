@@ -1,0 +1,59 @@
+/* A tab's panes as herdr lays them out, at the head of the pane menu: cells of the tab's area on
+   the menu's surface, the surface showing between them as hairlines, the open pane in the accent
+   and the zoomed one carrying its glyph. Schematic, never to scale with the terminal: the area's
+   columns over its rows (LayoutMap.tsx), no taller than 96px in the popover, so the items under
+   it stand on a short screen, and 140px in the phone's sheet, whose items scroll. */
+.layout-map {
+  position: relative;
+  width: 100%;
+  max-height: 96px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 640px) {
+  .layout-map {
+    max-height: 140px;
+  }
+}
+
+.layout-map-cell {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-hover);
+  border: var(--hairline) solid var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.layout-map-cell:hover {
+  background: var(--border-strong);
+}
+
+.layout-map-cell:focus-visible {
+  outline: var(--ring);
+  outline-offset: -3px;
+}
+
+/* the pane that is open: the accent's wash, and its edge, inside the cell's own hairline */
+.layout-map-cell.is-current {
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 var(--hairline) var(--accent);
+  color: var(--accent);
+}
+
+.layout-map-cell svg {
+  width: 12px;
+  height: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layout-map-cell {
+    transition: none;
+  }
+}

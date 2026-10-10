@@ -1,4 +1,90 @@
 {
+  "0.4.6": {
+    "en": {
+      "new": [
+        "Split, zoom, swap and resize panes from the web; a split tab shows all its panes at once.",
+        "Search a pane's terminal history, with highlighted matches and a history scrollbar.",
+        "The command palette works like herdr's Goto picker and runs herdr plugin actions.",
+        "Reorder tabs, and move a pane to another tab or workspace, as in herdr's own window.",
+        "Agents show the names set with herdr, and Settings lists herdr's agent integrations."
+      ],
+      "improved": [
+        "Answers are compressed, so opening a long chat is faster over a slow connection.",
+        "Changes made in herdr's own window show in the web at once.",
+        "A phone that leaves the app gives the pane's size back to herdr's window right away."
+      ],
+      "fixed": [
+        "Typing never reaches a pane that another connection is using.",
+        "Held messages keep Send now after you switch tabs, workspaces or PCs.",
+        "Codex chats on Windows are found even when the folder's letter case differs.",
+        "An OmO turn that ended on a model error reads READY, not DONE.",
+        "A remote PC that slept during a bridge update shows Reconnecting, not an update prompt."
+      ]
+    },
+    "ko": {
+      "new": [
+        "웹에서 패널을 분할·확대·교체·크기 조절하고, 분할된 탭은 모든 패널을 한 번에 보여 줍니다.",
+        "패널의 터미널 기록을 검색하고, 일치 항목 강조와 기록 스크롤바를 제공합니다.",
+        "명령 팔레트가 herdr의 Goto 선택기처럼 동작하고 herdr 플러그인 동작을 실행합니다.",
+        "herdr 창처럼 탭 순서를 바꾸고 패널을 다른 탭이나 워크스페이스로 옮길 수 있습니다.",
+        "herdr에서 정한 에이전트 이름이 보이고, 설정에서 herdr 에이전트 연동 상태를 볼 수 있습니다."
+      ],
+      "improved": [
+        "응답을 압축해 느린 연결에서도 긴 채팅을 더 빨리 엽니다.",
+        "herdr 창에서 바꾼 내용이 웹에 바로 반영됩니다.",
+        "휴대폰에서 앱을 벗어나면 패널 크기를 herdr 창에 바로 돌려줍니다."
+      ],
+      "fixed": [
+        "다른 연결이 쓰고 있는 패널에는 입력이 들어가지 않습니다.",
+        "탭, 워크스페이스, PC를 바꿔도 보류된 메시지의 '지금 보내기'가 남아 있습니다.",
+        "Windows에서 폴더 이름의 대소문자가 달라도 Codex 채팅을 찾습니다.",
+        "모델 오류로 끝난 OmO 턴은 DONE이 아니라 READY로 표시됩니다.",
+        "브리지 업데이트 중 잠든 원격 PC는 업데이트 요청 대신 '다시 연결 중'으로 표시됩니다."
+      ]
+    },
+    "ja": {
+      "new": [
+        "Webからペインの分割・拡大・入れ替え・サイズ変更ができ、分割タブは全ペインを表示します。",
+        "ペインのターミナル履歴を検索でき、一致箇所の強調と履歴スクロールバーがあります。",
+        "コマンドパレットがherdrのGotoピッカーのように動き、herdrプラグインの操作を実行します。",
+        "herdrのウィンドウと同じく、タブを並べ替え、ペインを別のタブやワークスペースへ移せます。",
+        "herdrで付けたエージェント名が表示され、設定画面でherdrのエージェント連携を確認できます。"
+      ],
+      "improved": [
+        "応答を圧縮するため、遅い回線でも長いチャットを速く開けます。",
+        "herdrのウィンドウで行った変更がWebにすぐ反映されます。",
+        "スマートフォンでアプリを離れると、ペインのサイズをすぐherdrのウィンドウに戻します。"
+      ],
+      "fixed": [
+        "別の接続が使っているペインには入力が届きません。",
+        "タブ、ワークスペース、PCを切り替えても、保留メッセージの「今すぐ送信」が残ります。",
+        "Windowsでフォルダ名の大文字小文字が違っても、Codexのチャットを見つけます。",
+        "モデルエラーで終わったOmOのターンはDONEではなくREADYと表示されます。",
+        "ブリッジ更新中にスリープしたリモートPCは、更新の案内ではなく「再接続中」と表示されます。"
+      ]
+    },
+    "zh": {
+      "new": [
+        "可在网页中拆分、放大、交换和调整窗格大小，拆分的标签页会同时显示所有窗格。",
+        "可搜索窗格的终端历史，并高亮匹配项、提供历史滚动条。",
+        "命令面板像 herdr 的 Goto 选择器一样工作，并可运行 herdr 插件操作。",
+        "像 herdr 窗口一样重新排列标签页，并把窗格移到其他标签页或工作区。",
+        "会显示在 herdr 中设置的代理名称，并可在设置中查看 herdr 的代理集成状态。"
+      ],
+      "improved": [
+        "响应经过压缩，在慢速连接下也能更快打开较长的聊天。",
+        "在 herdr 窗口中所做的更改会立即显示在网页中。",
+        "手机离开应用后，会立即把窗格大小还给 herdr 窗口。"
+      ],
+      "fixed": [
+        "输入不会再进入另一个连接正在使用的窗格。",
+        "切换标签页、工作区或电脑后，暂存消息的“立即发送”仍然保留。",
+        "在 Windows 上，即使文件夹大小写不同也能找到 Codex 聊天。",
+        "因模型错误结束的 OmO 回合显示为 READY，而不是 DONE。",
+        "在网桥更新期间休眠的远程电脑会显示“正在重新连接”，而不是要求更新。"
+      ]
+    }
+  },
   "0.4.5": {
     "en": {
       "improved": [

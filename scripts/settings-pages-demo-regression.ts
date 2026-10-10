@@ -13,7 +13,7 @@ import { ZH } from "../src/lib/i18n.zh.ts";
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "About"];
+const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
 const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
@@ -65,6 +65,7 @@ try {
         const label = (name: string): string => strings[name] ?? name;
         const context = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, locale: language });
         try {
+          await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
           await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
           const page = await context.newPage();
           const errors: string[] = [];
@@ -98,6 +99,36 @@ try {
               assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).language), language,
                 "dictation selection does not change the display language");
               await dictation.selectOption("auto");
+            }
+            if (name === "Agent integrations") {
+              // the demo's fixture, in herdr's order with the agents found on the PC first: a failed request
+              // would leave one error paragraph that still fits, so the rows and their states are asserted
+              const body = page.locator(".settings-body:not([hidden])");
+              assert.equal(await body.locator("[role='alert']").count(), 0, "the integrations page shows no error");
+              const install = (target: string): string => `herdr integration install ${target}`;
+              const shown = await body.locator(".settings-row").evaluateAll((nodes) => nodes.map((node) => ({
+                label: node.querySelector(".settings-label")?.textContent ?? "",
+                description: node.querySelector(".settings-description")?.textContent ?? "",
+                command: node.querySelector("code")?.textContent ?? null,
+                copy: node.querySelector("button")?.getAttribute("aria-label") ?? null,
+              })));
+              const copyLabel = (target: string): string => label("Copy the command for {name}").replace("{name}", target);
+              const missing = label("Not installed");
+              assert.deepEqual(shown, [
+                { label: "pi", description: missing + install("pi"), command: install("pi"), copy: copyLabel("pi") },
+                { label: "claude", description: label("Installed"), command: null, copy: null },
+                { label: "codex", description: label("Installed, but older than this herdr: run this to update it") + install("codex"), command: install("codex"), copy: copyLabel("codex") },
+                { label: "opencode", description: missing + install("opencode"), command: install("opencode"), copy: copyLabel("opencode") },
+                { label: "omp", description: missing + install("omp"), command: install("omp"), copy: copyLabel("omp") },
+                { label: "copilot", description: missing + install("copilot"), command: install("copilot"), copy: copyLabel("copilot") },
+                { label: "cursor", description: missing + install("cursor"), command: install("cursor"), copy: copyLabel("cursor") },
+                { label: "antigravity-cli", description: missing + install("antigravity-cli"), command: install("antigravity-cli"), copy: copyLabel("antigravity-cli") },
+              ], "every fixture integration, with its state and install command");
+              assert.deepEqual(await body.locator("h3").allTextContents(), [label("Not found on this PC")]);
+              const copy = body.getByRole("button", { name: copyLabel("codex"), exact: true });
+              await copy.tap();
+              await body.getByRole("button", { name: copyLabel("codex"), exact: true }).filter({ hasText: label("Copied") }).waitFor();
+              assert.equal(await page.evaluate(() => navigator.clipboard.readText()), install("codex"));
             }
             assert.deepEqual(await cutOff(page), [], `${name} fits a ${width}px phone (${language})`);
           }

@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { claudeProcessSession, forgetClaudeSessions, processClaudeConfigDir } from "./claude-store.ts";
-import { codexRolloutPath } from "./codex.ts";
+import { Database } from "bun:sqlite";
+
+import { codexRolloutPath, directoryKey, sameDirectory, storedCwdCondition } from "./codex.ts";
 import { gjcSessionFile, storeRelative } from "./gjc-runtime.ts";
 import { descendantArgv, windowsProcessTable } from "./windows-processes.ts";
 import { windowsHost } from "./remote-host.ts";
@@ -120,6 +122,25 @@ it.skipIf(!onWindows)("reads a Codex rollout path stored with the \\\\?\\ prefix
     // raw `..` segments (join would fold them) that climb from the store to `outside`, which exists
     expect(codexRolloutPath(`\\\\?\\${home}\\sessions\\..\\..\\..\\other.jsonl`, home)).toBeNull();
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it.skipIf(!onWindows)("finds Codex's thread under the on-disk casing when herdr reports another spelling of the directory (#740)", () => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "herdr-codex-cwd-")));
+  mkdirSync(join(root, "Recorde"));
+  const reported = join(root, "recorde");
+  const canonical = realpathSync.native(reported);
+  const db = new Database(":memory:");
+  try {
+    // the two spellings are only one directory to the file system, not to directoryKey
+    expect(directoryKey(reported)).not.toBe(directoryKey(canonical));
+    db.run("CREATE TABLE threads (id TEXT, cwd TEXT)");
+    db.run("INSERT INTO threads VALUES (?, ?)", ["own", `\\\\?\\${canonical}`]);
+    const { where, params } = storedCwdCondition(reported);
+    expect(db.query<{ id: string }, string[]>(`SELECT id FROM threads WHERE ${where}`).all(...params)).toEqual([{ id: "own" }]);
+    expect(sameDirectory(reported, canonical)).toBe(true);
+    mkdirSync(join(root, "Other"));
+    expect(sameDirectory(reported, join(root, "Other"))).toBe(false);
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 it.skipIf(!onWindows)("finds a Claude's own store from the start it records, which the process table repeats", async () => {

@@ -19,9 +19,11 @@
  * CHECK_REPORT overrides the durable JSON report path; otherwise the report is in CHECK_DIR or
  * node_modules/.cache/check/<run-id>. The report and streamed logs are outside ephemeral isolation.
  *
- * Only one herdr-backed run at a time on this PC: contract and browser tests are bound by timing,
- * and two runs side by side fail each other. A second one says so and exits. The lock is a loopback
- * port the run listens on (LOCK_PORT), so a run that died holds nothing.
+ * A few herdr-backed runs at a time on this PC (CHECK_MAX_RUNS, see maxRuns): contract and browser
+ * tests are bound by timing, so too many side by side fail each other. Each run holds a slot, a
+ * loopback port it listens on (LOCK_PORT and the ports after it), so a run that died holds nothing.
+ * A run that finds every slot taken names the holders and exits, and so does a second run in the
+ * same checkout, which would share its dist/ and generated types.
  *
  * What a run still shares with the PC: the checkout (`fast` rewrites the generated types file
  * while it checks it, and fast/lane modes build into dist/), herdr's worktree root, and Playwright's
@@ -29,11 +31,12 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
-import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { availableParallelism, tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { finished } from "node:stream/promises";
+import { DISPOSABLE_CONFIG_ENV, DISPOSABLE_CONFIG_FILE } from "./disposable-config.ts";
 import {
   artifactIdentity,
   artifactUnchangedAfterBuild,
@@ -137,6 +140,8 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`isolated state path is not a real directory: ${path}`);
     if (process.platform !== "win32") chmodSync(path, 0o700);
   }
+  // what lets a test write to herdr's per-user plugin registry: this one is the run's own
+  writeFileSync(join(config, DISPOSABLE_CONFIG_FILE), "", { mode: 0o600 });
   const sessions = join(config, "herdr", "sessions");
   // the integration lane's workers are `<session>-<n>`
   const socket = join(sessions, `${session}-9`, "herdr.sock");
@@ -149,6 +154,7 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
   for (const [name, value] of Object.entries(base)) if (value !== undefined && !LIVE_HERDR.includes(name)) env[name] = value;
   Object.assign(env, {
     XDG_CONFIG_HOME: config,
+    [DISPOSABLE_CONFIG_ENV]: config,
     XDG_STATE_HOME: join(dir, "state"),
     HERDR_WEB_STATE_DIR: join(dir, "web-state"),
     HERDR_TEST_SESSION: session,
@@ -159,27 +165,59 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
   return { env, sessions, remove: () => { if (!kept) rmSync(dir, { recursive: true, force: true }); } };
 }
 
-/** The loopback port a herdr-backed run listens on while it runs: the lock. */
+/** The first loopback port a herdr-backed run listens on while it runs: slot 1. Slot n is LOCK_PORT + n - 1. */
 export const LOCK_PORT = 41737;
+/** The most slots CHECK_MAX_RUNS may ask for; every run looks at all of them for its own checkout. */
+export const MAX_RUNS_LIMIT = 8;
 
 /**
- * One run with a lane at a time on this PC. The lock is a listening loopback port: taking it is
- * one step, and it is free again the moment its run is gone, however it ended, so there is no
- * lock left behind to take over. Whoever holds it answers a connection with its pid. Resolves
- * with the release, or with the pid of the run that holds it (NaN when something else listens
- * there).
+ * How many herdr-backed runs may share this PC: CHECK_MAX_RUNS (1 to 8), else one per eight cores,
+ * at least one and at most two. On a 32-core PC two side by side stayed green; with three,
+ * machine-conflict-regression.ts lost Chromium screenshots, and with four integration tests
+ * that wait on live processes failed (measured for the PR that added slots).
  */
-export function lock(port = LOCK_PORT, pid = process.pid): Promise<{ release: () => void } | { heldBy: number }> {
+export function maxRuns(env: Record<string, string | undefined>, cores = availableParallelism()): number {
+  const asked = env["CHECK_MAX_RUNS"];
+  if (asked === undefined || asked === "") return Math.max(1, Math.min(2, Math.floor(cores / 8)));
+  const count = /^\d+$/.test(asked) ? Number(asked) : Number.NaN;
+  if (!(count >= 1 && count <= MAX_RUNS_LIMIT)) throw new Error(`CHECK_MAX_RUNS must be a whole number from 1 to ${MAX_RUNS_LIMIT}, not "${asked}"`);
+  return count;
+}
+
+/** What a slot's holder says: its pid (NaN when what listens there is no run) and its checkout, when it names one. */
+export type Holder = { heldBy: number; checkout?: string };
+
+/** Asks the holder of a port who it is; null when nothing listens there. */
+function ask(port: number): Promise<Holder | null> {
+  return new Promise((resolve) => {
+    let said = "";
+    let refused = false;
+    const client = connect(port, "127.0.0.1");
+    client.setTimeout(2_000, () => client.destroy());
+    client.on("data", (chunk) => { said += chunk.toString(); });
+    client.on("error", (error: NodeJS.ErrnoException) => { refused = error.code === "ECONNREFUSED"; });
+    client.on("close", () => {
+      if (refused) { resolve(null); return; }
+      // `<pid>` from a run before slots, `<pid>\n<checkout>` from one since
+      const match = /^(\d+)(?:\n([^]+))?$/.exec(said);
+      resolve(!match ? { heldBy: Number.NaN } : match[2] ? { heldBy: Number(match[1]), checkout: match[2] } : { heldBy: Number(match[1]) });
+    });
+  });
+}
+
+/**
+ * One slot. The lock is a listening loopback port: taking it is one step, and it is free again the
+ * moment its run is gone, however it ended, so there is no lock left behind to take over. Whoever
+ * holds it answers a connection with its pid and checkout. Resolves with the release, or with who
+ * holds it (NaN when something else listens there).
+ */
+export function lock(port = LOCK_PORT, pid = process.pid, checkout?: string): Promise<{ release: () => void } | Holder> {
   return new Promise((resolve, reject) => {
-    const server = createServer((socket) => { socket.on("error", () => undefined); socket.end(String(pid)); });
+    const answer = checkout === undefined ? String(pid) : `${pid}\n${checkout}`;
+    const server = createServer((socket) => { socket.on("error", () => undefined); socket.end(answer); });
     server.once("error", (error: NodeJS.ErrnoException) => {
       if (error.code !== "EADDRINUSE") { reject(error); return; }
-      let said = "";
-      const client = connect(port, "127.0.0.1");
-      client.setTimeout(2_000, () => client.destroy());
-      client.on("data", (chunk) => { said += chunk.toString(); });
-      client.on("error", () => undefined);
-      client.on("close", () => resolve({ heldBy: /^\d+$/.test(said) ? Number(said) : Number.NaN }));
+      void ask(port).then((holder) => resolve(holder ?? { heldBy: Number.NaN }));
     });
     server.listen(port, "127.0.0.1", () => {
       // the lock must not keep the run alive once its work is done
@@ -189,12 +227,114 @@ export function lock(port = LOCK_PORT, pid = process.pid): Promise<{ release: ()
   });
 }
 
+export type SlotHolder = Holder & { port: number };
+
+/**
+ * Admission is serialized on the port after the slot range. While holding it, claim explicit
+ * resources and take a candidate slot, then scan ALL slots again: an earlier holder may have
+ * turned over while we asked it. Zero slots claims only resources (fast needs no herdr slot).
+ * The admission port also serializes dead-pid marker reclamation, so two reclaimers cannot
+ * unlink each other's newly acquired marker. A busy admission port refuses rather than waits.
+ */
+export async function acquire(
+  { slots, checkout, base = LOCK_PORT, pid = process.pid, scan = MAX_RUNS_LIMIT, resources = [], reports = [] }: { slots: number; checkout: string; base?: number; pid?: number; scan?: number; resources?: readonly string[]; reports?: readonly string[] },
+): Promise<{ release: () => void; port: number | null } | { refused: "busy" | "same-checkout" | "resource"; holders: SlotHolder[]; resource?: string }> {
+  const admissionPort = base + Math.max(slots, scan);
+  const admission = await lock(admissionPort, pid, checkout);
+  if (!("release" in admission)) return { refused: "busy", holders: [{ ...admission, port: admissionPort }] };
+  let taken: { release: () => void; port: number } | null = null;
+  const markers: string[] = [];
+  let admitted = false;
+  const release = (): void => {
+    taken?.release();
+    for (const marker of markers.splice(0)) rmSync(marker);
+  };
+  try {
+    // A report is written by renaming over its name (check-report.ts), which replaces a symlink
+    // there whatever it points to: its lock is the name in its real directory, never the target.
+    const claims = [...resources.map((path) => ({ path, report: false })), ...reports.map((path) => ({ path, report: true }))];
+    for (const { path, report } of claims) {
+      const absolute = resolve(path);
+      mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
+      const isDir = !report && existsSync(absolute) && statSync(absolute).isDirectory();
+      const canonical = isDir ? realpathSync(absolute) : join(realpathSync(dirname(absolute)), basename(absolute));
+      const marker = isDir ? join(canonical, ".check-lock") : `${canonical}.check-lock`;
+      if (markers.includes(marker)) continue;
+      if (existsSync(marker)) {
+        // a marker that cannot be read may be a live holder's: only one that was read and is not
+        // JSON (a write cut short) is taken over
+        const text = readFileSync(marker, "utf8");
+        let owner: { pid: number; checkout: string };
+        try {
+          owner = JSON.parse(text) as { pid: number; checkout: string };
+        } catch {
+          rmSync(marker, { force: true });
+          writeFileSync(marker, JSON.stringify({ pid, checkout }), { flag: "wx", mode: 0o600 });
+          markers.push(marker);
+          continue;
+        }
+        if (owner === null || typeof owner !== "object" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error(`invalid check lock owner: ${marker}`);
+        let dead = false;
+        try { process.kill(owner.pid, 0); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          dead = true;
+        }
+        if (!dead) return { refused: "resource", resource: canonical, holders: [{ port: admissionPort, heldBy: owner.pid, checkout: owner.checkout }] };
+        rmSync(marker);
+      }
+      writeFileSync(marker, JSON.stringify({ pid, checkout }), { flag: "wx", mode: 0o600 });
+      markers.push(marker);
+    }
+    for (let index = 0; index < slots; index++) {
+      const port = base + index;
+      const result = await lock(port, pid, checkout);
+      if ("release" in result) { taken = { release: result.release, port }; break; }
+    }
+    const holders: SlotHolder[] = [];
+    for (let index = 0; slots > 0 && index < Math.max(slots, scan); index++) {
+      const port = base + index;
+      if (port === taken?.port) continue;
+      const holder = await ask(port);
+      if (holder) holders.push({ ...holder, port });
+    }
+    const same = holders.filter((holder) => holder.checkout === checkout);
+    if (same.length > 0) return { refused: "same-checkout", holders: same };
+    // a run from before slots names no checkout and counts on having the PC to itself: nothing
+    // can say it is not in this checkout, so it is alone until it ends
+    const alone = holders.filter((holder) => !Number.isNaN(holder.heldBy) && holder.checkout === undefined);
+    if (alone.length > 0) return { refused: "busy", holders: alone };
+    if (slots > 0 && (!taken || holders.length >= slots)) return { refused: "busy", holders };
+    admitted = true;
+    return { release, port: taken?.port ?? null };
+  } finally {
+    if (!admitted) release();
+    admission.release();
+  }
+}
+
+/** One line per holder for a refusal. */
+export function describeHolders(holders: readonly SlotHolder[]): string {
+  return holders.map((holder) => Number.isNaN(holder.heldBy)
+    ? `port ${holder.port}: something that is no check run`
+    : `port ${holder.port}: pid ${holder.heldBy}${holder.checkout ? ` in ${holder.checkout}` : ""}`).join("; ");
+}
+
 async function main(): Promise<void> {
   let todo: ReturnType<typeof plan>;
   const args = process.argv.slice(2);
   try { todo = plan(args); } catch (error) { console.error((error as Error).message); process.exit(2); }
   const needsHerdr = needsLock(todo);
   const cwd = process.cwd();
+  const runId = createRunId();
+  const paths = reportPaths(cwd, process.env, runId);
+  const resources: string[] = [];
+  if (process.env["CHECK_DIR"]) {
+    const dir = resolve(cwd, process.env["CHECK_DIR"]!);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    resources.push(dir);
+  }
+  const reports = process.env["CHECK_REPORT"] || process.env["CHECK_DIR"] ? [paths.reportPath] : [];
   const cleanups: (() => void)[] = [];
   let cleaned = false;
   const cleanup = (): void => {
@@ -202,30 +342,33 @@ async function main(): Promise<void> {
     cleaned = true;
     for (const step of cleanups.reverse()) try { step(); } catch (error) { console.error(`check: cleanup failed: ${(error as Error).message}`); }
   };
-  if (needsHerdr) {
+  if (needsHerdr || resources.length > 0 || reports.length > 0) {
     try {
-      const held = await lock();
-      if ("heldBy" in held) {
-        const message = Number.isNaN(held.heldBy)
-          ? `port ${LOCK_PORT} on 127.0.0.1, which a herdr-backed check run holds while it runs, is in use by something else`
-          : `another \`bun run check\` with a herdr-backed command is running on this PC (pid ${held.heldBy}); wait for it to end`;
+      let slots: number;
+      try { slots = needsHerdr ? maxRuns(process.env) : 0; } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
+      const held = await acquire({ slots, checkout: realpathSync(cwd), resources, reports });
+      if ("refused" in held) {
+        const message = held.refused === "same-checkout"
+          ? `another herdr-backed \`bun run check\` is running in this checkout, and the two would share dist/ and the generated types (${describeHolders(held.holders)}); wait for it to end or use another worktree`
+          : held.refused === "resource"
+            ? `check resource ${held.resource} is already held (${describeHolders(held.holders)}); use a different CHECK_DIR / CHECK_REPORT or wait for the holder`
+            : `herdr-backed check admission is busy or the ${slots}-run limit is reached (${describeHolders(held.holders)}); wait for one to end, or set CHECK_MAX_RUNS (1 to ${MAX_RUNS_LIMIT})`;
         console.error(`check: ${message}`);
         process.exit(1);
       }
-      cleanups.push(held.release);
+      // Keep output ownership through cleanup AND the final report write.
+      process.once("exit", held.release);
     } catch (error) {
       console.error(`check: could not acquire the herdr-backed check lock: ${(error as Error).message}`);
       process.exit(1);
     }
   }
-  const runId = createRunId();
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
-  const paths = reportPaths(cwd, process.env, runId);
   const logDirectory = paths.logDirectory;
   mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") chmodSync(logDirectory, 0o700);
-  const sourceExcludes = [paths.reportPath, logDirectory];
+  const sourceExcludes = [paths.reportPath, `${paths.reportPath}.check-lock`, logDirectory];
   if (process.env["CHECK_DIR"]) {
     const checkDirectory = resolve(cwd, process.env["CHECK_DIR"]!);
     const relativeCheckDirectory = relative(cwd, checkDirectory);

@@ -135,6 +135,21 @@
   width: 14rem;
 }
 
+.settings-integration-check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--status-done);
+}
+
+.settings-integration-command {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
 .settings-link {
   color: var(--accent);
   font-size: var(--fs-xs);

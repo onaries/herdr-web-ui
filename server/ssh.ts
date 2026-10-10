@@ -174,6 +174,8 @@ export class SshConnection {
       return out;
     } finally { clearTimeout(timer); this.children.delete(proc); }
   }
+  /** whether the master connection still stands: false once ssh exited (the PC went away), was killed (Bun then sets only signalCode) or was closed */
+  connected(): boolean { return !this.closed && this.master !== null && this.master.exitCode === null && this.master.signalCode === null; }
   close(): void {
     if (this.closed) return;
     this.closed = true;

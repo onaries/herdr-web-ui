@@ -85,7 +85,8 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await page.locator(".conn-live").waitFor();
     await page.locator(".tab-strip").waitFor();
     await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
-    const composer = page.getByRole("textbox", { name: "Message", exact: true });
+    const firstFrame = page.locator(`[data-layout-pane=${JSON.stringify(first)}]`);
+    const composer = firstFrame.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
     await assertShell(page, "chat");
     const chat = await box(page, ".chat-view");
@@ -102,13 +103,16 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await page.waitForFunction(() => !document.documentElement.hasAttribute("data-keyboard"));
 
     await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
-    await page.locator(".key-bar").waitFor();
+    await firstFrame.locator(".key-bar").waitFor();
+    assert.equal(await page.locator(".pane-frame:visible").count(), 2, "the terminal lens retains both panes on a phone");
     await assertShell(page, "terminal");
 
+    assert.equal(await page.locator(".tab-strip-close, .tab-strip-panes").count(), 0, "tabs have no close buttons or chevrons");
+    assert.equal(await page.locator(".tab-strip-menu:visible").count(), 1, "only the active tab exposes a touch menu");
     const tab = await box(page, ".tab-strip-item.is-active .tab-strip-tab");
-    const picker = await box(page, ".tab-strip-item.is-active .tab-strip-panes");
-    assert.ok(picker.left >= tab.right - 0.5, `a split tab's pane picker is beside its name, not over it (${picker.left} vs ${tab.right})`);
-    assert.ok(picker.width >= 40 && picker.height >= 40, "the pane picker is a touch target");
+    const menu = await box(page, ".tab-strip-item.is-active .tab-strip-menu");
+    assert.ok(menu.left >= tab.right - 0.5, `the tab's menu button is beside its name, not over it (${menu.left} vs ${tab.right})`);
+    assert.ok(menu.width >= 40 && menu.height >= 40, "the tab menu button is a touch target");
     await activeTabInView(page, "the first tab");
     await screenshot("terminal");
 
@@ -123,6 +127,13 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await page.getByRole("tab", { name: "Tab 1", exact: true }).tap();
     await page.locator('.tab-strip [role="tab"][aria-selected="true"]', { hasText: "Tab 1" }).waitFor();
     await activeTabInView(page, "the first tab, tapped");
+    assert.equal(await page.locator(".tab-strip-menu:visible").count(), 1, "the menu button follows a tab selected by touch");
+    await page.getByRole("button", { name: "Actions for Tab 1", exact: true }).tap();
+    const tabSheet = page.getByRole("dialog", { name: "Tab 1", exact: true });
+    await tabSheet.waitFor();
+    assert.deepEqual(await tabSheet.locator(".row-sheet-item").allTextContents(), ["Move tab right", "New tab", "Rename tab", "Close tab"], "the first tab offers only its available adjacent move, with the same actions as right-click");
+    await tabSheet.getByRole("button", { name: "Cancel", exact: true }).tap();
+    await tabSheet.waitFor({ state: "detached" });
 
     await page.setViewportSize({ width: 320, height: 640 });
     await activeTabInView(page, "a 320px phone");

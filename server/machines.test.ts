@@ -68,8 +68,11 @@ describe("machine boundaries", () => {
     expect(canSendSecret(new Request("http://127.0.0.1/api/machines"))).toBe(true);
   });
   it("proxies only pane/workspace data and never remote management credentials", () => {
-    for (const path of ["auth", "push", "updates/install", "machines/setup", "bridge", "../auth", "pane/../../auth", "pane/prompt/answer/extra", "tab/move", "tab/close/extra"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
-    for (const path of ["session", "agents", "pane/files", "pane/image", "pane/prompt/answer", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["pane/focus", "layout/ratio", "tab/move"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["pane/focus/extra", "layout/apply", "layout/ratio/extra", "layout/../auth"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+    for (const path of ["auth", "push", "updates/install", "machines/setup", "bridge", "../auth", "pane/../../auth", "pane/prompt/answer/extra", "tab/move/extra", "tab/close/extra"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+    for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/move", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/split", "pane/zoom", "pane/swap", "pane/resize", "pane/clear", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
   });
 });
 
@@ -245,6 +248,147 @@ describe("a first connect that finds a bridge of another version", () => {
       // this app cannot update that server, so "update this app" is not the way out here
       expect(job).toMatchObject({ phase: "failed", action_required: "setup" });
       expect(job.error).toContain("independently managed");
+    } finally { manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// A bridge update that cannot reach its PC (switched off, asleep, gone in the middle) learned
+// nothing about the bridge: the PC waits as offline and checks the version again once it answers,
+// instead of asking for an update it cannot run. A PC that refuses the key keeps the button.
+describe("a bridge update on a PC that cannot be reached", () => {
+  const id = "0b9d6a52-7a5e-4f8e-9a51-2f3c4d5e6f70";
+  const socket = "/home/u/.config/herdr/herdr.sock";
+  const descriptor = { pid: 4242, port: 29431, token: "a".repeat(64), socket_path: socket, bridge_protocol: BRIDGE_PROTOCOL, bundle_version: "0", managed_remote: true };
+  const real = { start: SshConnection.prototype.start, run: SshConnection.prototype.run, close: SshConnection.prototype.close, connected: SshConnection.prototype.connected };
+  afterEach(() => { Object.assign(SshConnection.prototype, real); });
+
+  async function updateOnce(options: { start: () => Promise<void>; connected?: boolean; failRun?: boolean }) {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-offline-update-"));
+    writeFileSync(join(dir, "machines.json"), JSON.stringify([{ id, name: "macbook", enabled: false, target: { destination: "macbook" }, snapshot: null }]));
+    SshConnection.prototype.start = options.start;
+    SshConnection.prototype.connected = () => options.connected ?? true;
+    SshConnection.prototype.run = (async (script: string) => {
+      if (script.includes("uname")) return `Linux\nx86_64\n/home/u\n/home/u/.config\n\n${JSON.stringify(descriptor)}\n`;
+      if (script.includes("socket=")) return socket;
+      // the bridge check after the host was read: the connection drops (or the check fails) here
+      if (script.includes("kill -0")) { if (options.failRun) throw new Error("Connection to macbook closed by remote host."); return "live"; }
+      throw new Error("Unexpected remote mutation");
+    }) as typeof real.run;
+    SshConnection.prototype.close = () => {};
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("local offline"); });
+    // registered disabled so no reconnect of its own runs; enabled again without a reconnect,
+    // as a PC that was connected when its update began
+    (manager as unknown as { machines: Map<string, { machine: { enabled: boolean } }> }).machines.get(id)!.machine.enabled = true;
+    try {
+      const started = manager.updateBridge(id);
+      for (let i = 0; i < 100 && manager.job(started.id)?.phase !== "failed"; i += 1) await Bun.sleep(25);
+      // copied: stop() below disconnects the live record
+      return structuredClone({ job: manager.job(started.id)!, machine: manager.list().find((machine) => machine.id === id)! });
+    } finally { manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  it("waits as offline when SSH cannot reach the PC", async () => {
+    const { job, machine } = await updateOnce({ start: async () => { throw new Error("ssh: connect to host macbook port 22: Operation timed out"); } });
+    expect(job.phase).toBe("failed");
+    expect(machine).toMatchObject({ state: "reconnecting", action_required: null });
+    expect(machine.error).toContain("Operation timed out");
+  });
+
+  it("waits as offline when the PC goes away in the middle of the update", async () => {
+    const { machine } = await updateOnce({ start: async () => {}, connected: false, failRun: true });
+    expect(machine).toMatchObject({ state: "reconnecting", action_required: null });
+  });
+
+  it("waits as offline when ssh only warns that a local key file is unreadable", async () => {
+    const { machine } = await updateOnce({ start: async () => { throw new Error("Warning: Identity file /home/u/.ssh/id_work not accessible: Permission denied.\r\nssh: connect to host macbook port 22: Connection timed out"); } });
+    expect(machine).toMatchObject({ state: "reconnecting", action_required: null });
+  });
+
+  it("keeps the update button when the PC refuses the saved key", async () => {
+    const { machine } = await updateOnce({ start: async () => { throw new Error("u@macbook: Permission denied (publickey)."); } });
+    expect(machine).toMatchObject({ state: "error", action_required: "update_bridge" });
+  });
+
+  it("keeps the update button when the update fails on a PC that still answers", async () => {
+    const { machine } = await updateOnce({ start: async () => {}, connected: true, failRun: true });
+    expect(machine).toMatchObject({ state: "error", action_required: "update_bridge" });
+  });
+
+  it("counts a killed SSH master as gone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-killed-master-"));
+    for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+      const ssh = new SshConnection({ destination: "macbook" }, dir);
+      const master = Bun.spawn(["sleep", "30"]);
+      (ssh as unknown as { master: typeof master }).master = master;
+      expect(ssh.connected()).toBe(true);
+      master.kill(signal);
+      await master.exited;
+      // Bun leaves exitCode null after a signal and sets signalCode
+      expect(ssh.connected()).toBe(false);
+      real.close.call(ssh);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lets the user's Update bridge take back a Cancel, and keeps a queued automatic update from undoing one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-cancel-flag-"));
+    writeFileSync(join(dir, "machines.json"), JSON.stringify([{ id, name: "macbook", enabled: false, target: { destination: "macbook" }, snapshot: null }]));
+    SshConnection.prototype.start = async () => { throw new Error("ssh: connect to host macbook port 22: Connection timed out"); };
+    SshConnection.prototype.close = () => {};
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("local offline"); });
+    type Internals = { machines: Map<string, { updateCancelled?: boolean; machine: { enabled: boolean; state: string; action_required: string | null } }>; jobs: Map<string, { finished: Promise<void> }>; autoChain: Promise<void>; queueAutoUpdate(id: string): void };
+    const internals = manager as unknown as Internals;
+    const runtime = internals.machines.get(id)!;
+    Object.assign(runtime.machine, { enabled: true, state: "error", action_required: "update_bridge" });
+    try {
+      // an automatic update queued before the Cancel, which runs once the one ahead of it is done
+      runtime.updateCancelled = true;
+      internals.queueAutoUpdate(id);
+      await internals.autoChain;
+      expect(internals.jobs.size).toBe(0);
+      // a scheduled update keeps the Cancel, the user's button takes it back
+      await internals.jobs.get(manager.updateBridge(id, true).id)!.finished;
+      expect(runtime.updateCancelled).toBe(true);
+      Object.assign(runtime.machine, { state: "error", action_required: "update_bridge" });
+      await internals.jobs.get(manager.updateBridge(id).id)!.finished;
+      expect(runtime.updateCancelled).toBe(false);
+    } finally { manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // The record a live server showed for a switched-off MacBook: an earlier failed update left the
+  // button and its error, then an update that was cancelled (Cancel update, a closed dialog, the
+  // setup's time limit) disconnected the PC and kept both, with no reconnect ever scheduled.
+  it("reconnects after a cancelled update, and asks again only once the PC answers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-cancelled-update-"));
+    writeFileSync(join(dir, "machines.json"), JSON.stringify([{ id, name: "macbook", enabled: false, target: { destination: "macbook" }, snapshot: null }]));
+    let reachable = false;
+    SshConnection.prototype.start = async () => { await Bun.sleep(100); if (!reachable) throw new Error("ssh: connect to host macbook port 22: Connection timed out"); };
+    SshConnection.prototype.connected = () => true;
+    SshConnection.prototype.run = (async (script: string) => {
+      if (script.includes("uname")) return `Linux\nx86_64\n/home/u\n/home/u/.config\n\n${JSON.stringify(descriptor)}\n`;
+      if (script.includes("socket=")) return socket;
+      if (script.includes("kill -0")) return "live";
+      throw new Error("Unexpected remote mutation");
+    }) as typeof real.run;
+    SshConnection.prototype.close = () => {};
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("local offline"); });
+    const internals = manager as unknown as { machines: Map<string, { machine: { enabled: boolean; state: string; action_required: string | null; error: string | null } }>; jobs: Map<string, unknown> };
+    const record = internals.machines.get(id)!.machine;
+    Object.assign(record, { enabled: true, state: "error", action_required: "update_bridge", error: "mux_client_request_session: read from master failed: Broken pipe" });
+    const view = () => structuredClone(manager.list().find((machine) => machine.id === id)!);
+    try {
+      const started = manager.updateBridge(id);
+      manager.action(started.id, { action: "cancel" });
+      await (internals.jobs.get(started.id) as { finished: Promise<void> }).finished;
+      expect(manager.job(started.id)!.phase).toBe("cancelled");
+      expect(view()).toMatchObject({ state: "reconnecting", action_required: null });
+      // the PC answers with an old bridge: the button comes back, and the cancelled update does
+      // not start again by itself
+      reachable = true;
+      for (let i = 0; i < 120 && view().state !== "error"; i += 1) await Bun.sleep(25);
+      expect(view()).toMatchObject({ state: "error", action_required: "update_bridge", updating: null });
+      await Bun.sleep(50);
+      expect(internals.jobs.size).toBe(1);
     } finally { manager.stop(); rmSync(dir, { recursive: true, force: true }); }
   });
 });

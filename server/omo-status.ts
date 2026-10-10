@@ -12,12 +12,15 @@
  * background task, a monitor, a goal continuation); it is over after an assistant message that
  * stopped for good. Measured over 40 session files: each of 492 such runtime messages written at
  * rest was followed by an assistant message, a median of 5 s later, so the message itself is the
- * start. An answer that ended in an error ends the turn like any other: OmO may retry (the next
+ * start. An answer that ended in an error ends the turn too: OmO may retry (the next
  * answer followed 2, 4, 8 and 16 s later), but nothing it writes tells a retry from giving up.
  * Its `senpi.hooks.stop-state` record follows 2 ms after an error either way (350 of them were
  * followed by a retry), and is held back while a background task runs, so waiting for it kept a
- * pane at RUN for good. A retry that gets an answer shows as RUN again from that answer. Nothing
- * of OmO's or Claude's is installed or changed for this: files are read.
+ * pane at RUN for good. Such a turn did not finish, though: the pane reads READY, not DONE, and
+ * no finish is alerted (#687: a model that gave up after its retries read DONE, with the agent
+ * still there). A retry that gets an answer shows as RUN again from that answer, and one that
+ * ends the turn is the finish after all. Nothing of OmO's or Claude's is installed or changed
+ * for this: files are read.
  *
  * A question OmO asks the user (omo-ask.ts) holds the pane at INPUT while it is open, whatever the
  * turn does: one that waits for its answer stopped the turn for a tool (RUN until now), and one
@@ -37,6 +40,7 @@ export { readOmoLines as readLines, type OmoLine } from "./omo-records.ts";
 
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { omoAsksAfter, type OmoAsks } from "./omo-ask.ts";
+import type { OmoRest } from "./completion.ts";
 
 /** runtime messages that start a turn nobody typed; one not named here shows as RUN from its first answer on */
 const TURN_STARTS = new Set([
@@ -49,6 +53,8 @@ export const OMO_ALIASES: readonly string[] = ["claude", "pi"];
 
 export interface OmoTurn {
   status: "working" | "idle" | null;
+  /** at rest after an answer that ended in an error: no finish */
+  failed?: boolean;
   /** when the entry that decided the status was written */
   at: number | null;
   /** the questions open for the user */
@@ -89,7 +95,7 @@ export function omoTurnAfter(turn: OmoTurn, line: OmoLine): OmoTurn {
   const parsed = typeof timestamp === "string" ? Date.parse(timestamp) : NaN;
   const at = Number.isFinite(parsed) ? parsed : turn.at;
   if (custom) return typeof customType === "string" && TURN_STARTS.has(customType) ? { status: "working", at, asks } : turn;
-  if (role === "assistant") return { status: stopReason === "toolUse" ? "working" : "idle", at, asks };
+  if (role === "assistant") return stopReason === "toolUse" ? { status: "working", at, asks } : { status: "idle", ...(stopReason === "error" ? { failed: true } : {}), at, asks };
   return role === "user" || role === "toolResult" ? { status: "working", at, asks } : { ...turn, asks };
 }
 
@@ -145,8 +151,11 @@ export interface OmoStatusDeps {
   /** the panes of a snapshot that run OmO, whatever herdr calls them: one process lookup per pane */
   discover: (panes: HerdrPane[]) => Promise<Map<string, OmoPane>>;
   snapshot: () => Promise<SessionSnapshot>;
-  /** `turn`: the pane's turn started or ended; otherwise only its background tasks changed */
-  onChange: (paneId: string, status: AgentStatus, background: number, turn: boolean) => void;
+  /**
+   * `turn`: the pane's turn started or ended; otherwise only its background tasks changed.
+   * `rest`: why a pane at rest is (completion.ts `OmoRest`), where an error had a part in it
+   */
+  onChange: (paneId: string, status: AgentStatus, background: number, turn: boolean, rest?: OmoRest) => void;
   /** a pane was found to run OmO: what herdr called it until now is the same agent */
   onFound?: (paneId: string) => void;
   file?: OmoFile;
@@ -157,7 +166,7 @@ export interface OmoStatusDeps {
   now?: () => number;
 }
 
-interface Tracked extends OmoPane { cwd: string; offset: number; size: number; id: string; /** found again after a while herdr's status stood for it: a turn still running is told anew */ retell: boolean; turn: OmoTurn; status: OmoPaneStatus; background: number }
+interface Tracked extends OmoPane { cwd: string; offset: number; size: number; id: string; /** found again after a while herdr's status stood for it: a turn still running is told anew */ retell: boolean; turn: OmoTurn; status: OmoPaneStatus; /** at rest after an error, and when that error was written */ failed: boolean; failedAt: number | null; /** what is read now is the file's history, found anew: not written since it was being read */ history: boolean; background: number }
 
 const FILES: OmoFile = {
   stat: (path) => { try { const fd = openSync(path, "r"); try { const stat = fstatSync(fd); return { size: stat.size, id: `${stat.dev}:${stat.ino}` }; } finally { closeSync(fd); } } catch { return null; } },
@@ -175,7 +184,7 @@ export class OmoStatus {
   /** every pane that runs OmO; those whose session is known carry a status */
   private readonly panes = new Map<string, Tracked>();
   /** what a pane read when its OmO was last told from it, while the pane itself is still there: found again, it goes on from that */
-  private readonly last = new Map<string, { status: OmoPaneStatus; background: number; path: string; startedAt: number | null }>();
+  private readonly last = new Map<string, { status: OmoPaneStatus; failed: boolean; failedAt: number | null; background: number; path: string; startedAt: number | null }>();
   private refreshedAt = -Infinity;
   private refreshedFor = "";
   private refreshing: Promise<void> | null = null;
@@ -265,7 +274,9 @@ export class OmoStatus {
           if (before) this.remember(paneId, before);
           const prior = this.last.get(paneId);
           const startedAt = pane.startedAt ?? before?.startedAt ?? (prior?.path === pane.path ? prior.startedAt : null);
-          this.panes.set(paneId, { ...pane, startedAt, cwd: cwds.get(paneId) ?? "", offset: -1, size: -1, id: "", retell: prior !== undefined, turn: noTurn(), status: prior?.status ?? "idle", background: prior?.background ?? 0 });
+          // an error the pane rested on is the same session's alone: another one's answers finish nothing of it
+          const same = prior !== undefined && prior.path === pane.path;
+          this.panes.set(paneId, { ...pane, startedAt, cwd: cwds.get(paneId) ?? "", offset: -1, size: -1, id: "", retell: prior !== undefined, turn: noTurn(), status: prior?.status ?? "idle", failed: same && prior.failed, failedAt: same ? prior.failedAt : null, history: false, background: prior?.background ?? 0 });
         }
         if (pane.path !== null) this.last.delete(paneId);
       }
@@ -277,7 +288,7 @@ export class OmoStatus {
   }
 
   private remember(paneId: string, tracked: Tracked): void {
-    if (tracked.path !== null) this.last.set(paneId, { status: tracked.status, background: tracked.background, path: tracked.path, startedAt: tracked.startedAt });
+    if (tracked.path !== null) this.last.set(paneId, { status: tracked.status, failed: tracked.failed, failedAt: tracked.failedAt, background: tracked.background, path: tracked.path, startedAt: tracked.startedAt });
   }
 
   /**
@@ -319,18 +330,30 @@ export class OmoStatus {
       const sessionId = omoSessionId(tracked.path);
       if (!counts.has(tracked.cwd)) counts.set(tracked.cwd, tracked.cwd ? this.background(tracked.cwd) : new Map());
       const background = sessionId ? counts.get(tracked.cwd)!.get(sessionId) ?? 0 : 0;
-      const turn = status !== tracked.status || (tracked.retell && status !== "idle");
+      const failed = status === "idle" && tracked.turn.failed === true;
+      // an answer written after the error that ended the turn (a retry's, or one to a new prompt):
+      // the pane worked meanwhile, though it read READY, and this rest is the finish of that work.
+      // Without the times to tell it newer, it is not taken for one: a finish missed, never made up
+      const answered = tracked.failed && tracked.failedAt !== null && status === "idle" && !failed && tracked.turn.status === "idle"
+        && tracked.turn.at !== null && tracked.turn.at > tracked.failedAt;
+      // an error read from a file found anew is history: it says nothing of a DONE told since
+      const rest: OmoRest | undefined = failed ? (tracked.history ? "failed-before" : "failed") : answered ? "answered" : undefined;
+      const turn = status !== tracked.status || failed !== tracked.failed || (tracked.retell && status !== "idle");
       tracked.retell = false;
       const changed = turn || background !== tracked.background;
       tracked.status = status;
+      tracked.failed = failed;
+      tracked.failedAt = failed ? tracked.turn.at : null;
+      tracked.history = false;
       tracked.background = background;
-      if (changed) this.deps.onChange(paneId, status, background, turn);
+      if (changed) this.deps.onChange(paneId, status, background, turn, rest);
     }
   }
 
   /** Replay from the start once, then consume only appended complete records. */
   private readFrom(tracked: Tracked, path: string, size: number): void {
     tracked.turn = noTurn();
+    tracked.history = true;
     tracked.offset = this.file.lines(path, 0, size, (line) => {
       tracked.turn = omoTurnAfter(tracked.turn, line);
     });

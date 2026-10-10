@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { createServer } from "./index.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, PushKey, RemoteAccess, SessionSnapshot, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
+import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type InstalledNotes, type UpdateNotes } from "../shared/update.ts";
 import { USAGE_PROVIDERS, UsageService } from "./usage.ts";
@@ -39,6 +39,18 @@ afterAll(() => {
 });
 
 const base = () => `http://localhost:${server.port}`;
+
+describe("single-pane context lookup", () => {
+  for (const route of ["commands", "files"] as const) {
+    it(`rejects an unknown pane on /api/pane/${route} with the shared error envelope`, async () => {
+      const response = await fetch(`${base()}/api/pane/${route}?pane_id=w9999:p9999`);
+      expect(response.status).toBe(404);
+      const body: ApiError = await response.json();
+      expect(body.error.code).toBe("pane_not_found");
+      expect(typeof body.error.message).toBe("string");
+    });
+  }
+});
 
 describe("Devin conversation API", () => {
   it("keeps the terminal fallback rather than guessing a shell pane's session", async () => {
@@ -352,9 +364,9 @@ describe("phone access", () => {
 describe("mutation body validation", () => {
   it("rejects non-object JSON without touching herdr or losing the error envelope", async () => {
     for (const path of [
-      "/api/workspace/create", "/api/tab/create", "/api/tab/rename", "/api/tab/close", "/api/workspace/rename", "/api/workspace/move", "/api/workspace/close",
-      "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/image",
-      "/api/pane/scroll",
+      "/api/workspace/create", "/api/tab/create", "/api/tab/rename", "/api/tab/close", "/api/tab/move", "/api/workspace/rename", "/api/workspace/move", "/api/workspace/close",
+      "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/move", "/api/pane/image",
+      "/api/pane/scroll", "/api/agent/rename",
     ]) {
       for (const body of [null, [], "text", 42, true]) {
         const response = await fetch(`${base()}${path}`, {
@@ -441,6 +453,153 @@ describe("tab rename and close", () => {
   });
 });
 
+describe("tab reorder", () => {
+  const post = (body: unknown, path = "/api/tab/move") => fetch(`${base()}${path}`, {
+    method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify(body),
+  });
+  it("requires a tab and a non-negative safe insertion boundary", async () => {
+    expect((await fetch(`${base()}/api/tab/move`)).status).toBe(400);
+    for (const tab_id of [undefined, null, "", 4, true]) {
+      const result = await post({ tab_id, insert_index: 0 });
+      expect(result.status).toBe(400);
+      expect(((await result.json()) as ApiError).error.code).toBe("missing_tab_id");
+    }
+    for (const insert_index of [undefined, null, -1, 0.5, "1", Number.MAX_SAFE_INTEGER + 1]) {
+      const result = await post({ tab_id: "unknown:t9", insert_index });
+      expect(result.status).toBe(400);
+      expect(((await result.json()) as ApiError).error.code).toBe("invalid_index");
+    }
+    const missing = await post({ tab_id: "unknown:t9", insert_index: 0 });
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as ApiError).error.code).toBe("tab_not_found");
+  });
+  it("uses boundaries before removal, preserves focus and IDs, and rejects out-of-range moves", async () => {
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-tab-reorder" });
+    const id = owned.workspace.workspace_id;
+    try {
+      const second = await tabCreate({ workspaceId: id, label: "build" });
+      const third = await tabCreate({ workspaceId: id });
+      const firstId = owned.tab.tab_id;
+      const initial = await sessionSnapshot();
+      const nativeIds = () => sessionSnapshot().then((snapshot) => snapshot.tabs.filter((tab) => tab.workspace_id === id).map((tab) => tab.tab_id));
+      for (const [boundary, expected] of [[3, [second.tab.tab_id, third.tab.tab_id, firstId]], [0, [firstId, second.tab.tab_id, third.tab.tab_id]]] as const) {
+        const response = await post({ tab_id: firstId, insert_index: boundary }, "/api/machines/local/tab/move");
+        expect(response.status).toBe(200);
+        const result = await response.json() as TabMoved;
+        expect(result.ok).toBe(true);
+        expect(result.tabs.map((tab) => tab.tab_id)).toEqual([...expected]);
+        expect(result.tabs.find((tab) => tab.tab_id === second.tab.tab_id)?.label).toBe("build");
+        expect(await nativeIds()).toEqual([...expected]);
+        const snapshot = await sessionSnapshot();
+        expect(snapshot.focused_pane_id).toBe(initial.focused_pane_id);
+        expect(snapshot.focused_tab_id).toBe(initial.focused_tab_id);
+        expect(snapshot.panes.filter((pane) => pane.workspace_id === id).map((pane) => pane.pane_id).sort()).toEqual(initial.panes.filter((pane) => pane.workspace_id === id).map((pane) => pane.pane_id).sort());
+      }
+      const bad = await post({ tab_id: firstId, insert_index: 4 });
+      expect(bad.status).toBe(404);
+      expect(((await bad.json()) as ApiError).error.code).toBe("tab_move_failed");
+      expect(await nativeIds()).toEqual([firstId, second.tab.tab_id, third.tab.tab_id]);
+      // Either boundary touching the source is a no-op, not a close/recreate.
+      expect((await post({ tab_id: firstId, insert_index: 1 })).status).toBe(200);
+      expect(await nativeIds()).toEqual([firstId, second.tab.tab_id, third.tab.tab_id]);
+    } finally { await workspaceClose(id); }
+  });
+});
+
+describe("agent rename", () => {
+  const post = (body: unknown) => fetch(`${base()}/api/agent/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const nameOf = async (paneId: string): Promise<string | null> =>
+    (await herdrRpc<{ agents: Array<{ pane_id: string; name?: string | null }> }>("agent.list", {})).agents.find((agent) => agent.pane_id === paneId)?.name ?? null;
+
+  it("sets, reads back and clears a pane's agent name, and passes herdr's refusals through", async () => {
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-agent-rename" });
+    const id = owned.workspace.workspace_id;
+    const paneId = owned.root_pane.pane_id;
+    try {
+      // a shell pane has no live agent to name
+      const shell = await post({ pane_id: paneId, name: "webui-rename-a" });
+      expect(shell.status).toBe(404);
+      expect(((await shell.json()) as ApiError).error.code).toBe("agent_not_found");
+
+      await herdrRpc("pane.report_agent", { pane_id: paneId, source: "herdr-web-ui-test", agent: "claude", state: "idle" });
+      const set = await post({ pane_id: paneId, name: "webui-rename-a" });
+      expect(set.status).toBe(200);
+      expect(await set.json()).toEqual({ ok: true });
+      expect(await nameOf(paneId)).toBe("webui-rename-a");
+      // the browser reads it off the session snapshot's agents
+      const session = (await (await fetch(`${base()}/api/session`)).json()) as { snapshot: SessionSnapshot };
+      expect(session.snapshot.agents.find((agent) => agent.pane_id === paneId)?.name).toBe("webui-rename-a");
+
+      // herdr's rule, in herdr's words, and the name stays
+      const invalid = await post({ pane_id: paneId, name: "Bad Name" });
+      expect(invalid.status).toBe(404);
+      const refused = (await invalid.json()) as ApiError;
+      expect(refused.error.code).toBe("invalid_agent_name");
+      expect(refused.error.message).toContain("lowercase");
+      expect(await nameOf(paneId)).toBe("webui-rename-a");
+
+      // unique among the session's live agents
+      const second = await tabCreate({ workspaceId: id });
+      await herdrRpc("pane.report_agent", { pane_id: second.root_pane.pane_id, source: "herdr-web-ui-test", agent: "codex", state: "working" });
+      const taken = await post({ pane_id: second.root_pane.pane_id, name: "webui-rename-a" });
+      expect(taken.status).toBe(404);
+      expect(((await taken.json()) as ApiError).error.code).toBe("agent_name_taken");
+      expect(await nameOf(second.root_pane.pane_id)).toBeNull();
+
+      // the local-PC alias reaches it, and null clears
+      const alias = await fetch(`${base()}/api/machines/local/agent/rename`, {
+        method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ pane_id: paneId, name: null }),
+      });
+      expect(alias.status).toBe(200);
+      expect(await alias.json()).toEqual({ ok: true });
+      expect(await nameOf(paneId)).toBeNull();
+    } finally { await workspaceClose(id); }
+  });
+
+  it("forwards a remote rename with the registered bridge token, not the browser's", async () => {
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-agent-rename-bridge" });
+    const paneId = owned.root_pane.pane_id;
+    const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-agent-rename-bridge-"));
+    // the other PC's bridge asks its browsers for a token of its own; the proxy holds only the bridge token it registered
+    const bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "test-browser-token", machines: false, registerBridge: true, stateDir: state, tailscaleOwner: null });
+    const registered = JSON.parse(readFileSync(descriptorPath(), "utf8")) as BridgeDescriptor;
+    const endpoint = `http://127.0.0.1:${bridge.port}`;
+    const manager = { endpoint: (id: string) => id === "rename-remote" ? { url: endpoint, token: registered.token } : null, trackTerminal: () => () => {} } as unknown as MachineManager;
+    try {
+      expect(registered.token).not.toBe("test-browser-token");
+      await herdrRpc("pane.report_agent", { pane_id: paneId, source: "herdr-web-ui-test", agent: "claude", state: "idle" });
+      // the browser token is deliberately absent: the proxy must authenticate with the bridge token
+      expect((await fetch(`${endpoint}/api/agent/rename`, { method: "POST", body: "{}" })).status).toBe(401);
+      const res = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/rename-remote/agent/rename", {
+        method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" },
+        body: JSON.stringify({ pane_id: paneId, name: "webui-rename-b" }),
+      }), manager);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(await nameOf(paneId)).toBe("webui-rename-b");
+    } finally {
+      bridge.stop();
+      await workspaceClose(owned.workspace.workspace_id);
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
+
+  it("validates the body before asking herdr", async () => {
+    for (const [body, code] of [
+      [{}, "missing_pane_id"],
+      [{ pane_id: "", name: "x" }, "missing_pane_id"],
+      // an omitted name is not a clear: only null is
+      [{ pane_id: "w1:p1" }, "invalid_name"],
+      [{ pane_id: "w1:p1", name: 42 }, "invalid_name"],
+    ] as const) {
+      const response = await post(body);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as ApiError).error.code).toBe(code);
+    }
+    expect((await fetch(`${base()}/api/agent/rename`)).status).toBe(400);
+  });
+});
+
 // Tab creation shares workspace creation's agent launch (#362 by @WOULDU-pres): the cases
 // below prove the tab half of that path against a real herdr.
 describe("tab creation", () => {
@@ -516,7 +675,7 @@ describe("tab creation", () => {
       const created = await res.json() as WorkspaceCreated;
       expect(created).toMatchObject({ workspace_id: owned.workspace.workspace_id, agent_started: false });
       expect(created.pane_id).not.toBe(owned.root_pane.pane_id);
-      expect((await fetch(`${base()}/api/machines/local/tab/move`)).status).toBe(404);
+      expect((await fetch(`${base()}/api/machines/local/tab/move/extra`)).status).toBe(404);
     } finally { await workspaceClose(owned.workspace.workspace_id); }
   });
 
@@ -539,6 +698,14 @@ describe("tab creation", () => {
       const created = await res.json() as WorkspaceCreated;
       expect(created).toMatchObject({ workspace_id: owned.workspace.workspace_id, agent_started: false });
       expect(created.pane_id).not.toBe(owned.root_pane.pane_id);
+
+      const createdTab = (await sessionSnapshot()).panes.find((pane) => pane.pane_id === created.pane_id)!.tab_id;
+      const moved = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/tab-remote/tab/move", {
+        method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" },
+        body: JSON.stringify({ tab_id: createdTab, insert_index: 0 }),
+      }), manager);
+      expect(moved?.status).toBe(200);
+      expect(((await moved!.json()) as TabMoved).tabs[0]?.tab_id).toBe(createdTab);
       const management = await fetch(`${endpoint}/api/machines`, { headers: { authorization: `Bearer ${registered.token}` } });
       expect(management.status).toBe(401);
     } finally {
@@ -616,6 +783,20 @@ describe("workspace and discovery endpoints", () => {
     expect(agents.some((agent) => agent.kind === "claude")).toBeTrue();
     expect(agents.some((agent) => agent.kind === "omp")).toBeTrue();
     expect(agents.map((agent) => agent.label)).toEqual([...agents.map((agent) => agent.label)].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it("lists herdr's integrations as integration.list reports them, and refuses anything but GET", async () => {
+    const res = await fetch(`${base()}/api/integrations`);
+    expect(res.status).toBe(200);
+    const { integrations } = (await res.json()) as IntegrationsResponse;
+    const fromHerdr = (await herdrRpc<IntegrationsResponse>("integration.list", {})).integrations;
+    expect(integrations).toEqual(fromHerdr);
+    const claude = integrations.find((integration) => integration.target === "claude");
+    expect(claude).toMatchObject({ label: "claude", command: "claude" });
+    for (const integration of integrations) expect(["not_installed", "current", "outdated"]).toContain(integration.state);
+    const post = await fetch(`${base()}/api/integrations`, { method: "POST" });
+    expect(post.status).toBe(400);
+    expect(((await post.json()) as ApiError).error.code).toBe("method_not_allowed");
   });
 
   it("offers omo and gjc, which herdr cannot start, exactly when they are on PATH", async () => {
@@ -868,6 +1049,13 @@ describe("workspace and discovery endpoints", () => {
       ["/api/workspace/move", { workspace_id: "x", insert_index: -1 }, "invalid_index"],
       ["/api/workspace/close", {}, "missing_workspace_id"],
       ["/api/pane/rename", {}, "missing_pane_id"],
+      ["/api/pane/focus", {}, "missing_pane_id"],
+      ["/api/pane/swap", { pane_id: "x", direction: "right", target_pane_id: "y" }, "invalid_pane_swap"],
+      ["/api/pane/swap", { pane_id: "x", target_pane_id: "" }, "invalid_target_pane_id"],
+      ["/api/layout/ratio", {}, "missing_tab_id"],
+      ["/api/layout/ratio", { tab_id: "x", path: [0], ratio: 0.5 }, "invalid_path"],
+      ["/api/layout/ratio", { tab_id: "x", path: [], ratio: 1 }, "invalid_ratio"],
+      ["/api/agent/rename", {}, "missing_pane_id"],
     ] as const) {
       const res = await fetch(`${base()}${path}`, {
         method: "POST",
@@ -908,6 +1096,47 @@ describe("GET /api/session", () => {
       expect(typeof ws.label).toBe("string");
     }
     expect(body.snapshot.panes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("POST /api/pane/find viewport results", () => {
+  let workspaceId: string;
+  let paneId: string;
+  beforeAll(async () => {
+    const created = await workspaceCreate({ cwd: stateDir, label: "herdr-web-ui-test-find-response" });
+    workspaceId = created.workspace.workspace_id;
+    paneId = created.root_pane.pane_id;
+    const ready = herdrRpc("pane.wait_for_output", {
+      pane_id: paneId, source: "visible", match: { type: "substring", value: "find_response_ready" }, timeout_ms: 10000,
+    }, undefined, 12000);
+    await herdrRpc("pane.send_input", { pane_id: paneId, text: "printf 'find_response_%s\\n' ready; exec cat", keys: ["enter"] });
+    await ready;
+  }, 15000);
+  afterAll(async () => { if (workspaceId) await workspaceClose(workspaceId); });
+
+  it("includes bounded cell ranges and the unchanged shared viewport for jump:false", async () => {
+    const before = await (await fetch(`${base()}/api/pane/scroll?pane_id=${encodeURIComponent(paneId)}`)).json() as { scroll: PaneFindResponse["scroll"] };
+    const response = await fetch(`${base()}/api/pane/find`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane_id: paneId, query: "find_response_ready", direction: "backward", jump: false }),
+    });
+    expect(response.status).toBe(200);
+    const body: PaneFindResponse = await response.json();
+    expect(body.total).toBe(1);
+    expect(body.matches).toEqual([body.match!]);
+    expect(body.scroll).toEqual(before.scroll);
+    expect(Number.isSafeInteger(body.content_revision)).toBe(true);
+    const after = await (await fetch(`${base()}/api/pane/scroll?pane_id=${encodeURIComponent(paneId)}`)).json() as { scroll: PaneFindResponse["scroll"] };
+    expect(after.scroll).toEqual(before.scroll);
+  });
+
+  it("rejects a non-boolean jump with the shared error envelope", async () => {
+    const response = await fetch(`${base()}/api/pane/find`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane_id: paneId, query: "ready", direction: "forward", jump: "false" }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: { code: "invalid_jump", message: "jump must be a boolean" } });
   });
 });
 
@@ -2330,6 +2559,10 @@ describe("PC management API", () => {
     expect(data.machines[0]).toMatchObject({ id: "local", kind: "local" });
     const local = await fetch(`${base()}/api/machines/local/session`);
     expect(local.status).toBe(200);
+    const viaAlias = await fetch(`${base()}/api/machines/local/integrations`);
+    expect(viaAlias.status).toBe(200);
+    const direct = await fetch(`${base()}/api/integrations`);
+    expect(await viaAlias.json()).toEqual(await direct.json());
   });
   it("rejects CSRF, malformed targets and remote forwarding outside the allowlist", async () => {
     for (const headers of [{}, { "x-herdr-machine": "1", origin: "https://evil.invalid" }, { "x-herdr-machine": "1", "sec-fetch-site": "cross-site" }] as Record<string, string>[]) {
@@ -2389,7 +2622,7 @@ it("refuses cross-origin changes while allowing same-origin and CLI requests", a
   const base = `http://127.0.0.1:${instance.port}`;
   const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-origin" });
   try {
-    for (const path of ["pane/input", "pane/keys", "pane/close", "workspace/create", "tab/create", "tab/rename", "tab/close", "push/subscribe"]) {
+    for (const path of ["pane/input", "pane/keys", "pane/close", "pane/focus", "layout/ratio", "workspace/create", "tab/create", "tab/rename", "tab/close", "tab/move", "push/subscribe"]) {
       const response = await fetch(`${base}/api/${path}`, { method: "POST", headers: { origin: "http://other.example", "content-type": "text/plain" }, body: JSON.stringify({ pane_id: created.root_pane.pane_id, text: "must not type", keys: ["Enter"] }) });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: { code: "invalid_origin" } });

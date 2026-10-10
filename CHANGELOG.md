@@ -7,6 +7,144 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-11
+
+### Added
+- Drag tabs to reorder them within their workspace without changing the selected pane. The tab
+  menu offers **Move tab left / right**, including on phones; Alt+Shift+Left/Right moves a focused
+  tab. The order is saved by herdr and shared with its TUI.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Terminal search highlights native matches in the visible grid, and a scrollbar navigates
+  herdr's shared history by dragging or keyboard. Search counts and previous/next navigation stay
+  available on older bridges; automatic highlighting requires the new range response.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- The command palette searches panes across all connected PCs, including PC names, workspace
+  branches and tab labels. Results and Recent entries retain their owning PC, and selecting one
+  switches directly to it. App and plugin actions still target the currently selected PC.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Native pane layout operations are available from the web and remote PCs. Pane menus offer
+  split, zoom and swap with the focused pane; split boundaries resize herdr's actual layout.
+  The command palette also offers split and zoom actions. The bridge exposes pane split, zoom,
+  swap, resize and clear endpoints.
+  ([#726](https://github.com/devswha/herdr-web-ui/pull/726), [#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Find literal text in a pane's history from **Find in terminal** in More or Mod+Shift+F.
+  Previous/next controls show the match count and move herdr's shared viewport, including its TUI.
+  ([#729](https://github.com/devswha/herdr-web-ui/pull/729))
+- The command palette lists the actions of the herdr plugins installed on the PC under **Plugin
+  actions** and runs one against the selected pane, with that pane's workspace and tab as its
+  context. The row shows that it is running, a command that fails says why above the list, and a
+  pane the action opens and focuses is selected. Settings → About lists the installed plugins and
+  their actions, to read only: installing, enabling and removing a plugin stay with herdr.
+  ([#720](https://github.com/devswha/herdr-web-ui/pull/720))
+- **Settings → Agent integrations** lists herdr's integration for each agent it supports and
+  says whether it is installed, older than the running herdr, or missing. Agents found on the PC
+  come first. A missing or outdated one shows its `herdr integration install …` command with a
+  Copy button; the page only reads herdr's state and never installs or removes anything.
+  ([#722](https://github.com/devswha/herdr-web-ui/pull/722))
+- **Move pane to…** in the header's More menu moves the
+  pane into another tab of its workspace, a new tab there or in another workspace, or a workspace
+  of its own, as herdr's `pane move` does; on a phone the places are a bottom sheet. The app stays
+  on the moved pane, also under the new id herdr gives a pane that changes workspace, and the lens
+  and unsent drafts kept for it follow. `POST /api/pane/move` carries it, on a remote PC too.
+  ([#734](https://github.com/devswha/herdr-web-ui/pull/734), [#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- The command palette now lists panes the way herdr's Goto picker does: one row per pane under
+  its workspace's heading (a linked worktree's branch beside the name), with status chips above
+  the list — **All**, **INPUT**, **RUN**, **READY**, **DONE** and **BG**, each with its count — and
+  a footer that names where the picked row goes (workspace › tab) and its path. A search also
+  matches the tab's label, the workspace's branch and the agent kind, `>` searches the actions
+  alone, Left and Right step between workspaces from the edge of the query or from a row, and
+  herdr's own keys (`b`, `w`, `i`, `d`, `a` for a filter, `/` for the search) work while the
+  focus is on the list or the chips, never while typing.
+  ([#721](https://github.com/devswha/herdr-web-ui/pull/721))
+- Live agent names set through `herdr agent rename` appear in the Agents list, including changes
+  from another client. ([#736](https://github.com/devswha/herdr-web-ui/pull/736), [#747](https://github.com/devswha/herdr-web-ui/pull/747))
+
+### Changed
+- The server gzips its JSON and text answers for a browser that accepts it. A conversation page
+  of a couple of megabytes, fetched on every session switch and polled while it changes, goes over
+  the wire at about a quarter of its size, and the app's script at about a third; over a slow link
+  such as a relayed Tailscale connection a switch to a long session is about twice as fast.
+  ([#615](https://github.com/devswha/herdr-web-ui/pull/615) by @Haeminway1)
+- Agents rows are selection-only: removed their ellipsis menu and name-editing dialog. The list
+  keeps its existing names, status, folding and click-to-open behavior.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Desktop tabs use a right-click menu in place of inline close and dropdown buttons. Touch and
+  narrow layouts offer the same menu through an ellipsis beside the selected tab; keyboard users
+  can open it with Shift+F10.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Workspace right-click and ⋯ menus share herdr’s workspace/worktree actions. Right-click opens
+  at the pointer without changing pane selection or input focus; sidebar layout stays the same.
+  Pane renaming stays in the pane menu, and Move pane to… is available through header More.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Split tabs now show every pane together in herdr's layout, with focused borders and draggable
+  split boundaries. Right-click a pane for herdr's pane menu without changing focus; splits open
+  the new pane, Swap with focused pane preserves the original focus, and zoom restores the same
+  layout. Tab menus contain tab creation, renaming, reordering and closing, and the strip stays visible
+  for a single pane. Each pane retains its own terminal stream, chat lens and unsent draft.
+  ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- Single-pane input, file discovery and image upload lookups ask herdr for that pane instead of
+  rebuilding a whole-session snapshot. Layout and transcript peer checks keep their snapshots.
+  ([#724](https://github.com/devswha/herdr-web-ui/pull/724))
+
+### Fixed
+- A screen reader no longer reads a pane's id out as the terminal's name.
+  ([#695](https://github.com/devswha/herdr-web-ui/pull/695) by @pt-act)
+- Pending messages remain available for **Send now** after switching tabs, workspaces or PCs.
+  Pane attachments share their PC's connection, so leaving a pane stops automatic delivery while
+  its server-owned hold receipt still arrives. Real disconnections and reloads never resume a
+  queued send. ([#747](https://github.com/devswha/herdr-web-ui/pull/747))
+- A phone or tablet that leaves the web UI (another app, the lock screen, another tab) lets go
+  of the pane at once and only watches it, so herdr's own window on the PC gets its size back
+  instead of keeping the phone's. Coming back to the page attaches again.
+  ([#748](https://github.com/devswha/herdr-web-ui/pull/748))
+- Codex conversations on Windows resolve the transcript even when the pane's working directory
+  uses different letter casing from Codex's stored path. The lookup verifies the directory on
+  disk before considering its canonical spelling, so another pane's chat is not substituted.
+  ([#740](https://github.com/devswha/herdr-web-ui/pull/740) by @antonydoyle)
+- The browser demo keeps each row's own split when resizing a grid and keeps deeply split
+  panes visible and resizable. ([#726](https://github.com/devswha/herdr-web-ui/pull/726))
+- Workspace and tab changes, pane moves and layout updates made in herdr's terminal UI
+  now refresh the web immediately through coalesced lifecycle events instead of waiting
+  for the five-second poll. Pane status subscriptions follow moved pane IDs.
+  ([#725](https://github.com/devswha/herdr-web-ui/pull/725))
+- Typing no longer reaches a pane that another connection is attached to, on a PC where typing
+  goes through herdr instead of a terminal. The other path already refused it; this one did not,
+  so a second tab or a second bridge could type into a pane someone else was attached to. A pane
+  nobody is attached to is unaffected, which is what keeps the key bar and an older bridge's
+  composer working.
+  ([#732](https://github.com/devswha/herdr-web-ui/pull/732) by @pt-act)
+- A numeric custom tab name remains visible when tabs before it close ([#723](https://github.com/devswha/herdr-web-ui/pull/723)).
+- A request that carries a session cookie but states no `Origin` is now read as cross-site rather
+  than same-origin, so a header that went missing is no longer trusted as though a browser had
+  sent it. What genuinely cannot state one keeps working — a same-origin read such as the PC
+  event stream, the WebSocket upgrade a browser cannot add the custom header to, signing out, and
+  push subscribe — as does any client that proves itself with `x-herdr-machine`. A browser is
+  unaffected: it always states an `Origin` on a cross-origin request, and `SameSite=Strict`
+  already covered what this closes.
+  ([#697](https://github.com/devswha/herdr-web-ui/pull/697) by @pt-act)
+- A remote PC that is switched off or asleep while its bridge update runs, or whose update was
+  cancelled, now shows **Reconnecting…** instead of asking for a bridge update it cannot run.
+  Once the PC answers, the version check runs again and, if the bridge is still out of date, the
+  update follows; a cancelled update comes back as the **Update bridge** button only.
+  ([#716](https://github.com/devswha/herdr-web-ui/pull/716))
+- An OmO pane whose turn ended on a model error (the provider gave up after its retries, or
+  timed out) now reads READY instead of DONE, and no "work finished" alert fires for it. A retry
+  that answers afterwards still finishes the turn as DONE, with its alert.
+  ([#715](https://github.com/devswha/herdr-web-ui/pull/715))
+- On Windows, a Codex chat is found when `CODEX_HOME` carries the `\\?\` prefix, or when Codex
+  stored the working directory with a drive letter in another case than herdr reports
+  (`\\?\d:\work\app` for `D:\work\app`). A Claude pane whose process two stores both claim
+  (`~/.claude` and a `~/.claude-*` copy) now says its chat is unavailable instead of showing
+  `~/.claude`'s session.
+  ([#714](https://github.com/devswha/herdr-web-ui/pull/714))
+
+### Maintenance
+- A few herdr-backed check runs can share a PC, one per checkout, so parallel worktrees no longer
+  wait on one lock; integration results are counted through bun's colour codes; three more
+  entry-point scripts are typechecked.
+  ([#738](https://github.com/devswha/herdr-web-ui/pull/738), [#733](https://github.com/devswha/herdr-web-ui/pull/733) by @pt-act, [#696](https://github.com/devswha/herdr-web-ui/pull/696) by @pt-act)
+- The remote-PC runtime is now version 25: every saved PC asks for **Update bridge…** once.
+
 ## [0.4.5] - 2026-10-09
 
 ### Changed
@@ -63,7 +201,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#684](https://github.com/devswha/herdr-web-ui/pull/684) by @sma505)
 - Workspaces can be reordered on a phone or tablet: hold a row until it lifts, drag it, and let
   go where the line shows. Before, a long press on iOS showed the system's drag preview but
-  dropped nothing. The row's ⋯ menu also has Move up and Move down.
+  dropped nothing. Alt+Up/Down also moves a focused row one step.
   ([#679](https://github.com/devswha/herdr-web-ui/pull/679) by @jiunshinn)
 - A task list (`- [x] done`, `- [ ] open`) in the chat shows a checked or empty box in place of
   its bullet, instead of the brackets.
@@ -2733,7 +2871,10 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/devswha/herdr-web-ui/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/devswha/herdr-web-ui/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/devswha/herdr-web-ui/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/devswha/herdr-web-ui/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/devswha/herdr-web-ui/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/devswha/herdr-web-ui/compare/v0.4.0...v0.4.1

@@ -84,6 +84,8 @@ function registerTarget(target: VoiceTarget): () => void {
 }
 
 export interface DictationOptions {
+  /** A mounted sibling must not own the global shortcut or retain a recording after selection leaves. */
+  active?: boolean;
   mode: VoiceMode;
   connected: boolean;
   polish: boolean;
@@ -129,6 +131,7 @@ export function useDictation(options: DictationOptions): Dictation {
   const spans = useRef(new Map<number, InsertedSpan>());
 
   const apply = useCallback((result: VoiceText): void => {
+    if (latest.current.active === false) return;
     const { box, read, write, maxLength, onNote } = latest.current;
     const value = read();
     const element = box.current;
@@ -203,8 +206,8 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [voice.state]);
 
   useEffect(() => {
-    if (!options.connected) cancel();
-  }, [options.connected, cancel]);
+    if (!options.connected || options.active === false) cancel();
+  }, [options.connected, options.active, cancel]);
 
   const active = voice.state !== "idle";
   useEffect(() => {
@@ -220,9 +223,9 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [active, cancel]);
 
   useEffect(() => {
-    if (!shown) return;
+    if (!shown || options.active === false) return;
     return registerTarget({ mode: latest.current.mode, box: latest.current.box, voice: () => voiceRef.current, press });
-  }, [shown, press]);
+  }, [shown, press, options.active]);
 
   return { shown, connected: options.connected, voice: { ...voice, cancel }, forget, partial, press };
 }

@@ -86,6 +86,21 @@ describe("a paired watch device", () => {
     expect(posted.status).toBe(400);
     expect((await posted.json() as { error: { code: string } }).error.code).toBe("method_not_allowed");
   });
+
+  it("keeps its own session's paths open with no Origin, and refuses every other mutation that carries one", async () => {
+    // A cookie-bearing client that cannot state an origin — a non-browser one, or a WS
+    // handshake — keeps the endpoints its own session needs, while every other mutation is
+    // now read as cross-site rather than same-origin.
+    const read = () => fetch(`${base}/api/pane/read?pane_id=w9999:p9999&source=visible`, { method: "POST", headers: { cookie } });
+    expect((await read()).status).toBe(403);
+    expect((await (await read()).json() as { error: { code: string } }).error.code).toBe("invalid_origin");
+    // the custom mutation header is that client's proof, and it still passes the origin gate:
+    // what answers next is this device's own role, not the origin check
+    const cli = await fetch(`${base}/api/pane/read?pane_id=w9999:p9999&source=visible`, { method: "POST", headers: { cookie, "x-herdr-machine": "1" } });
+    expect(cli.status).toBe(403);
+    expect((await cli.json() as { error: { code: string } }).error.code).toBe("read_only");
+  });
+
 });
 describe("a token set: guessing it", () => {
   const TOKEN = "the-right-token-for-this-test";
