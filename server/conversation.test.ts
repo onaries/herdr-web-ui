@@ -430,6 +430,22 @@ describe("parseClaudeTranscript", () => {
     expect(assistant?.parts.map((part) => part.kind)).toEqual(["text", "tool", "thinking", "text"]);
   });
 
+  it("reads thinking that Claude Code displays as updates as narration in the work", () => {
+    // the shape a recent Claude Code writes: one entry per block, the visible update as thinking
+    const entry = (thinkingDisplay: string | undefined, block: object) => JSON.stringify({ type: "assistant", timestamp: "2026-10-14T07:00:00.000Z", ...(thinkingDisplay ? { thinkingDisplay } : {}), message: { role: "assistant", stop_reason: null, content: [block] } });
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", message: { role: "user", content: "measure the padding" } }),
+      entry("updates", { type: "thinking", thinking: "", signature: "s" }),
+      entry("updates", { type: "thinking", thinking: "The padding stays; measuring it next.", signature: "s" }),
+      entry("updates", { type: "tool_use", id: "t", name: "Bash", input: { command: "true" } }),
+      entry(undefined, { type: "thinking", thinking: "private reasoning", signature: "s" }),
+    ].join("\n"));
+    expect(turns[1]?.parts.filter((part) => part.kind !== "tool")).toEqual([
+      { kind: "text", text: "The padding stays; measuring it next.", phase: "commentary" },
+      { kind: "thinking", text: "private reasoning" },
+    ]);
+  });
+
   it("survives a torn tail line while Claude is mid-append", () => {
     expect(parseClaudeTranscript(`${lines}\n{"type":"ass`).length).toBe(2);
   });

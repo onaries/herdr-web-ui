@@ -7,6 +7,8 @@ import { chromium } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { CONTENT_SECURITY_POLICY } from "../server/static.ts";
 import { chromePath } from "./chrome-path.ts";
+import { parseClaudeTranscript } from "../server/conversation.ts";
+import type { ConversationTurn } from "../shared/protocol.ts";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-chat-fallback-")));
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -18,6 +20,8 @@ try {
   await viteBuild({ configFile: join(repo, "vite.config.ts"), root, publicDir: false, logLevel: "warn", build: { outDir: output, emptyOutDir: true } });
   const terminalReads: string[] = [];
   let structured = false, resolveAgent!: () => void, agentReadArrived!: () => void;
+  let source = "codex-transcript";
+  let turns: ConversationTurn[] = [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Structured conversation arrived" }] }];
   // resolved by the server's handler: a browser-side waitForRequest can win the race against it
   const agentRead = new Promise<void>((resolve) => { agentReadArrived = resolve; });
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
@@ -25,7 +29,7 @@ try {
     if (url.pathname === "/api/pane/prompt") return Response.json({ prompt: null });
     // the chat's skill matcher asks for the pane's commands
     if (url.pathname === "/api/pane/commands") return Response.json({ commands: [] });
-    if (url.pathname === "/api/pane/conversation") return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? "codex-transcript" : "scrollback", cursor: null, turns: structured && pane === "agent" ? [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Structured conversation arrived" }] }] : [] });
+    if (url.pathname === "/api/pane/conversation") return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? source : "scrollback", cursor: null, turns: structured && pane === "agent" ? turns : [] });
     if (url.pathname === "/api/pane/read") {
       terminalReads.push(pane ?? "");
       if (pane === "error") return Response.json({ error: { code: "read_failed", message: "Terminal output unavailable" } }, { status: 500 });
@@ -78,6 +82,65 @@ try {
   await page.evaluate(() => window.chatFallbackQA.pane("empty"));
   await page.getByText("No conversation yet — say something below", { exact: true }).waitFor();
   assert.equal(await page.locator(".chat-terminal-fallback").count(), 0, "an empty structured conversation keeps its ordinary prompt");
+  // Native parser output crosses HTTP into the real ChatView. Later activity must not
+  // move a final reply into the fold or duplicate it; narration and tools stay there.
+  const jsonl = (...records: unknown[]) => records.map((record) => JSON.stringify(record)).join("\n");
+  source = "claude-transcript";
+  turns = parseClaudeTranscript(jsonl(
+    { type: "assistant", timestamp: "2026-01-01T12:00:00Z", message: { content: [{ type: "text", text: "The catalog has three books." }], stop_reason: "end_turn" } },
+    { type: "user", message: { content: "<task-notification><task-id>catalog</task-id><status>completed</status><summary>Catalog check finished.</summary></task-notification>" } },
+    { type: "assistant", timestamp: "2026-01-01T12:01:00Z", message: { content: [{ type: "tool_use", id: "check", name: "Bash", input: { command: "true" } }], stop_reason: "tool_use" } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "check", content: "Two available" }] } },
+    { type: "assistant", timestamp: "2026-01-01T12:02:00Z", message: { content: [{ type: "text", text: "Two books are available." }], stop_reason: "end_turn" } },
+    { type: "user", isMeta: true, userType: "external", message: { content: "Background command catalog-check failed with exit code 124" } },
+    { type: "assistant", timestamp: "2026-01-01T12:03:00Z", message: { content: [{ type: "text", text: "The background check timed out." }], stop_reason: "end_turn" } },
+  ));
+  await page.evaluate(() => { window.chatFallbackQA.agent("claude"); window.chatFallbackQA.pane("agent"); window.chatFallbackQA.refresh(); });
+  await page.getByText("The background check timed out.", { exact: true }).waitFor();
+  const replies = page.locator(".chat-turn-agent");
+  console.log("Claude background reply rendering:", JSON.stringify(await replies.allTextContents()));
+  assert.equal(await replies.count(), 3, "completed replies have separate message bubbles");
+  for (const [index, text] of ["The catalog has three books.", "Two books are available.", "The background check timed out."].entries()) {
+    assert.equal(await replies.nth(index).getByText(text, { exact: true }).isVisible(), true, "replies stay visible in transcript order");
+    assert.equal(await replies.nth(index).locator("time").count(), 1, "each reply has its own time");
+    assert.equal(await replies.nth(index).locator("time").getAttribute("datetime"), ["2026-01-01T12:00:00Z", "2026-01-01T12:01:00Z", "2026-01-01T12:03:00Z"][index], "each bubble keeps its own turn timestamp");
+  }
+  assert.equal(await replies.nth(0).locator(".work-block").count(), 0, "later tools do not move before the first reply");
+  assert.equal(await replies.nth(1).locator(".work-block").count(), 1, "tools stay with the reply they produced");
+  assert.equal(await replies.nth(2).locator(".work-block").count(), 0, "later reply does not inherit earlier tools");
+  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "claude-separate-replies.png") });
+  console.log("PASS Claude background continuations keep separate replies, times and intervening work");
+  {
+    const answer = "The fictional Claude catalog contains three books.";
+    const narration = "Checking the Claude catalog.";
+    turns = parseClaudeTranscript(jsonl(
+      { type: "assistant", message: { content: [{ type: "text", text: answer }], stop_reason: "end_turn" } },
+      { type: "user", isMeta: true, userType: "external", message: { role: "user", content: "Stop hook feedback: Verify the fictional catalog." } },
+      { type: "system", subtype: "stop_hook_summary" },
+      { type: "assistant", message: { content: [{ type: "text", text: narration }, { type: "tool_use", id: "cleanup", name: "Bash", input: { command: "true" } }], stop_reason: "tool_use" } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "cleanup", content: "Verified" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Catalog verification complete." }], stop_reason: "end_turn" } },
+    ));
+    await page.evaluate(() => { window.chatFallbackQA.agent("claude"); window.chatFallbackQA.pane("agent"); window.chatFallbackQA.refresh(); });
+    await page.getByText(answer, { exact: true }).waitFor();
+    const work = page.locator(".work-block");
+    const head = work.locator(".work-block-head");
+    await head.waitFor();
+    if (await head.getAttribute("aria-expanded") === "true") await head.click();
+    await work.locator(".work-block-rows").waitFor({ state: "hidden" });
+    assert.equal(await work.getByText(answer, { exact: true }).count(), 0, "the reply is outside work");
+    assert.equal(await page.getByText(answer, { exact: true }).count(), 1, "the reply appears once");
+    assert.equal(await page.getByText(answer, { exact: true }).isVisible(), true, "folding work keeps the reply visible");
+    assert.equal(await page.getByText("Catalog verification complete.", { exact: true }).isVisible(), true, "the hook continuation's short reply is also visible");
+    assert.equal(await page.locator(".chat-turn-agent").count(), 2, "hook continuation answers have separate bubbles");
+    assert.equal(await page.getByText(/Stop hook feedback:/).count(), 0, "injected hook context is not a user message");
+    await head.click();
+    await work.getByText(narration, { exact: true }).waitFor();
+    assert.equal(await work.locator(".work-row-head").count(), 1, "the tool stays inside work");
+    await head.click();
+    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "claude-hook-separate-replies.png") });
+    console.log("PASS Claude hook replies stay separately visible outside folded work; narration and tool remain grouped");
+  }
   assert.deepEqual(errors, []);
   console.log("chat fallback: browser OK (no hidden terminal reads, opened stalled output cannot block structured refresh, late cleanup, non-agent inline output, fallback error announcement and accurate empty state)");
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_IDLE_MAX_MS, idleScrollPollDelay, offsetAtThumb, scrollPollDelay, scrollThumb, validScroll, visibleFindRects, type CellReader } from "./terminalViewport.ts";
+import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_IDLE_MAX_MS, idleScrollPollDelay, scrollPollDelay, validScroll, visibleFindRects, type CellReader } from "./terminalViewport.ts";
 const scroll = { max_offset_from_bottom: 100, offset_from_bottom: 20, viewport_rows: 2 };
 const cells = (lines: string[]): CellReader => (row, col) => ({ chars: lines[row]?.[col] ?? " ", width: 1 });
 
@@ -32,14 +32,7 @@ describe("herdr viewport overlay", () => {
     expect(visibleFindRects([range], scroll, "abcd", 5, 2, cells(["xx"]))).toEqual([]);
   });
 });
-describe("shared history scrollbar", () => {
-  it("reaches both ends and roundtrips a mid-history viewport", () => {
-    const thumb = scrollThumb(scroll, 200);
-    expect(offsetAtThumb(scroll, thumb.top, 200, thumb.height)).toBe(20);
-    expect(offsetAtThumb(scroll, -100, 200, thumb.height)).toBe(100);
-    expect(offsetAtThumb(scroll, 500, 200, thumb.height)).toBe(0);
-    expect(scrollThumb({ ...scroll, max_offset_from_bottom: 0, offset_from_bottom: 0 }, 200)).toEqual({ top: 0, height: 200 });
-  });
+describe("shared history metrics", () => {
   it("rejects impossible remote metrics", () => {
     expect(validScroll(scroll)).toBe(true);
     expect(validScroll({ ...scroll, viewport_rows: 0 })).toBe(false);

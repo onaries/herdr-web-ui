@@ -44,17 +44,6 @@ const layout = async (page: Page, path: string, body: Record<string, unknown>): 
   assert.equal(status, 200, `${path} answered ${status}`);
 };
 
-const setNarrowFit = async (page: Page, on: boolean): Promise<void> => {
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-  await dialog.getByText("Terminal", { exact: true }).first().click();
-  const toggle = dialog.getByRole("switch", { name: "Fit 80 columns in a split pane", exact: true });
-  assert.equal(await toggle.getAttribute("aria-checked"), String(!on), "the switch starts on the other side");
-  await toggle.click();
-  await page.getByRole("button", { name: "Close settings", exact: true }).click();
-  await dialog.waitFor({ state: "detached" });
-};
-
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
@@ -94,6 +83,43 @@ try {
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
+      // A lone chat pane's floating ellipsis and Find must remain separate click targets.
+      await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.infra)}&view=chat`);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      const frame = page.locator(".pane-frame.is-single:visible");
+      const find = frame.getByRole("button", { name: "Find in messages", exact: true });
+      const paneMenu = frame.locator(".pane-frame-menu");
+      await find.waitFor();
+      for (const density of ["comfortable", "compact"]) {
+        await page.evaluate((density) => document.documentElement.dataset.density = density, density);
+        // a mouse reaches the pane menu by right-click: only keyboard focus reveals the ellipsis
+        await page.keyboard.press("Tab");
+        await paneMenu.focus();
+        assert.equal(await paneMenu.evaluate((node) => getComputedStyle(node).opacity), "1", `${density}: the focused pane menu is shown`);
+        const searchBox = await find.boundingBox();
+        const menuBox = await paneMenu.boundingBox();
+        assert.ok(searchBox && menuBox, "both pane controls are visible");
+        assert.ok(searchBox.x + searchBox.width <= menuBox.x, `${density}: Find stays left of the pane menu`);
+        await find.click();
+        await frame.getByRole("search", { name: "Find in messages", exact: true }).waitFor();
+        await frame.getByRole("button", { name: "Close search", exact: true }).click();
+        await page.keyboard.press("Tab");
+        await paneMenu.focus();
+        await paneMenu.press("Enter");
+        const actions = page.getByRole("menu", { name: /^Pane actions for / });
+        await actions.waitFor();
+        await page.keyboard.press("Escape");
+        await actions.waitFor({ state: "detached" });
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      const searchBox = await find.boundingBox();
+      const headerBox = await page.locator(".app-header").boundingBox();
+      assert.ok(searchBox && headerBox);
+      assert.ok(searchBox.y >= headerBox.y + headerBox.height, "phone Find stays below the glass header and its menu");
+      await find.click();
+      await frame.getByRole("button", { name: "Close search", exact: true }).click();
+      await page.setViewportSize({ width: 1700, height: 900 });
+      console.log("PASS chat Find stays clear of desktop pane menus and the phone header");
       await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.shell)}`);
       await page.locator(".conn-live").waitFor({ state: "attached" });
       const saved = (): Promise<number | undefined> => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").terminalFontSize as number | undefined);
@@ -104,11 +130,6 @@ try {
 
       await page.setViewportSize({ width: 1450, height: 900 });
       const shrunk = await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "a split under 80 columns");
-
-      await setNarrowFit(page, false);
-      await settled(page, { panes: 2, font: "base", cols: "narrow" }, "the setting off");
-      await setNarrowFit(page, true);
-      assert.deepEqual(await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "the setting back on"), shrunk);
 
       await page.setViewportSize({ width: 1200, height: 900 });
       await settled(page, { panes: 2, font: "base", cols: "narrow" }, "a split no font can bring to 80 columns");

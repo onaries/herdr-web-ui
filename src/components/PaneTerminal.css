@@ -54,7 +54,6 @@
    positioned against THIS, never against the stack — the composer and key bar
    below keep their rows no matter which lens is on */
 .terminal-surface {
-  --terminal-history-gutter: var(--space-3);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -363,6 +362,3 @@
 .terminal-stack.is-chat .pane-terminal {
   content-visibility: hidden;
 }
-
-.pane-terminal.has-viewport-tools { width: calc(100% - var(--terminal-history-gutter)); }
-@media (pointer: coarse) { .terminal-surface { --terminal-history-gutter: var(--space-6); } }

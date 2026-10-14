@@ -21,10 +21,15 @@ process.env["TMPDIR"] = realpathSync(tmpdir());
 
 export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "herdr-web-ui-test";
 
-/** Where herdr puts a named session's socket (it follows XDG_CONFIG_HOME, as remote-entry.ts does). */
-export function testSocketPath(): string {
-  const config = join(process.env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "herdr");
-  return join(config, "sessions", TEST_SESSION, "herdr.sock");
+/**
+ * Where herdr puts a named session's socket: under XDG_CONFIG_HOME when it is set, on Windows too
+ * (live-verified, herdr 0.9.3; `bun run check` isolates herdr through it), else under APPDATA on
+ * Windows and ~/.config elsewhere.
+ */
+export function testSocketPath(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): string {
+  const root = env["XDG_CONFIG_HOME"]
+    || (platform === "win32" ? env["APPDATA"] || join(homedir(), "AppData", "Roaming") : join(homedir(), ".config"));
+  return join(root, "herdr", "sessions", TEST_SESSION, "herdr.sock");
 }
 
 function herdrBinary(): string | null {

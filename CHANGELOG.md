@@ -88,6 +88,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   to the start of the message in the order the files were picked, once a `/command` being typed or
   an IME composition is finished. It used to go where the caret
   was, so a path that arrived while you typed landed in the middle of your words and moved the caret.
+- A Pi conversation whose session file has grown past 64 MiB reads as a conversation again, where
+  the chat fell back to the terminal's text (`branch_unreadable`): the reader no longer refuses a
+  long active branch as a whole, and pages it the way it pages a short one, within the same budgets.
 - One paste, pick or drop attaches up to 20 files instead of silently keeping the first four, and
   the message box says how many it left out. **Settings → Chat → Files at once** sets the number
   for the device, from 1 to 50.

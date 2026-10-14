@@ -15,7 +15,7 @@
 
 import { constants } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
-import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
+import nodePath, { dirname, isAbsolute, join, type PlatformPath } from "node:path";
 import { directoryKey, withoutVerbatimPrefix } from "./codex.ts";
 import { recentProcessTable } from "./gjc-runtime.ts";
 import type { ProcessRow } from "./windows-processes.ts";
@@ -191,8 +191,7 @@ const CONTINUED_TAIL_BYTES = 64 * 1024;
  * user or assistant turn after it. Only the file's tail is read, since this runs on every lookup.
  * A file that cannot be read names no continuation: its own reader reports the failure.
  */
-async function continuedInSession(path: string): Promise<string | null> {
-  let text: string;
+async function transcriptTail(path: string): Promise<string | null> {
   try {
     const file = await open(path, constants.O_RDONLY);
     try {
@@ -200,15 +199,20 @@ async function continuedInSession(path: string): Promise<string | null> {
       const start = Math.max(0, size - CONTINUED_TAIL_BYTES);
       const buffer = Buffer.alloc(size - start);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
-      text = buffer.subarray(0, bytesRead).toString("utf8");
+      const text = buffer.subarray(0, bytesRead).toString("utf8");
       // a tail that starts mid-line drops that partial line
-      if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+      return start > 0 ? text.slice(text.indexOf("\n") + 1) : text;
     } finally {
       await file.close();
     }
   } catch {
     return null;
   }
+}
+
+async function continuedInSession(path: string): Promise<string | null> {
+  const text = await transcriptTail(path);
+  if (text === null) return null;
   let continued: string | null = null;
   for (const line of text.split("\n")) {
     if (!line.includes('"type"')) continue;
@@ -221,6 +225,43 @@ async function continuedInSession(path: string): Promise<string | null> {
     } catch { /* a torn tail line cannot name the active session */ }
   }
   return continued;
+}
+
+/**
+ * `/resume` of a session running in the background parks the pane on a continuation that never
+ * gets a transcript; the conversation lives in the job's own `<8 hex>-*.jsonl` of the same project,
+ * whose id the command prints as `running in the background (<8 hex>)`. Only an unambiguous
+ * single match is taken, and the job's state.json, when it names a transcript, must agree.
+ */
+async function backgroundJobTranscript(path: string, configDir: string): Promise<string | null> {
+  const text = await transcriptTail(path);
+  if (text === null) return null;
+  // each continued-in record claims only the output printed since the previous record, so an
+  // earlier /resume's job id never names a later continuation
+  let pending: string | undefined;
+  let id: string | undefined;
+  for (const line of text.split("\n")) {
+    if (line.includes('"type":"continued-in"')) {
+      id = pending;
+      pending = undefined;
+    } else {
+      pending = [...line.matchAll(/running in the background \(([0-9a-f]{8})\)/g)].at(-1)?.[1] ?? pending;
+    }
+  }
+  if (id === undefined) return null;
+  let matches: string[];
+  try {
+    matches = (await readdir(dirname(path))).filter((name) => name.startsWith(`${id}-`) && name.endsWith(".jsonl"));
+  } catch { return null; }
+  if (matches.length !== 1) return null;
+  const job = join(dirname(path), matches[0]!);
+  try {
+    const state = JSON.parse(await readFile(join(configDir, "jobs", id, "state.json"), "utf8")) as { linkScanPath?: unknown };
+    if (typeof state.linkScanPath === "string" && state.linkScanPath !== job) return null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError || absent(error))) return null;
+  }
+  return await isFile(job) ? job : null;
 }
 
 export function forgetClaudeSessions(): void {
@@ -350,8 +391,9 @@ export async function claudeTranscriptFile(home: string, session: string, cwds: 
     const next = await continuedInSession(path);
     if (next === null || seen.has(next)) return path;
     seen.add(next);
-    // a continuation whose file is not there keeps the transcript that named it
-    const nextPath = await locate(next);
+    // a continuation whose file is not there keeps the transcript that named it, unless a
+    // /resume of a background session names that job's own transcript
+    const nextPath = await locate(next) ?? await backgroundJobTranscript(path, configDir);
     if (nextPath === null) return path;
     path = nextPath;
   }

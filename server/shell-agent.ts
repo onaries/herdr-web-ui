@@ -11,7 +11,7 @@
  */
 import { herdrRpc } from "./herdr/client.ts";
 import { isGjcProcess } from "./gjc-runtime.ts";
-import { isOmoProcess } from "./omo.ts";
+import { isOmoProcess, omoProcessIdentity } from "./omo.ts";
 import { psQuote } from "./powershell.ts";
 import { descendantArgv, windowsProcessTable } from "./windows-processes.ts";
 
@@ -21,7 +21,7 @@ export const SHELL_AGENTS: Record<string, (argv: readonly string[]) => boolean> 
   gjc: isGjcProcess,
 };
 /** The shell-started agents known to start on Windows; the others are not offered there. */
-const WINDOWS_SHELL_AGENTS = new Set(["gjc"]);
+const WINDOWS_SHELL_AGENTS = new Set(["omo", "gjc"]);
 
 export function isShellAgentKind(kind: string): boolean { return Object.hasOwn(SHELL_AGENTS, kind); }
 
@@ -55,7 +55,7 @@ export function shellCommandLine(shell: PaneShell, executable: string, args: rea
   return [executable, ...args].map(quote).join(" ");
 }
 
-interface ProcessInfo { process_info?: { shell_pid?: number; foreground_processes?: { argv?: string[] }[] } }
+interface ProcessInfo { process_info?: { shell_pid?: number; foreground_processes?: { pid: number; argv?: string[]; cwd?: string }[] } }
 const processInfo = (paneId: string) => herdrRpc<ProcessInfo>("pane.process_info", { pane_id: paneId }).catch(() => null);
 
 /**
@@ -85,7 +85,7 @@ export async function startShellAgent(kind: string, paneId: string, args: string
   const deadline = Date.now() + (options.timeoutMs ?? 60_000);
   while (Date.now() < deadline) {
     const info = await processInfo(paneId);
-    if (info?.process_info?.foreground_processes?.some((process) => isProcess(process.argv ?? []))) return;
+    if (info?.process_info?.foreground_processes?.some((entry) => kind === "omo" ? omoProcessIdentity(entry, "", process.env["HOME"] ?? "") !== null : isProcess(entry.argv ?? []))) return;
     const shellPid = info?.process_info?.shell_pid;
     // the table query never outlasts what is left of the start's own time
     if (windows && typeof shellPid === "number" && descendantArgv(await windowsProcessTable(Math.max(500, Math.min(10_000, deadline - Date.now()))), shellPid).some(isProcess)) return;

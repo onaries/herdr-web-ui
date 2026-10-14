@@ -49,6 +49,68 @@ describe("paneCommands", () => {
 describe("skills and plugins", () => {
   const write = (path: string, text: string) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, text); };
 
+  it("offers linked skills and commands while skipping broken links and cycles", () => {
+    const home = temp("linked-home-");
+    const cwd = temp("linked-project-");
+    const shared = temp("linked-resources-");
+    write(join(shared, "skill", "SKILL.md"), "---\ndescription: Shared skill\n---\n");
+    write(join(shared, "review.md"), "Shared review\n");
+    write(join(shared, "team", "check.md"), "Shared check\n");
+    symlinkSync(".", join(shared, "team", "cycle"), "dir");
+    const plugin = join(home, "plugin");
+    for (const root of [join(home, ".claude"), join(cwd, ".claude"), join(home, ".codex"), join(cwd, ".codex"), join(home, ".agents"), join(home, ".pi", "agent"), plugin]) {
+      const skills = join(root, "skills");
+      mkdirSync(skills, { recursive: true });
+      symlinkSync(join(shared, "skill"), join(skills, "linked"), "dir");
+      symlinkSync(join(shared, "missing"), join(skills, "broken"), "dir");
+      symlinkSync("cycle", join(skills, "cycle"), "dir");
+    }
+    for (const commands of [join(home, ".claude", "commands"), join(cwd, ".claude", "commands"), join(home, ".codex", "prompts"), join(plugin, "commands")]) {
+      mkdirSync(commands, { recursive: true });
+      symlinkSync(join(shared, "review.md"), join(commands, "review.md"));
+      symlinkSync(join(shared, "missing.md"), join(commands, "broken.md"));
+      symlinkSync("cycle.md", join(commands, "cycle.md"));
+      symlinkSync(join(shared, "team"), join(commands, "team"), "dir");
+      symlinkSync(join(shared, "team"), join(commands, "alias"), "dir");
+      symlinkSync(".", join(commands, "cycle"), "dir");
+    }
+    write(join(home, ".claude", "plugins", "installed_plugins.json"), JSON.stringify({ plugins: { "tools@market": [{ installPath: plugin }] } }));
+    write(join(home, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "tools@market": true } }));
+
+    expect(paneCommands("claude", cwd, home).filter((command) => command.source !== "builtin")).toEqual([
+      { name: "alias:check", description: "Shared check", source: "project" },
+      { name: "alias:check", description: "Shared check", source: "user" },
+      { name: "linked", description: "Shared skill", source: "skill" },
+      { name: "linked", description: "Shared skill", source: "skill" },
+      { name: "review", description: "Shared review", source: "project" },
+      { name: "review", description: "Shared review", source: "user" },
+      { name: "team:check", description: "Shared check", source: "project" },
+      { name: "team:check", description: "Shared check", source: "user" },
+      { name: "tools:alias:check", description: "Shared check", source: "plugin" },
+      { name: "tools:linked", description: "Shared skill", source: "plugin" },
+      { name: "tools:review", description: "Shared review", source: "plugin" },
+      { name: "tools:team:check", description: "Shared check", source: "plugin" },
+    ]);
+    expect(paneCommands("codex", cwd, home).filter((command) => command.source !== "builtin")).toEqual([
+      { name: "linked", description: "Shared skill", source: "skill", trigger: "$" },
+      { name: "linked", description: "Shared skill", source: "skill", trigger: "$" },
+      { name: "prompts:alias:check", description: "Shared check", source: "user" },
+      { name: "prompts:review", description: "Shared review", source: "user" },
+      { name: "prompts:team:check", description: "Shared check", source: "user" },
+    ]);
+    const previousPiAgentDir = process.env["PI_CODING_AGENT_DIR"];
+    process.env["PI_CODING_AGENT_DIR"] = join(home, ".pi", "agent");
+    try {
+      expect(paneCommands("pi", null, home).filter((command) => command.source !== "builtin")).toEqual([
+        { name: "skill:linked", description: "Shared skill", source: "skill" },
+        { name: "skill:linked", description: "Shared skill", source: "skill" },
+      ]);
+    } finally {
+      if (previousPiAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+      else process.env["PI_CODING_AGENT_DIR"] = previousPiAgentDir;
+    }
+  });
+
   it("offers Claude's skills, user and project, and the enabled plugins' skills and commands", () => {
     const home = temp("skills-home-");
     const cwd = temp("skills-cwd-");

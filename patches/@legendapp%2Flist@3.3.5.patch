@@ -61,7 +61,20 @@ diff --git a/react.mjs b/react.mjs
 +    }
 +  }, [ctx, version]);
  }
-@@ -7288,6 +7278,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6425,8 +6415,11 @@ function ScrollAdjust() {
+               window.getComputedStyle(contentNode)[axis.paddingEndProp]
+             );
+             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+-            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
+             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++            // Remember the value as the browser serialized it: Chromium rounds a long fraction
++            // ("214.1875px" reads back "214.188px"), so the string set never matched the reset's
++            // check and the padding stayed under the list, growing with each later adjustment.
++            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
+             void contentNode.offsetHeight;
+             scrollBy();
+             if (resetPaddingRafRef.current !== void 0) {
+@@ -7288,6 +7281,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
    const startImperativeScroll = (resolve) => {
 +    state.mvcpAnchorLock = void 0;
      state.scheduledWork.cancel("imperativeScrollReady");

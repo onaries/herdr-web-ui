@@ -7,6 +7,71 @@ import { socketAddress } from "../server/herdr/client.ts";
 import { windowsProcessTable } from "../server/windows-processes.ts";
 import { updateStateDir } from "../server/update-state.ts";
 
+it("waits for every snapshotted Windows tree member after termination returns", async () => {
+  const root = join(import.meta.dir, "..");
+  const scratch = mkdtempSync(join(tmpdir(), "herdr windows stop tree "));
+  const state = join(scratch, "plugin-state");
+  mkdirSync(state);
+  const rootPid = process.pid;
+  const childPid = process.pid + 100_000_000;
+  const previousRoot = process.env["HERDR_PLUGIN_ROOT"];
+  const previousStateDir = process.env["HERDR_PLUGIN_STATE_DIR"];
+  const previousConfigDir = process.env["HERDR_PLUGIN_CONFIG_DIR"];
+  process.env["HERDR_PLUGIN_ROOT"] = root;
+  process.env["HERDR_PLUGIN_STATE_DIR"] = state;
+  process.env["HERDR_PLUGIN_CONFIG_DIR"] = join(scratch, "config");
+  mkdirSync(join(scratch, "config"));
+  writeFileSync(join(state, "server.pid"), `${rootPid}\n`);
+  let terminated = false;
+  let childAlive = true;
+  let polls = 0;
+  try {
+    const { stop } = await import("./plugin.ts");
+    const rootRow = {
+      pid: rootPid,
+      parent: 0,
+      path: process.execPath,
+      commandLine: `"${process.execPath}" "${join(root, "server", "managed.ts")}"`,
+      started: 1,
+    };
+    const childRow = {
+      pid: childPid,
+      parent: rootPid,
+      path: process.execPath,
+      commandLine: `"${process.execPath}" -e child`,
+      started: 2,
+    };
+    const result = await stop({
+      isWindows: true,
+      isAlive: pid => pid === rootPid ? !terminated : pid === childPid && childAlive,
+      processTable: async () => {
+        if (!terminated) return [rootRow, childRow];
+        polls += 1;
+        if (polls === 4) childAlive = false;
+        return childAlive ? [childRow] : [];
+      },
+      terminateTree: pid => {
+        expect(pid, "control: termination targets the recorded root process").toBe(rootPid);
+        terminated = true;
+        return { status: 0, error: undefined, stderr: "" };
+      },
+    });
+    expect(result, "control: stop returns success after the original tree is gone").toBe(0);
+    expect(childAlive, "regression (fails on main): stop must wait until every snapshotted member reports dead").toBe(false);
+    expect(polls, "control: process liveness was rechecked through the delayed exit").toBe(4);
+  } finally {
+    for (const [key, value] of [
+      ["HERDR_PLUGIN_ROOT", previousRoot],
+      ["HERDR_PLUGIN_STATE_DIR", previousStateDir],
+      ["HERDR_PLUGIN_CONFIG_DIR", previousConfigDir],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}, 15_000);
+
 it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops its owned tree and restarts on Windows", async () => {
   const root = join(import.meta.dir, "..");
   const scratch = mkdtempSync(join(tmpdir(), "herdr windows plugin "));
@@ -89,7 +154,17 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
       expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);
     } finally { utimesSync(join(state, "server.pid"), record.atime, record.mtime); }
     await run("stop");
-    for (const member of owned) expect(() => process.kill(member, 0)).toThrow();
+    const deadline = Date.now() + 10_000;
+    const stillOwned = () => [...owned].filter(member => {
+      try { process.kill(member, 0); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+    });
+    let remaining = stillOwned();
+    while (remaining.length > 0 && Date.now() < deadline) {
+      await Bun.sleep(50);
+      remaining = stillOwned();
+    }
+    expect(remaining, "control: wait up to ten seconds for the Windows-owned process tree to disappear").toEqual([]);
     expect(existsSync(join(state, "server.pid"))).toBe(false);
     await run("start"); // forced Windows shutdown leaves a stale lock; restart must recover it
     expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);

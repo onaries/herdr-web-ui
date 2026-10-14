@@ -1,6 +1,6 @@
 /**
- * The header's More menu, for the browser scripts: New tab, Browse files and Alerts are its
- * items, and at phone width the command palette is its first. It is a popover on a desktop and
+ * The header's More menu, for the browser scripts: Browse files and Alerts are among its
+ * items. It is a popover on a desktop and
  * a bottom sheet at 640px and below (RowMenu), so an item is found in either.
  */
 import type { Locator, Page } from "playwright-core";

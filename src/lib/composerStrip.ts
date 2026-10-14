@@ -2,21 +2,31 @@
  * The slim strip tucked under the input card (Composer.tsx): the pane's working folder and its
  * branch, as t3code's composer names its checkout and branch in a strip under the composer. Each
  * part is drawn only when the caller passes it (the composer takes them as optional props); a
- * blank string counts as absent, and with neither part there is no strip at all.
+ * blank string counts as absent, and with no part there is no strip at all. Settings can turn it off.
  */
 import { folderName } from "./paneName.ts";
 
 export interface ComposerStrip {
-  /** the working folder's last name, as the greeting names it; `path` keeps the whole path */
+  /** the working folder's last name, as the greeting names it, or a linked worktree's repository; `path` keeps the whole path */
   folder: string | null;
   path: string | null;
   branch: string | null;
 }
 
-/** What the strip draws, or null when there is nothing to draw. */
-export function composerStrip(input: { cwd?: string | null | undefined; branch?: string | null | undefined }): ComposerStrip | null {
+/**
+ * What the strip draws, or null when there is nothing to draw. `repo` is the repository a linked worktree
+ * belongs to: its name stands in the folder's place, since a worktree's checkout folder is its branch again
+ * (herdr names it the branch with dashes) and the branch is already at the strip's other end.
+ */
+export function composerStrip(input: { cwd?: string | null | undefined; branch?: string | null | undefined; repo?: string | null | undefined }): ComposerStrip | null {
   const path = input.cwd !== undefined && input.cwd !== null && input.cwd.trim() !== "" ? input.cwd : null;
   const branch = input.branch !== undefined && input.branch !== null && input.branch.trim() !== "" ? input.branch.trim() : null;
-  if (path === null && branch === null) return null;
-  return { folder: path === null ? null : folderName(path), path, branch };
+  const repo = input.repo !== undefined && input.repo !== null && input.repo.trim() !== "" ? input.repo.trim() : null;
+  if (path === null && branch === null && repo === null) return null;
+  return { folder: repo ?? (path === null ? null : folderName(path)), path, branch };
+}
+
+/** The repository a workspace is a linked worktree of, by herdr's name for it; null for any other workspace. */
+export function worktreeRepoName(workspace: { worktree?: { is_linked_worktree: boolean; repo_name: string } | null } | undefined): string | null {
+  return workspace?.worktree?.is_linked_worktree === true ? workspace.worktree.repo_name : null;
 }

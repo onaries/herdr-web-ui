@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { DISMISS_DRAG_PX, dismissKeyboardOn, dragDismisses, scrolledDown, tapDismisses } from "./keyboard.ts";
+import { DISMISS_DRAG_PX, dismissKeyboardOn, dragDismisses, keyboardHoldsGrid, scrolledDown, tapDismisses } from "./keyboard.ts";
 
 describe("dragDismisses", () => {
   test("a drag down the transcript puts the keyboard away", () => {
@@ -95,5 +95,27 @@ describe("scrolledDown", () => {
     card.scrollTop = 8;
     expect(scrolledDown(line, card)).toBe(true);
     expect(scrolledDown(null, card)).toBe(true);
+  });
+});
+
+/** #1045: the keyboard takes the bottom of the screen, not the pane; the shared pty keeps its grid */
+describe("keyboardHoldsGrid", () => {
+  test("a host that only lost height under the keyboard keeps its grid (regression: fails on main)", () => {
+    expect(keyboardHoldsGrid(true, 390, 390)).toBe(true);
+  });
+
+  test("a first fit under the keyboard waits for it to go (regression: fails on main)", () => {
+    expect(keyboardHoldsGrid(true, 390, null)).toBe(true);
+  });
+
+  test("a host whose width changed under the keyboard (a rotation) refits (control)", () => {
+    expect(keyboardHoldsGrid(true, 430, 390)).toBe(false);
+    expect(keyboardHoldsGrid(true, 390, 430)).toBe(false);
+  });
+
+  test("without the keyboard every resize refits, the first one too (control)", () => {
+    expect(keyboardHoldsGrid(false, 390, 390)).toBe(false);
+    expect(keyboardHoldsGrid(false, 390, null)).toBe(false);
+    expect(keyboardHoldsGrid(false, 450, 390)).toBe(false);
   });
 });

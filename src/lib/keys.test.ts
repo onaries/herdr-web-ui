@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { altSequence, clipboardKey, physicalKey, controlCode, ctrlEnterSequence, isPrintable, keySequence, modifyOtherKeysLevel, sanitizeKeyBarExtras, navigationSequence, terminalChord, keyFromData } from "./keys.ts";
+import { altSequence, clipboardKey, physicalKey, controlCode, ctrlEnterSequence, mirroredCtrlEnterKey, isPrintable, keySequence, modifyOtherKeysLevel, sanitizeKeyBarExtras, navigationSequence, terminalChord, keyFromData } from "./keys.ts";
 
 describe("clipboardKey", () => {
   it("recognizes native Ctrl+C/V on Korean and Russian layouts without replacing Latin layout letters", () => {
@@ -204,5 +204,18 @@ describe("ctrlEnterSequence", () => {
     expect(ctrlEnterSequence(0)).toBeNull();
     expect(ctrlEnterSequence(1)).toBe("\u001b[27;5;13~");
     expect(ctrlEnterSequence(2)).toBe("\u001b[27;5;13~");
+  });
+});
+
+describe("mirroredCtrlEnterKey", () => {
+  it("sends a mirrored pane's Ctrl+Enter as herdr's key, which herdr encodes in the program's own mode (#924)", () => {
+    // regression (fails on main): a mirror never shows the browser the program's modifyOtherKeys
+    expect(mirroredCtrlEnterKey(true, 0)).toBe("ctrl+enter");
+  });
+
+  it("leaves an attached pane's Ctrl+Enter to xterm and to what its stream asked for", () => {
+    // control: unchanged on an attached pane, with or without modifyOtherKeys
+    expect(mirroredCtrlEnterKey(false, 0)).toBeNull();
+    expect(mirroredCtrlEnterKey(false, 2)).toBeNull();
   });
 });

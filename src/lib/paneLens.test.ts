@@ -41,13 +41,6 @@ describe("PaneLenses", () => {
     expect(lenses.of("local/w2:p1", false, false)).toBe("chat");
   });
 
-  it("keeps a moved pane's lens under the new id herdr gives it", () => {
-    const lenses = new PaneLenses("chat");
-    expect(lenses.of("local/w1:p2", false, false)).toBe("terminal");
-    lenses.move("local/w1:p2", "local/w2:p1");
-    expect(lenses.of("local/w2:p1", true, false)).toBe("terminal");
-  });
-
   it("keeps each pane apart", () => {
     const lenses = new PaneLenses("chat");
     expect(lenses.of("local/w1:p1", true, false)).toBe("chat");

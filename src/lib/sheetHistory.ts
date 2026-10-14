@@ -61,7 +61,7 @@ export function enterSheet(onBack: () => boolean | void, reuse: string | null): 
   const state = { ...(base !== null && typeof base === "object" ? base : {}), [KEY]: id };
   pushing = true;
   try {
-    // a sheet opened from another sheet (More → Move pane to…) takes that sheet's entry: one Back closes it
+    // a sheet opened from another sheet takes that sheet's entry: one Back closes it
     if (owned(base)) window.history.replaceState(state, "");
     else window.history.pushState(state, "");
   } finally { pushing = false; }

@@ -12,6 +12,7 @@
  * - An administrator's authorized keys live in %ProgramData%\ssh\administrators_authorized_keys
  *   with a fixed ACL; everyone else's in ~\.ssh\authorized_keys.
  */
+import { win32 } from "node:path";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { shellQuote } from "./machine-security.ts";
@@ -25,6 +26,26 @@ export const BUNDLE_DIR = `.local/share/herdr-web-ui/remote-v${REMOTE_BUNDLE_VER
 export const WINDOWS_BUNDLE_BASE = "$env:LOCALAPPDATA\\herdr-web-ui";
 export const UNSUPPORTED_HOST = "Only Linux, macOS (x64 or arm64) and Windows (x64) PCs are supported.";
 export const HERDR_INSTALL_CMD = "https://herdr.dev/install.cmd";
+
+/** the upload is cut off after this long on the PC, as a dead SSH link may never deliver EOF */
+export const INSTALL_UPLOAD_TIMEOUT_S = 25 * 60;
+/**
+ * Takes `$base/install.lock` (a directory holding the owner's PID). A lock whose owner is
+ * gone, or that outlived the longest possible install (the local SSH timeout is 30 minutes),
+ * was left by an install that never reached its trap; it is reclaimed rather than blocking
+ * every retry until someone deletes it by hand. Expects `$base`; sets `$lock`.
+ *
+ * Reclaiming happens under `install.lock.reclaim`, a second mkdir mutex, with the owner and
+ * age read again inside it: two installers that both judged the lock stale cannot then
+ * delete each other's fresh lock. A mutex left by a reclaimer that died is dropped after two
+ * minutes, and that run reports "in progress"; the retry takes over.
+ * The lock directory exists for an instant before its PID file is written. In that window
+ * other installers see it as in progress, and if its creator dies there, only the age check
+ * can reclaim it.
+ */
+export const POSIX_INSTALL_LOCK = `lock="$base/install.lock"; if ! mkdir "$lock" 2>/dev/null; then mkdir "$lock.reclaim" 2>/dev/null || { test -z "$(find "$lock.reclaim" -maxdepth 0 -mmin +2 2>/dev/null)" || rmdir "$lock.reclaim" 2>/dev/null; printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; }; owner=$(cat "$lock/pid" 2>/dev/null || true); if { test -n "$owner" && ! kill -0 "$owner" 2>/dev/null; } || test -n "$(find "$lock" -maxdepth 0 -mmin +35 2>/dev/null)"; then rm -rf "$lock"; mkdir "$lock" 2>/dev/null || { rmdir "$lock.reclaim"; printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; }; printf '%s' "$$" > "$lock/pid"; rmdir "$lock.reclaim"; else rmdir "$lock.reclaim"; printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; fi; fi; printf '%s' "$$" > "$lock/pid";`;
+/** the exit trap's release: only a lock this shell still owns, never a successor's */
+export const POSIX_INSTALL_RELEASE = `test "$(cat "$lock/pid" 2>/dev/null)" != "$$" || rm -rf "$lock"`;
 
 export interface HostInspection {
   platform: "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64";
@@ -102,7 +123,7 @@ export const posixHost: RemoteHost = {
     const { asset, input } = await fetchBundle(platform, signal, options);
     // Verify on BOTH hosts, extract into staging and atomically rename. No user-wide
     // Bun/Node/herdr installation is changed; the complete runtime lives in this dir.
-    await ssh.run(`set -eu; umask 077; base="$HOME/.local/share/herdr-web-ui"; mkdir -p "$base"; mkdir "$base/install.lock" || { printf 'Another installation is in progress; retry shortly\\n' >&2; exit 1; }; tmp=$(mktemp -d "$base/install.XXXXXX"); trap 'rm -rf "$tmp"; rmdir "$base/install.lock"' EXIT HUP INT TERM; cat > "$tmp/bundle.tgz"; if command -v sha256sum >/dev/null; then actual=$(sha256sum "$tmp/bundle.tgz" | cut -d ' ' -f 1); else actual=$(shasum -a 256 "$tmp/bundle.tgz" | cut -d ' ' -f 1); fi; test "$actual" = ${shellQuote(asset.sha256)}; mkdir "$tmp/runtime"; tar xzf "$tmp/bundle.tgz" -C "$tmp/runtime"; test -x "$tmp/runtime/bin/bun"; test -x "$tmp/runtime/bin/node"; test -x "$tmp/runtime/bin/herdr"; "$tmp/runtime/bin/bun" --version; "$tmp/runtime/bin/herdr" --version; "$tmp/runtime/bin/node" "$tmp/runtime/server/pty/smoke.mjs"; release="$HOME/${BUNDLE_DIR}-${asset.sha256.slice(0, 16)}"; if test ! -d "$release"; then mv "$tmp/runtime" "$release"; fi; ln -s "$release" "$tmp/current"; if test -d "$HOME/${BUNDLE_DIR}" && test ! -L "$HOME/${BUNDLE_DIR}"; then mv "$HOME/${BUNDLE_DIR}" "$HOME/${BUNDLE_DIR}-legacy-$(date +%s)"; fi; "$release/bin/bun" -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' "$tmp/current" "$HOME/${BUNDLE_DIR}"`, input, 30 * 60_000);
+    await ssh.run(`set -eu; umask 077; base="$HOME/.local/share/herdr-web-ui"; mkdir -p "$base"; ${POSIX_INSTALL_LOCK} tmp=$(mktemp -d "$base/install.XXXXXX"); trap 'rm -rf "$tmp"; ${POSIX_INSTALL_RELEASE}' EXIT HUP INT TERM; if command -v timeout >/dev/null; then timeout ${INSTALL_UPLOAD_TIMEOUT_S} cat > "$tmp/bundle.tgz"; else cat > "$tmp/bundle.tgz"; fi; if command -v sha256sum >/dev/null; then actual=$(sha256sum "$tmp/bundle.tgz" | cut -d ' ' -f 1); else actual=$(shasum -a 256 "$tmp/bundle.tgz" | cut -d ' ' -f 1); fi; test "$actual" = ${shellQuote(asset.sha256)}; mkdir "$tmp/runtime"; tar xzf "$tmp/bundle.tgz" -C "$tmp/runtime"; test -x "$tmp/runtime/bin/bun"; test -x "$tmp/runtime/bin/node"; test -x "$tmp/runtime/bin/herdr"; "$tmp/runtime/bin/bun" --version; "$tmp/runtime/bin/herdr" --version; "$tmp/runtime/bin/node" "$tmp/runtime/server/pty/smoke.mjs"; release="$HOME/${BUNDLE_DIR}-${asset.sha256.slice(0, 16)}"; if test ! -d "$release"; then mv "$tmp/runtime" "$release"; fi; ln -s "$release" "$tmp/current"; if test -d "$HOME/${BUNDLE_DIR}" && test ! -L "$HOME/${BUNDLE_DIR}"; then mv "$HOME/${BUNDLE_DIR}" "$HOME/${BUNDLE_DIR}-legacy-$(date +%s)"; fi; "$release/bin/bun" -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' "$tmp/current" "$HOME/${BUNDLE_DIR}"`, input, 30 * 60_000);
   },
   stop: async (ssh, pid) => { await ssh.run(`kill -TERM ${pid}`); },
   async start(ssh, { session, herdrPath, inspection }) {
@@ -147,20 +168,23 @@ export const windowsHost: RemoteHost = {
       // which the next update replaces); a fresh sshd session may not have the PATH it added yet
       "$herdr = \"$env:LOCALAPPDATA\\Programs\\Herdr\\bin\\herdr.exe\"",
       "if (-not (Test-Path $herdr)) { $herdr = (Get-Command herdr.exe -ErrorAction SilentlyContinue).Source }",
-      "Write-Output 'Windows'; Write-Output $env:PROCESSOR_ARCHITECTURE; Write-Output $env:USERPROFILE; Write-Output $env:APPDATA; Write-Output $env:LOCALAPPDATA; Write-Output \"$herdr\"",
+      "Write-Output 'Windows'; Write-Output $env:PROCESSOR_ARCHITECTURE; Write-Output $env:USERPROFILE; Write-Output $env:APPDATA; if ($env:XDG_CONFIG_HOME) { Write-Output $env:XDG_CONFIG_HOME } else { Write-Output '' }; Write-Output $env:LOCALAPPDATA; Write-Output \"$herdr\"",
       `if (Test-Path "${WINDOWS_BUNDLE}\\bin\\bun.exe") { Write-Output 'bundle-ready' }`,
       `if (Get-ChildItem "${WINDOWS_BUNDLE_BASE}" -Directory -Filter 'remote-v*' -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\\bin\\bun.exe" }) { Write-Output 'bundle-older' }`,
       WINDOWS_DESCRIPTORS,
     ].join("\n"));
-    const [os, arch, home, appData, localAppData, herdrPath, ...lines] = inspection.split("\n");
+    const [os, arch, home, appData, xdgConfigHome, localAppData, herdrPath, ...lines] = inspection.split("\n");
     if (os !== "Windows" || arch !== "AMD64") throw new Error(UNSUPPORTED_HOST);
-    const drive = /^[A-Za-z]:\\/;
-    if (!home || !drive.test(home) || !appData || !drive.test(appData) || !localAppData || !drive.test(localAppData)) throw new Error("The SSH account's profile directory (%USERPROFILE%) could not be read on this PC");
-    const herdrDir = `${appData}\\herdr`;
+    const drive = /^[A-Za-z]:[\\/]/;
+    if (xdgConfigHome && !drive.test(xdgConfigHome)) throw new Error("The SSH account's XDG_CONFIG_HOME could not be read on this PC");
+    if (!home || !drive.test(home) || !localAppData || !drive.test(localAppData)) throw new Error("The SSH account's profile directory (%USERPROFILE%) could not be read on this PC");
+    const herdrConfig = xdgConfigHome || appData;
+    if (!herdrConfig || !drive.test(herdrConfig)) throw new Error("The SSH account's herdr configuration directory could not be read on this PC");
+    const herdrDir = win32.join(herdrConfig, "herdr");
     return {
       platform: "win32-x64", home, herdrPath: herdrPath ?? "",
       // the marker file's own path: the bridge's realpath of it is the same string (live-verified)
-      expectedSocket: session ? `${herdrDir}\\sessions\\${session}\\herdr.sock` : `${herdrDir}\\herdr.sock`,
+      expectedSocket: session ? win32.join(herdrDir, "sessions", session, "herdr.sock") : win32.join(herdrDir, "herdr.sock"),
       bundleReady: lines.includes("bundle-ready"), bundleOlder: lines.includes("bundle-older"),
       descriptors: parseDescriptors(lines),
       runtimeDir: `${localAppData}\\herdr-web-ui\\remote-v${REMOTE_BUNDLE_VERSION}`, registryDir: `${home}\\.config\\herdr-web-ui\\bridges`,

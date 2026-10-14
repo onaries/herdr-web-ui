@@ -8,8 +8,8 @@
  */
 export const SHARED_SETTING_KEYS = [
   "theme", "palette", "language", "sidebarRows", "agentOrder", "agentCards", "agentPins", "agentMarks", "autoSendQueued",
-  "showThinking", "quickReplies", "showQuickReplies", "showSuggestionChip", "showUsage", "usageCount", "usagePace",
-  "usageGlance", "usageOrder", "usageHidden", "highlightCode",
+  "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
+  "usageGlance", "usageOrder", "usageHidden",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];
 

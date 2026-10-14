@@ -44,7 +44,7 @@ export function transitionTimes(value: string): number[] {
 
 /**
  * How long the longest of an element's transitions runs from now, its delay included, in ms:
- * 0 when none moves (`transition: none`, reduced motion, Panel motion off), so the box can rest
+ * 0 when none moves (`transition: none`, reduced motion), so the box can rest
  * at once instead of waiting for an end event that never comes. A delay list shorter than the
  * duration list repeats, as the browser pairs them.
  */

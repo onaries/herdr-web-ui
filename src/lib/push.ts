@@ -1,5 +1,5 @@
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
-import { fetchPushKey, registerPushSubscription, sendTestPush, unregisterPushSubscription } from "./api.ts";
+import { ApiError, fetchPushKey, registerPushSubscription, sendTestPush, unregisterPushSubscription } from "./api.ts";
 
 /**
  * This device's web push subscription: pane alerts that arrive with the app closed.
@@ -91,7 +91,18 @@ async function subscribeDevice(alerts?: AlertPrefs): Promise<string | null> {
     subscription = null;
   }
   subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-  await registerPushSubscription(subscription.toJSON(), alerts);
+  try {
+    await registerPushSubscription(subscription.toJSON(), alerts);
+  } catch (error) {
+    // its push service retired this endpoint (#1038); an older server never says so and keeps today's path
+    if (!(error instanceof ApiError && error.code === "subscription_gone")) throw error;
+    const retired = subscription.endpoint;
+    await subscription.unsubscribe();
+    // a browser still handing over the retired endpoint cannot be repaired from here
+    if ((await registration.pushManager.getSubscription())?.endpoint === retired) throw error;
+    subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    await registerPushSubscription(subscription.toJSON(), alerts);
+  }
   return subscription.endpoint;
 }
 

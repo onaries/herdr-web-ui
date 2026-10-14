@@ -37,6 +37,11 @@ export class ConversationRefresh {
     }
   }
 
+  /** A newest-page read is in flight: one requested now would start only after it settles. */
+  get reading(): boolean {
+    return this.running;
+  }
+
   refresh(): void {
     if (this.read === null) return;
     this.clearTimer();

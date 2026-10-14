@@ -1,0 +1,6 @@
+ ▶ example workflow running wave 1/2 0/4 done, 1 running, 2 failed
+   ▶ question-parser · category:deep-low · Checking captured question cards · 7m
+ 53s
+   ◌ verify · category:quick · waiting 21m 59s
+   ✗ scroll-check · category:deep-low · x2 · 1m 10s
+   ✗ answer-check · category:deep-low · x2 · 1m 10s

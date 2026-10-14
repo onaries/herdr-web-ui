@@ -156,29 +156,33 @@
   left: calc(var(--space-4) + max(0px, (100% - 2 * var(--space-4) - var(--chat-w)) / 2));
 }
 
-/* the start of the card's last row, before the action icons and the round button, as t3code's
-   composer puts its model and mode controls first. It can share that row because the agent's
-   name and the state word are no longer drawn (.visually-hidden: the mark stays, and the state
-   is told by Stop, the live row and the prompt card). What does not fit gives way in this order:
-   the task chip's words (BackgroundTasks.css, by the card's width); then the model label, as
-   composerModelDraw says of the measured row (Composer.tsx marks data-model): the level steps out
-   whole, read and not drawn, so no word is drawn in part; then the model's name and the opened
-   context text. Nothing overlaps its neighbour, and the context ring at the end is never the
-   part that is cut. The mark starts where the message's text does. */
+/* the middle of the card's last row, between add and the round button, pushed to the button's
+   side. It can share that row because the agent's name and the state word are no longer drawn
+   (.visually-hidden: the mark stays, and the state is told by Stop, the live row and the prompt
+   card). What does not fit gives way in this order: the task chip's words (BackgroundTasks.css,
+   by the card's width); then the model label, as composerModelDraw says of the measured row
+   (Composer.tsx marks data-model): the level steps out whole, read and not drawn, so no word is
+   drawn in part; then the model's name and the opened context text. Nothing overlaps its
+   neighbour, and the context ring at the end is never the part that is cut. */
 .composer-status {
   grid-area: status;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: var(--space-1);
   min-width: 0;
   min-height: var(--chip-h);
-  padding: var(--space-1) 0 var(--space-3) var(--space-4);
+  padding: var(--space-1) var(--space-2) var(--space-3);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* not connected: the content starts beside add, where the reconnecting sentence is read from */
+.composer-status[data-offline] {
+  justify-content: flex-start;
 }
 
 /* a sentence (uploading, reconnecting) is never cut: where it does not fit beside the model it
@@ -188,27 +192,24 @@
   row-gap: 0;
 }
 
-/* A narrow card (data-compact: the card's own width, Composer.tsx) with a sentence to say: the
-   action icons at touch size leave the status content too little of the row for a word, so it
-   takes a row of its own over them, the card's width, where the sentence is read whole beside
-   the model group or under it, and the icons keep their row. The card grows by that row while
-   the sentence shows. data-hint is the sentence's presence, not a measurement, so this layout
-   never feeds back into the fit that measures the row */
+/* A narrow card (data-compact: the card's own width, Composer.tsx) with a sentence to say: add,
+   the icons and the round button at touch size leave the status content too little of the row
+   for a word, so it takes a row of its own over them, the card's width, where the sentence is
+   read whole beside the model pill or under it, from where the message's text starts. Add and
+   the round button keep their row. The card grows by that row while the sentence shows.
+   data-hint is the sentence's presence, not a measurement, so this layout never feeds back into
+   the fit that measures the row */
 .composer-surface[data-compact]:has(> .composer-status[data-hint]) {
   grid-template-areas:
     "attachments attachments attachments"
     "text text text"
     "status status status"
-    "left left right";
+    "left . right";
 }
 
 .composer-surface[data-compact]:has(> .composer-status[data-hint]) > .composer-status {
-  padding-bottom: 0;
-}
-
-/* the icons then start the row: their glyph near the text's edge, as the mark was */
-.composer-surface[data-compact]:has(> .composer-status[data-hint]) > .composer-controls-left {
-  padding-left: var(--space-2);
+  justify-content: flex-start;
+  padding: var(--space-1) var(--space-4) 0;
 }
 
 /* everything but the sentence. No box of its own at rest: its items are the status line's. Beside
@@ -223,7 +224,7 @@
   display: flex;
   flex: 0 1 auto;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: var(--space-1);
   min-width: 0;
   overflow: hidden;
@@ -234,12 +235,10 @@
   display: contents;
 }
 
-/* the mark, the model, the level and the ring in one quiet group, as tall as a control, its parts
-   told apart by hairlines (.composer-sep) the way t3code's composer parts its model, effort and
-   mode controls: no fill, no border, no hover, no cursor, and the ring inside it is the only thing
-   to press. It is read at --fs-sm, a step over the status line's own size, as t3code's controls
-   are. It shrinks before its neighbours do, so a name that does not fit is measured clipped
-   inside it (Composer.tsx) and the label steps out */
+/* the mark, the model, the level and the ring in one quiet pill, as tall as a control. It is a
+   surface, not a control: no border, no hover, no cursor, and the ring inside it is the only
+   thing to press. It shrinks before its neighbours do, so a name that does not fit is measured
+   clipped inside it (Composer.tsx) and the label steps out */
 .composer-pill {
   display: flex;
   flex: 0 1 auto;
@@ -247,30 +246,20 @@
   gap: var(--space-2);
   min-width: 0;
   height: var(--control-h);
-  font-size: var(--fs-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
   overflow: hidden;
 }
 
-/* the hairline between two parts: a control's height less its ends, as t3code's separator is */
-.composer-sep {
-  flex: none;
-  width: var(--hairline);
-  height: var(--space-4);
-  margin-inline: var(--space-1);
-  background: var(--border-strong);
-}
-
-/* no model to show, or the label stepped out: no group either. Its box is gone, so the mark and
-   the ring stand in the status row itself, as they did before there was a group */
+/* no model to show, or the label stepped out: no pill either. Its box is gone, so the mark and
+   the ring stand in the status row itself, as they did before there was a pill */
 .composer-pill.is-bare,
 .composer-status[data-model="out"] .composer-pill {
   display: contents;
 }
 
-/* stepped out, the label takes its hairlines with it: the ring stands alone */
-.composer-status[data-model="out"] .agent-mark,
-.composer-status[data-model="out"] .composer-sep,
-.composer-status[data-model="no-effort"] .composer-model-info > .composer-sep {
+.composer-status[data-model="out"] .agent-mark {
   display: none;
 }
 
@@ -317,7 +306,7 @@
   font-weight: var(--fw-regular);
 }
 
-/* the level after a hairline, dim beside the name. The words are the agent's own; only the
+/* the level after a middle dot, dim beside the name. The words are the agent's own; only the
    first letter of the first one is drawn as a capital. The sentence ("Reasoning high") is the
    screen reader's and the tooltip's */
 .composer-reasoning {
@@ -326,6 +315,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-reasoning-dot {
+  margin-right: var(--space-2);
 }
 
 /* a block of its own, which is what ::first-letter needs */
@@ -377,8 +370,8 @@
   stroke: var(--border);
 }
 
-/* in the group the track is the hairlines' colour, so the ring reads with them; a ring left bare
-   by a label that stepped out, or by a pane that names no model, keeps the bare ring's track */
+/* on the pill's fill --border would be the fill itself in two palettes: the track stays a ring.
+   Only on the fill: a ring left bare by a label that stepped out has the bare ring's track */
 .composer-status:not([data-model="out"]) .composer-pill:not(.is-bare) .composer-context-track {
   stroke: var(--border-strong);
 }
@@ -460,22 +453,20 @@
   height: var(--chip-h);
 }
 
-/* the message is the card's first row at its full width; under it one row, ordered as t3code's
-   composer orders its own: the status content (the model group) | add, the mic and
-   the task chip | the one round Send/Stop button. The attachment strip is its own row above
-   both. The three cells of the last row stretch and centre what they hold, so the controls and
-   the model share one centre line. The card stands over the strip tucked under it (below), so
+/* the message is the card's first row at its full width; under it one row: add, the mic and the
+   task chip | the status content | the one round Send/Stop button. The attachment strip is its own
+   row above both. The three cells of the last row stretch and centre what they hold, so the
+   controls and the model share one centre line. The card stands over the strip tucked under it (below), so
    it is raised; its popovers go with it and still rise over the transcript, which comes first */
 .composer-surface {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "attachments attachments attachments"
     "text text text"
-    "status left right";
-  column-gap: var(--space-2);
+    "left status right";
   background: var(--bg-elevated);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-2xl);
@@ -636,16 +627,14 @@
   min-height: var(--control-h);
 }
 
-/* the action icons, between the model group and the round button (the class names are the
-   groups' first names, kept for the browser scripts that read them) */
 .composer-controls-left {
   grid-area: left;
-  padding: var(--space-1) 0 var(--space-3);
+  padding: var(--space-1) 0 var(--space-3) var(--space-3);
 }
 
 .composer-controls-right {
   grid-area: right;
-  padding: var(--space-1) var(--space-4) var(--space-3) 0;
+  padding: var(--space-1) var(--space-3) var(--space-3) 0;
 }
 
 .composer-controls .icon-button,
@@ -731,6 +720,18 @@
 .composer-controls .icon-button:disabled {
   opacity: 0.7;
   cursor: default;
+}
+
+.composer-send[aria-busy="true"] {
+  opacity: 1;
+}
+
+.composer-send-progress {
+  animation: composer-send-spin var(--dur-spin) steps(8) infinite;
+}
+
+@keyframes composer-send-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (hover: hover) {
@@ -899,7 +900,8 @@
   white-space: nowrap;
 }
 
-.composer-attachment.is-error {
+.composer-attachment.is-error,
+.composer-attachment.is-no-room {
   border-color: var(--status-blocked);
 }
 
@@ -986,31 +988,30 @@
     padding: var(--space-3) var(--space-3) 0;
   }
 
-  /* a phone's row holds the same controls at touch size: the groups close up (no gap of the
-     grid's own) and the round button's transparent target reaches the card's edge, so the model
-     group keeps the most room */
-  .composer-surface {
-    column-gap: 0;
-  }
-
   .composer-controls-left {
-    padding: var(--space-1) 0 var(--space-2);
+    padding: var(--space-1) 0 var(--space-2) var(--space-2);
   }
 
   .composer-controls-right {
-    padding: var(--space-1) var(--space-1) var(--space-2) 0;
+    padding: var(--space-1) var(--space-2) var(--space-2) 0;
+  }
+
+  /* the 4px a side the 12px gutter took come back inside the card, after the cells' own phone
+     padding above: the control row is as wide as it was with the 8px gutter */
+  .composer-controls-left {
+    padding-left: var(--space-1);
+  }
+
+  .composer-controls-right {
+    padding-right: var(--space-1);
   }
 
   .composer-status {
-    padding: var(--space-1) 0 var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-2) var(--space-2) var(--space-1);
   }
 
   .composer-surface[data-compact]:has(> .composer-status[data-hint]) > .composer-status {
-    padding-bottom: 0;
-  }
-
-  .composer-surface[data-compact]:has(> .composer-status[data-hint]) > .composer-controls-left {
-    padding-left: var(--space-1);
+    padding: var(--space-1) var(--space-3) 0;
   }
 
   /* A phone fits neither half of a pi command's row, and pi writes explanations twice as long as
@@ -1053,6 +1054,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .composer-send-progress {
+    animation: none;
+  }
+
   .composer-surface,
   .composer-action::before,
   .composer-resize::before {

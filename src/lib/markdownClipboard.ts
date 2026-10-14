@@ -18,7 +18,7 @@ const HTML_TAGS = new Set(["P", "BR", "HR", "PRE", "CODE", "STRONG", "B", "EM", 
 const OMIT_CLASSES = new Set(["markdown-code-header", "markdown-code-error", "hl-note", "chat-turn-meta", "chat-meta", "sr-only"]);
 const attr = (node: ClipboardNode, name: string): string | undefined => node.attrs?.[name];
 const children = (node: ClipboardNode): readonly ClipboardNode[] => node.children ?? [];
-const visible = (node: ClipboardNode): boolean => !OMIT.has(node.tag) && attr(node, "aria-hidden") !== "true" && !(attr(node, "class") ?? "").split(/\s+/).some((name) => OMIT_CLASSES.has(name));
+const visible = (node: ClipboardNode): boolean => (!OMIT.has(node.tag) || (node.tag === "BUTTON" && (attr(node, "class") ?? "").split(/\s+/).includes("markdown-file"))) && attr(node, "aria-hidden") !== "true" && !(attr(node, "class") ?? "").split(/\s+/).some((name) => OMIT_CLASSES.has(name));
 const rawText = (node: ClipboardNode): string => node.text ?? children(node).map(rawText).join("");
 const escapeHtml = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 

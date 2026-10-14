@@ -1,4 +1,4 @@
-/** Search decoration and shared-history scrollbar against panes owned by this script. */
+/** Search decoration and shared-history paging, with no history scrollbar, against panes owned by this script. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -52,16 +52,36 @@ try {
     }
   };
   page.on("pageerror", (error) => errors.push(error.message));
+  // Native history moves the way a user moves it: the paging shortcut, one acknowledged page at a time.
+  const pageToEdge = async (direction: -1 | 1) => {
+    const deadline = Date.now() + 10000;
+    await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
+    for (;;) {
+      const info = (await paneScrollInfo(paneId))!;
+      if (info.offset_from_bottom === (direction > 0 ? info.max_offset_from_bottom : 0)) return;
+      assert.ok(Date.now() < deadline, `paging reaches the ${direction > 0 ? "top" : "bottom"} of native history`);
+      const acknowledged = page.waitForResponse((response) => response.url().endsWith("/api/pane/scroll") && response.request().method() === "POST");
+      await page.keyboard.press(direction > 0 ? "ControlOrMeta+Shift+PageUp" : "ControlOrMeta+Shift+PageDown");
+      await acknowledged.catch(async (error) => { throw new Error(`no page POST toward ${direction > 0 ? "top" : "bottom"} from ${JSON.stringify(info)}, focus ${await page.evaluate(() => document.activeElement?.className)}: ${error}`); });
+    }
+  };
+  const firstMetrics = page.waitForResponse((response) => response.url().includes("/api/pane/scroll?") && response.request().method() === "GET");
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(paneId)}`);
-  const scrollbar = page.getByRole("scrollbar", { name: "Terminal scrollback", exact: true });
-  await scrollbar.waitFor();
-  const max = Number(await scrollbar.getAttribute("aria-valuemax"));
-  assert.ok(max > 100, "the scrollbar reads herdr's full history");
+  await firstMetrics;
+  assert.ok((await paneScrollInfo(paneId))!.max_offset_from_bottom > 100, "herdr holds the full history");
+  const widths = await page.evaluate(() => ({ grid: document.querySelector(".pane-terminal")!.getBoundingClientRect().width, surface: document.querySelector(".terminal-surface")!.getBoundingClientRect().width }));
+  assert.equal(widths.grid, widths.surface, "the grid takes the full width, with no column reserved beside it");
   // Paging moves native history without reaching the program’s input.
   await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
   const inputsBeforePaging = terminalInput.length;
   const pageRows = (await paneScrollInfo(paneId))!.viewport_rows - 1;
-  await page.keyboard.press("ControlOrMeta+Shift+PageUp");
+  // a page asked for before the client's first metrics read only asks for that read: press until one is sent
+  for (let attempt = 0; ; attempt++) {
+    assert.ok(attempt < 10, "the client pages once it has read the pane's metrics");
+    const sent = page.waitForRequest((request) => request.url().endsWith("/api/pane/scroll") && request.method() === "POST", { timeout: 3000 }).then(() => true, () => false);
+    await page.keyboard.press("ControlOrMeta+Shift+PageUp");
+    if (await sent) break;
+  }
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === pageRows, "the global shortcut pages by native rows minus one");
   await page.keyboard.press("ControlOrMeta+Shift+PageDown");
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "the opposite shortcut returns to the native bottom");
@@ -87,53 +107,42 @@ try {
   await page.unroute("**/api/pane/scroll", holdPaging);
   await page.keyboard.press("ControlOrMeta+Shift+PageDown");
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === pageRows * 2, "paging after the ACK starts at its acknowledged offset");
-  await scrollbar.focus();
-  await page.keyboard.press("End");
-  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "reset native history after repeat paging");
+  await pageToEdge(-1);
 
-  for (const rows of [3, 0, 1]) {
+  {
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
     await openSettingsPage(page, "Shortcuts");
-    const overlap = page.getByRole("group", { name: "Page overlap", exact: true }).locator("output");
-    for (let clicks = 0; Number(await overlap.textContent()) !== rows; clicks++) {
-      assert.ok(clicks <= 100, `page overlap reaches ${rows}, showing ${await overlap.textContent()}`);
-      await page.getByRole("button", { name: Number(await overlap.textContent()) < rows ? "Increase page overlap" : "Decrease page overlap", exact: true }).click();
-    }
     await page.keyboard.press("ControlOrMeta+Shift+PageUp");
     assert.equal((await paneScrollInfo(paneId))!.offset_from_bottom, 0, "Settings blocks the pane's paging control");
     await page.keyboard.press("Escape");
     await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
-    const expected = Math.max(1, (await paneScrollInfo(paneId))!.viewport_rows - rows);
+    // one line stays between pages
+    const expected = Math.max(1, (await paneScrollInfo(paneId))!.viewport_rows - 1);
     await page.keyboard.press("ControlOrMeta+Shift+PageUp");
-    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === expected, `native paging respects ${rows} overlap rows`);
+    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === expected, "native paging keeps one overlap row");
     await page.keyboard.press("ControlOrMeta+Shift+PageDown");
     await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "native paging down reaches the bottom");
-    await scrollbar.focus();
-    await page.keyboard.press("PageUp");
-    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === expected, "focused scrollbar paging uses the same overlap");
-    await page.keyboard.press("PageDown");
-    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "focused scrollbar paging down reaches the bottom");
   }
-  // An app-owned PageDown must not also run the scrollbar’s local handler.
+  // A rebound global PageDown pages up, once; then the defaults come back for the rest of the script.
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Shortcuts");
   await page.getByRole("combobox", { name: "Scroll pane down", exact: true }).selectOption("off");
   await page.getByRole("combobox", { name: "Scroll pane up", exact: true }).selectOption("PageDown");
   await page.keyboard.press("Escape");
-  await scrollbar.focus();
+  await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
   await page.keyboard.press("ControlOrMeta+Shift+PageDown");
   await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === pageRows, "a rebound global PageDown pages up only once");
-  await page.keyboard.press("End");
-  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "reset history after rebound paging");
+  await page.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(page, "Shortcuts");
+  await page.getByRole("combobox", { name: "Scroll pane up", exact: true }).selectOption("PageUp");
+  await page.getByRole("combobox", { name: "Scroll pane down", exact: true }).selectOption("PageDown");
+  await page.keyboard.press("Escape");
+  await pageToEdge(-1);
   assert.equal(terminalInput.length, inputsBeforePaging, "paging and settings never send input to the terminal program");
 
-  await scrollbar.focus();
-  await page.keyboard.press("Home");
-  await page.waitForFunction(() => document.querySelector('[role="scrollbar"]')?.getAttribute("aria-valuenow") === "0");
-  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom > 100, "Home moves native history to the top");
-  await page.keyboard.press("End");
-  await page.waitForFunction(() => { const bar = document.querySelector('[role="scrollbar"]'); return bar?.getAttribute("aria-valuenow") === bar?.getAttribute("aria-valuemax"); });
-  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "End reaches native bottom");
+  await pageToEdge(1);
+  assert.ok((await paneScrollInfo(paneId))!.offset_from_bottom > 100, "paging reaches the top of native history");
+  await pageToEdge(-1);
 
   // The metrics poll: a quiet pane at the bottom backs off, output brings it back, and a view scrolled
   // up into history keeps reading every second, since growing history there may send no output.
@@ -143,13 +152,13 @@ try {
   };
   page.on("request", countRead);
   try {
-    await until(async () => metricsReads.length > 0, "the poll reads metrics after End");
+    await until(async () => metricsReads.length > 0, "the poll reads metrics after paging to the bottom");
     const quietFrom = metricsReads.at(-1)!;
     // fixed wait: proving the quiet pane's poll stays sparse over a window (a 1 s poll makes 8 reads)
     await Bun.sleep(8000);
     const quietReads = metricsReads.filter((at) => at > quietFrom).length;
     assert.ok(quietReads <= 4, `a quiet pane backs its metrics poll off, read ${quietReads} times in 8 s`);
-    // A failed read on the backed-off poll hides the scrollbar; the retry must not wait out the idle backoff.
+    // A failed read on the backed-off poll leaves page keys without metrics; the retry must not wait out the idle backoff.
     let failedAt = 0;
     const failOnce = async (route: import("playwright-core").Route) => {
       if (failedAt || route.request().method() !== "GET") return route.continue();
@@ -165,7 +174,6 @@ try {
       await until(async () => afterFailure() !== undefined || Date.now() - failedAt > 3000, "a read follows the failed one");
       const retry = afterFailure();
       assert.ok(retry !== undefined && retry - failedAt < 1500, `a failed metrics read retries within about 1 s, took ${retry === undefined ? "over 3000" : retry - failedAt} ms`);
-      await page.locator('[role="scrollbar"]').waitFor({ state: "visible", timeout: 2000 });
     } finally { await page.unroute("**/api/pane/scroll?**", failOnce); }
     const beforeOutput = metricsReads.length;
     const outputAt = Date.now();
@@ -173,33 +181,22 @@ try {
     await until(async () => metricsReads.length > beforeOutput, "output wakes the backed-off poll");
     assert.ok(metricsReads[beforeOutput]! - outputAt < 1500, `output brings the next read back within about 1 s, took ${metricsReads[beforeOutput]! - outputAt} ms`);
 
-    await scrollbar.focus();
-    await page.keyboard.press("Home");
-    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom > 100, "Home scrolls up before the held-view poll check");
-    await page.waitForFunction(() => document.querySelector('[role="scrollbar"]')?.getAttribute("aria-valuenow") === "0");
+    await pageToEdge(1);
+    await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom > 100, "paging scrolls up before the held-view poll check");
     const upFrom = Date.now();
     // fixed wait: proving the scrolled-up poll keeps its 1 s cadence over a window the idle backoff would stretch
     await Bun.sleep(6000);
     const upReads = metricsReads.filter((at) => at > upFrom).length;
     assert.ok(upReads >= 4, `a view scrolled up keeps reading metrics about every second, read ${upReads} times in 6 s`);
-    const heldMax = Number(await scrollbar.getAttribute("aria-valuemax"));
+    const heldMax = (await paneScrollInfo(paneId))!.max_offset_from_bottom;
+    const grown = page.waitForResponse(async (response) => response.url().includes("/api/pane/scroll?") && response.request().method() === "GET"
+      && (((await response.json()) as { scroll: { max_offset_from_bottom: number } | null }).scroll?.max_offset_from_bottom ?? 0) > heldMax, { timeout: 3000 });
     const grownAt = Date.now();
     for (let line = 0; line < 5; line++) await herdrRpc("pane.send_input", { pane_id: paneId, text: `held_view_${line}`, keys: ["enter"] });
-    await page.waitForFunction((held) => Number(document.querySelector('[role="scrollbar"]')?.getAttribute("aria-valuemax")) > held, heldMax, { timeout: 3000 });
-    assert.ok(Date.now() - grownAt < 3000, "history grown under a scrolled-up view reaches the scrollbar within about 3 s");
+    await grown;
+    assert.ok(Date.now() - grownAt < 3000, "history grown under a scrolled-up view reaches the client's metrics within about 3 s");
   } finally { page.off("request", countRead); }
-  await scrollbar.focus();
-  await page.keyboard.press("End");
-  await page.waitForFunction(() => { const bar = document.querySelector('[role="scrollbar"]'); return bar?.getAttribute("aria-valuenow") === bar?.getAttribute("aria-valuemax"); });
-  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "End returns to the native bottom after the poll checks");
-  const box = (await scrollbar.boundingBox())!;
-  const thumb = (await scrollbar.locator(".terminal-history-thumb").boundingBox())!;
-  await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2, box.y + thumb.height / 2, { steps: 8 });
-  await page.mouse.up();
-  await page.waitForFunction(() => Number(document.querySelector('[role="scrollbar"]')?.getAttribute("aria-valuenow")) < 3);
-  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom > 100, "thumb drag moves the actual shared pane");
+  await pageToEdge(-1);
 
   const beforeFindRows = (await paneScrollInfo(paneId))!.viewport_rows;
   await page.keyboard.press("ControlOrMeta+Shift+f");
@@ -222,10 +219,8 @@ try {
   }
   const count = await find.locator(".find-bar-count").textContent();
   const readonlySearch = page.waitForRequest((request) => request.url().endsWith("/api/pane/find") && request.postDataJSON()?.jump === false);
-  await scrollbar.focus();
-  await page.keyboard.press("End");
+  await pageToEdge(-1);
   await readonlySearch;
-  await page.waitForFunction(() => { const bar = document.querySelector('[role="scrollbar"]'); return bar?.getAttribute("aria-valuenow") === bar?.getAttribute("aria-valuemax"); });
   assert.equal(await find.locator(".find-bar-count").textContent(), count, "scroll refresh does not advance the search ordinal");
   assert.equal((await paneScrollInfo(paneId))!.offset_from_bottom, 0, "background search refresh never moves the view");
   await input.fill("界éZ");
@@ -235,7 +230,7 @@ try {
   const screen = (await page.locator(".xterm-screen").boundingBox())!;
   const wide = await page.evaluate(() => { const row = document.querySelector(".xterm-rows > div"); return row?.getBoundingClientRect().height ?? 0; });
   assert.ok(hit.width > 20 && hit.height > 0 && wide > 0 && hit.x >= screen.x, "wide and combining text has visible cell-aligned emphasis");
-  // An older scrollbar write must finish before a newer explicit search moves the pane.
+  // An older page write must finish before a newer explicit search moves the pane.
   // The fetch observer records dispatch synchronously; no timing sleep is needed to prove
   // Find is waiting while its UI already says Searching… and the POST is held below.
   await page.evaluate((owner) => {
@@ -266,14 +261,14 @@ try {
   };
   await page.route("**/api/pane/scroll", holdScroll);
   try {
-    await scrollbar.focus();
-    await page.keyboard.press("Home");
+    await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
+    await page.keyboard.press("ControlOrMeta+Shift+PageUp");
     await Promise.race([intercepted.promise, new Promise<never>((_resolve, reject) => {
       const signal = AbortSignal.timeout(10000);
       signal.addEventListener("abort", () => reject(new Error("scroll POST was not intercepted")), { once: true });
     })]);
     // A second queued target is obsolete once the user asks Find to choose the viewport.
-    await page.keyboard.press("PageDown");
+    await page.keyboard.press("ControlOrMeta+Shift+PageDown");
     await input.fill("history 090: record");
     const explicitResponse = page.waitForResponse((response) => response.url().endsWith("/api/pane/find")
       && response.request().postDataJSON()?.query === "history 090: record" && response.request().postDataJSON()?.jump !== false);
@@ -284,7 +279,7 @@ try {
     await input.press("Enter");
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".find-bar input")?.readOnly === true);
     assert.equal(await page.evaluate(() => (window as any).__viewportOrderProbe.calls.filter((call: { path: string }) => call.path.endsWith("/pane/find")).length), 0,
-      "explicit native search must wait for the previous scrollbar request");
+      "explicit native search must wait for the previous page request");
     await page.evaluate(() => { (window as any).__viewportOrderProbe.released = true; });
     releaseScroll.resolve();
     const response = await explicitResponse;
@@ -335,7 +330,7 @@ try {
   assert.deepEqual(errors, []);
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "terminal-viewport.png") });
   await context.close();
-  console.log("PASS native history scrollbar, search highlights, wide cells, non-jumping refresh and old bridge compatibility");
+  console.log("PASS no history scrollbar, full-width grid, native paging, search highlights, wide cells, non-jumping refresh and old bridge compatibility");
 } finally {
   await browser.close(); server.stop();
   if (workspace) await workspaceClose(workspace).catch(() => {});

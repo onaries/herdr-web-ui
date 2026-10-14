@@ -52,17 +52,6 @@ it("the demo preserves native split paths, explicit swaps and focus while zoomed
     expect((await post("layout/ratio", { tab_id: tabId, path: [0], ratio: 0.5 })).status).toBe(400);
     expect((await post("layout/ratio", { tab_id: tabId, path: [], ratio: 1 })).status).toBe(400);
     expect((await post("pane/focus", null)).status).toBe(400);
-    // Moving a pane must edit both binary trees; a later drag must not resurrect a removed leaf.
-    const moved = await (await post("pane/move", { pane_id: topRight, destination: { type: "new_tab" } })).json();
-    expect(moved.changed).toBe(true);
-    const destination = moved.pane.tab_id as string;
-    expect((await snapshot()).layouts.find((candidate) => candidate.tab_id === destination)?.panes.map((pane) => pane.pane_id)).toEqual([topRight]);
-    expect((await snapshot()).focused_pane_id).not.toBe(topRight);
-    expect(await (await post("layout/ratio", { tab_id: tabId, path: [], ratio: 0.6 })).json()).toEqual({ ok: true });
-    expect((await layout()).panes.some((pane) => pane.pane_id === topRight)).toBe(false);
-    await post("pane/move", { pane_id: topRight, destination: { type: "tab", tab_id: tabId } });
-    expect(await (await post("layout/ratio", { tab_id: tabId, path: [], ratio: 0.5 })).json()).toEqual({ ok: true });
-    expect((await layout()).panes.map((pane) => pane.pane_id).sort()).toEqual([root, bottom, topRight, bottomRight].sort());
   } finally {
     for (const [key, descriptor] of saved) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

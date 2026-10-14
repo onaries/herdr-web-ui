@@ -1,5 +1,8 @@
+diff --git a/node_modules/@xterm/xterm/.bun-tag-e1949dc8b8c7d718 b/.bun-tag-e1949dc8b8c7d718
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/src/browser/Terminal.ts b/src/browser/Terminal.ts
-index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986a1fc1f40 100644
+index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..2c6e3353e162aa36cd37f3850d711f29bb266a95 100644
 --- a/src/browser/Terminal.ts
 +++ b/src/browser/Terminal.ts
 @@ -339,7 +339,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
@@ -13,7 +16,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
 +    };
      this.register(addDisposableDomListener(this.textarea!, 'paste', pasteHandlerWrapper));
      this.register(addDisposableDomListener(this.element!, 'paste', pasteHandlerWrapper));
-
+ 
 @@ -381,6 +384,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
      this.register(addDisposableDomListener(this.textarea!, 'compositionstart', () => this._compositionHelper!.compositionstart()));
      this.register(addDisposableDomListener(this.textarea!, 'compositionupdate', (e: CompositionEvent) => this._compositionHelper!.compositionupdate(e)));
@@ -24,7 +27,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
    }
 @@ -465,7 +469,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
      this._instantiationService.setService(ICoreBrowserService, this._coreBrowserService);
-
+ 
      this.register(addDisposableDomListener(this.textarea, 'focus', (ev: FocusEvent) => this._handleTextAreaFocus(ev)));
 -    this.register(addDisposableDomListener(this.textarea, 'blur', () => this._handleTextAreaBlur()));
 +    this.register(addDisposableDomListener(this.textarea, 'blur', () => {
@@ -32,7 +35,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
 +      this._handleTextAreaBlur();
 +    }));
      this._helperContainer.appendChild(this.textarea);
-
+ 
      this._charSizeService = this._instantiationService.createInstance(CharSizeService, this._document, this._helperContainer);
 @@ -485,6 +492,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
      this._compositionView = this._document.createElement('div');
@@ -40,25 +43,34 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
      this._compositionHelper = this._instantiationService.createInstance(CompositionHelper, this.textarea, this._compositionView);
 +    this.register(toDisposable(() => this._compositionHelper?.reset()));
      this._helperContainer.appendChild(this._compositionView);
-
+ 
      this._mouseService = this._instantiationService.createInstance(MouseService);
 @@ -888,6 +896,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
    }
-
+ 
    public paste(data: string): void {
 +    this._compositionHelper?.finishReplacement();
      paste(data, this.textarea!, this.coreService, this.optionsService);
    }
-
-@@ -1009,6 +1018,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+ 
+@@ -1006,9 +1015,16 @@ export class Terminal extends CoreTerminal implements ITerminal {
+       return false;
+     }
+ 
++    // An iPad's Korean input method composes this key in the editor; keypress must not send it either
++    if (this._compositionHelper!.passHangulKey(event)) {
++      this._keyDownHandled = true;
++      return false;
++    }
++
      // Ignore composing with Alt key on Mac when macOptionIsMeta is enabled
      const shouldIgnoreComposition = this.browser.isMac && this.options.macOptionIsMeta && event.altKey;
-
+ 
 +    const wasComposing = this._compositionHelper?.isComposing === true;
      if (!shouldIgnoreComposition && !this._compositionHelper!.keydown(event)) {
        if (this.options.scrollOnUserInput && this.buffer.ybase !== this.buffer.ydisp) {
          this.scrollToBottom();
-@@ -1063,7 +1073,13 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1063,7 +1079,13 @@ export class Terminal extends CoreTerminal implements ITerminal {
      // If ctrl+c or enter is being sent, clear out the textarea. This is done so that screen readers
      // will announce deleted characters. This will not work 100% of the time but it should cover
      // most scenarios.
@@ -72,8 +84,8 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
 +    if (result.key === C0.ETX || result.key === C0.CR || clearAfterBackspace) {
        this.textarea!.value = '';
      }
-
-@@ -1170,10 +1186,11 @@ export class Terminal extends CoreTerminal implements ITerminal {
+ 
+@@ -1170,10 +1192,11 @@ export class Terminal extends CoreTerminal implements ITerminal {
     * @param ev The input event to be handled.
     */
    protected _inputEvent(ev: InputEvent): boolean {
@@ -86,7 +98,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
        if (this._keyPressHandled) {
          return false;
        }
-@@ -1251,6 +1268,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1251,6 +1274,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
     * using DECSTR (soft reset, CSI ! p) or RIS instead (hard reset, ESC c).
     */
    public reset(): void {
@@ -95,37 +107,42 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..06a7e9fa4f68c16f478d988326eda986
       * Since _setup handles a full terminal creation, we have to carry forward
       * a few things that should not reset.
 diff --git a/src/browser/Types.d.ts b/src/browser/Types.d.ts
-index 9ebc55d96f328720dcb87cc31147c6d5a76ebebe..4dac08577f0153bc73ac9615af1f4586b6a216c9 100644
+index 9ebc55d96f328720dcb87cc31147c6d5a76ebebe..8ad922b9f033f878da81e81d33725c6613d92c3a 100644
 --- a/src/browser/Types.d.ts
 +++ b/src/browser/Types.d.ts
-@@ -36,6 +36,11 @@ export type CustomWheelEventHandler = (event: WheelEvent) => boolean;
+@@ -36,6 +36,12 @@ export type CustomWheelEventHandler = (event: WheelEvent) => boolean;
  export type LineData = CharData[];
-
+ 
  export interface ICompositionHelper {
 +  reset(): void;
 +  beforeinput(ev: InputEvent, keyDownSeen?: boolean): void;
 +  input(ev: InputEvent, keyDownSeen?: boolean): boolean;
 +  takeCommitInsert(ev: InputEvent): boolean;
 +  finishReplacement(): void;
++  passHangulKey(ev: KeyboardEvent): boolean;
    readonly isComposing: boolean;
    compositionstart(): void;
    compositionupdate(ev: CompositionEvent): void;
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970ad4cba04 100644
+index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94759d3b70 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
-@@ -6,6 +6,7 @@
+@@ -6,6 +6,11 @@
  import { IRenderService } from 'browser/services/Services';
  import { IBufferService, ICoreService, IOptionsService } from 'common/services/Services';
  import { C0 } from 'common/data/EscapeSequences';
-+import { isMac, isSafari } from 'common/Platform';
-
++import { isIpad, isMac, isSafari } from 'common/Platform';
++
++/** Hangul jamo and syllables: a key or an edit that a Korean input method composes. */
++const HANGUL_KEY = /^[ᄀ-ᇿ㄰-㆏가-힯]$/;
++const HANGUL_TEXT = /^[ᄀ-ᇿ㄰-㆏가-힯]+$/;
+ 
  interface IPosition {
    start: number;
-@@ -30,11 +31,16 @@ export class CompositionHelper {
+@@ -30,11 +35,16 @@ export class CompositionHelper {
     */
    private _compositionPosition: IPosition;
-
+ 
 -  /**
 -   * Whether a composition is in the process of being sent, setting this to false will cancel any
 -   * in-progress composition.
@@ -141,10 +158,10 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
 +  private _editAwaitingKey = false;
 +  /** Text whose insertion ended a replacement after its keydown was held back (keydown 229). */
 +  private _commitInsert: string | undefined;
-
+ 
    /**
     * Data already sent due to keydown event.
-@@ -50,17 +56,84 @@ export class CompositionHelper {
+@@ -50,17 +60,101 @@ export class CompositionHelper {
      @IRenderService private readonly _renderService: IRenderService
    ) {
      this._isComposing = false;
@@ -152,7 +169,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
      this._compositionPosition = { start: 0, end: 0 };
      this._dataAlreadySent = '';
    }
-
+ 
 +  /** A reset/disposal must not forward an old pane's deferred input into its replacement. */
 +  public reset(): void {
 +    this._generation++;
@@ -172,7 +189,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
 +  /** Safari #432: beforeinput supplies the pre-edit range; keydown 229 arrives AFTER input. */
 +  public beforeinput(ev: InputEvent, keyDownSeen = false): void {
 +    if (!this._replacementComposition) this._editAwaitingKey = false;
-+    if (!isMac || !isSafari || ev.isComposing || this._optionsService.rawOptions.screenReaderMode
++    if (!(isMac || isIpad) || !isSafari || ev.isComposing || this._optionsService.rawOptions.screenReaderMode
 +      || (this._isComposing && !this._replacementComposition)) return;
 +    if (this._replacementComposition && (ev.inputType === 'insertReplacementText'
 +      || ev.inputType === 'deleteContentBackward' || ev.inputType === 'deleteContentForward')) return;
@@ -181,13 +198,30 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
 +    const commitInsert = this._replacementComposition && keyDownSeen && ev.inputType === 'insertText' ? ev.data ?? undefined : undefined;
 +    this.finishReplacement();
 +    this._commitInsert = commitInsert;
-+    // Only a single Hangul preedit starts this path. Paste, emoji, dictation blocks and
-+    // browsers emitting real composition events retain their existing input handling.
-+    if (ev.inputType === 'insertText' && ev.data && /^[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]$/.test(ev.data)) {
++    // Only a Hangul preedit starts this path. Paste, emoji, dictation blocks and browsers
++    // emitting real composition events retain their existing input handling. iPadOS puts two
++    // syllables back at once when a final consonant moves on (\ub9dd + \u314f: \ub9c8\uc544).
++    if (ev.inputType === 'insertText' && ev.data && HANGUL_TEXT.test(ev.data)) {
 +      this._commitInsert = undefined;
 +      this.compositionstart();
 +      this._replacementComposition = true;
 +    }
++  }
++
++  /**
++   * iPadOS Safari with a hardware keyboard reports each Hangul jamo as a printable keydown (its own
++   * keyCode, not 229) and then composes in the editor with deleteContentBackward and insertText,
++   * never with composition events. Sending the key on keydown cancels that edit, so every jamo
++   * reached the PTY on its own (한 as ㅎㅏㄴ). Such a key is left to the editor: beforeinput takes
++   * its insertion as a replacement preedit, which the next other key, paste or blur commits.
++   */
++  public passHangulKey(ev: KeyboardEvent): boolean {
++    if (!isSafari || !(isMac || isIpad) || ev.keyCode === 229 || ev.isComposing || ev.ctrlKey || ev.altKey || ev.metaKey
++      || this._optionsService.rawOptions.screenReaderMode || (this._isComposing && !this._replacementComposition)
++      || !HANGUL_KEY.test(ev.key)) return false;
++    this._editAwaitingKey = false;
++    this._commitInsert = undefined;
++    return true;
 +  }
 +
 +  /** Whether this insertion ended a replacement and still has to be forwarded (see beforeinput). */
@@ -231,7 +265,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
      this._compositionView.textContent = '';
      this._dataAlreadySent = '';
      this._compositionView.classList.add('active');
-@@ -71,9 +144,12 @@ export class CompositionHelper {
+@@ -71,9 +165,12 @@ export class CompositionHelper {
     * @param ev The event.
     */
    public compositionupdate(ev: Pick<CompositionEvent, 'data'>): void {
@@ -244,15 +278,15 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
        this._compositionPosition.end = this._textarea.value.length;
      }, 0);
    }
-@@ -83,6 +159,7 @@ export class CompositionHelper {
+@@ -83,6 +180,7 @@ export class CompositionHelper {
     * the handler.
     */
    public compositionend(): void {
 +    if (!this._isComposing) return;
      this._finalizeComposition(true);
    }
-
-@@ -92,7 +169,24 @@ export class CompositionHelper {
+ 
+@@ -92,7 +190,24 @@ export class CompositionHelper {
     * @returns Whether the Terminal should continue processing the keydown event.
     */
    public keydown(ev: KeyboardEvent): boolean {
@@ -278,14 +312,14 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
        if (ev.keyCode === 229) {
          // Continue composing if the keyCode is the "composition character"
          return false;
-@@ -125,56 +219,45 @@ export class CompositionHelper {
+@@ -125,56 +240,45 @@ export class CompositionHelper {
     *   the command is executed.
     */
    private _finalizeComposition(waitForPropagation: boolean): void {
 +    this._replacementComposition = false;
      this._compositionView.classList.remove('active');
      this._isComposing = false;
-
+ 
      if (!waitForPropagation) {
 -      // Cancel any delayed composition send requests and send the input immediately.
 -      this._isSendingComposition = false;
@@ -351,7 +385,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
        }, 0);
      }
    }
-
+ 
 +  private _sliceUnsent(start: number, end: number): string {
 +    const from = Math.max(start, this._sentUpTo);
 +    const to = Math.max(from, end);
@@ -362,7 +396,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..6a7da585c1361ebd65ab31ad7fc26970
    /**
     * Apply any changes made to the textarea after the current event chain is allowed to complete.
     * This should be called when not currently composing but a keydown event with the "composition
-@@ -183,7 +266,9 @@ export class CompositionHelper {
+@@ -183,7 +287,9 @@ export class CompositionHelper {
     */
    private _handleAnyTextareaChanges(): void {
      const oldValue = this._textarea.value;

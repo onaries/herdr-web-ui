@@ -116,8 +116,8 @@ export function RepoDiffViewer({ target, onClose, onOpenFile, keyboardActive = t
   const file = answer?.file ?? null;
   const patch = answer?.patch ?? null;
   const style = diffStyleFor(settings.diffStyle, narrow);
-  const wantsColor = settings.highlightCode && canHighlight(languageForPath(path));
-  const colored = patch !== null && diffColorable(settings.highlightCode, path, patch);
+  const wantsColor = canHighlight(languageForPath(path));
+  const colored = patch !== null && diffColorable(path, patch);
   const notes = [
     wantsColor && patch !== null && !colored ? t("Too long to highlight") : null,
     narrow && settings.diffStyle === "split" ? t("Split view needs a wider screen; showing one column.") : null,

@@ -23,6 +23,8 @@ interface StandInSubscription {
 let live: StandInSubscription | null;
 let issued: number;
 let registered: string[];
+/** endpoints the server answers `subscription_gone` for: their push service retired them */
+let retired: Set<string>;
 const saved = {
   fetch: globalThis.fetch,
   PushManager: (globalThis as { PushManager?: unknown }).PushManager,
@@ -47,6 +49,7 @@ beforeEach(() => {
   live = null;
   issued = 0;
   registered = [];
+  retired = new Set();
   const pushManager = {
     getSubscription: async () => live,
     subscribe: async (options: { applicationServerKey: Uint8Array }) => {
@@ -64,7 +67,9 @@ beforeEach(() => {
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     if (url === "/api/push") return Response.json({ public_key: SERVER_KEY });
     if (url === "/api/push/subscribe" && init?.method === "POST") {
-      registered.push((JSON.parse(String(init.body)) as { subscription: { endpoint: string } }).subscription.endpoint);
+      const endpoint = (JSON.parse(String(init.body)) as { subscription: { endpoint: string } }).subscription.endpoint;
+      if (retired.has(endpoint)) return Response.json({ error: { code: "subscription_gone", message: "retired" } }, { status: 410 });
+      registered.push(endpoint);
       return new Response(null, { status: 204 });
     }
     if (url === "/api/push/subscribe" && init?.method === "DELETE") return new Response(null, { status: 204 });
@@ -102,6 +107,28 @@ describe("ensurePushSubscription", () => {
     expect(stale.unsubscribed).toBe(true);
     expect(endpoint).toBe("https://push.example/1");
     expect(registered).toEqual(["https://push.example/1"]);
+  });
+
+  // regression (fails on main): "Turn alerts on again" must not hand the server the retired endpoint again (#1038)
+  it("drops a subscription the server says its push service retired and registers a fresh one", async () => {
+    const first = await ensurePushSubscription();
+    const old = live!;
+    retired.add(first!);
+    const repaired = await ensurePushSubscription();
+    expect(old.unsubscribed).toBe(true);
+    expect(issued).toBe(2);
+    expect(repaired).toBe("https://push.example/2");
+    expect(registered).toEqual([first!, "https://push.example/2"]);
+  });
+
+  // control: a browser that keeps returning the retired endpoint is not registered again
+  it("gives up when the browser still holds the retired endpoint after unsubscribing", async () => {
+    await ensurePushSubscription();
+    const stuck = live!;
+    stuck.unsubscribe = async () => true; // the browser says yes and keeps it
+    retired.add(stuck.endpoint);
+    await expect(ensurePushSubscription()).rejects.toMatchObject({ code: "subscription_gone" });
+    expect(issued).toBe(1);
   });
 
   it("does nothing until notifications are allowed", async () => {

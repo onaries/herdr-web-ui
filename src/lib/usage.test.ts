@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
-import { composerUsage, formatPercent, formatRate, formatResetIn, formatRunsOut, glanceWindow, meterPercent, meterText, moveInOrder, orderProviders, providerForAgent, statusWindows, tightestWindow, usageName, windowLabel, windowPace } from "./usage.ts";
+import { composerUsage, formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, orderProviders, providerForAgent, statusWindows, tightestWindow, usageName, windowLabel } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const window = (used_percent: number, kind: UsageWindow["kind"] = "week", scope: string | null = null): UsageWindow => ({ kind, scope, used_percent, resets_at: null, starts_at: null });
@@ -81,41 +81,6 @@ describe("usage meters", () => {
     expect(formatPercent(0.4)).toBe("0.4%");
     expect(formatPercent(2.2)).toBe("2%");
     expect(formatPercent(99.6)).toBe("100%");
-  });
-
-  it("projects when a limit runs out at its pace so far, and only when that comes before the reset", () => {
-    const at = (hours: number) => new Date(NOW + hours * 3600_000).toISOString();
-    const span = (used: number, start: number, end: number, kind: UsageWindow["kind"] = "week"): UsageWindow => ({ ...window(used, kind), starts_at: at(start), resets_at: at(end) });
-    // a week 2 days in, 40% used: 20%/day, out in 3 days, 2 days before the reset
-    const fast = windowPace(span(40, -48, 120), null, NOW)!;
-    expect(fast.elapsed).toBeCloseTo(2 / 7);
-    expect(fast.runsOutAt).toBe(at(72));
-    expect(formatRate(span(40, -48, 120), fast)).toBe("20%/day");
-    // 10% two days in lasts the week
-    expect(windowPace(span(10, -48, 120), null, NOW)).toMatchObject({ runsOutAt: null });
-    // a session 2 hours in, 9% used
-    expect(formatRate(span(9, -2, 3, "session"), windowPace(span(9, -2, 3, "session"), null, NOW)!)).toBe("4.5%/h");
-    expect(formatRate(span(0.01, -2, 3, "session"), windowPace(span(0.01, -2, 3, "session"), null, NOW)!)).toBe("<0.1%/h");
-    // numbers read 3 hours ago, kept while the provider asks to slow down: measured when they were read
-    expect(windowPace(span(50, -4, 1, "session"), at(-3), NOW)).toMatchObject({ elapsed: 0.2, perHour: 50, runsOutAt: at(-2) });
-    // nothing used yet still shows how much of the window has gone by
-    expect(windowPace(span(0, -2, 3, "session"), null, NOW)).toEqual({ elapsed: 0.4, perHour: 0, runsOutAt: null });
-    expect(windowPace(span(100, -2, 3, "session"), null, NOW)!.runsOutAt).toBeNull();
-    // too early for a rate, past the reset, or a window whose start the provider does not state
-    expect(windowPace(span(5, -0.1, 4.9, "session"), null, NOW)).toBeNull();
-    expect(windowPace(span(5, -6, -1, "session"), null, NOW)).toBeNull();
-    expect(windowPace(span(5, -4, 1, "session"), at(-3), NOW + 2 * 3600_000)).toBeNull();
-    expect(windowPace({ ...window(40), resets_at: at(120) }, null, NOW)).toBeNull();
-  });
-
-  it("keeps the run-out warning until the reset, once its time has gone by", () => {
-    const at = (hours: number) => new Date(NOW + hours * 3600_000).toISOString();
-    const span = (used: number, start: number, end: number): UsageWindow => ({ ...window(used, "session"), starts_at: at(start), resets_at: at(end) });
-    // 50% one hour in, read 3 hours ago: out 2 hours ago at that pace, an hour before the reset
-    expect(formatRunsOut(span(50, -4, 1), at(-3), NOW)).toBe("Runs out before reset");
-    expect(formatRunsOut(span(50, -4, 1), at(-3), NOW - 3 * 3600_000 + 60_000)).toBe("Runs out in 59m");
-    expect(formatRunsOut(span(10, -4, 1), at(-3), NOW)).toBeNull();
-    expect(formatRunsOut(span(50, -4, 1), at(-3), NOW + 2 * 3600_000)).toBeNull();
   });
 
   it("names a window by its span and its scope", () => {

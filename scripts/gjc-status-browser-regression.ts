@@ -1,0 +1,268 @@
+import "./test-herdr.ts";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, readFileSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, type Browser, type Page } from "playwright-core";
+import { createServer } from "../server/index.ts";
+import { herdrRpc, herdrSocketPath, sessionSnapshot, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { gjcTranscriptForPane, isGjcProcess } from "../server/gjc-runtime.ts";
+import { UsageService } from "../server/usage.ts";
+import type { ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
+
+type Status = "idle" | "working" | "done" | "blocked";
+type NativeRecord = Readonly<Record<string, unknown>>;
+const root = mkdtempSync(join(tmpdir(), "herdr-gjc-status-browser-"));
+const store = join(root, ".gjc", "agent", "sessions", "v2-fixture");
+const script = join(root, "gjc");
+const oldPath = process.env.PATH;
+const sdkRows: Record<string, unknown>[] = [];
+const sdkRegistry = join(root, "sdk-fixture.json");
+const oldHome = process.env.HOME, oldSocket = process.env.HERDR_SOCKET;
+const evidenceDirectory = process.env.UI_EVIDENCE_DIR || process.env.CHECK_BROWSER_EVIDENCE_DIR;
+const workspaces: string[] = [], frames: ServerMessage[] = [];
+const outcomes: { scenario: string; outcome: "passed" }[] = [];
+let server: ReturnType<typeof createServer> | undefined, browser: Browser | undefined;
+let statusSocket: WebSocket | undefined, page: Page | undefined;
+let socketError: Error | undefined, origin = "", scenario = "fixture setup";
+let deferredCleanupError: AggregateError | undefined;
+
+function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
+async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (!(await check())) {
+    if (socketError) throw socketError;
+    assert.ok(Date.now() < deadline, `Timed out: ${label}`);
+    await Bun.sleep(50);
+  }
+}
+function history(path: string) {
+  let previousId: string | null = null, sequence = 0;
+  const record = (fields: NativeRecord): NativeRecord => {
+    const id = `fixture-${++sequence}`;
+    const result = { id, parentId: previousId, timestamp: new Date().toISOString(), ...fields };
+    previousId = id;
+    return result;
+  };
+  return {
+    message(role: "user" | "assistant" | "toolResult", text: string, ending?: "stop" | "toolUse") {
+      return record({ type: "message", message: { role, content: [{ type: "text", text }],
+        ...(role === "assistant" ? { stopReason: ending ?? "stop" } : {}),
+        ...(role === "toolResult" ? { toolCallId: "q1" } : {}) } });
+    },
+    ask: () => record({ type: "message", message: { role: "assistant", stopReason: "toolUse", content: [
+      { type: "toolCall", id: "q1", name: "ask", arguments: { questions: [
+        { question: "Synthetic choice?", options: [{ label: "Continue" }] },
+      ] } },
+    ] } }),
+    wake: () => record({ type: "custom_message", customType: "async-result", display: false, content: "Synthetic background result" }),
+    append: (...records: NativeRecord[]) => appendFileSync(path, records.map((item) => JSON.stringify(item) + "\n").join("")),
+  };
+}
+async function fixture(transcript: string): Promise<string> {
+  const result = await workspaceCreate({ cwd: root, label: "Synthetic GJC status" });
+  workspaces.push(result.workspace.workspace_id);
+  const paneId = result.root_pane.pane_id;
+  await herdrRpc("pane.send_text", { pane_id: paneId, text: `cd ${quote(root)} && ${quote(process.execPath)} ${quote(script)} ${quote(transcript)}\n` });
+  let foreground: { pid: number; argv?: string[] } | undefined;
+  await until(async () => {
+    const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: paneId });
+    foreground = info.process_info?.foreground_processes?.find((item) => item.argv?.includes(script));
+    return foreground !== undefined;
+  }, "owned GJC process");
+  assert.ok(foreground?.argv);
+  assert.ok(isGjcProcess(foreground.argv), "fixture must be recognized as GJC");
+  const header: { id: string } = JSON.parse(readFileSync(transcript, "utf8").split("\n")[0] ?? "");
+  sdkRows.push({ sessionId: header.id, pid: foreground.pid, hostIncarnation: "owned-fixture",
+    endpointGeneration: 1, identityProvenance: "composite", live: true, terminal: false,
+    terminalUncertain: false, ambiguous: false,
+    locator: { cwd: root, worktreeRoot: null, stateRoot: join(root, ".gjc", "agent") }, path: transcript });
+  writeFileSync(sdkRegistry, JSON.stringify(sdkRows));
+  await until(async () => await gjcTranscriptForPane(paneId, root, root) === transcript, "exact native transcript binding");
+  await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "gjc", state: "working" });
+  await herdrRpc("pane.report_agent_session", { pane_id: paneId, source: "herdr:codex", agent: "codex", seq: Date.now(), agent_session_id: "01a00000-0000-7000-8000-000000000001" });
+  await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "gjc", state: "working" });
+  return paneId;
+}
+async function rawWorking(paneId: string): Promise<void> {
+  const pane = (await sessionSnapshot()).panes.find((item) => item.pane_id === paneId);
+  assert.ok(pane);
+  assert.equal(pane.agent, "gjc");
+  assert.equal(pane.agent_status, "working", "raw provider signal must remain stale working");
+}
+async function httpSnapshot(): Promise<SessionSnapshot> {
+  const response = await fetch(`${origin}/api/session`, { signal: AbortSignal.timeout(5_000) });
+  assert.equal(response.status, 200);
+  const body: { snapshot: SessionSnapshot } = await response.json();
+  return body.snapshot;
+}
+async function conversation(paneId: string): Promise<string> {
+  const response = await fetch(`${origin}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`, { signal: AbortSignal.timeout(5_000) });
+  assert.equal(response.status, 200);
+  const body: { source: string } = await response.json();
+  assert.equal(body.source, "gjc-transcript");
+  return JSON.stringify(body);
+}
+function agentRow(paneId: string) {
+  assert.ok(page);
+  return page.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${paneId}"]`);
+}
+async function settled(paneId: string, status: Status, start?: number): Promise<void> {
+  if (start !== undefined) await until(() => frames.slice(start).some((frame) =>
+    frame.type === "pane-status" && frame.pane_id === paneId && frame.agent_status === status), `${scenario}: pushed ${status}`);
+  await until(async () => (await httpSnapshot()).panes.find((item) => item.pane_id === paneId)?.agent_status === status, `${scenario}: HTTP ${status}`);
+  await until(() => agentRow(paneId).locator(`.badge[data-status="${status}"]`).isVisible(), `${scenario}: browser ${status}`);
+  await rawWorking(paneId);
+}
+async function checkpoint(name: string): Promise<void> {
+  if (evidenceDirectory && page) {
+    await page.screenshot({ path: join(evidenceDirectory, `gjc-status-${name}.png`), fullPage: true });
+    await page.locator(".agents-sidebar").screenshot({ path: join(evidenceDirectory, `gjc-status-${name}-agents.png`) });
+  }
+}
+async function staysDone(paneId: string, start: number): Promise<void> {
+  const observedUntil = Date.now() + 2_000;
+  await until(async () => {
+    assert.equal((await httpSnapshot()).panes.find((item) => item.pane_id === paneId)?.agent_status, "done");
+    assert.ok(await agentRow(paneId).locator('.badge[data-status="done"]').isVisible());
+    assert.ok(!frames.slice(start).some((frame) => frame.type === "pane-status" && frame.pane_id === paneId && frame.agent_status !== "done"), "stale raw events must not push a native status regression");
+    return Date.now() >= observedUntil;
+  }, "DONE remains stable while stale raw events are processed");
+}
+function passed(): void {
+  outcomes.push({ scenario, outcome: "passed" });
+  console.log(`PASS ${scenario}`);
+}
+
+process.env.HERDR_SOCKET = herdrSocketPath();
+process.env.HOME = root;
+try {
+  const sdkBin = join(root, "bin");
+  mkdirSync(sdkBin);
+  const sdkCommand = join(sdkBin, "gjc");
+  writeFileSync(sdkCommand, `#!${process.execPath}
+import { readFileSync } from "node:fs";
+const rows = JSON.parse(readFileSync(${JSON.stringify(sdkRegistry)}, "utf8"));
+const at = process.argv.indexOf("--json-input");
+const input = at < 0 ? {} : JSON.parse(process.argv[at + 1]);
+const row = rows.find((candidate) => candidate.sessionId === input.resolveSessionId);
+console.log(JSON.stringify({ type: "broker_response", ok: true, result: {
+  indexSeq: 1, sessions: rows, continuationCursor: null,
+  savedSession: row ? { id: row.sessionId, path: row.path } : null,
+} }));
+`);
+  chmodSync(sdkCommand, 0o755);
+  process.env.PATH = `${sdkBin}:${oldPath ?? ""}`;
+  mkdirSync(store, { recursive: true });
+  if (evidenceDirectory) mkdirSync(evidenceDirectory, { recursive: true });
+  writeFileSync(script, "import { openSync } from 'node:fs'; globalThis.held = openSync(process.argv[2], 'r'); console.log('Synthetic GJC fixture'); setInterval(() => {}, 1000);\n");
+  const transcript = join(store, "main.jsonl"), delayedTranscript = join(store, "delayed.jsonl");
+  const header = JSON.stringify({ type: "session", id: "fixture-native-session", cwd: root, timestamp: new Date().toISOString() }) + "\n";
+  writeFileSync(transcript, header);
+  writeFileSync(delayedTranscript, header.replace("fixture-native-session", "fixture-delayed-session"));
+  const native = history(transcript), delayed = history(delayedTranscript);
+  native.append(native.message("user", "Synthetic initial request"), native.message("assistant", "Synthetic GJC completed answer"));
+  const paneId = await fixture(transcript), delayedPaneId = await fixture(delayedTranscript);
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), tailscaleOwner: null, usage: new UsageService(undefined, []) });
+  origin = `http://127.0.0.1:${server.port}`;
+  statusSocket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+  statusSocket.addEventListener("message", (event) => {
+    try {
+      const frame: ServerMessage = JSON.parse(String(event.data));
+      frames.push(frame);
+    } catch (error) { socketError = error instanceof Error ? error : new Error(String(error)); }
+  });
+  statusSocket.addEventListener("error", () => { socketError = new Error("Status WebSocket failed"); });
+  await until(() => frames.some((frame) => frame.type === "snapshot"), "initial WebSocket snapshot");
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript((ids) => {
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", quietOpenedDone: false }));
+    for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+  }, [paneId, delayedPaneId]);
+  page = await context.newPage();
+  await page.goto(origin);
+
+  scenario = "Initial completed history is READY without fabricated completion";
+  await settled(paneId, "idle");
+  assert.ok((await conversation(paneId)).includes("Synthetic GJC completed answer"));
+  await agentRow(paneId).locator(".agent-select").click();
+  await page.getByText("Synthetic GJC completed answer", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  assert.ok(!frames.some((frame) => frame.type === "pane-status" && frame.pane_id === paneId && frame.agent_status === "done"));
+  await checkpoint("initial-rest"); passed();
+
+  scenario = "Native user work is RUN despite stale provider status";
+  let start = frames.length;
+  native.append(native.message("user", "Synthetic new work"));
+  await settled(paneId, "working", start);
+  await checkpoint("working"); passed();
+
+  scenario = "Native stop is DONE and stale raw idle/working cannot undo it";
+  start = frames.length;
+  native.append(native.message("assistant", "Synthetic foreground answer"));
+  await settled(paneId, "done", start);
+  start = frames.length;
+  await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "gjc", state: "idle" });
+  // A provider report may keep herdr at RUN even after this raw idle report; native DONE must stand either way.
+  await staysDone(paneId, start);
+  start = frames.length;
+  await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "gjc", state: "working" });
+  await settled(paneId, "done");
+  await staysDone(paneId, start); passed();
+
+  scenario = "Native async-result wakes RUN and a final stop returns DONE";
+  start = frames.length; native.append(native.wake());
+  await settled(paneId, "working", start);
+  start = frames.length; native.append(native.message("assistant", "Synthetic background completed answer"));
+  await settled(paneId, "done", start); passed();
+
+  scenario = "Native ask is INPUT through narration, then tool result resumes RUN";
+  start = frames.length;
+  native.append(native.message("user", "Synthetic question request"), native.ask());
+  await settled(paneId, "blocked", start);
+  await checkpoint("input");
+  native.append(native.message("assistant", "Synthetic unrelated narration", "toolUse"));
+  await until(async () => (await conversation(paneId)).includes("Synthetic unrelated narration"), "native narration read");
+  await settled(paneId, "blocked");
+  start = frames.length; native.append(native.message("toolResult", "Synthetic Continue result"));
+  await settled(paneId, "working", start);
+  start = frames.length; native.append(native.message("assistant", "Synthetic choice completed answer"));
+  await settled(paneId, "done", start); passed();
+
+  scenario = "Delayed native readiness pushes DONE from raw RUN";
+  await settled(delayedPaneId, "working");
+  await agentRow(delayedPaneId).locator(".agent-select").click();
+  start = frames.length;
+  delayed.append(delayed.message("user", "Synthetic delayed request"), delayed.message("assistant", "Synthetic delayed completed answer"));
+  await settled(delayedPaneId, "done", start);
+  assert.ok((await conversation(delayedPaneId)).includes("Synthetic delayed completed answer"));
+  await page.getByText("Synthetic delayed completed answer", { exact: true }).waitFor({ state: "visible", timeout: 20_000 });
+  await checkpoint("final-done"); passed();
+} catch (error) {
+  try { await checkpoint("failure"); } catch (captureError) { console.error("GJC screenshot failed", captureError); }
+  throw error;
+} finally {
+  try {
+    if (evidenceDirectory) writeFileSync(join(evidenceDirectory, "gjc-status-summary.json"), JSON.stringify({ scenarios: outcomes, failedScenario: outcomes.length === 6 ? null : scenario }, null, 2) + "\n");
+  } finally {
+    statusSocket?.close();
+    try { await browser?.close(); } finally {
+      try { await server?.stop(); } finally {
+        try {
+          const cleanup = await Promise.allSettled(workspaces.map((id) => workspaceClose(id)));
+          const failures = cleanup.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+          if (failures.length) {
+            deferredCleanupError = new AggregateError(failures, "Owned GJC workspace cleanup failed");
+            console.error(deferredCleanupError);
+          }
+        } finally {
+          if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+          if (oldSocket === undefined) delete process.env.HERDR_SOCKET; else process.env.HERDR_SOCKET = oldSocket;
+          if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+          rmSync(root, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+}
+if (deferredCleanupError) throw deferredCleanupError;

@@ -56,7 +56,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
   const half = (page: Page, side: string) => page.locator(`.pane-slot[data-side="${side}"]`);
   const isActive = (page: Page, side: string) => page.waitForFunction((which) => document.querySelector(`.pane-slot[data-side="${which}"]`)?.classList.contains("is-active") === true, side);
   /** the pane dropped on the right half, which is then the active one */
-  const splitRight = async (page: Page, pane: string): Promise<void> => {
+  const splitRight = async (page: Page, pane: string, options: { newTargetAtDrop?: boolean } = {}): Promise<void> => {
     const area = page.locator(".pane-split");
     const source = page.locator(`.pane-select[title^="${pane} —"]`);
     await source.waitFor({ state: "visible" });
@@ -77,6 +77,16 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       const guide = document.querySelector(".split-drop");
       return guide?.classList.contains("is-visible") === true && guide.getAttribute("data-side") === "right";
     });
+    if (options.newTargetAtDrop) {
+      // The node under the pointer is replaced between the last dragover and the drop (xterm redraws
+      // a row, a transcript renders again): the drop's own hit test then meets a new node and sends
+      // it a dragenter, and Chromium refuses a drop whose last drag event nobody accepted. The cover
+      // is the test's own node, so React never sees the swap.
+      await page.evaluate(() => {
+        const cover = document.querySelector("#split-drop-cover")!;
+        cover.replaceWith(cover.cloneNode());
+      });
+    }
     await page.mouse.up();
     await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
     await isActive(page, "right");
@@ -520,6 +530,24 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         "activating the half keeps the in-memory lens choice");
       assert.deepEqual(errors, []);
       console.log("PASS an inactive-half lens choice works and survives activation when storage writes fail");
+    }
+
+    // 9b. A drop just after the node under the pointer was replaced still opens the half.
+    {
+      const [left, right] = await panesFor("new-target-left", "new-target-right") as [string, string];
+      const { page, errors } = await open([left, right], "terminal");
+      await page.locator(".pane-split").evaluate((area) => {
+        const cover = document.createElement("div");
+        cover.id = "split-drop-cover";
+        const box = area.getBoundingClientRect();
+        cover.style.cssText = `position:fixed;left:${box.left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;z-index:10`;
+        area.append(cover);
+      });
+      await splitRight(page, right, { newTargetAtDrop: true });
+      await page.locator("#split-drop-cover").evaluate((cover) => cover.remove());
+      await half(page, "right").locator(".xterm").waitFor();
+      assert.deepEqual(errors, []);
+      console.log("PASS a drop on a node that replaced the hovered one still opens the half");
     }
 
     // 10. The phone's glass header follows the nested pane DOM, but never crosses a notice or tab row.

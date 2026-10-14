@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, RotateCcw, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -8,10 +8,8 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, isMacPlatform, modKeyLabel, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
-import { ATTACH_LIMIT_MAX, ATTACH_LIMIT_MIN, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, TERMINAL_CURSOR_STYLES, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type Palette as PaletteName, type TerminalCursorStyle, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type Palette as PaletteName, type VoiceButton } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
-import { CONTRAST_MAX, CONTRAST_MIN, contrastText } from "../lib/contrast.ts";
-import type { FontSmoothing, PanelMotion } from "../lib/appearanceRendering.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
@@ -39,6 +37,7 @@ import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
@@ -71,14 +70,13 @@ function compactKeys(keys: readonly string[]): string {
 
 const FONT_LIST_LIMIT = 150;
 const FONT_FAMILY_PLACEHOLDER = 'D2Coding, "Cascadia Mono"';
-const UI_FONT_PLACEHOLDER = '"Noto Sans", "Segoe UI"';
 
 /**
  * A font family list, saved when the field is left, on Enter or when the dialog closes: saving
  * every keystroke would sanitize away the comma or space being typed, and each change of the
  * terminal's font refits the grid and resizes the pane.
  */
-function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null, placeholder = FONT_FAMILY_PLACEHOLDER }: { value: string; label: string; onCommit: (family: string) => void; /** the surface that needs every glyph on one advance: a proportional pick from the list is refused in its name */ fixedWidthFor?: "terminal" | "code" | null; placeholder?: string }) {
+function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null }: { value: string; label: string; onCommit: (family: string) => void; /** the surface that needs every glyph on one advance: a proportional pick from the list is refused in its name */ fixedWidthFor?: "terminal" | null }) {
   const t = useT();
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -132,7 +130,7 @@ function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null, placeho
         <input
           className="input settings-font-input"
           value={draft}
-          placeholder={placeholder}
+          placeholder={FONT_FAMILY_PLACEHOLDER}
           maxLength={FONT_FAMILY_MAX_CHARS}
           aria-label={label}
           spellCheck={false}
@@ -174,7 +172,7 @@ function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null, placeho
               }
             }}
           />
-          {refused !== "" && <p className="settings-font-note" role="status">{fixedWidthFor === "code" ? t("{font} is not monospace. Code needs a fixed-width font, so the current font was kept.", { font: refused }) : t("{font} is not monospace. The terminal needs a fixed-width font, so the current font was kept.", { font: refused })}</p>}
+          {refused !== "" && <p className="settings-font-note" role="status">{t("{font} is not monospace. The terminal needs a fixed-width font, so the current font was kept.", { font: refused })}</p>}
           <ul className="settings-font-list" aria-label={t("Installed fonts")}>
             {matches.slice(0, FONT_LIST_LIMIT).map((family) => (
               <li key={family}>
@@ -238,11 +236,8 @@ function PaletteSelect({ id, value, onChange }: { id: string; value: PaletteName
   return (
     <select id={id} className="select settings-select" value={value} onChange={(event) => onChange(event.target.value as PaletteName)}>
       <option value="amber">{t("Amber")}</option>
-      <option value="report">{t("Dark report")}</option>
       <option value="charcoal">{t("Charcoal")}</option>
       <option value="catppuccin">{t("Catppuccin")}</option>
-      <option value="lilac">{t("Lilac")}</option>
-      <option value="forest">{t("Forest")}</option>
     </select>
   );
 }
@@ -270,20 +265,6 @@ function AppearancePage() {
           <PaletteSelect id="settings-palette" value={settings.palette} onChange={(palette) => update({ palette })} />
         </SettingsRow>
       )}
-      <SettingsRow label={t("Contrast")} description={t("How far text and hairlines stand out from the surfaces. Dim text keeps its contrast, so every step stays readable.")} wide>
-        <div className="settings-contrast">
-          <button type="button" className="icon-button" aria-label={t("Reset contrast")} disabled={settings.contrast === DEFAULT_SETTINGS.contrast} onClick={() => update({ contrast: DEFAULT_SETTINGS.contrast })}><RotateCcw aria-hidden="true" /></button>
-          <Stepper label={t("Contrast")} value={settings.contrast} text={contrastText(settings.contrast)} min={CONTRAST_MIN} max={CONTRAST_MAX} decreaseLabel={t("Decrease contrast")} increaseLabel={t("Increase contrast")} onChange={(contrast) => update({ contrast })} />
-        </div>
-      </SettingsRow>
-      {isMacPlatform() ? (
-        <SettingsRow label={t("Text smoothing")} description={t("Grayscale draws thinner text; System uses the macOS default.")} wide>
-          <Segmented<FontSmoothing> label={t("Text smoothing")} value={settings.fontSmoothing} onChange={(fontSmoothing) => update({ fontSmoothing })} options={[{ value: "grayscale", label: t("Grayscale") }, { value: "system", label: t("System") }]} />
-        </SettingsRow>
-      ) : null}
-      <SettingsRow label={t("Panel motion")} description={t("How fast the sidebar and phone sheets open and close. Off snaps them.")} wide>
-        <Segmented<PanelMotion> label={t("Panel motion")} value={settings.panelMotion} onChange={(panelMotion) => update({ panelMotion })} options={[{ value: "off", label: t("Off") }, { value: "fast", label: t("Fast") }, { value: "default", label: t("Default") }, { value: "slow", label: t("Slow") }]} />
-      </SettingsRow>
       <SettingsRow label={t("Density")}>
         <Segmented label={t("Density")} value={settings.density} onChange={(density) => update({ density })} options={[{ value: "comfortable", label: t("Comfortable") }, { value: "compact", label: t("Compact") }]} />
       </SettingsRow>
@@ -316,12 +297,6 @@ function AppearancePage() {
       <SettingsRow label={t("Interface font size")} description={t("Menus, lists, dialogs and the sidebar. The chat follows it until it has a size of its own; the terminal keeps its own.")}>
         <Stepper label={t("Interface font size")} value={uiFontSize(settings)} text={`${uiFontSize(settings)}px`} min={UI_FONT_MIN} max={UI_FONT_MAX} decreaseLabel={t("Decrease interface font size")} increaseLabel={t("Increase interface font size")} onChange={(size) => update({ uiFontSize: size })} />
       </SettingsRow>
-      <SettingsRow label={t("Interface font")} description={t("Everything outside code and the terminal; the chat's text follows it until it has a font of its own. Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
-        <FontFamilyInput value={settings.uiFontFamily} label={t("Interface font")} placeholder={UI_FONT_PLACEHOLDER} onCommit={(uiFontFamily) => update({ uiFontFamily })} />
-      </SettingsRow>
-      <SettingsRow label={t("Code font")} description={t("Code blocks, the file viewer, diffs, paths and keycaps; the terminal has a font of its own. Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
-        <FontFamilyInput value={settings.codeFontFamily} label={t("Code font")} fixedWidthFor="code" onCommit={(codeFontFamily) => update({ codeFontFamily })} />
-      </SettingsRow>
     </SettingsGroup>
     </>
   );
@@ -330,6 +305,7 @@ function AppearancePage() {
 function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
+  const touch = useMediaQuery("(pointer: coarse)");
   return (
     <>
       <SettingsGroup>
@@ -353,26 +329,14 @@ function ChatPage() {
         <SettingsRow label={t("Chat font")} description={t("Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
           <FontFamilyInput value={settings.chatFontFamily} label={t("Chat font")} onCommit={(chatFontFamily) => update({ chatFontFamily })} />
         </SettingsRow>
-        <SettingsRow label={t("Highlight code")} description={t("Colors code by its language. Off, code is plain text.")}>
-          <Toggle label={t("Highlight code")} checked={settings.highlightCode} onChange={(highlightCode) => update({ highlightCode })} />
-        </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">
-        <SettingsRow label={t("PageUp / PageDown scroll chat")} description={t("Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.")}>
-          <Toggle label={t("PageUp / PageDown scroll chat")} checked={settings.chatPageKeys} onChange={(chatPageKeys) => update({ chatPageKeys })} />
-        </SettingsRow>
-        <SettingsRow label={t("Enter sends")} description={t("When off, Mod+Enter sends")}>
-          <Toggle label={t("Enter sends")} checked={settings.enterSends} onChange={(enterSends) => update({ enterSends })} />
-        </SettingsRow>
-        <SettingsRow label={t("Files at once")} description={t("How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.")}>
-          <Stepper label={t("Files at once")} value={settings.attachLimit} text={String(settings.attachLimit)} min={ATTACH_LIMIT_MIN} max={ATTACH_LIMIT_MAX} decreaseLabel={t("Attach fewer files at once")} increaseLabel={t("Attach more files at once")} onChange={(attachLimit) => update({ attachLimit })} />
+        <SettingsRow label={touch ? t("Return inserts a new line") : t("Enter sends")} description={touch ? t("When on, use Send or hardware Mod+Enter to send.") : t("When off, Mod+Enter sends")}>
+          <Toggle label={touch ? t("Return inserts a new line") : t("Enter sends")} checked={touch ? !settings.enterSends : settings.enterSends} onChange={(checked) => update({ enterSends: touch ? !checked : checked })} />
         </SettingsRow>
         <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
           <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
-        </SettingsRow>
-        <SettingsRow label={t("Suggestion chip")} description={t("On a touch screen, a chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.")}>
-          <Toggle label={t("Suggestion chip")} checked={settings.showSuggestionChip} onChange={(showSuggestionChip) => update({ showSuggestionChip })} />
         </SettingsRow>
       </SettingsGroup>
 
@@ -431,18 +395,8 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
       <SettingsRow label={t("Terminal font size")} description={t("Applied to every terminal pane")}>
         <Stepper label={t("Terminal font size")} value={settings.terminalFontSize} text={`${settings.terminalFontSize}px`} min={TERMINAL_FONT_MIN} max={TERMINAL_FONT_MAX} decreaseLabel={t("Decrease terminal font size")} increaseLabel={t("Increase terminal font size")} onChange={(terminalFontSize) => update({ terminalFontSize })} />
       </SettingsRow>
-      <SettingsRow label={t("Fit 80 columns in a split pane")} description={t("A split pane narrower than 80 columns draws in a smaller font, down to 10px, so a program that needs 80 columns still fits. Turn it off to keep your font size in every pane.")}>
-        <Toggle label={t("Fit 80 columns in a split pane")} checked={settings.narrowPaneFont} onChange={(narrowPaneFont) => update({ narrowPaneFont })} />
-      </SettingsRow>
       <SettingsRow label={t("Terminal font")} description={t("Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
         <FontFamilyInput value={settings.terminalFontFamily} label={t("Terminal font")} fixedWidthFor="terminal" onCommit={(terminalFontFamily) => update({ terminalFontFamily })} />
-      </SettingsRow>
-      <SettingsRow label={t("Cursor shape")} description={t("A program in the pane can still change this with its own cursor control sequence")} wide>
-        <Segmented label={t("Cursor shape")} value={settings.terminalCursorStyle} onChange={(terminalCursorStyle: TerminalCursorStyle) => update({ terminalCursorStyle })}
-          options={TERMINAL_CURSOR_STYLES.map((style) => ({ value: style, label: t(style === "block" ? "Block" : style === "bar" ? "Bar" : "Underline") }))} />
-      </SettingsRow>
-      <SettingsRow label={t("Blinking cursor")}>
-        <Toggle label={t("Blinking cursor")} checked={settings.terminalCursorBlink} onChange={(terminalCursorBlink) => update({ terminalCursorBlink })} />
       </SettingsRow>
       <SettingsRow label={t("Wheel scroll speed")} description={t("How far one turn of the wheel scrolls the terminal")}>
         <Stepper label={t("Wheel scroll speed")} value={settings.terminalWheelSpeed} text={`${settings.terminalWheelSpeed}×`} min={TERMINAL_WHEEL_SPEED_MIN} max={TERMINAL_WHEEL_SPEED_MAX} decreaseLabel={t("Slower wheel scrolling")} increaseLabel={t("Faster wheel scrolling")} onChange={(terminalWheelSpeed) => update({ terminalWheelSpeed })} />
@@ -669,9 +623,6 @@ function UsagePage() {
           <SettingsRow label={t("Limit shown")} description={t("The limit each chip shows. Session is the short one, 5 hours on Claude and Codex. A plan without the chosen limit shows the one closest to running out.")} wide>
             <Segmented label={t("Limit shown")} value={settings.usageGlance} onChange={(usageGlance) => update({ usageGlance })} options={[{ value: "week", label: t("Weekly") }, { value: "session", label: t("Session") }]} />
           </SettingsRow>
-          <SettingsRow label={t("Show pace")} description={t("On each limit, a mark where an even pace would be by now, the rate so far, and a warning when it runs out before its reset. Claude, Codex and Grok only.")}>
-            <Toggle label={t("Show pace")} checked={settings.usagePace} onChange={(usagePace) => update({ usagePace })} />
-          </SettingsRow>
         </>}
       </SettingsGroup>
       {settings.showUsage && usage.report && usage.report.providers.length > 0 && <UsageAccounts providers={usage.report.providers} />}
@@ -830,11 +781,6 @@ function ShortcutsPage() {
       <div className="settings-actions">
         <button type="button" className="btn" onClick={() => update({ shortcutOverrides: {} })}>{t("Reset shortcuts")}</button>
       </div>
-      <SettingsGroup title={t("Paging")} section="paging">
-        <SettingsRow label={t("Page overlap")} description={t("Lines kept visible between pages in chat and terminal history. Zero scrolls a full page.")}>
-          <Stepper label={t("Page overlap")} value={settings.pageOverlapRows} text={String(settings.pageOverlapRows)} min={0} max={100} decreaseLabel={t("Decrease page overlap")} increaseLabel={t("Increase page overlap")} onChange={(pageOverlapRows) => update({ pageOverlapRows })} />
-        </SettingsRow>
-      </SettingsGroup>
     </>
   );
 }
@@ -907,7 +853,7 @@ function PluginsGroup() {
   }, [api]);
   if (plugins.length === 0) return null;
   return (
-    <SettingsGroup title={t("herdr plugins")} note={t("Run a plugin's actions from the command palette.")} className="settings-plugins">
+    <SettingsGroup title={t("herdr plugins")} note={t("The command palette and its plugin actions are not available in the phone touch UI. Use a wider screen or a keyboard's command palette shortcut.")} className="settings-plugins">
       {plugins.map((plugin) => (
         <SettingsRow key={plugin.plugin_id} label={`${plugin.name} ${plugin.version}`} description={plugin.actions.length > 0 ? plugin.actions.map((action) => action.title).join(" · ") : t("No actions")}>
           <span className="settings-hint">{plugin.enabled ? t("Enabled") : t("Disabled")}</span>

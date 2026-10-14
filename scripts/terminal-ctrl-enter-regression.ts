@@ -17,10 +17,15 @@ async function until(check: () => boolean, label: string): Promise<void> {
   }
 }
 
+type Sent = { type: "input"; pane_id: string; text: string } | { type: "keys"; pane_id: string; keys: string[] };
+
 /**
  * Ctrl+Enter against a pane owned by the UI suite: plain Enter until the program asks for
  * modifyOtherKeys, then xterm's CSI 27;5;13~ (Claude Code's "send now"), in the browser's
  * frames and in the bytes a raw-mode program reads in the pane.
+ * A mirrored pane (no terminal attach on its PC, #924) never shows the browser the program's
+ * request, so there Ctrl+Enter goes as herdr's `ctrl+enter` key, which herdr encodes in the
+ * program's own mode: the program reads the same bytes either way.
  */
 export async function checkCtrlEnter(browser: Browser, origin: string, paneId: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
@@ -48,23 +53,40 @@ process.stdin.on("data", (data) => {
   appendFileSync(received, "");
   try {
     const page = await context.newPage();
-    const inputs: Array<{ pane_id: string; text: string }> = [];
-    page.on("websocket", (socket) => socket.on("framesent", ({ payload }) => {
-      const message = JSON.parse(String(payload));
-      if (message.type === "input") inputs.push(message);
-    }));
+    const inputs: Sent[] = [];
+    let mirrored = false;
+    let inputReady = false;
+    page.on("websocket", (socket) => {
+      socket.on("framesent", ({ payload }) => {
+        const message = JSON.parse(String(payload));
+        if (message.type === "input" || message.type === "keys") inputs.push(message);
+      });
+      // a mirror's fixed grid is told before input-ready, on the same socket
+      socket.on("framereceived", ({ payload }) => {
+        const message = JSON.parse(String(payload));
+        if (message.pane_id !== paneId) return;
+        if (message.type === "pane-geometry" && message.fixed) mirrored = true;
+        if (message.type === "input-ready") inputReady = message.ready !== false;
+      });
+    });
     await page.goto(`${origin}/?pane=${encodeURIComponent(paneId)}`);
     await page.locator(".conn-live").waitFor();
     const input = page.locator(".xterm-helper-textarea");
     await input.waitFor();
+    await until(() => inputReady, "input-ready");
+    const typed = (text: string): Sent => ({ type: "input", pane_id: paneId, text });
+    /** Ctrl+Enter's frame: herdr's key on a mirror, else what the program asked for */
+    const ctrlEnter = (modified: boolean): Sent => mirrored ? { type: "keys", pane_id: paneId, keys: ["ctrl+enter"] }
+      : typed(modified ? MODIFIED_CTRL_ENTER : "\r");
+    const isModifiedCtrlEnter = (sent: Sent): boolean => sent.type === "keys" ? sent.keys.includes("ctrl+enter")
+      : sent.text === MODIFIED_CTRL_ENTER;
     const screen = (text: string) => page.locator(".pane-terminal .xterm-rows", { hasText: text }).waitFor();
-    const press = async (shortcut: string, expected: string): Promise<void> => {
+    const press = async (shortcut: string, expected: Sent): Promise<void> => {
       const before = inputs.length;
       await input.press(shortcut);
       await until(() => inputs.length > before, shortcut);
       await page.waitForTimeout(NO_SEND_WAIT_MS);
-      assert.deepEqual(inputs.slice(before).map(({ pane_id, text }) => ({ pane_id, text })),
-        [{ pane_id: paneId, text: expected }], `${shortcut} must send ${JSON.stringify(expected)} exactly once`);
+      assert.deepEqual(inputs.slice(before), [expected], `${shortcut} must send ${JSON.stringify(expected)} exactly once`);
     };
     const reads = (): string[] => readFileSync(received, "utf8").split("\n").filter(Boolean);
     /** the program read `expected` after its first `since` reads */
@@ -74,15 +96,15 @@ process.stdin.on("data", (data) => {
     };
 
     // a shell asked for nothing: Ctrl+Enter is the Enter it always was
-    await press("Control+Enter", "\r");
+    await press("Control+Enter", ctrlEnter(false));
     await paneSendText(paneId, `node ${script}`);
     await paneSendKeys(paneId, ["Enter"]);
     await screen("modifyOtherKeys on");
     let since = reads().length;
-    await press("Control+Enter", MODIFIED_CTRL_ENTER);
+    await press("Control+Enter", ctrlEnter(true));
     await read(MODIFIED_CTRL_ENTER, since);
     for (const [shortcut, expected] of [["Enter", "\r"], ["Shift+Enter", "\x1b\r"], ["Alt+Enter", "\x1b\r"]]) {
-      await press(shortcut!, expected!);
+      await press(shortcut!, typed(expected!));
     }
     // a composition's Enter belongs to the IME
     for (const composition of [{ isComposing: true, keyCode: 13 }, { isComposing: false, keyCode: 229 }]) {
@@ -91,7 +113,7 @@ process.stdin.on("data", (data) => {
         key: "Enter", code: "Enter", ctrlKey: true, ...composition, bubbles: true, cancelable: true,
       });
       await page.waitForTimeout(NO_SEND_WAIT_MS);
-      assert.equal(inputs.slice(before).some(({ text }) => text === MODIFIED_CTRL_ENTER), false,
+      assert.equal(inputs.slice(before).some(isModifiedCtrlEnter), false,
         "an IME commit must not receive the modified Ctrl+Enter");
     }
     // pending IME text goes before the key
@@ -110,16 +132,15 @@ process.stdin.on("data", (data) => {
     });
     await until(() => inputs.length >= beforeCommit + 2, "IME commit followed by Ctrl+Enter");
     await page.waitForTimeout(NO_SEND_WAIT_MS);
-    assert.deepEqual(inputs.slice(beforeCommit).map(({ pane_id, text }) => ({ pane_id, text })),
-      [{ pane_id: paneId, text: "한" }, { pane_id: paneId, text: MODIFIED_CTRL_ENTER }],
+    assert.deepEqual(inputs.slice(beforeCommit), [typed("한"), ctrlEnter(true)],
       "pending IME text must precede Ctrl+Enter without duplicates");
     // the program gives modifyOtherKeys up: Enter again
     await paneSendText(paneId, "o");
     await screen("modifyOtherKeys off");
     since = reads().length;
-    await press("Control+Enter", "\r");
+    await press("Control+Enter", ctrlEnter(false));
     await read("\r", since);
-    console.log("PASS Ctrl+Enter stays Enter until the pane asks for modifyOtherKeys, then reaches it as CSI 27;5;13~");
+    console.log(`PASS Ctrl+Enter stays Enter until the pane asks for modifyOtherKeys, then reaches it as CSI 27;5;13~${mirrored ? " (mirrored pane, herdr's key)" : ""}`);
     console.log("PASS Enter, Shift+Enter and Alt+Enter keep their sequences; IME text precedes Ctrl+Enter");
   } finally {
     await paneSendKeys(paneId, ["ctrl+c"]).catch(() => {});

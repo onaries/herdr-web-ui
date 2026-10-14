@@ -21,6 +21,7 @@
     "scripts/chat-virtual-fixture.tsx",
     "scripts/chat-virtual-browser-qa.ts",
     "scripts/grok-chat-browser-qa.ts",
+    "scripts/gjc-status-browser-regression.ts",
     "scripts/file-preview-text-browser-qa.ts",
     "scripts/file-preview-text-fixture.tsx",
     "scripts/virtual-source-browser-qa.ts",

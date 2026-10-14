@@ -26,6 +26,7 @@
  * that sends neither (nginx's bare `proxy_pass` rewrites Host to the upstream address and adds
  * nothing) cannot be told from a local client: only a token closes that setup.
  */
+import { BlockList, isIP } from "node:net";
 import type { AccessRefusal, AccessVia, DeviceRole } from "../shared/protocol.ts";
 import type { DeviceMatch } from "./devices.ts";
 
@@ -38,6 +39,8 @@ export interface AccessInput {
   funnel: boolean;
   /** Tailscale-User-Login: set by tailscale serve for a person's device, absent for tagged nodes */
   tailscaleLogin: string | null;
+  /** X-Forwarded-For: Serve replaces this with one source address, never a proxy chain */
+  forwardedFor?: string | null;
   /** the request's Host header, as sent */
   host: string | null;
   /** the shared token matched (cookie or bearer) */
@@ -140,6 +143,14 @@ export function isServeOwnerRequest(input: Pick<AccessInput, "serveOnly" | "loop
   return input.serveOnly && input.loopback && input.forwarded && !input.funnel && input.tailscaleLogin === null;
 }
 
+// Tailscale v1.102.3: ipn/ipnlocal/serve.go:1068-1106 replaces XFF and strips incoming identity.
+// net/tsaddr/tsaddr.go defines the assigned address ranges. This filters ordinary forwarding
+// proxies, not a raw tunnel whose sender can forge both the login and the address.
+const tailnetIpv4 = new BlockList();
+tailnetIpv4.addSubnet("100.64.0.0", 10, "ipv4");
+const tailnetIpv6 = new BlockList();
+tailnetIpv6.addSubnet("fd7a:115c:a1e0::", 48, "ipv6");
+
 export function decideAccess(input: AccessInput): Access {
   if (input.tokenMatched) return { level: "full", via: "token", role: "drive" };
   if (input.device !== null) return { level: "full", via: "device", role: input.device.role, device: input.device };
@@ -147,6 +158,11 @@ export function decideAccess(input: AccessInput): Access {
   if (input.tokenConfigured) return { level: "none", reason: "token_required" };
   // the identity header is only worth something from the local tailscaled, never from a LAN client
   if (input.loopback && input.tailscaleLogin !== null && input.owner !== null) {
+    const address = input.forwardedFor ?? "";
+    const family = isIP(address);
+    if (!(family === 4 ? tailnetIpv4.check(address, "ipv4") : family === 6 && tailnetIpv6.check(address, "ipv6"))) {
+      return { level: "none", reason: "pairing_required" };
+    }
     if (input.tailscaleLogin.toLowerCase() === input.owner.toLowerCase()) return { level: "full", via: "tailscale", role: "drive", login: input.tailscaleLogin };
     return { level: "none", reason: "other_user" };
   }

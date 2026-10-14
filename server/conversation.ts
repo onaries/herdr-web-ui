@@ -45,17 +45,18 @@ import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, cod
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import { forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
-import { isOmoProcess, omoSessionForPane } from "./omo.ts";
+import { omoProcessIdentity, omoSessionForPane } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
 import { piTranscriptInStore, piTranscriptPath, unwrittenSession } from "./pi.ts";
-import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchSegments } from "./pi-tree.ts";
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { forgetGrokState, grokProjection, grokToolOutput, parseGrokTranscript, GrokUnavailable } from "./grok.ts";
 import { resolveGrokStore } from "./grok-store.ts";
 import { AgyUnavailable, agyCatalog, agyToolOutput, forgetAgyState, parseAgyTranscript, withAgyHistory, type AgyProjection } from "./agy.ts";
 import { resolveAgyStore, sameAgyStore, type AgyStore } from "./agy-store.ts";
+import { withinRetentionBudget } from "./retention-budget.ts";
+import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, piBranchSegments } from "./pi-tree.ts";
 import { trimOutput } from "./tool-output.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
@@ -75,6 +76,7 @@ export { isOmoProcess } from "./omo.ts";
  * tool-heavy session; the chat asks for the pages before it as the reader scrolls up.
  */
 export const TRANSCRIPT_WINDOW_BYTES = 16 * 1024 * 1024;
+const PI_PAGE_CACHE_BYTES = 4 * 1024 * 1024;
 
 /** A page never holds more prompts than this (each opens a user + assistant pair). */
 const MAX_PAGE_PROMPTS = MAX_TURNS / 2;
@@ -136,11 +138,6 @@ function localCommandOutput(content: unknown): string {
 
 /** Lines of one notice Claude Code writes as separate entries, a moment apart. */
 const NOTICE_JOIN_MS = 1000;
-
-/** A notice Claude Code writes as plain text: no terminal codes, and not past a notice's length. */
-function noticeText(raw: string): string {
-  return capNotice(stripTerminalControls(raw).trim());
-}
 
 /** A notice is not a log: past the cap the rest stays in the terminal, also for lines joined into one. */
 function capNotice(text: string): string {
@@ -235,6 +232,8 @@ interface TranscriptEntry {
   parentUuid?: string | null;
   isMeta?: boolean;
   isCompactSummary?: boolean;
+  /** "updates": Claude Code shows the entry's thinking text as a progress message, not as reasoning */
+  thinkingDisplay?: unknown;
   message?: { role?: string; content?: unknown; stop_reason?: unknown };
   attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } };
 }
@@ -263,6 +262,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
   /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
   let atWork = false;
+  /** injected feedback can resume the model without a human prompt after a completed reply */
+  let completed = false;
   /** where a notice goes: before the turn at work it was written in, else at the end */
   const noticeAt = (): number => atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
   /** the notifications already drawn: a completion is recorded in up to three places */
@@ -281,7 +282,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
-    if (last !== undefined && last.role === "assistant") return last;
+    if (last !== undefined && last.role === "assistant" && !completed) return last;
     const turn: ConversationTurn = { role: "assistant", ts: ts ?? null, parts: [] };
     turns.push(turn);
     return turn;
@@ -364,7 +365,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     // goes before the turn it was written in, so the turn stays whole and stays the last one,
     // which is what the chat reads as the turn still running.
     if (entry.type === "system" && entry.subtype === "informational") {
-      const text = typeof entry.content === "string" ? noticeText(entry.content) : "";
+      const text = typeof entry.content === "string" ? capNotice(stripTerminalControls(entry.content).trim()) : "";
       if (text.length === 0) continue;
       const ts = entry.timestamp ?? null;
       const at = noticeAt();
@@ -417,6 +418,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
       const turn = assistantTurn(entry.timestamp);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
+      completed = stop === "end_turn";
       atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use"));
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
@@ -426,7 +428,10 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
           turn.parts.push({ kind: "text", text: b.text });
         } else if (b.type === "thinking") {
           const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
-          if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
+          // the terminal prints an "updates" entry's thinking as narration between the tools, so it
+          // is read as that: commentary keeps it in the work block, never taken for the answer
+          if (thinking.trim().length > 0 && entry.thinkingDisplay === "updates") turn.parts.push({ kind: "text", text: thinking, phase: "commentary" });
+          else if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
         } else if (b.type === "tool_use" && typeof b.name === "string") {
           const input = (typeof b.input === "object" && b.input !== null ? b.input : {}) as Record<string, unknown>;
           const part: Extract<ConversationPart, { kind: "tool" }> = {
@@ -453,7 +458,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 const writtenSessions = new Set<string>();
 
 /** Re-parse on file changes, including replacement and same-size rewrites. */
-const cache = new Map<string, { signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata; cursor: string | null; abandoned?: { count: number; branches: number; summary: string | null } }>();
+const cache = new Map<string, { source: RecognizedConversation["source"]; signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata; cursor: string | null; abandoned?: { count: number; branches: number; summary: string | null } }>();
 
 export class ConversationUnavailable extends Error {
   constructor(reason: string) {
@@ -790,6 +795,7 @@ interface LiveScan {
 const liveScans = new Map<string, LiveScan>();
 
 interface SettledTurns {
+  source: RecognizedConversation["source"];
   id: string;
   /** the page start these turns begin at, and the turn start they end at */
   start: number;
@@ -852,6 +858,15 @@ function rememberPaneDevin(paneId: string, sessionId: string, cwd: string, dbPat
   const key = JSON.stringify([dbPath ?? defaultDevinDbPath(), sessionId, cwd]);
   reads.devin.set(key, { sessionId, cwd, dbPath });
   remember(paneReads, paneId, reads, PANE_READS_MAX);
+}
+
+/** Pi retains at most four small parsed pages per cache; oversized pages remain readable uncached. */
+function rememberPage<T extends { source: RecognizedConversation["source"] }>(map: Map<string, T>, key: string, value: T, limit: number): void {
+  map.delete(key);
+  if (value.source === "pi-transcript" && !withinRetentionBudget(value, PI_PAGE_CACHE_BYTES)) return;
+  remember(map, key, value, limit);
+  const piKeys = [...map].filter(([, item]) => item.source === "pi-transcript").map(([key]) => key);
+  while (piKeys.length > 4) map.delete(piKeys.shift()!);
 }
 
 /** The newest page's start and scanned turn starts, or null when it starts mid-turn. */
@@ -989,14 +1004,15 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
       const to = Math.min(start, kept.observedEnd);
       if (to > from) parseTurns(source, path, readStream(stream, from, to).toString("utf8"), inherited);
     }
-    settled = { id: stream.id, start, end: start, turns: [], metadata: parseConversationMetadata(`${head}\n`, source), tail: bytesBefore(stream, start), taskTitles: new Map(inherited), noticed: new Set(), inherited, observedEnd: stream.length };
+    settled = { source, id: stream.id, start, end: start, turns: [], metadata: parseConversationMetadata(`${head}
+`, source), tail: bytesBefore(stream, start), taskTitles: new Map(inherited), noticed: new Set(), inherited, observedEnd: stream.length };
   }
   if (settled.end < last) {
     const text = readStream(stream, settled.end, last).toString("utf8");
     settled = { ...settled, end: last, turns: [...settled.turns, ...parseTurns(source, path, text, settled.taskTitles, settled.noticed)], metadata: parseConversationMetadata(text, source, settled.metadata), tail: bytesBefore(stream, last) };
   }
   settled.observedEnd = stream.length;
-  remember(settledTurns, key, settled, 8);
+  rememberPage(settledTurns, key, settled, 8);
   if (source === "codex-transcript") {
     const live = codexLiveTurn(path, stream, last, settled.metadata);
     return { turns: [...settled.turns, ...live.turns], metadata: live.metadata };
@@ -1005,6 +1021,13 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
   // the live turn is parsed again on every poll: its titles and completions are kept only
   // once it settles, so a read titles a task exactly as a cold read of the same bytes does
   return { turns: [...settled.turns, ...parseTurns(source, path, text, new Map(settled.taskTitles), new Set(settled.noticed))], metadata: parseConversationMetadata(text, source, settled.metadata) };
+}
+
+/** Retention diagnostics only: counts/budget adherence, never transcript contents. */
+export function piPageCacheUsage(): { pages: number; settled: number; withinBudget: boolean } {
+  const pages = [...cache.values()].filter(item => item.source === "pi-transcript");
+  const settled = [...settledTurns.values()].filter(item => item.source === "pi-transcript");
+  return { pages: pages.length, settled: settled.length, withinBudget: [...pages, ...settled].every(item => withinRetentionBudget(item, PI_PAGE_CACHE_BYTES)) };
 }
 
 /** Forget every scan and parse kept between polls (tests compare against a cold read). */
@@ -1095,12 +1118,18 @@ export async function gjcTranscriptPath(paneId: string, cwd: string, home?: stri
 export async function paneRunsOmo(paneId: string): Promise<boolean> {
   // pane.process_info wants `pane_id`; given `target` herdr answers for the
   // FOCUSED pane instead of erroring (live-verified 2026-09-21).
-  const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: unknown }[] } }>(
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown; cwd?: unknown }[] } }>(
     "pane.process_info",
     { pane_id: paneId },
   ).catch(() => null);
+  const home = process.env["HOME"] ?? "";
   return (info?.process_info?.foreground_processes ?? []).some((process) =>
-    isOmoProcess(Array.isArray(process.argv) ? process.argv.map(String) : []),
+    // a pid herdr does not report keeps the argv-only proof and fails the custom one closed
+    omoProcessIdentity({
+      pid: typeof process.pid === "number" ? process.pid : -1,
+      argv: Array.isArray(process.argv) ? process.argv.map(String) : undefined,
+      cwd: typeof process.cwd === "string" && process.cwd ? process.cwd : undefined,
+    }, "", home) !== null,
   );
 }
 
@@ -1111,7 +1140,7 @@ export async function paneRunsOmo(paneId: string): Promise<boolean> {
  * (paneRunsOmo), including panes herdr has not recognized as an agent.
  */
 export async function labelOmoPanes(snapshot: SessionSnapshot): Promise<SessionSnapshot> {
-  const candidates = snapshot.panes.filter((pane) => !pane.agent || pane.agent === "pi" || pane.agent === "claude");
+  const candidates = snapshot.panes;
   const omo = new Set<string>();
   await Promise.all(candidates.map(async (pane) => { if (await paneRunsOmo(pane.pane_id)) omo.add(pane.pane_id); }));
   if (omo.size === 0) return snapshot;
@@ -1259,7 +1288,9 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       "pane.process_info", { pane_id: paneId },
     ).catch(() => null);
     if (info?.process_info?.foreground_processes?.some((process) => process.name === "agy" || process.name === "agy-native")) agent = "agy";
-    else if (await paneRunsOmo(paneId)) return { source: "omo-transcript", path: await omoTranscriptPath(paneId, cwd, panes) };
+  }
+  if (await paneRunsOmo(paneId)) {
+    return { source: "omo-transcript", path: await omoTranscriptPath(paneId, cwd, panes) };
   }
   // omp and GJC can change their own cwd without changing the pane's shell directory; their
   // session headers name the one they run in
@@ -1282,13 +1313,18 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       const found = await resolveAgyStore(pane);
       if (!found) throw new ConversationUnavailable("no_session_path");
       let transcriptExists: boolean;
-      try { transcriptExists = !!statSync(found.path, { throwIfNoEntry: false }); }
+      let path = found.path;
+      try {
+        transcriptExists = !!statSync(found.path, { throwIfNoEntry: false });
+        // Profile brain directories may link to the shared store; the reader expects its real path.
+        if (transcriptExists) path = realpathSync(path);
+      }
       catch { throw new ConversationUnavailable("transcript_missing"); }
       if (!transcriptExists) {
         if (agyCatalog(found.path).size !== 0 || !sameAgyStore(found, await resolveAgyStore(pane))) throw new ConversationUnavailable("transcript_missing");
         throw new ConversationNotStarted(found.session, "agy-transcript", found.path);
       }
-      return { source: "agy-transcript", path: found.path, agy: found };
+      return { source: "agy-transcript", path, agy: found };
     }
     if (agent === "codex") {
       // the pane's own store: the rollout, its history and its images are all read from there
@@ -1383,7 +1419,7 @@ export async function paneTranscript(paneId: string, codexHome?: string, snapsho
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
-  if (pane.agent === "devin") {
+  if (pane.agent === "devin" && !(await paneRunsOmo(paneId))) {
     const cwd = pane.foreground_cwd || pane.cwd;
     const storePath = devinDbPath ?? defaultDevinDbPath();
     const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: unknown }[] } }>(
@@ -1607,8 +1643,7 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
   // the abandoned turns live outside the branch's byte ranges, so the page cannot see them: a
   // straight line answers { count: 0 }, which is most sessions and costs the client nothing
   const abandoned = source === "pi-transcript" ? piAbandonedTurns(path, stat.size) ?? undefined : undefined;
-  cache.set(key, { signature, turns, metadata, cursor, abandoned });
-  if (cache.size > 32) cache.delete(cache.keys().next().value!);
+  rememberPage(cache, key, { source, signature, turns, metadata, cursor, abandoned }, 32);
   return { source, turns, metadata, cursor, abandoned, history_id: stream.id, version };
 }
 
@@ -1717,16 +1752,19 @@ function piToolOutput(path: string, ref: string): string | null {
   let branch: ReturnType<typeof piBranchSegments>;
   try { size = statSync(path).size; branch = piBranchSegments(path, size); } catch { return null; }
   if (branch === null) return null;
-  const fd = openSync(path, "r");
-  try {
-    for (const segment of branch) {
-      const buffer = Buffer.alloc(segment.end - segment.start);
-      if (readSync(fd, buffer, 0, buffer.length, segment.start) !== buffer.length) continue;
-      const output = outputInText("pi-transcript", buffer.toString("utf8"), ref);
-      if (output !== null) return output;
+  // only a record that can be a clear or can hold the ref is parsed: an unrelated record (a picture
+  // the agent read, a long tool result) is skipped on a substring check, as the segment reader did
+  const needle = JSON.stringify(ref);
+  let output: string | null = null;
+  for (const line of piBranchRecords(path, size)) {
+    if (line.includes("context_clear")) {
+      let entry: unknown;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (isContextClear(entry, "pi-transcript")) { output = null; continue; }
     }
-  } finally { closeSync(fd); }
-  return null;
+    if (output === null && line.includes(needle)) output = outputInText("pi-transcript", line, ref);
+  }
+  return output;
 }
 
 /**
@@ -1742,22 +1780,15 @@ export function piTranscriptImage(path: string, ref: string): { mediaType: strin
   let branch: ReturnType<typeof piBranchSegments>;
   try { size = statSync(path).size; branch = piBranchSegments(path, size); } catch { return null; }
   if (branch === null) return null;
-  const fd = openSync(path, "r");
-  try {
-    for (const segment of branch) {
-      const buffer = Buffer.alloc(segment.end - segment.start);
-      if (readSync(fd, buffer, 0, buffer.length, segment.start) !== buffer.length) continue;
-      for (const line of buffer.toString("utf8").split("\n")) {
-        if (!line.includes(callId)) continue;
-        let entry: unknown;
-        try { entry = JSON.parse(line); } catch { continue; }
-        const message = piMessage(entry);
-        if (message === null) continue;
-        const image = piImageBlock(message, callId, Number(nth));
-        if (image !== null) return { mediaType: image.media_type, bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
-      }
-    }
-  } finally { closeSync(fd); }
+  for (const line of piBranchRecords(path, size)) {
+    if (!line.includes(callId)) continue;
+    let entry: unknown;
+    try { entry = JSON.parse(line); } catch { continue; }
+    const message = piMessage(entry);
+    if (message === null) continue;
+    const image = piImageBlock(message, callId, Number(nth));
+    if (image !== null) return { mediaType: image.media_type, bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
+  }
   return null;
 }
 

@@ -967,6 +967,7 @@ function displayedFirstExchange(screen: string): CodexExchange | null {
   let promptAt = -1;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] ?? "";
+    if (/^• (?:Model changed|Unrecognized command|Working directory changed)(?:[ \t]|$)/.test(line)) continue;
     if (/^•(?:[ \t]|$)/.test(line)) return null;
     if (/^›[ \t]+/.test(line)) { promptAt = index; break; }
   }
@@ -985,12 +986,12 @@ function displayedFirstExchange(screen: string): CodexExchange | null {
   return { user, assistant: response };
 }
 
-function matchingCodexExchanges(screen: string, candidates: readonly CodexFirstExchangeCandidate[]): { candidate: CodexFirstExchangeCandidate; index: number }[] {
+function matchingCodexExchanges(screen: string, candidates: readonly CodexFirstExchangeCandidate[], answerFloor: number): { candidate: CodexFirstExchangeCandidate; index: number }[] {
   const shown = displayedFirstExchange(screen);
   if (shown === null) return [];
   const prompt = normalizePrompt(shown.user);
   const answer = normalizePrompt(shown.assistant);
-  if (normalizeDisplay(prompt).length < 8 || normalizeDisplay(answer).length < 16) return [];
+  if (normalizeDisplay(prompt).length < 8 || normalizeDisplay(answer).length < answerFloor) return [];
   const matches: { candidate: CodexFirstExchangeCandidate; index: number }[] = [];
   for (const candidate of candidates) {
     for (const [index, exchange] of codexExchanges(candidate.text).entries()) {
@@ -1014,7 +1015,7 @@ export function matchCodexFirstExchange(
   if (!Number.isFinite(startedAtMs)) return null;
   if (candidates.filter((candidate) => typeof candidate.createdAtMs === "number"
     && candidate.createdAtMs >= startedAtMs).length !== 1) return null;
-  const matches = matchingCodexExchanges(screen, candidates);
+  const matches = matchingCodexExchanges(screen, candidates, 1);
   if (matches.length !== 1) return null;
   const match = matches[0]!;
   const first = codexExchanges(match.candidate.text)[0];

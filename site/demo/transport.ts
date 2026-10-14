@@ -12,7 +12,7 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
@@ -31,6 +31,7 @@ const DEMO_VERSION = "demo";
 /** Only an explicit `demo logs` command starts this fictional retained history. */
 const histories = new Map<string, DemoHistory>();
 const terminalGrids = new Map<string, { cols: number; rows: number }>();
+const heldCopyResends = new Map<string, { text: string; reply: Extract<ServerMessage, { type: "submit-result" }>; at: number }>();
 const demoGrid = (paneId: string) => terminalGrids.get(paneId) ?? { cols: 80, rows: 24 };
 function redrawHistory(paneId: string): void {
   for (const socket of sockets) socket.renderHistory(paneId);
@@ -47,8 +48,6 @@ const integrationsFixture: AgentIntegration[] = [
 ].map(([target, command, available, state]) => ({ target: target as string, label: (target as string).replace("_", "-"), command: command as string, available: available as boolean, state: state as string }));
 
 type Pane = SessionSnapshot["panes"][number];
-type Tab = SessionSnapshot["tabs"][number];
-type Layout = SessionSnapshot["layouts"][number];
 type SseListener = (event: MessageEvent) => void;
 
 // ---- state -----------------------------------------------------------------------------------
@@ -243,152 +242,6 @@ function relabelAutoTabs(workspaceId: string): void {
   }
 }
 
-function recountDemoWorkspace(workspaceId: string): void {
-  const snap = snapshot();
-  const workspace = snap.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
-  if (!workspace) return;
-  const panes = snap.panes.filter((pane) => pane.workspace_id === workspaceId);
-  const tabs = snap.tabs.filter((tab) => tab.workspace_id === workspaceId);
-  for (const tab of tabs) {
-    const own = panes.filter((pane) => pane.tab_id === tab.tab_id);
-    tab.pane_count = own.length;
-    tab.agent_status = rollupStatus(own.map((pane) => pane.agent_status));
-  }
-  workspace.pane_count = panes.length;
-  workspace.tab_count = tabs.length;
-  workspace.agent_status = rollupStatus(panes.map((pane) => pane.agent_status));
-  if (!tabs.some((tab) => tab.tab_id === workspace.active_tab_id)) workspace.active_tab_id = tabs[0]?.tab_id ?? workspace.active_tab_id;
-}
-
-/** a tab's layout as herdr reports one: the fixture's where it has one, else its panes side by side */
-function demoLayout(tabId: string): Layout {
-  const snap = snapshot();
-  const existing = snap.layouts.find((layout) => layout.tab_id === tabId);
-  if (existing) return existing;
-  const own = snap.panes.filter((pane) => pane.tab_id === tabId);
-  const width = Math.floor(120 / Math.max(1, own.length));
-  return {
-    workspace_id: own[0]?.workspace_id ?? "", tab_id: tabId, zoomed: false, area: { x: 0, y: 0, width: 120, height: 40 },
-    focused_pane_id: own.find((pane) => pane.focused)?.pane_id ?? own[0]?.pane_id ?? "",
-    panes: own.map((pane, index) => ({ pane_id: pane.pane_id, focused: pane.focused, rect: { x: index * width, y: 0, width, height: 40 } })),
-    splits: [],
-  };
-}
-
-// herdr's `pane move`: the pane into another tab, a new tab or a new workspace, under a new id
-// when it leaves its workspace; the tab and workspace it emptied close behind it
-function moveDemoPane(pane: Pane, destination: Record<string, unknown>, focus = false): PaneMoved | Response {
-  const snap = snapshot();
-  const previous = { pane_id: pane.pane_id, workspace_id: pane.workspace_id, tab_id: pane.tab_id };
-  const makeTab = (workspaceId: string, label: string): Tab => {
-    const number = Math.max(0, ...snap.tabs.filter((tab) => tab.workspace_id === workspaceId).map((tab) => tab.number)) + 1;
-    const tab: Tab = { ...structuredClone(newTabTemplate), tab_id: `${workspaceId}:t${number}`, workspace_id: workspaceId, label, number, agent_status: pane.agent_status, focused: false, pane_count: 0 };
-    snap.tabs.push(tab);
-    if (label === "") autoTabs.add(tab.tab_id); else autoTabs.delete(tab.tab_id);
-    return tab;
-  };
-  let targetTab: Tab;
-  let createdTab: Tab | null = null;
-  let createdWorkspace: WorkspaceInfo | null = null;
-  switch (destination["type"]) {
-    case "tab": {
-      const tab = snap.tabs.find((candidate) => candidate.tab_id === destination["tab_id"]);
-      if (!tab) return error("tab_not_found", "no such tab", 404);
-      if (tab.tab_id === pane.tab_id) {
-        return { changed: false, reason: "same_tab", previous_pane_id: pane.pane_id, previous_workspace_id: pane.workspace_id, previous_tab_id: pane.tab_id, pane, focused_pane_id: snap.focused_pane_id ?? pane.pane_id, target_layout: demoLayout(tab.tab_id) };
-      }
-      targetTab = tab;
-      break;
-    }
-    case "new_tab": {
-      const workspace = snap.workspaces.find((candidate) => candidate.workspace_id === (destination["workspace_id"] ?? pane.workspace_id));
-      if (!workspace) return error("workspace_not_found", "no such workspace", 404);
-      targetTab = createdTab = makeTab(workspace.workspace_id, String(destination["label"] ?? ""));
-      break;
-    }
-    case "new_workspace": {
-      const id = `w${(nextWorkspace++).toString(36)}`;
-      const cwd = pane.cwd ?? pane.foreground_cwd ?? "/home/demo";
-      const label = String(destination["label"] ?? "") || cwd.split("/").pop() || id;
-      createdWorkspace = { ...structuredClone(newWorkspaceTemplate), workspace_id: id, label, number: snap.workspaces.length + 1, active_tab_id: `${id}:t1`, agent_status: pane.agent_status, focused: false, pane_count: 0, tab_count: 1, worktree: worktreeMetadata(repositoryAt(cwd)) };
-      snap.workspaces.push(createdWorkspace);
-      targetTab = createdTab = makeTab(id, String(destination["tab_label"] ?? ""));
-      break;
-    }
-    default:
-      return error("invalid_destination", "destination.type must be \"tab\", \"new_tab\" or \"new_workspace\"", 400);
-  }
-  const crossing = targetTab.workspace_id !== previous.workspace_id;
-  const paneId = crossing ? `${targetTab.workspace_id}:p${(nextWorkspace++).toString(36)}` : pane.pane_id;
-  const target = snap.layouts.find((layout) => layout.tab_id === targetTab.tab_id);
-  if (target) {
-    const beside = target.panes.find((candidate) => candidate.pane_id === (destination["target_pane_id"] ?? target.focused_pane_id)) ?? target.panes.at(-1);
-    if (!beside || !splitLayout(target, beside.pane_id, { pane_id: paneId, focused: false, rect: beside.rect }, destination["split"] === "down" ? "down" : "right")) {
-      return error("split_failed", "The demo pane is too small to split.", 400);
-    }
-  } else addDemoLayout(targetTab.workspace_id, targetTab.tab_id, paneId);
-  if (crossing) {
-    movedPaneIds.set(previous.pane_id, paneId);
-    const key = keyOfPane.get(previous.pane_id);
-    if (key !== undefined) { keyOfPane.delete(previous.pane_id); keyOfPane.set(paneId, key); }
-    if (replying.delete(previous.pane_id)) replying.add(paneId);
-    for (const agent of snap.agents) if (agent.pane_id === previous.pane_id) agent.pane_id = paneId;
-    for (const socket of sockets) socket.holdPending(previous.pane_id, "pane_not_found", "This demo pane moved to another workspace. Copy the message before discarding it.");
-  }
-  pane.pane_id = paneId;
-  pane.workspace_id = targetTab.workspace_id;
-  pane.tab_id = targetTab.tab_id;
-  const source = snap.layouts.find((layout) => layout.tab_id === previous.tab_id);
-  if (source) {
-    closeLayoutPane(source, previous.pane_id);
-    if (source.focused_pane_id === previous.pane_id) source.focused_pane_id = source.panes[0]?.pane_id ?? "";
-    for (const candidate of source.panes) candidate.focused = candidate.pane_id === source.focused_pane_id;
-  }
-  let closedTabId: string | null = null;
-  let closedWorkspaceId: string | null = null;
-  if (!snap.panes.some((candidate) => candidate.tab_id === previous.tab_id)) {
-    closedTabId = previous.tab_id;
-    snap.tabs = snap.tabs.filter((tab) => tab.tab_id !== previous.tab_id);
-    autoTabs.delete(previous.tab_id);
-    snap.layouts = snap.layouts.filter((layout) => layout.tab_id !== previous.tab_id);
-    if (!snap.tabs.some((tab) => tab.workspace_id === previous.workspace_id)) {
-      closedWorkspaceId = previous.workspace_id;
-      snap.workspaces = snap.workspaces.filter((workspace) => workspace.workspace_id !== previous.workspace_id);
-    }
-  }
-  relabelAutoTabs(previous.workspace_id);
-  relabelAutoTabs(targetTab.workspace_id);
-  recountDemoWorkspace(previous.workspace_id);
-  recountDemoWorkspace(targetTab.workspace_id);
-  if (focus) {
-    snap.focused_pane_id = paneId;
-    snap.focused_tab_id = targetTab.tab_id;
-    snap.focused_workspace_id = targetTab.workspace_id;
-  } else {
-    // focus was not asked to follow, but it cannot stay on a tab or workspace that closed behind
-    // the pane: a pane still there takes it, one outside the destination when there is one
-    if (snap.focused_pane_id === previous.pane_id || !snap.tabs.some((tab) => tab.tab_id === snap.focused_tab_id) || !snap.workspaces.some((workspace) => workspace.workspace_id === snap.focused_workspace_id)) {
-      const heir = snap.panes.find((candidate) => candidate.pane_id === source?.focused_pane_id)
-        ?? snap.panes.find((candidate) => candidate.workspace_id === previous.workspace_id && candidate.pane_id !== paneId)
-        ?? snap.panes.find((candidate) => candidate.workspace_id !== targetTab.workspace_id)
-        ?? pane;
-      snap.focused_pane_id = heir.pane_id;
-      snap.focused_tab_id = heir.tab_id;
-      snap.focused_workspace_id = heir.workspace_id;
-    }
-  }
-  for (const candidate of snap.panes) candidate.focused = candidate.pane_id === snap.focused_pane_id;
-  for (const tab of snap.tabs) tab.focused = tab.tab_id === snap.focused_tab_id;
-  snap.workspaces.forEach((workspace, index) => { workspace.number = index + 1; workspace.focused = workspace.workspace_id === snap.focused_workspace_id; });
-  const focused = snap.panes.find((candidate) => candidate.pane_id === snap.focused_pane_id);
-  if (focused) focusDemoPane(focused);
-  return {
-    changed: true, previous_pane_id: previous.pane_id, previous_workspace_id: previous.workspace_id, previous_tab_id: previous.tab_id, pane,
-    created_tab: createdTab, created_workspace: createdWorkspace, closed_tab_id: closedTabId, closed_workspace_id: closedWorkspaceId,
-    focused_pane_id: snap.focused_pane_id ?? paneId, target_layout: demoLayout(targetTab.tab_id),
-  };
-}
-
 function emitSse(event: MachineEvent): void {
   const message = new MessageEvent("message", { data: JSON.stringify(event) });
   for (const listener of sseListeners) listener(message);
@@ -449,12 +302,8 @@ function agentOf(paneId: string): string {
 
 const now = () => new Date().toISOString();
 
-/** the id a pane answers to after a move took it to another workspace, for a mock turn begun under the old one */
-const movedPaneIds = new Map<string, string>();
-
 /** The bridge takes one accepted pending message when the current mock turn finishes. */
 function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void {
-  while (movedPaneIds.has(paneId)) paneId = movedPaneIds.get(paneId)!;
   replying.delete(paneId);
   if (!paneOf(paneId)) return;
   setStatus(paneId, status);
@@ -884,19 +733,6 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ ok: true });
   }
-  if (path === "/api/pane/move") {
-    const body = await bodyOf(init, input);
-    const pane = paneOf(String(body["pane_id"] ?? ""));
-    if (!pane) return error("pane_not_found", "source pane not found", 404);
-    const destination = body["destination"];
-    if (!destination || typeof destination !== "object" || Array.isArray(destination)) return error("invalid_destination", "destination must be an object", 400);
-    const focus = body["focus"];
-    if (focus !== undefined && typeof focus !== "boolean") return error("invalid_focus", "focus must be a boolean", 400);
-    const moved = moveDemoPane(pane, destination as Record<string, unknown>, focus === true);
-    if (moved instanceof Response) return moved;
-    structureChanged();
-    return json(moved satisfies PaneMoved);
-  }
   if (path === "/api/layout/ratio") {
     const body = await layoutBodyOf(method, init, input);
     if (body instanceof Response) return body;
@@ -1099,9 +935,10 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
     snap.panes.push(pane);
     addAgent(pane);
-    snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: tabId, workspace_id: id, label: String(body["label"] ?? ""), number, agent_status: pane.agent_status, focused: false, pane_count: 1 });
+    const label = String(body["label"] ?? "");
+    snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: tabId, workspace_id: id, label, number, agent_status: pane.agent_status, focused: false, pane_count: 1 });
     addDemoLayout(id, tabId, pane.pane_id);
-    if (String(body["label"] ?? "") === "") autoTabs.add(tabId);
+    if (label === "") autoTabs.add(tabId);
     else autoTabs.delete(tabId);
     relabelAutoTabs(id);
     workspace.tab_count = tabs.length + 1;
@@ -1284,10 +1121,10 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; send_anyway?: unknown; resend_id?: unknown; resend_generation?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; stop?: unknown };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
-      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, pending_id: message.pending_id, action: message.action });
+      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, send_anyway: message.send_anyway, resend_id: message.resend_id, resend_generation: message.resend_generation, pending_id: message.pending_id, action: message.action });
       const previous = this.requests.get(message.id!);
       if (previous) {
         if (previous.signature !== signature) {
@@ -1333,6 +1170,9 @@ class DemoSocket extends EventTarget {
       case "resize":
         if (message.pane_id && this.attached.has(message.pane_id) && this.mode === "interact") this.resizeGrid(message.pane_id, message.cols, message.rows);
         break;
+      // the demo page is its pane's only terminal: no other grid to hand the pty to, and the server answers nothing
+      case "release-size":
+        break;
       // The demo has no competing attach slots and does not advertise this capability.
       case "take-over":
         this.push({ type: "error", code: "unsupported", message: "The demo has no competing terminal attachments.", pane_id: message.pane_id });
@@ -1360,6 +1200,7 @@ class DemoSocket extends EventTarget {
           this.conversationInterests.delete(message.pane_id);
         }
         break;
+      // a Stop (`stop`) is typed like any key: the demo has no pty for a following message to overtake
       case "input": if (message.pane_id && message.text !== undefined) this.typed(message.pane_id, message.text); break;
       case "keys": if (message.pane_id) for (const key of message.keys ?? []) this.typed(message.pane_id, chordText(key)); break;
       case "secret":
@@ -1371,20 +1212,40 @@ class DemoSocket extends EventTarget {
           break;
         }
         if (message.pane_id && message.text !== undefined && message.id !== undefined) {
+          if (message.resend_id !== undefined && message.send_anyway !== undefined) {
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
+            break;
+          }
           const queued = message.delivery === "queue" || message.delivery === "hold";
           const native = message.delivery === "agent-queue";
+          for (const [key, receipt] of heldCopyResends) if (Date.now() - receipt.at >= 60_000) heldCopyResends.delete(key);
+          const resendKey = message.resend_id === undefined ? null : JSON.stringify([message.pane_id, message.resend_id, message.resend_generation ?? 0]);
+          const previous = resendKey === null ? undefined : heldCopyResends.get(resendKey);
+          if (previous && this.mode !== "observe" && message.clear_draft === undefined) {
+            this.push(previous.text === message.text ? { ...previous.reply, id: message.id }
+              : { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_submit_id", message: "This resend id already belongs to another message." });
+            break;
+          }
           const text = queued ? message.text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n") : message.text;
           let code: string | null = null;
           if ((message.delivery !== undefined && message.delivery !== "immediate" && !queued && !native) || ((queued || native) && message.typed !== undefined && message.typed !== false)) code = "invalid_delivery";
           else if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
             || queued || native || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
+          else if (message.send_anyway !== undefined && (message.send_anyway !== true || queued || native || message.clear_draft !== undefined
+            || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
           else if (this.mode === "observe") code = "read_only";
-          else if (message.clear_draft !== undefined) code = "unsupported";
+          // the demo agent never refuses over its input box, so there is nothing to clear or send over
+          else if (message.clear_draft !== undefined || message.send_anyway !== undefined) code = "unsupported";
+          else if (message.resend_id !== undefined && (typeof message.resend_id !== "string" || !message.resend_id || message.resend_id.length > 128 || queued || native || message.typed === true)) code = "invalid_delivery";
+          else if (message.resend_generation !== undefined && (typeof message.resend_generation !== "number" || !Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0 || message.resend_id === undefined)) code = "invalid_delivery";
+          else if (resendKey !== null && heldCopyResends.size >= 256) code = "pending_limit";
           else if ((queued || native) && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
           else if (native && (paneOf(message.pane_id)?.agent ?? paneOf(message.pane_id)?.agent_session?.agent) !== "omo") code = "agent_queue_unsupported";
           else if (queued || native) code = this.pendingTargetError(message.pane_id);
           if (code) {
-            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." });
+            const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." };
+            if (resendKey !== null && this.mode !== "observe" && code !== "pending_limit" && !previous) heldCopyResends.set(resendKey, { text: message.text, reply, at: Date.now() });
+            this.completeRequest(reply);
             break;
           }
           if (queued && (message.delivery === "hold" || paneOf(message.pane_id)?.agent_status === "working")) {
@@ -1396,7 +1257,9 @@ class DemoSocket extends EventTarget {
             this.push(reply);
           } else {
             submitToChat(message.pane_id, text);
-            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true });
+            const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true };
+            if (resendKey !== null) heldCopyResends.set(resendKey, { text: message.text, reply, at: Date.now() });
+            this.completeRequest(reply);
           }
         }
         break;
@@ -1404,6 +1267,9 @@ class DemoSocket extends EventTarget {
         if (message.id !== undefined && message.pane_id && message.pending_id) {
           const result = (ok: boolean, code?: string) => this.completeRequest({ type: "pending-result", id: message.id!, pane_id: message.pane_id!, pending_id: message.pending_id!, ok, ...(code ? { code, message: "The demo pending message was not changed." } : {}) });
           if (message.action !== "steer" && message.action !== "discard" && message.action !== "agent-queue") { result(false, "invalid_pending_action"); break; }
+          if (message.resend_generation !== undefined && (typeof message.resend_generation !== "number" || !Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0)) {
+            result(false, "invalid_pending_action"); break;
+          }
           if (this.mode === "observe") { result(false, "read_only"); break; }
           const pending = this.pending.get(message.pane_id)?.find((item) => item.id === message.pending_id);
           if (!pending) {
@@ -1419,6 +1285,22 @@ class DemoSocket extends EventTarget {
             this.removePending(message.pane_id, pending.id, "discarded");
             result(true);
           } else {
+            const key = JSON.stringify([message.pane_id, pending.id, message.resend_generation ?? 0]);
+            for (const [id, receipt] of heldCopyResends) if (Date.now() - receipt.at >= 60_000) heldCopyResends.delete(id);
+            const previous = heldCopyResends.get(key);
+            if (previous) {
+              if (previous.text !== pending.text) { result(false, "invalid_submit_id"); break; }
+              if (previous.reply.ok) this.removePending(message.pane_id, pending.id, "sent");
+              result(previous.reply.ok, previous.reply.code);
+              break;
+            }
+            if (heldCopyResends.size >= 256) { result(false, "pending_limit"); break; }
+            const resendResult = (ok: boolean, code?: string) => {
+              heldCopyResends.set(key, { text: pending.text, at: Date.now(), reply: {
+                type: "submit-result", id: message.id!, pane_id: message.pane_id!, ok, ...(code ? { code } : {}),
+              } });
+              result(ok, code);
+            };
             if (pending.state === "uncertain") { result(false, "pending_uncertain"); break; }
             const code = message.action === "agent-queue" && (paneOf(message.pane_id)?.agent ?? paneOf(message.pane_id)?.agent_session?.agent) !== "omo"
               ? "agent_queue_unsupported" : this.pendingTargetError(message.pane_id);
@@ -1428,14 +1310,14 @@ class DemoSocket extends EventTarget {
                 pending.error = { code, message: "The demo agent cannot take this native queue transfer." };
                 this.publishPending(message.pane_id);
               }
-              result(false, code); break;
+              resendResult(false, code); break;
             }
             if (message.action === "agent-queue") {
               this.removePending(message.pane_id, pending.id, "sent");
-              result(true); break;
+              resendResult(true); break;
             }
             const sent = this.deliverPending(message.pane_id, pending);
-            result(sent, sent ? undefined : pending.error?.code ?? "pending_changed");
+            resendResult(sent, sent ? undefined : pending.error?.code ?? "pending_changed");
           }
         }
         break;

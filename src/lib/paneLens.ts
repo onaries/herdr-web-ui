@@ -32,14 +32,6 @@ export class PaneLenses {
     return lens;
   }
 
-  /** A pane herdr gave a new id (a move to another workspace) keeps the lens it was showing. */
-  move(from: string, to: string): void {
-    const settled = this.settled.get(from);
-    if (settled === undefined) return;
-    this.settled.delete(from);
-    this.settled.set(to, settled);
-  }
-
   /** A pane this page started an agent in: its lens is an agent's, whatever the first snapshot says. */
   startedAgent(key: string, coarse: boolean): void {
     this.settled.set(key, defaultLens(true, this.defaultView, coarse));

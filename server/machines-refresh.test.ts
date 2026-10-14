@@ -61,6 +61,7 @@ async function fixture() {
       input += chunk.toString();
       if (!input.includes("\n")) return;
       const request = JSON.parse(input.split("\n")[0]!);
+      if (request.method === "pane.process_info") { socket.end(JSON.stringify({ id: request.id, result: { process_info: { foreground_processes: [] } } }) + "\n"); return; }
       if (request.method !== "session.snapshot") throw new Error(`unexpected fixture RPC: ${request.method}`);
       void local.read().then((captured) => socket.end(JSON.stringify({ id: request.id, result: { snapshot: captured } }) + "\n"));
     });

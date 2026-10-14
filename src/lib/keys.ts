@@ -192,3 +192,14 @@ export function modifyOtherKeysLevel(level: number, final: "m" | "n", params: Re
 export function ctrlEnterSequence(modifyOtherKeys: number): string | null {
   return modifyOtherKeys > 0 ? "\u001b[27;5;13~" : null;
 }
+
+/**
+ * Ctrl+Enter on a mirrored pane, as a herdr key (#924). A mirror's repaint carries no terminal
+ * modes (server/mirror.ts), so the browser never learns that the program asked for
+ * modifyOtherKeys; herdr holds the pty and encodes `ctrl+enter` in the program's own mode:
+ * CSI 27;5;13~ after `CSI > 4;2 m` (Claude Code's "send now"), CR otherwise (herdr 0.9.3).
+ * null: the attached pane's own sequence, from ctrlEnterSequence.
+ */
+export function mirroredCtrlEnterKey(mirrored: boolean, modifyOtherKeys: number): string | null {
+  return mirrored && modifyOtherKeys === 0 ? "ctrl+enter" : null;
+}

@@ -76,7 +76,7 @@ Copyright (c) 2026 T3 Tools Inc.
 - `src/lib/workspacePath.ts` <- `apps/web/src/filePathDisplay.ts`
 - `src/lib/fileIcons.ts`, `src/components/FileGlyph.tsx` <- `apps/web/src/pierre-icons.ts`,
   `apps/web/src/components/chat/PierreEntryIcon.tsx`
-- `src/lib/contrast.ts`, `src/styles.css` <- `apps/web/src/appearanceContrast.ts`, `apps/web/src/index.css`
+- `src/styles.css` <- `apps/web/src/index.css`
 - `src/lib/composerNotices.ts` <- `apps/web/src/components/chat/ComposerBannerStack.tsx`
 - `src/lib/changeTree.ts`, `src/components/RepoChanges.tsx` <-
   `apps/web/src/components/diffs/diffFileTree.logic.ts`,

@@ -5,6 +5,21 @@ function fixture() {
   const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); }, removeItem: (key: string) => { data.delete(key); } };
   return { data, store: new ComposerDraftStore(() => storage) };
 }
+it("keeps the draft busy and intact until an acknowledged send settles, and releases a refused send for retry", () => {
+  const { store } = fixture();
+  store.set("a", "check delivery");
+  expect(store.begin("a", "check delivery")).toBe(true);
+  expect(store.read("a")).toEqual({ text: "check delivery", sending: true });
+  expect(store.begin("a", "check delivery")).toBe(false);
+  store.settle("a", "check delivery");
+  store.end("a");
+  expect(store.read("a")).toEqual({ text: "", sending: false });
+  store.set("a", "retry this");
+  store.begin("a", "retry this");
+  store.end("a");
+  expect(store.read("a")).toEqual({ text: "retry this", sending: false });
+  expect(store.begin("a", "retry this")).toBe(true);
+});
 it("settles an unmounted pane's draft and pending send without changing another owner", () => {
   const { store, data } = fixture();
   store.set("local:a", "sent"); store.begin("local:a");

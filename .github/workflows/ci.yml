@@ -53,7 +53,7 @@ jobs:
             echo "draft=false" >> "$GITHUB_OUTPUT"
           fi
           # Only a pull request may skip the heavy jobs as docs-only. Every other event validates in
-          # full, including workflow_call from release.yml and pages.yml, where github.event_name is
+          # full, including workflow_call from release.yml and manual pages.yml dispatches, where github.event_name is
           # the caller's event and a docs-only last commit must not skip release validation.
           if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$BASE_SHA" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -169,9 +169,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(needs.changes.outputs.linux) }}
-    timeout-minutes: 15
+    # a wait for a slot counts against it
+    timeout-minutes: 50
     env:
       CHECK_DIR: ${{ github.workspace }}/.ci
+      # The herdr-backed lanes of every runner on the self-hosted PC share check.ts's slots
+      # (scripts/self-hosted-runner/run.sh): at most CHECK_MAX_RUNS at once, and a lane that finds
+      # them taken waits its turn instead of failing. A hosted runner has the slots to itself.
+      CHECK_MAX_RUNS: 3
+      CHECK_WAIT_SECONDS: 2400
     steps:
       - uses: actions/checkout@v7
         with:
@@ -209,9 +215,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(needs.changes.outputs.linux) }}
-    timeout-minutes: 15
+    # a wait for a slot counts against it
+    timeout-minutes: 50
     env:
       CHECK_DIR: ${{ github.workspace }}/.ci
+      # The herdr-backed lanes of every runner on the self-hosted PC share check.ts's slots
+      # (scripts/self-hosted-runner/run.sh): at most CHECK_MAX_RUNS at once, and a lane that finds
+      # them taken waits its turn instead of failing. A hosted runner has the slots to itself.
+      CHECK_MAX_RUNS: 3
+      CHECK_WAIT_SECONDS: 2400
     steps:
       - uses: actions/checkout@v7
         with:
@@ -245,7 +257,7 @@ jobs:
         env:
           BROWSER_SCRIPTS: scripts/ui-regression.ts,scripts/ui-contexts-regression.ts
           BROWSER_WORKERS: 2
-        run: bun scripts/ci-browser-parallel.ts
+        run: bun run check run -- bun scripts/ci-browser-parallel.ts
       - name: Preserve browser logs and evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -263,9 +275,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ fromJSON(needs.changes.outputs.linux) }}
-    timeout-minutes: 15
+    # a wait for a slot counts against it
+    timeout-minutes: 50
     env:
       CHECK_DIR: ${{ github.workspace }}/.ci
+      # The herdr-backed lanes of every runner on the self-hosted PC share check.ts's slots
+      # (scripts/self-hosted-runner/run.sh): at most CHECK_MAX_RUNS at once, and a lane that finds
+      # them taken waits its turn instead of failing. A hosted runner has the slots to itself.
+      CHECK_MAX_RUNS: 3
+      CHECK_WAIT_SECONDS: 2400
     steps:
       - uses: actions/checkout@v7
         with:
@@ -300,7 +318,7 @@ jobs:
           # Every script of scripts/ci-browser.sh except the two browser-main runs.
           BROWSER_EXCLUDE: scripts/ui-regression.ts,scripts/ui-contexts-regression.ts
           BROWSER_WORKERS: ${{ runner.environment == 'self-hosted' && '6' || '4' }}
-        run: bun scripts/ci-browser-parallel.ts
+        run: bun run check run -- bun scripts/ci-browser-parallel.ts
       - name: Preserve browser logs and evidence
         if: always()
         uses: actions/upload-artifact@v7

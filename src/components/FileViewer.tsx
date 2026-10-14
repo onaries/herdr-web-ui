@@ -19,7 +19,6 @@ import { fileLineTarget, pathParts } from "../lib/filePaths.ts";
 import { lineRequest, readBudget, shownSource, sourceLayout, virtualHighlightable } from "../lib/sourcePreview.ts";
 import { canHighlight, countLines, languageForPath, normalizeCode } from "../lib/highlight.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
-import { useSettings } from "../lib/settings.ts";
 import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import type { MarkdownBlock } from "../lib/markdown.ts";
@@ -114,7 +113,6 @@ function selectSource(element: HTMLElement): void {
 export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true, page = false }: FileViewerProps) {
   const t = useT();
   const locale = useLocale();
-  const { settings } = useSettings();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
   // on; until then it would list the bridge's own folder, so only an absolute or ~/ one is listed there
@@ -237,7 +235,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const sourceText = useMemo(() => codeShown ? shownSource(normalizeCode(loaded.text), loaded.truncated) : "", [codeShown, loaded]);
   const sourceLines = useMemo(() => countLines(sourceText), [sourceText]);
   const layout = sourceLayout(sourceLines);
-  const colorable = settings.highlightCode && canHighlight(language);
+  const colorable = canHighlight(language);
   const virtual = useMemo(() => codeShown && layout === "virtual" ? { text: sourceText, colored: colorable && virtualHighlightable(sourceText.length, sourceLines) } : null, [codeShown, layout, sourceText, colorable, sourceLines]);
   // CodeLines' code has no length limit of its own (the layout bounds it): only a worker that gave up leaves it plain
   const code = useHighlightedLines(codeShown && layout === "elements" ? sourceText : "", codeShown ? language : null);

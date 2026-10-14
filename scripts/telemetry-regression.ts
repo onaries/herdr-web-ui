@@ -30,7 +30,7 @@ async function statusAt(origin: string): Promise<TelemetryStatus> {
 function fixtureSettings() {
   return {
     language: "en",
-    palette: "forest",
+    palette: "catppuccin",
     terminalInputMode: "line",
     terminalFontSize: 17,
     chatFontSize: 19,
@@ -121,7 +121,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
       "no settings snapshot leaves the browser before the notice is acknowledged; the first rides with the acknowledgement");
     await until(async () => {
       const settings = (await statusAt(origin)).next?.settings;
-      return settings?.palette === "forest" && settings.terminalFontSize === 17;
+      return settings?.palette === "catppuccin" && settings.terminalFontSize === 17;
     }, "the server receives the full initial settings snapshot");
 
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
@@ -134,7 +134,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await preview.waitFor({ state: "visible" });
     const previewText = await preview.innerText();
     const event = JSON.parse(previewText) as TelemetryEvent;
-    assert.equal(event.settings?.palette, "forest", "the preview shows the selected palette enum");
+    assert.equal(event.settings?.palette, "catppuccin", "the preview shows the selected palette enum");
     assert.equal(event.settings?.terminalInputMode, "line", "the preview shows the selected input-mode enum");
     assert.equal(event.settings?.terminalFontSize, 17, "the preview shows the selected numeric font size");
     assert.equal(event.settings?.chatFontSize, 19);
@@ -150,11 +150,11 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
 
     await openSettingsPage(page, "Appearance");
     const palette = page.locator("#settings-palette");
-    assert.equal(await palette.inputValue(), "forest");
-    await palette.selectOption("lilac");
+    assert.equal(await palette.inputValue(), "catppuccin");
+    await palette.selectOption("charcoal");
     await until(async () => {
       const settings = (await statusAt(origin)).next?.settings;
-      return settings?.palette === "lilac";
+      return settings?.palette === "charcoal";
     }, "a non-default palette change reaches the server snapshot");
     for (const marker of privateMarkers) {
       assert.equal(JSON.stringify(changes).includes(marker), false, `the browser submission omits private fixture value ${marker}`);
@@ -163,7 +163,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await openSettingsPage(page, "About");
     await telemetrySection.locator("summary").click();
     const updatedPreview = JSON.parse(await preview.innerText()) as TelemetryEvent;
-    assert.equal(updatedPreview.settings?.palette, "lilac", "the preview refreshes with the server's updated snapshot");
+    assert.equal(updatedPreview.settings?.palette, "charcoal", "the preview refreshes with the server's updated snapshot");
     assert.equal(await notice.getByRole("button").count(), 2, "the line offers What is sent and Dismiss, nothing else");
     const rows = await notice.locator("span").evaluate((span) => span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight));
     assert.ok(rows < 1.5, `the sentence stays on one row (${rows} rows)`);

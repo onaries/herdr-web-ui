@@ -10,6 +10,7 @@ import type { RepoComparison } from "../lib/repoDiff.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 
 export interface FilesDialogProps {
   /** the folder to open at: the pane's own */
@@ -30,6 +31,7 @@ type Tab = "browse" | "changes";
 /** The files of the pane's folder (and any other), each opened in the file viewer, and the changes of its repository, each opened as a diff. */
 export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, onBrowseFolders, onClose }: FilesDialogProps) {
   const t = useT();
+  const phone = useMediaQuery("(max-width: 480px)");
   const surface = useFocusTrap<HTMLElement>(true);
   const [tab, setTab] = useState<Tab>("browse");
   // the changes are read with the first visit and kept, as the browser keeps its folder
@@ -60,7 +62,7 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
             <button type="button" aria-pressed={tab === "browse"} onClick={() => show("browse")}>{t("Browse")}</button>
             <button type="button" aria-pressed={tab === "changes"} onClick={() => show("changes")}>{t("Changes")}</button>
           </div>
-          <button type="button" className="icon-button" aria-label={t("Browse folders in the palette")} title={t("Browse folders in the palette")} onClick={browseFolders}><FolderSearch aria-hidden="true" /></button>
+          {!phone && <button type="button" className="icon-button" aria-label={t("Browse folders in the palette")} title={t("Browse folders in the palette")} onClick={browseFolders}><FolderSearch aria-hidden="true" /></button>}
           <button type="button" className="icon-button" aria-label={t("Close files")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body">

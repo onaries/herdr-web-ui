@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it, spyOn } from "bun:test";
 import { isGjcProcess } from "./gjc-runtime.ts";
 import { paneShell, shellAgentExecutable, shellCommandLine } from "./shell-agent.ts";
 import { descendantArgv, descendantProcesses, parseProcessTable, windowsArgv, windowsProcessTable } from "./windows-processes.ts";
@@ -63,6 +63,14 @@ it("gives up on a process-table query that stalls, and kills it", async () => {
   expect(await windowsProcessTable(5000, ["printf", '[{"ProcessId":2,"ParentProcessId":1,"ExecutablePath":null,"CommandLine":"x"}]'])).toEqual([{ pid: 2, parent: 1, path: null, commandLine: "x" }]);
 });
 
-it("offers on Windows only the shell-started agents known to start there", () => {
-  expect(shellAgentExecutable("omo", "win32")).toBeNull();
+it("offers OmO on Windows when its launcher is on PATH", () => {
+  const which = spyOn(Bun, "which").mockReturnValue("C:\\tools\\omo.exe");
+  try {
+    expect(shellAgentExecutable("omo", "win32")).toBe("C:\\tools\\omo.exe");
+    expect(which).toHaveBeenCalledWith("omo", { PATH: process.env["PATH"] ?? "" });
+    which.mockReturnValue(null);
+    expect(shellAgentExecutable("omo", "win32")).toBeNull();
+  } finally {
+    which.mockRestore();
+  }
 });

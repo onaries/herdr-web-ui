@@ -6,9 +6,8 @@
  * `[data-theme="light"]` overrides the color group only (src/lib/settings.ts sets
  * the attribute); `[data-density="compact"]` overrides the type scale and row
  * heights. The base blocks are the amber palette, the default and the look before
- * settings load; `[data-palette]` blocks override them for the opt-in report,
- * charcoal, catppuccin, lilac and forest palettes. `[data-contrast]` (after them) re-mixes the
- * text and border tokens under <html> by the Contrast step. xterm cannot read CSS custom
+ * settings load; `[data-palette]` blocks override them for the opt-in
+ * charcoal and catppuccin palettes. xterm cannot read CSS custom
  * properties, so the --term-* group is mirrored in settings.ts `terminalTheme()`.
  * Component-scoped rules live beside their component (Sidebar.css,
  * PaneTerminal.css, ...); this file owns the app shell, the header and the
@@ -28,7 +27,7 @@
   --border: #2d2924;
   --border-strong: #3e3830;
   /* the chat's user bubble: no edge where --bg-elevated alone parts it from --bg (the dark
-     amber, report and charcoal palettes), --border where the two surfaces sit close */
+     amber and charcoal palettes), --border where the two surfaces sit close */
   --bubble-border: transparent;
 
   /* text */
@@ -93,23 +92,7 @@
   --syntax-variable: #e0c08f;
   --syntax-meta: #b49dd6;
 
-  /* contrast (Settings → Appearance → Contrast; the [data-contrast] layer after the palette
-     blocks): the pole the text tokens are mixed toward at a step up, white here and black in
-     light, and the palette's own values of the tokens the layer re-mixes under <html>. A token
-     cannot be mixed from itself on the element whose block sets it, so these copies, made here
-     on <html>, carry the palette's values down to where the mix is made */
-  --contrast-far: #ffffff;
-  --text-base: var(--text);
-  --text-dim-base: var(--text-dim);
-  --text-strong-base: var(--text-strong);
-  --border-base: var(--border);
-  --border-strong-base: var(--border-strong);
-  --line-number-base: var(--line-number);
-  --syntax-comment-base: var(--syntax-comment);
-
-  /* type (comfortable density; compact overrides below). Settings → Appearance → Interface font and
-     Code font write --font-ui and --font-mono on <html> with a chosen list in front of these stacks
-     (lib/typography.ts keeps them verbatim); unset, the two are what they say here */
+  /* type (comfortable density; compact overrides below) */
   --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
   /* "JetBrains Mono Web" is the bundled face (fonts/fonts.css): after the icon font, which draws
      the private use area alone, and never in the terminal's own stack (lib/fontFamily.ts) */
@@ -195,9 +178,7 @@
 
   /* motion: only real state changes move (drawer, dialogs, working/reconnecting pulse) */
   --dur-fast: 120ms;
-  /* Settings → Panel motion: 0 snaps, 1 is as drawn (lib/settings.ts writes it on <html>) */
-  --motion-scale: 1;
-  --dur-base: calc(180ms * var(--motion-scale));
+  --dur-base: 180ms;
   --dur-pulse: 1600ms;
   /* one turn of a stepped spinner: it draws its steps and nothing else, so the step count is
      the frame rate and this only sets how fast it looks */
@@ -211,8 +192,8 @@
      video playing beside the app; two steps draw about one frame a second */
   --ease-pulse: steps(2, jump-none);
   /* a phone's sheet rises on the spring and drops faster than it rose */
-  --dur-sheet: calc(360ms * var(--motion-scale));
-  --dur-sheet-out: calc(240ms * var(--motion-scale));
+  --dur-sheet: 360ms;
+  --dur-sheet-out: 240ms;
 
   /* layers */
   --z-header: 4;
@@ -248,7 +229,6 @@
   --text: #2a251f;
   --text-dim: #685e52;
   --text-strong: #16120d;
-  --contrast-far: #000000;
   --accent: #8c5000;
   --accent-tint: rgba(140, 80, 0, 0.1);
   --primary: #c57d12;
@@ -281,64 +261,8 @@
   --syntax-meta: #5d4791;
 }
 
-/* Dark report palette (Settings → Appearance → Colors): a near-black blue-grey canvas
-   with 1px hairlines and near-square panels. The user's own action (Send, primary
-   buttons) is white on the canvas; electric blue is kept for small marks only - the
-   selected row's rail, focus, links, the cursor. Agent states carry the report's
-   meaning colors: amber working, red input, green done, none of them blue. */
-[data-palette="report"] {
-  --radius-sm: 2px;
-  --radius-md: 3px;
-  --radius-lg: 3px;
-  --radius-xl: 4px;
-  --radius-2xl: 6px;
-}
-
-[data-theme="dark"][data-palette="report"] {
-  --notice: #f5b544;
-  --bg: #0a0d12;
-  --bg-panel: #0f1319;
-  --bg-elevated: #141922;
-  --bg-hover: #1a212c;
-  --bg-input: #0c1016;
-  --border: #1e2530;
-  --border-strong: #2a3340;
-  --text: #b4bdc9;
-  --text-dim: #8792a3;
-  --text-strong: #e8ecf2;
-  --accent: #4c9aff;
-  --accent-tint: rgba(76, 154, 255, 0.12);
-  --primary: #e8ecf2;
-  --primary-hover: #ffffff;
-  --primary-text: #0a0d12;
-  --primary-tint: rgba(232, 236, 242, 0.1);
-  --status-idle: #8792a3;
-  --status-working: #f5b544;
-  --status-blocked: #ff6b7a;
-  --status-done: #3ddc97;
-  --status-working-tint: rgba(245, 181, 68, 0.14);
-  --status-blocked-tint: rgba(255, 107, 122, 0.14);
-  --status-done-tint: rgba(61, 220, 151, 0.14);
-  --danger-tint: rgba(255, 107, 122, 0.12);
-  --danger-text: #ffd6db;
-  --scrim: rgba(4, 6, 10, 0.6);
-  /* resting surfaces carry no shadow: the one card, the composer's box, is a hairline */
-  --shadow-card: none;
-  --term-bg: #0f1319;
-  --term-fg: #c9d1dc;
-  --term-cursor: #4c9aff;
-  --term-selection: #1f3a66;
-  --syntax-keyword: #f78c6c;
-  --syntax-string: #3ddc97;
-  --syntax-number: #f5b544;
-  --syntax-type: #7fd4ff;
-  --syntax-variable: #c9d1dc;
-  --syntax-meta: #b392f0;
-}
-
-/* Report and charcoal share plain paper in light; charcoal's own light block below
-   swaps the blue for ink */
-[data-theme="light"]:is([data-palette="report"], [data-palette="charcoal"]) {
+/* Charcoal in light: plain paper with ink for the accent and the cursor */
+[data-theme="light"][data-palette="charcoal"] {
   --notice: #8a5300;
   --bg: #f2f2f0;
   --bg-panel: #fafaf9;
@@ -350,8 +274,8 @@
   --text: #242424;
   --text-dim: #5f5b56;
   --text-strong: #111111;
-  --accent: #1f5fcc;
-  --accent-tint: rgba(31, 95, 204, 0.1);
+  --accent: #242424;
+  --accent-tint: rgba(36, 36, 36, 0.08);
   --primary: #242424;
   --primary-hover: #3a3a3a;
   --primary-text: #fafaf9;
@@ -362,8 +286,8 @@
   --shadow-card: 0 4px 16px rgba(20, 20, 20, 0.06);
   --term-bg: #fafaf9;
   --term-fg: #242424;
-  --term-cursor: #1f5fcc;
-  --term-selection: #cfe0fb;
+  --term-cursor: #242424;
+  --term-selection: #dedad3;
   --syntax-keyword: #b3261e;
   --syntax-string: #22743a;
   --syntax-number: #8a5300;
@@ -374,7 +298,7 @@
 
 /* Charcoal: neutral charcoal, a Ghostty-style terminal (the panel is its #171717), no
    chrome hue - selection, focus, cursor and the user's action are near-white; agent
-   states are muted as in the terminal palette. Light keeps the base paper with ink. */
+   states are muted as in the terminal palette. Light is the paper block above. */
 [data-theme="dark"][data-palette="charcoal"] {
   --notice: #d9b26a;
   --bg: #0f0f0f;
@@ -414,13 +338,6 @@
   --syntax-type: #9fb4c2;
   --syntax-variable: #dcd8d0;
   --syntax-meta: #b8a5c9;
-}
-
-[data-theme="light"][data-palette="charcoal"] {
-  --accent: #242424;
-  --accent-tint: rgba(36, 36, 36, 0.08);
-  --term-cursor: #242424;
-  --term-selection: #dedad3;
 }
 
 /* Catppuccin (catppuccin.com/palette): Mocha in dark, Latte in light, mapped by the
@@ -525,211 +442,6 @@
   --syntax-function: #0b59f4;
 }
 
-/* Lilac: one quiet lavender. Light is the look it was drawn for: a lavender canvas (`--bg`)
-   under paler lavender chrome (`--bg-panel`: sidebar, header, tabs), indigo ink, and an indigo
-   accent for the user's own action. Dark is the same hue at night: an indigo-black canvas, violet
-   chrome and a pale lilac accent. No gradient and no translucency: every surface is flat. */
-[data-theme="dark"][data-palette="lilac"] {
-  --bg: #16152b;
-  --bg-panel: #1c1b34;
-  --bg-elevated: #23223f;
-  --bg-hover: #2c2a4f;
-  --bg-input: #13122a;
-  --border: #2f2d52;
-  --border-strong: #423f6e;
-  --text: #dcdaf4;
-  --text-dim: #a5a2cc;
-  --text-strong: #f2f1ff;
-  --accent: #b3abff;
-  --accent-tint: rgba(179, 171, 255, 0.13);
-  --primary: #b3abff;
-  --primary-hover: #c5bfff;
-  --primary-text: #17163a;
-  --primary-tint: rgba(179, 171, 255, 0.16);
-  --status-idle: #a5a2cc;
-  --status-working: #85b8ff;
-  --status-blocked: #ff94ad;
-  --status-done: #92d9ab;
-  --status-working-tint: rgba(133, 184, 255, 0.14);
-  --status-blocked-tint: rgba(255, 148, 173, 0.14);
-  --status-done-tint: rgba(146, 217, 171, 0.14);
-  --danger-tint: rgba(255, 148, 173, 0.12);
-  --danger-text: #ffd6df;
-  --scrim: rgba(9, 8, 22, 0.6);
-  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
-  --term-bg: #18172f;
-  --term-fg: #dcdaf4;
-  --term-cursor: #b3abff;
-  --term-selection: #3a3768;
-}
-
-[data-theme="light"][data-palette="lilac"] {
-  --bg: #f0eefc;
-  --bg-panel: #f6f5fe;
-  --bg-elevated: #fbfaff;
-  --bg-hover: #e8e5f8;
-  --bg-input: #fdfcff;
-  --border: #e0dcf4;
-  --border-strong: #c8c2ea;
-  --text: #2b2d4d;
-  --text-dim: #545779;
-  --text-strong: #17193a;
-  --accent: #4a42c2;
-  --accent-tint: rgba(74, 66, 194, 0.12);
-  --primary: #4a42c2;
-  --primary-hover: #5951d0;
-  --primary-text: #ffffff;
-  --primary-tint: rgba(74, 66, 194, 0.14);
-  --status-idle: #545779;
-  --status-working: #1f4aa6;
-  --status-blocked: #9c2044;
-  --status-done: #1f5c39;
-  --status-working-tint: rgba(31, 74, 166, 0.12);
-  --status-blocked-tint: rgba(156, 32, 68, 0.12);
-  --status-done-tint: rgba(31, 92, 57, 0.12);
-  --danger-tint: rgba(156, 32, 68, 0.1);
-  --danger-text: #8c1f3a;
-  --scrim: rgba(43, 35, 100, 0.32);
-  --shadow-drawer: 0 0 40px rgba(60, 50, 130, 0.22);
-  --shadow-pop: 0 16px 48px rgba(60, 50, 130, 0.16), 0 0 0 1px var(--border);
-  --shadow-card: 0 4px 16px rgba(60, 50, 130, 0.08);
-  --term-bg: #f8f7fe;
-  --term-fg: #2b2d4d;
-  --term-cursor: #4a42c2;
-  --term-selection: #dcd7f8;
-}
-
-/* Forest: low-saturation green-grey surfaces for long sessions. The accent stays green, while
-   working, blocked and done keep separate status hues. */
-[data-theme="dark"][data-palette="forest"] {
-  --bg: #101a16;
-  --bg-panel: #16231d;
-  --bg-elevated: #1d2d25;
-  --bg-hover: #263b30;
-  --bg-input: #132019;
-  --border: #2d4437;
-  --border-strong: #3d5b49;
-  --text: #d4e5d8;
-  --text-dim: #9ab9a3;
-  --text-strong: #edf7ef;
-  --accent: #8fd3a2;
-  --accent-tint: rgba(143, 211, 162, 0.14);
-  --primary: #8fd3a2;
-  --primary-hover: #a7dfb5;
-  --primary-text: #102016;
-  --primary-tint: rgba(143, 211, 162, 0.16);
-  --status-idle: #9ab9a3;
-  --status-working: #79c7d4;
-  --status-blocked: #ffa294;
-  --status-done: #91d69a;
-  --status-working-tint: rgba(121, 199, 212, 0.14);
-  --status-blocked-tint: rgba(255, 162, 148, 0.14);
-  --status-done-tint: rgba(145, 214, 154, 0.14);
-  --danger-tint: rgba(255, 162, 148, 0.12);
-  --danger-text: #ffd7d0;
-  --scrim: rgba(6, 14, 10, 0.6);
-  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
-  --term-bg: #16231d;
-  --term-fg: #d4e5d8;
-  --term-cursor: #8fd3a2;
-  --term-selection: #31513e;
-  --syntax-keyword: #e6a96d;
-  --syntax-string: #91d69a;
-  --syntax-number: #d2b18a;
-  --syntax-type: #79c7d4;
-  --syntax-variable: #d4e5d8;
-  --syntax-meta: #c2a0d8;
-}
-
-[data-theme="light"][data-palette="forest"] {
-  --bg: #eaf2ed;
-  --bg-panel: #f7fbf8;
-  --bg-elevated: #edf5ef;
-  --bg-hover: #e1eee5;
-  --bg-input: #ffffff;
-  --border: #c9ddd0;
-  --border-strong: #a7c3b2;
-  --text: #20352a;
-  --text-dim: #4f6d5a;
-  --text-strong: #15291e;
-  --accent: #2c7648;
-  --accent-tint: rgba(44, 118, 72, 0.1);
-  --primary: #397f50;
-  --primary-hover: #2f6e44;
-  --primary-text: #ffffff;
-  --primary-tint: rgba(57, 127, 80, 0.12);
-  --status-idle: #4f6d5a;
-  --status-working: #166578;
-  --status-blocked: #a02b20;
-  --status-done: #225f32;
-  --status-working-tint: rgba(22, 101, 120, 0.12);
-  --status-blocked-tint: rgba(160, 43, 32, 0.1);
-  --status-done-tint: rgba(34, 95, 50, 0.12);
-  --danger-tint: rgba(160, 43, 32, 0.1);
-  --danger-text: #9d3022;
-  --scrim: rgba(24, 52, 35, 0.35);
-  --shadow-drawer: 0 0 40px rgba(24, 52, 35, 0.22);
-  --shadow-pop: 0 16px 48px rgba(24, 52, 35, 0.16), 0 0 0 1px var(--border);
-  --shadow-card: 0 4px 16px rgba(24, 52, 35, 0.07);
-  --term-bg: #f7fbf8;
-  --term-fg: #20352a;
-  --term-cursor: #2c7648;
-  --term-selection: #cfe5d5;
-  --syntax-keyword: #9c4f15;
-  --syntax-string: #225f32;
-  --syntax-number: #865d13;
-  --syntax-type: #166578;
-  --syntax-variable: #20352a;
-  --syntax-meta: #68489c;
-}
-
-/* Contrast (Settings → Appearance → Contrast): text and hairlines stand out more or less than the
-   palette drew them. lib/settings.ts writes the step on <html> as data-contrast, and not at all at
-   the default, so the look before settings load is the palette's own. A step up mixes the text
-   tokens toward the pole (--contrast-far) and the hairlines toward the text; a step down mixes
-   --text and --text-strong toward --text-dim and fades the hairlines. --text-dim itself never
-   softens: it is the dimmest text, the one each palette keeps at 4.5:1 on every surface
-   (DESIGN.md), so a step down stays readable by construction. Line numbers and code comments are
-   dim text and follow it. The user bubble's edge, the popover ring in --shadow-pop and the agent
-   states keep the palette's values.
-   After the palette blocks on purpose: the mix is made on body and on a leaving sheet's copy of
-   the page (lib/sheets.ts, which carries <html>'s data- marks), never on <html> itself, where the
-   blocks set the tokens the mix reads through their *-base copies; the copy's own palette rule
-   matches at the same specificity, and the later rule wins. */
-[data-contrast="-2"] {
-  --contrast-soften: 50%;
-}
-
-[data-contrast="-1"] {
-  --contrast-soften: 25%;
-}
-
-[data-contrast="1"] {
-  --contrast-boost: 20%;
-  --contrast-border-boost: 10%;
-}
-
-[data-contrast="2"] {
-  --contrast-boost: 40%;
-  --contrast-border-boost: 20%;
-}
-
-[data-contrast="3"] {
-  --contrast-boost: 60%;
-  --contrast-border-boost: 30%;
-}
-
-[data-contrast] body,
-[data-contrast]:not(:root) {
-  --text-strong: color-mix(in oklab, color-mix(in oklab, var(--text-strong-base), var(--text-dim-base) var(--contrast-soften, 0%)), var(--contrast-far) var(--contrast-boost, 0%));
-  --text: color-mix(in oklab, color-mix(in oklab, var(--text-base), var(--text-dim-base) var(--contrast-soften, 0%)), var(--contrast-far) var(--contrast-boost, 0%));
-  --text-dim: color-mix(in oklab, var(--text-dim-base), var(--contrast-far) var(--contrast-boost, 0%));
-  --line-number: color-mix(in oklab, var(--line-number-base), var(--contrast-far) var(--contrast-boost, 0%));
-  --syntax-comment: color-mix(in oklab, var(--syntax-comment-base), var(--contrast-far) var(--contrast-boost, 0%));
-  --border: color-mix(in srgb, color-mix(in srgb, var(--border-base), transparent var(--contrast-soften, 0%)), var(--text-base) var(--contrast-border-boost, 0%));
-  --border-strong: color-mix(in srgb, color-mix(in srgb, var(--border-strong-base), transparent var(--contrast-soften, 0%)), var(--text-base) var(--contrast-border-boost, 0%));
-}
-
 [data-chat-width="narrow"] {
   --chat-w: var(--content-w);
 }
@@ -799,11 +511,6 @@ body {
   font-weight: var(--fw-regular);
   line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
-}
-
-/* Settings → Text smoothing → System: the OS's own, as a browser draws without the rule above */
-[data-font-smoothing="system"] body {
-  -webkit-font-smoothing: auto;
 }
 
 button {
@@ -1187,11 +894,6 @@ button {
 .header-more {
   position: relative;
   display: inline-flex;
-}
-
-/* nothing to offer but the palette, which has its own button above phone width */
-.header-more.is-phone-only {
-  display: none;
 }
 
 /* alerts are off on this device: the one state of the menu worth a glance. The button's name
@@ -1901,7 +1603,8 @@ button {
   }
 }
 
-/* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself */
+/* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself,
+   the one bar that reaches the bottom of the screen (KeyBar.tsx) */
 @media (pointer: coarse), (max-width: 768px) {
   .terminal-host:has(.key-bar) {
     padding-bottom: 0; /* no pane = no bar, and the host keeps the inset */
@@ -1923,10 +1626,6 @@ button {
   .palette-button,
   .header-desktop-only {
     display: none;
-  }
-
-  .header-more.is-phone-only {
-    display: inline-flex;
   }
 }
 

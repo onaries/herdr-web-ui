@@ -210,6 +210,70 @@ describe("claudeTranscriptFile", () => {
     expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(original);
   });
 
+  describe("a /resume of a background session", () => {
+    const PARKED = "e4159264-2222-4222-8222-222222222222";
+    const BG = "8b80137e-f8fe-4aaa-8bbb-cccccccccccc";
+    const resumed = (folder: string, jobId = "8b80137e") => {
+      const original = join(folder, `${SESSION}.jsonl`);
+      writeFileSync(original, [
+        { type: "user", message: { content: "/resume" } },
+        { type: "user", message: { content: `<local-command-stdout>Opening \"title\", running in the background (${jobId})</local-command-stdout>` } },
+        { type: "continued-in", sessionId: SESSION, continuedInSessionId: PARKED },
+      ].map((entry) => JSON.stringify(entry)).join("\n"));
+      return original;
+    };
+
+    it("follows the output's job id to that job's transcript (regression: fails on main)", async () => {
+      const { home: dir, projects } = home();
+      const folder = join(projects, claudeProjectDir("/w/project"));
+      mkdirSync(folder, { recursive: true });
+      resumed(folder);
+      const job = join(folder, `${BG}.jsonl`);
+      writeFileSync(job, JSON.stringify({ type: "user", message: { content: "real conversation prompt" } }));
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(job);
+    });
+
+    it("keeps the named transcript when no file, or more than one, matches the job id (control)", async () => {
+      const { home: dir, projects } = home();
+      const folder = join(projects, claudeProjectDir("/w/project"));
+      mkdirSync(folder, { recursive: true });
+      const original = resumed(folder);
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(original);
+      writeFileSync(join(folder, `${BG}.jsonl`), "{}");
+      writeFileSync(join(folder, "8b80137e-0000-4000-8000-000000000000.jsonl"), "{}");
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(original);
+    });
+
+    it("ignores an earlier /resume's job id when the active continuation has no job output (regression)", async () => {
+      const { home: dir, projects } = home();
+      const folder = join(projects, claudeProjectDir("/w/project"));
+      mkdirSync(folder, { recursive: true });
+      const original = join(folder, `${SESSION}.jsonl`);
+      writeFileSync(original, [
+        { type: "user", message: { content: "<local-command-stdout>Opening, running in the background (8b80137e)</local-command-stdout>" } },
+        { type: "continued-in", sessionId: SESSION, continuedInSessionId: PARKED },
+        { type: "continued-in", sessionId: SESSION, continuedInSessionId: PARKED },
+      ].map((entry) => JSON.stringify(entry)).join("\n"));
+      writeFileSync(join(folder, `${BG}.jsonl`), JSON.stringify({ type: "user", message: { content: "earlier job" } }));
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(original);
+    });
+
+    it("checks the job's state.json when it names a transcript (regression: fails on main; mismatch is a control)", async () => {
+      const { home: dir, projects } = home();
+      const folder = join(projects, claudeProjectDir("/w/project"));
+      mkdirSync(folder, { recursive: true });
+      const original = resumed(folder);
+      const job = join(folder, `${BG}.jsonl`);
+      writeFileSync(job, "{}");
+      const state = join(dir, ".claude", "jobs", "8b80137e");
+      mkdirSync(state, { recursive: true });
+      writeFileSync(join(state, "state.json"), JSON.stringify({ linkScanPath: join(folder, "other.jsonl") }));
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(original);
+      writeFileSync(join(state, "state.json"), JSON.stringify({ linkScanPath: job }));
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"])).toBe(job);
+    });
+  });
+
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("returns an unreadable transcript for its reader to report", async () => {
     const { home: dir, projects } = home();
     const folder = join(projects, claudeProjectDir("/w/project"));

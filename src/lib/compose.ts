@@ -39,12 +39,19 @@ export function submitNotTyped(code: string): boolean {
     "held_input"].includes(code);
 }
 
-/** A send refused over a one-row draft in Claude's terminal input box: the note, and the draft a send may clear first. */
-export interface DraftRefusal { note: string; draft: string }
+/**
+ * A send refused over Claude's terminal input box: the note, and either the one-row draft a send may
+ * clear first (`draft`), or, where the server named none but showed the box, a send anyway (`anyway`).
+ */
+export type DraftRefusal = { note: string; draft: string } | { note: string; anyway: true };
 
-/** submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`). */
-export function submitRefusal(code: string, message: string, draft?: string): string | DraftRefusal {
+/**
+ * submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`)
+ * or showed a box it could not tell empty (`box`; empty when it could not read one whole).
+ */
+export function submitRefusal(code: string, message: string, draft?: string, box?: string): string | DraftRefusal {
   if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };
+  if (code === "input_draft" && box) return { note: t("Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.", { box }), anyway: true };
   return submitNote(code, message);
 }
 
@@ -80,13 +87,14 @@ export function imageMention(path: string): string {
  * finishes while the user may be typing, so the mention never goes where the caret is: the caller
  * shifts the caret and selection by `length` when they sit at or after `at`. The mention goes in
  * whole, with its separating space, or not at all (`length` 0): a cut `@path` would name a file
- * that does not exist, so the caller keeps the attachment waiting until there is room.
+ * that does not exist, so the caller keeps the attachment waiting until there is room; `missing`
+ * says how many characters the message is short of it.
  */
 export function insertLeadingMention(
   text: string,
   mention: string,
   earlier: readonly string[],
-): { text: string; at: number; length: number } {
+): { text: string; at: number; length: number; missing?: number } {
   let at = /^\/\S+\s*/u.exec(text)?.[0].length ?? 0;
   for (const previous of earlier) {
     const found = text.indexOf(previous);
@@ -94,7 +102,8 @@ export function insertLeadingMention(
   }
   const before = text.slice(0, at);
   const snippet = before.length > 0 && !/\s$/u.test(before) ? ` ${mention}` : mention;
-  if (text.length + snippet.length > MAX_COMPOSER_CHARS) return { text, at, length: 0 };
+  const missing = text.length + snippet.length - MAX_COMPOSER_CHARS;
+  if (missing > 0) return { text, at, length: 0, missing };
   return { text: before + snippet + text.slice(at), at, length: snippet.length };
 }
 
@@ -169,9 +178,15 @@ export function composerDelivery(agent: string | null, status?: AgentStatus): "q
  * it is uploading, and nothing else in the card would say why Stop and add are off. Otherwise
  * an upload says so while it runs.
  */
-export function composerStatusHint(state: { uploading: boolean; connected: boolean; text: string }): "uploading" | "offline" | null {
+/** Characters left at which the composer starts counting them: further off, a count is noise. */
+export const COMPOSER_CHARS_WARNING = 200;
+
+/** `noRoom`: a finished upload's path waits for the message to be shortened. */
+export function composerStatusHint(state: { uploading: boolean; connected: boolean; text: string; noRoom?: boolean }): "uploading" | "offline" | "no-room" | "near-limit" | null {
   if (!state.connected && state.text.length > 0) return "offline";
-  return state.uploading ? "uploading" : null;
+  if (state.noRoom) return "no-room";
+  if (state.uploading) return "uploading";
+  return MAX_COMPOSER_CHARS - state.text.length <= COMPOSER_CHARS_WARNING ? "near-limit" : null;
 }
 
 /**

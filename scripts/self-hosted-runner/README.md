@@ -21,7 +21,12 @@ The image `herdr-ci-runner:local` is built when missing or with `--build`. Ctrl+
 `--once` exits nonzero if registration-token retrieval or any container fails. Its exit status
 reports launcher/container execution, not the GitHub Actions job's conclusion.
 
-Runner containers have no CPU or total-memory quota and can use available host resources. The
+Runner containers have no CPU or total-memory quota and can use available host resources.
+They all join the network namespace of one idle container, `herdr-ci-<host>-net`, which the
+launcher starts first and stops last. The runners therefore share a loopback, and with it
+`scripts/check.ts`'s slots: the herdr-backed CI lanes of every runner on the PC count against one
+`CHECK_MAX_RUNS` and wait for a slot, instead of each runner believing it has the PC to itself.
+The namespace is not the host's: a job still cannot reach a service on the host's loopback. The
 `--shm-size 2g` Docker setting sizes `/dev/shm` for browser scratch space; it is not a total RAM
 limit. The container still has a pids limit of 8192.
 

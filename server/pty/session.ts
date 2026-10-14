@@ -13,6 +13,18 @@ export interface PtySessionOptions {
   env?: Record<string, string>;
 }
 
+/** Writes a line to a child's stdin. On Windows a pipe write settles later, so a child that already
+ * closed its end (EPIPE) rejects the returned promise instead of throwing; swallow both, never crash. */
+export function writeLine(sink: import("bun").FileSink, line: string): boolean {
+  const quiet = (pending: unknown) => { if (pending instanceof Promise) pending.catch(() => {}); };
+  try {
+    quiet(sink.write(line)); quiet(sink.flush());
+    return true;
+  } catch {
+    return false; // host already gone
+  }
+}
+
 /**
  * A command running on a real PTY, hosted by a Node sidecar (see pty-host.mjs for
  * why output flow control currently needs node-pty, and why it is the prebuilt
@@ -66,13 +78,7 @@ export class PtySession {
     if (this.closed) return false;
     const sink = this.proc.stdin;
     if (!sink || typeof sink === "number" || !("write" in sink)) return false;
-    try {
-      sink.write(`${JSON.stringify(frame)}\n`);
-      sink.flush();
-      return true;
-    } catch {
-      return false; // host already gone
-    }
+    return writeLine(sink, `${JSON.stringify(frame)}\n`);
   }
 
   write(data: string): boolean {

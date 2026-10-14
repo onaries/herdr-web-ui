@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { fileFromLink, followMoved, isNavigation, linkSearch, linksSomewhere, readLink, resolveLink, slugOf, workspacePane } from "./deepLink.ts";
+import { fileFromLink, isNavigation, linkSearch, linksSomewhere, readLink, resolveLink, slugOf, workspacePane } from "./deepLink.ts";
 
 describe("deep links", () => {
   it("keeps an absolute file on its PC without requiring a live pane", () => {
@@ -98,19 +98,6 @@ describe("resolving a link", () => {
     expect(resolveLink(two, { workspace: "w2", workspaceSlug: "herdr-web-ui", pane: "w2:p2" })).toEqual({ pane: "w2:p2", workspace: "w2", note: null });
     // a renamed workspace keeps its links: no other workspace has the old slug
     expect(resolveLink(two, { workspace: "w3", workspaceSlug: "old-name", pane: "w3:p1" })).toEqual({ pane: "w3:p1", workspace: "w3", note: null });
-  });
-
-  it("follows a moved pane to its new id, and keeps the entry's workspace once that pane has closed", () => {
-    const entry = readLink(`?ws=w2-herdr-web-ui&pane=${encodeURIComponent("w2:p2")}`);
-    const moved = roster([["w2", "HERDR WEB UI"], ["w3", "Billing"]], [["w2:p1", "w2"], ["w3:p1", "w3"], ["w3:p2", "w3"]]);
-    expect(followMoved(entry, "w3:p2", moved)).toEqual({ ...entry, workspace: null, workspaceSlug: null, pane: "w3:p2" });
-    expect(resolveLink(moved, followMoved(entry, "w3:p2", moved))).toEqual({ pane: "w3:p2", workspace: "w3", note: null });
-    // the moved pane closed since: the entry's own workspace opens, as for any closed pane
-    expect(followMoved(entry, "w3:p9", moved)).toBe(entry);
-    expect(resolveLink(moved, followMoved(entry, "w3:p9", moved))).toEqual({ pane: "w2:p1", workspace: "w2", note: "pane-closed" });
-    // nothing moved, or no roster yet to say
-    expect(followMoved(entry, null, moved)).toBe(entry);
-    expect(followMoved(entry, "w3:p2", undefined).pane).toBe("w3:p2");
   });
 
   it("opens the workspace's pane, with a note, when the linked pane has closed", () => {

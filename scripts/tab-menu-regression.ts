@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Locator, Page } from "playwright-core";
 import type { PaneLayoutSnapshot, PaneSplit } from "../shared/protocol.ts";
-import { paneFocus, paneRead, paneRename, paneSplit, sessionSnapshot, tabClose, tabCreate, tabMove, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { paneFocus, paneRead, paneRename, paneSplit, paneZoom, sessionSnapshot, tabClose, tabCreate, tabMove, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { sheetsSettled } from "./sheets-settled.ts";
 import { routeDrained } from "./drained-route.ts";
 import { chromePath } from "./chrome-path.ts";
@@ -91,6 +91,21 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     const firstTerm = await frame(page, first).locator(".xterm").elementHandle();
     const secondTerm = await frame(page, second).locator(".xterm").elementHandle();
 
+    // The menu remains a real Tab stop without taking Shift+F10 away from terminal programs.
+    const paneButton = frame(page, first).locator(".pane-frame-menu");
+    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "0");
+    await frame(page, first).focus();
+    await page.keyboard.press("Tab");
+    assert.equal(await paneButton.evaluate((node) => node === document.activeElement), true, "Tab reaches the pane menu");
+    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "1", "keyboard focus reveals the button");
+    await screenshot(page, "keyboard-pane-button");
+    await page.keyboard.press("Enter");
+    const keyboardMenu = page.getByRole("menu", { name: /^Pane actions for / });
+    await keyboardMenu.waitFor();
+    await keyboardMenu.getByRole("menuitem", { name: "Rename pane", exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await keyboardMenu.waitFor({ state: "detached" });
+
     // Both search bars stay mounted, but a new request must never focus the old sibling's bar.
     for (const target of [second, first]) {
       await frame(page, target).locator(".pane-frame-title").click();
@@ -137,9 +152,9 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     await tabMenu.waitFor();
     const narrowItems = await tabMenu.getByRole("menuitem").allTextContents();
     assert.deepEqual(narrowItems.slice(0, 2).sort(), ["canvas-first", "canvas-second"], "a narrow window's tab menu lists the tab's panes first");
-    assert.deepEqual(narrowItems.slice(-3), ["New tab", "Rename tab", "Close tab"]);
-    assert.deepEqual(narrowItems.slice(2, -3).filter((item) => item !== "Clear pane name"),
-      ["Rename pane", "Split right", "Split down", "Zoom pane", "Send right-clicks to pane", "Close pane"], "the touch menu carries the open pane's actions, in order, between its panes and the tab's");
+    assert.deepEqual(narrowItems.slice(-2), ["Rename tab", "Close tab"], "the strip's + is New tab: the menu does not repeat it");
+    assert.deepEqual(narrowItems.slice(2, -2).filter((item) => item !== "Clear pane name"),
+      ["Rename pane", "Close pane"], "the touch menu carries the open pane's actions but no split or zoom, between its panes and the tab's");
     await page.setViewportSize({ width: 1280, height: 800 });
     await tabMenu.waitFor({ state: "detached" });
     await narrowMenu.waitFor({ state: "hidden" });
@@ -319,6 +334,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     await frame(page, first).locator(".xterm-helper-textarea").focus();
     await currentPane(page, first);
     const beforeMenuInput = input.length;
+    assert.equal(await frame(page, second).locator(".pane-frame-menu").evaluate((node) => getComputedStyle(node).opacity), "0", "the pane ellipsis stays visually hidden without keyboard focus");
     let menu = await paneMenu(page, second);
     assert.equal(await frame(page, first).evaluate((node) => node.classList.contains("is-current")), true);
     assert.equal((await sessionSnapshot()).focused_pane_id, first, "right-click leaves native focus on the first pane");
@@ -488,9 +504,9 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     // herdr's own pane order stands (the desktop check above swapped the two)
     const phoneItems = await tabSheet.locator(".row-sheet-item").allTextContents();
     assert.deepEqual(phoneItems.slice(0, 2).sort(), ["canvas-first", "canvas-second"], "the split tab's panes lead its menu on a phone");
-    assert.deepEqual(phoneItems.slice(-3), ["New tab", "Rename tab", "Close tab"]);
-    assert.deepEqual(phoneItems.slice(2, -3).filter((item) => item !== "Clear pane name"),
-      ["Rename pane", "Split right", "Split down", "Zoom pane", "Send right-clicks to pane", "Close pane"], "the open pane's actions sit between its panes and the tab's");
+    assert.deepEqual(phoneItems.slice(-2), ["Rename tab", "Close tab"]);
+    assert.deepEqual(phoneItems.slice(2, -2).filter((item) => item !== "Clear pane name"),
+      ["Rename pane", "Close pane"], "the open pane's actions, less split and zoom, sit between its panes and the tab's");
     assert.equal(await tabSheet.getByRole("button", { name: "canvas-first", exact: true }).getAttribute("aria-current"), "true", "the open pane is marked");
     // The menu is a phone's way to the other pane, and picking one leaves herdr's layout alone.
     await sheetsSettled(page);
@@ -540,6 +556,22 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     await screenshot(page, `canvas-phone-${viewport.width}`);
     await cancel.tap();
     await tabSheet.waitFor({ state: "detached" });
+    // A zoom originating in another client must be reversible from the phone.
+    await paneZoom(first, "on");
+    await touchMenu.tap();
+    await tabSheet.waitFor();
+    const unzoom = tabSheet.getByRole("button", { name: "Unzoom pane", exact: true });
+    await unzoom.waitFor();
+    await sheetsSettled(page);
+    await screenshot(page, `unzoom-phone-${viewport.width}`);
+    const unzoomed = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/pane/zoom"));
+    await unzoom.tap();
+    assert.equal((await unzoomed).status(), 200);
+    await tabSheet.waitFor({ state: "detached" });
+    await touchMenu.tap();
+    await tabSheet.getByRole("button", { name: "canvas-second", exact: true }).tap();
+    await currentPane(page, second);
+    await frame(page, second).waitFor({ state: "visible" });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the canvas never overflows the phone sideways");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -562,7 +594,8 @@ async function checkTouchTablet(browser: Browser, origin: string, first: string)
     const tabletItems = await menu.getByRole("menuitem").allTextContents();
     // a wide touch screen shows both panes, so the menu has no pane list: the open pane's actions lead it
     assert.deepEqual(tabletItems.filter((item) => item !== "Clear pane name"),
-      ["Rename pane", "Split right", "Split down", "Zoom pane", "Send right-clicks to pane", "Close pane", "New tab", "Rename tab", "Close tab"], "the touch menu carries the open pane's actions, in order, before the tab's");
+      ["Rename pane", "Split right", "Split down", "Zoom pane", "Close pane", "Rename tab", "Close tab"], "a wide touch canvas keeps split and zoom in its menu");
+    await screenshot(page, "tablet-menu");
     await page.keyboard.press("Escape");
     await menu.waitFor({ state: "detached" });
   } finally { await context.close(); }

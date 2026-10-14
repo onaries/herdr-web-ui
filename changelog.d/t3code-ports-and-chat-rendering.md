@@ -14,7 +14,7 @@
   thumbnails keep their box through loading and failure the same way.
 - A work block opens and folds at its measured height: the rows slide out from under the header and
   back, a row opened inside it grows it at the same pace, and the reader's scroll position holds
-  through both; Panel motion scales it and reduced motion snaps it.
+  through both; reduced motion snaps it.
 - The file browser shows folders relative to the pane's own directory (`herdr/src/components`)
   instead of from `~/`; folders outside it keep the `~/` form.
 - Keep the selected `/` command or `@` file completion highlighted in the composer when matching
@@ -38,10 +38,8 @@
   pointer-anchored zoom and pan, and Copy image and Download actions, instead of a new tab.
 - Copying a chat selection keeps Markdown lists, code and image links, with sanitized rich HTML for
   pasting into documents; code-only selections stay plain code.
-- The chat composer's card reads like t3code's: the model, reasoning level and context ring stand as
-  quiet divider-separated text at the start of the control row, the action icons and the round Send
-  button at its end, and a slim strip tucked under the card can name the pane's working folder and
-  branch.
+- A slim strip tucked under the chat composer's card, as t3code's, can name the pane's working
+  folder and branch.
 - A long user message folds to twelve lines behind **Show full message**, opens again with **Show
   less** or when Find lands on it, and keeps that choice while the chat scrolls.
 - A work row now says what the agent said the call is for (OmO's eval summary, the description
@@ -68,11 +66,6 @@
   so a list can be scanned at a glance.
 - With Theme set to System, **Settings → Appearance** picks separate Light and Dark palettes and
   switches between them with the OS.
-- **Settings → Appearance → Contrast** raises or lowers how far text and hairlines stand out, in
-  steps from -2 to +3 with a reset; a step down never takes text under the dim level, so every step
-  stays readable on every palette.
-- **Settings → Appearance** has Text smoothing (Grayscale or the macOS default) and Panel motion
-  (Off, Fast, Default or Slow) for the sidebar drawer and phone sheets.
 - **Settings → Shortcuts** records a binding by pressing it (Escape cancels; reserved, unbindable
   and already-assigned chords are refused on the row), and a search field filters the shortcut
   list.
@@ -107,8 +100,8 @@
 - In Settings, the Chat font and Terminal font fields can be picked from a searchable, previewed list of
   the fonts installed on this device in Chromium browsers, and the terminal refuses proportional
   fonts.
-- **Settings → Appearance → Typography** sets the interface font and size and the code font on this
-  device, apart from the terminal's and the chat's own.
+- **Settings → Appearance → Typography** sets the interface font size on this device, apart from the
+  terminal's and the chat's own.
 - Chat work blocks list the files their edit tools changed in the turn, and a click opens the file's
   current working-tree diff.
 - Coming back to a pane's chat puts you on the same turn and offset you left, or at the end if you

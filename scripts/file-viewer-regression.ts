@@ -931,28 +931,6 @@ try {
   assert.deepEqual(errors, []);
   console.log("PASS A file path in a plain code block opens the file, and the block's text is unchanged");
 
-  // Settings → Highlight code, off: code is plain text, in the chat and the viewer
-  await page.evaluate(() => {
-    const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}") as Record<string, unknown>;
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, highlightCode: false }));
-  });
-  await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
-  await page.locator(".conn-live").waitFor();
-  await page.locator(".markdown-code .hl-code").first().waitFor();
-  assert.equal(await page.locator(".markdown-code .hl-keyword, .markdown-code .hl-number").count(), 0, "chat code is plain");
-  assert.equal(await page.locator(".markdown-code .hl-note").count(), 0, "plain by choice is not too long");
-  await checkCodeFidelity("highlight-off");
-  await page.getByRole("button", { name: "guide", exact: true }).click();
-  const plainGuide = page.getByRole("dialog", { name: "guide.md", exact: true });
-  await plainGuide.getByRole("heading", { name: "Guide", exact: true }).waitFor();
-  await plainGuide.getByRole("button", { name: "Show source", exact: true }).click();
-  await plainGuide.locator(".file-viewer-text .hl-line").first().waitFor();
-  assert.equal(await plainGuide.locator(".hl-keyword, .hl-function").count(), 0, "the viewer's code is plain");
-  assert.equal(await plainGuide.locator(".file-viewer-notice").count(), 0, "and no notice says it is too long");
-  console.log("PASS Settings → Highlight code off shows code plain, in the chat and the viewer");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
-  await page.locator(".file-viewer").waitFor({ state: "hidden" });
-
   // the file found, then its body refused (the file gone since, a remote PC dropped): the error's
   // JSON must never show as the file's text
   await page.route("**/api/fs/file?**", (route) => route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "machine_unavailable", message: "The PC connection was interrupted" } }) }), { times: 1 });

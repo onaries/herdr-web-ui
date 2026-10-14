@@ -576,7 +576,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     assert.equal(sent.length, switchBefore, "old composition cannot cross a pane reset");
     assert.equal(await page.locator(".draft-text").count(), 0, "old commit cannot enter the new pane's held draft");
     // A late end after reset is stale, not a second attempt to send the abandoned input.
-    await page.locator(".xterm-helper-textarea").dispatchEvent("compositionend", { data: "한" });
+    await page.locator(".pane-frame.is-current .xterm-helper-textarea").dispatchEvent("compositionend", { data: "한" });
     await page.waitForTimeout(75);
     assert.equal(sent.length, switchBefore);
     console.log("PASS xterm composition: local preedit, delayed multi-commit burst, punctuation order, Korean final-consonant movement, pane-reset cancellation");

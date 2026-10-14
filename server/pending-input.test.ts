@@ -1,5 +1,33 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_PENDING_PER_OWNER, PendingInputs } from "./pending-input.ts";
+import { MAX_PENDING_PER_OWNER, PendingInputs, samePendingIdentity, type PendingIdentity } from "./pending-input.ts";
+import { PendingMessageStore } from "../src/lib/pendingMessages.ts";
+
+describe("pending target identity", () => {
+  const identity: PendingIdentity = { agent: "claude", terminalId: "t1", session: null, processPid: 12, processBirth: 100_000, omoSession: null };
+
+  it("refuses known process, birth, native session and OmO session replacements (regression #540)", () => {
+    expect(samePendingIdentity(identity, { ...identity, processPid: 13 })).toBe(false);
+    expect(samePendingIdentity(identity, { ...identity, processBirth: 110_000 })).toBe(false);
+    expect(samePendingIdentity({ ...identity, session: "old" }, { ...identity, session: "new" })).toBe(false);
+    expect(samePendingIdentity({ ...identity, omoSession: "old" }, { ...identity, omoSession: "new" })).toBe(false);
+  });
+
+  it("permits identity parts that were unknown on either read (control #540)", () => {
+    const unknown: PendingIdentity = { agent: "claude", terminalId: "t1", session: null };
+    const known = { ...identity, session: "native", omoSession: "omo" };
+    expect(samePendingIdentity(unknown, known)).toBe(true);
+    expect(samePendingIdentity(known, unknown)).toBe(true);
+    expect(samePendingIdentity(identity, { ...identity })).toBe(true);
+    expect(samePendingIdentity(identity, { ...identity, terminalId: "t2" })).toBe(false);
+    expect(samePendingIdentity(identity, { ...identity, agent: null })).toBe(false);
+  });
+
+  it("tolerates only the existing macOS birth precision (control #540)", () => {
+    expect(samePendingIdentity(identity, { ...identity, processBirth: 101_000 }, "darwin")).toBe(true);
+    expect(samePendingIdentity(identity, { ...identity, processBirth: 101_001 }, "darwin")).toBe(false);
+    expect(samePendingIdentity(identity, { ...identity, processBirth: 101_000 }, "linux")).toBe(false);
+  });
+});
 
 function fixture() {
   let now = 1_000;
@@ -48,6 +76,54 @@ describe("bridge pending input", () => {
     expect(f.queue.next("p1")).toBe(partial ? null : second);
   });
 
+  it("regression: shares one resend outcome across stale cross-tab reads", async () => {
+    const f = fixture();
+    let finish!: (value: { ok: boolean }) => void;
+    const completion = new Promise<{ ok: boolean }>((resolve) => { finish = resolve; });
+    const submitted: string[] = [];
+    const submit = () => { submitted.push("copy-id"); return completion; };
+    let saved = JSON.stringify({ messages: [{ id: "copy-id", request_id: 1, text: "text", state: "held", created_at: "2026-10-14T00:00:00Z" }] });
+    const snapshot = saved;
+    const port = { getItem: () => snapshot, setItem: (_key: string, raw: string) => { saved = raw; }, removeItem: () => {} };
+    const a = new PendingMessageStore(() => port), b = new PendingMessageStore(() => port);
+    // A read, B read, A write, B write: localStorage cannot make this claim atomic.
+    const firstCopy = a.read("p")[0]!, secondCopy = b.read("p")[0]!;
+    a.begin("p", firstCopy.id); b.begin("p", secondCopy.id);
+    expect(a.unconfirm("p", firstCopy.id)).toBe(true);
+    expect(b.unconfirm("p", secondCopy.id)).toBe(true);
+    const first = f.queue.resend("p", firstCopy.id, firstCopy.text, submit);
+    const second = f.queue.resend("p", secondCopy.id, secondCopy.text, submit);
+    await Promise.resolve();
+    finish({ ok: true });
+    expect(await Promise.all([first, second])).toEqual([{ ok: true }, { ok: true }]);
+    expect(submitted).toEqual(["copy-id"]);
+  });
+  it("control: retains refused outcomes and rejects a different message for the same resend id", async () => {
+    const f = fixture();
+    expect(await f.queue.resend("p", "id", "one", async () => ({ ok: false, code: "agent_blocked" }))).toEqual({ ok: false, code: "agent_blocked" });
+    expect(await f.queue.resend("p", "id", "one", async () => ({ ok: true }))).toEqual({ ok: false, code: "agent_blocked" });
+    expect(() => f.queue.resend("p", "id", "two", async () => ({ ok: true }))).toThrow("another message");
+    expect(await f.queue.resend("p", "id", "one", async () => ({ ok: true }), 1)).toEqual({ ok: true });
+  });
+  it("control: retains an in-flight resend past the lifetime and expires only settled receipts", async () => {
+    const f = fixture();
+    let finish!: (value: { ok: boolean }) => void;
+    const first = f.queue.resend("p", "id", "text", () => new Promise((resolve) => { finish = resolve; }));
+    await Promise.resolve();
+    f.advance(60_001);
+    expect(f.queue.resend("p", "id", "text", async () => ({ ok: false }))).toBe(first);
+    finish({ ok: true });
+    await first;
+    f.advance(60_001);
+    expect(await f.queue.resend("p", "id", "text", async () => ({ ok: false }))).toEqual({ ok: false });
+  });
+  it("control: keeps the resend receipt while its original live pending row still exists", async () => {
+    const f = fixture(), item = f.enqueue(1);
+    const first = f.queue.resend("p1", item.message.id, "fingerprint", async () => ({ ok: true }));
+    await first;
+    f.advance(60_001);
+    expect(f.queue.resend("p1", item.message.id, "fingerprint", async () => ({ ok: false }))).toBe(first);
+  });
   it("deduplicates the same connection's request and rejects id reuse for another message", () => {
     const f = fixture();
     const first = f.enqueue(1);

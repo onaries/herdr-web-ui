@@ -4,7 +4,6 @@ import { canHighlight, countLines, extendLines, LINE_ELEMENT_LIMIT, normalizeCod
 import { highlightedFrom, highlightKnown, highlightOffThread, type Highlighted } from "../lib/highlightOffThread.ts";
 import { useT } from "../lib/i18n.ts";
 import { linkFilePaths, linksFilePaths } from "./FilePathLink.tsx";
-import { useSettings } from "../lib/settings.ts";
 import "./HighlightedCode.css";
 
 /**
@@ -12,13 +11,12 @@ import "./HighlightedCode.css";
  * never holds the page: short code is highlighted at once, longer code in a worker (shown plain
  * until it answers, or with the colors it had while a reply grows), and code the worker gives up on
  * stays plain. Above `limit` characters, or `LINE_ELEMENT_LIMIT` lines, it is not tried at all;
- * otherwise the worker's budget bounds it. Off in Settings, or in a language it has no grammar for,
- * every code is plain and never too long.
+ * otherwise the worker's budget bounds it. In a language it has no grammar for, every code is plain
+ * and never too long.
  */
 export function useHighlightedLines(code: string, language: string | null, limit?: number): Highlighted {
-  const { settings } = useSettings();
   const source = useMemo(() => normalizeCode(code), [code]);
-  const highlighted = settings.highlightCode && canHighlight(language) ? language : null;
+  const highlighted = canHighlight(language) ? language : null;
   const manyLines = useMemo(() => countLines(source) > LINE_ELEMENT_LIMIT, [source]);
   const overLimit = highlighted !== null && ((limit !== undefined && code.length > limit) || manyLines);
   // what is known without waiting: no language, too long, short enough, or highlighted before

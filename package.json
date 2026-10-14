@@ -57,5 +57,6 @@
   "patchedDependencies": {
     "@legendapp/list@3.3.5": "patches/@legendapp%2Flist@3.3.5.patch",
     "@xterm/xterm@5.5.0": "patches/@xterm%2Fxterm@5.5.0.patch"
-  }
+  },
+  "packageManager": "bun@1.4.2"
 }

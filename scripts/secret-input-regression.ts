@@ -118,7 +118,15 @@ process.stdin.on("data", chunk => {
     // size, alone, whether the pane types straight into the grid or through the input line.
     const desktop = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     try {
-      await desktop.addInitScript((pane) => { localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal"); }, pane);
+      await desktop.addInitScript((pane) => {
+        localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+        const Native = window.WebSocket;
+        const sockets = new Set<WebSocket>();
+        window.WebSocket = class extends Native {
+          constructor(url: string | URL, protocols?: string | string[]) { super(url, protocols); sockets.add(this); }
+        };
+        (window as any).dropTestSockets = () => { for (const socket of sockets) socket.close(); };
+      }, pane);
       for (const mode of ["direct", "line"] as const) {
         const view = await desktop.newPage();
         view.setDefaultTimeout(10_000);
@@ -141,6 +149,42 @@ process.stdin.on("data", chunk => {
         await frame();
         assert.equal(await gridHeight(), resting, `the masked input keeps the grid's height (${mode} input)`);
         assert.equal(await view.evaluate(() => (window as any).gridResized), 0, `the grid's observer never fired (${mode} input)`);
+        if (mode === "direct") {
+          // A desktop answers the prompt in the grid itself, as in any terminal (#1031): the keys go
+          // to the program while the masked input stands by. Regression: on a build that disables
+          // stdin for the prompt, the fixture never gets them.
+          await view.locator(".pane-terminal .xterm-screen").click();
+          await view.keyboard.type("typed-secret");
+          await view.keyboard.press("Enter");
+          const typedBy = Date.now() + 5000;
+          while (readFileSync(result, "utf8") !== String("typed-secret\r".length)) {
+            if (Date.now() > typedBy) throw new Error("regression: the grid did not take the typed secret while the masked input was up");
+            await Bun.sleep(25);
+          }
+          await masked.waitFor({ state: "detached" });
+          // control: typed into the pty only, never into a draft or the page
+          assert.equal(await view.evaluate(() => JSON.stringify({ ...localStorage }).includes("typed-secret")), false);
+          assert.equal(await view.locator("body").innerText().then((text) => text.includes("typed-secret")), false);
+          assert.equal(await view.locator(".terminal-banner-draft").count(), 0);
+          // Offline, a secret keystroke is refused with a note, never held for later like other
+          // typing (regression: the note; control: nothing held, nothing delivered afterwards).
+          await paneSendText(pane, "\u0010");
+          await masked.waitFor();
+          await desktop.setOffline(true);
+          await view.evaluate(() => (window as any).dropTestSockets());
+          await masked.waitFor({ state: "detached" });
+          await view.locator(".pane-terminal .xterm-screen").click();
+          await view.keyboard.type("offline-secret");
+          await view.keyboard.press("Enter");
+          await view.locator(".terminal-banner", { hasText: "Not sent: the terminal is not ready, and a password is never held for later." }).waitFor();
+          assert.equal(await view.evaluate(() => JSON.stringify({ ...localStorage }).includes("offline-secret")), false);
+          assert.equal(await view.locator(".terminal-banner-draft").count(), 0);
+          assert.equal(await view.locator(".draft-held").count(), 0);
+          await desktop.setOffline(false);
+          await masked.waitFor();
+          assert.equal(await view.locator(".terminal-banner-draft").count(), 0, "nothing typed offline is held for the reconnect");
+          assert.equal(readFileSync(result, "utf8"), String("typed-secret\r".length), "nothing typed offline reached the program");
+        }
         await view.locator(".secret-input").getByRole("button", { name: "Cancel", exact: true }).click();
         await masked.waitFor({ state: "detached" });
         await view.close();

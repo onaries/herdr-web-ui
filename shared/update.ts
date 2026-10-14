@@ -27,7 +27,7 @@ export type UpdateStep = typeof UPDATE_STEPS[number];
 export type UpdateCommand = "check" | "install";
 
 /** The languages a release's summary is written in: the app's own (src/lib/i18n.ts). */
-export const SUMMARY_LANGUAGES = ["en", "ko", "ja", "zh", "tr"] as const;
+export const SUMMARY_LANGUAGES = ["en", "ko", "ja", "zh"] as const;
 export type SummaryLanguage = typeof SUMMARY_LANGUAGES[number];
 /** The lists a summary is told in, in the order they are read. */
 export const SUMMARY_GROUPS = ["new", "improved", "fixed"] as const;

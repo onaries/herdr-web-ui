@@ -2,13 +2,32 @@ import { describe, expect, it } from "bun:test";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isLoopbackHost, lanExposed, type AccessInput } from "./access.ts";
 
 const device = { id: "d1", label: "Phone", role: "drive" as const };
-const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, host: null, tokenMatched: false, device: null, owner: null, tagged: false, soleLogin: null, dnsName: null, tailnetIp: null, serveOnly: false, tokenConfigured: false, gated: false };
+const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, forwardedFor: "100.64.0.9", host: null, tokenMatched: false, device: null, owner: null, tagged: false, soleLogin: null, dnsName: null, tailnetIp: null, serveOnly: false, tokenConfigured: false, gated: false };
 const NODE = "pc.tail5cc90b.ts.net";
 const IP = "100.64.0.7";
 const node = { host: NODE, dnsName: NODE, tailnetIp: IP } as const;
 const via = (input: Partial<AccessInput>) => { const a = decideAccess({ ...base, ...input }); return a.level === "full" ? a.via : `refused:${a.reason}`; };
 
 describe("decideAccess", () => {
+  for (const forwardedFor of [null, "127.0.0.1", "203.0.113.50", "100.101.102.103, 100.64.0.9", "100.63.255.255", "100.128.0.0", "fd7a:115c:a1e1::1", "100.64.0.999", "::ffff:100.64.0.9"]) {
+    it(`regression: refuses a login forwarded for ${forwardedFor}`, () => {
+      const input = { ...base, forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com", forwardedFor };
+      expect(decideAccess(input)).toEqual({ level: "none", reason: "pairing_required" });
+    });
+  }
+
+  for (const forwardedFor of ["100.101.102.103", "100.64.0.0", "100.127.255.255", "fd7a:115c:a1e0::1", "FD7A:115C:A1E0:0:0:0:0:1"]) {
+    it(`control: accepts a login forwarded for ${forwardedFor}`, () => {
+      const input = { ...base, forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com", forwardedFor };
+      expect(decideAccess(input)).toMatchObject({ level: "full", via: "tailscale" });
+    });
+  }
+
+  it("regression: a rejected login never falls through to the serve-only owner grant", () => {
+    const input = { ...base, ...node, forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com", soleLogin: "me@example.com", serveOnly: true, forwardedFor: "127.0.0.1" };
+    expect(decideAccess(input)).toEqual({ level: "none", reason: "pairing_required" });
+  });
+
   it("lets this PC in without a token, but not through a proxy", () => {
     expect(via({})).toBe("local");
     expect(via({ forwarded: true, gated: true })).toBe("refused:pairing_required");

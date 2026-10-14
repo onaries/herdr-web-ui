@@ -21,6 +21,47 @@ import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
 /** Decode ceiling: the limit the browser checks a file against before it uploads. */
 export const MAX_IMAGE_BYTES = MAX_ATTACHMENT_BYTES;
 
+/** The base64 text of a file at the ceiling, with the one padding group a decoder may add. */
+const MAX_ENCODED_BYTES = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4;
+
+/** What the JSON around the data may add: pane_id, content_type and a file name. */
+const ENVELOPE_ALLOWANCE = 1024 * 1024;
+
+/** The largest request body the image route reads; Bun.serve's `maxRequestBodySize` sits well above it. */
+export const MAX_IMAGE_BODY_BYTES = MAX_ENCODED_BYTES + ENVELOPE_ALLOWANCE;
+
+function tooLarge(): PasteImageError {
+  return new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
+}
+
+/**
+ * The request body as text, refused past `MAX_IMAGE_BODY_BYTES`: by its announced length before any
+ * of it is read, and by a running byte count for a body that announces none (chunked). Bun's own
+ * limit answers an empty 413 the browser cannot explain, so this one answers first with the reason.
+ */
+export async function readImageBody(request: Request): Promise<string> {
+  const announced = Number(request.headers.get("content-length"));
+  if (Number.isFinite(announced) && announced > MAX_IMAGE_BODY_BYTES) {
+    void request.body?.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  if (request.body === null) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_IMAGE_BODY_BYTES) {
+      void reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /**
  * A file that is not one of the image types keeps its own name (sanitised), so the agent
  * reading the path sees what it is: an icon.svg, a notes.pdf, a data.csv.
@@ -101,16 +142,12 @@ export async function savePaneImage(options: {
   const named = imageExtension === undefined ? storedName(options.name) : null;
   // cheap pre-check: reject the ENCODED length before allocating the decode buffer,
   // so an oversized body never costs a second copy of itself in memory
-  if (options.dataBase64.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) {
-    throw new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
-  }
+  if (options.dataBase64.length > MAX_ENCODED_BYTES) throw tooLarge();
   const data = Buffer.from(options.dataBase64, "base64");
   if (data.byteLength === 0) {
     throw new PasteImageError("empty_image", "file is empty", 400);
   }
-  if (data.byteLength > MAX_IMAGE_BYTES) {
-    throw new PasteImageError("image_too_large", `file exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
-  }
+  if (data.byteLength > MAX_IMAGE_BYTES) throw tooLarge();
 
   const pane = await paneGet(options.paneId);
 

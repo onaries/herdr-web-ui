@@ -1,4 +1,5 @@
 import { shouldSyncViewportOnResume } from "./viewportResume.ts";
+import { keyboardViewportReference } from "./keyboard.ts";
 
 /*
  * Sizes the shell to the VISUAL viewport. When the soft keyboard opens, iOS
@@ -26,13 +27,17 @@ const viewport = window.visualViewport;
 const root = document.documentElement;
 
 /**
- * Focus is necessary, not sufficient: dismissal and hardware keyboards leave the
+ * Focus starts it, and is not sufficient: dismissal and hardware keyboards leave the
  * field focused. Accept keyboard geometry where available, or detect a
  * substantial viewport occlusion relative to the large CSS viewport or a remembered
  * unobstructed height. Comparing visualViewport with innerHeight alone misses browsers
  * that resize both. The relative cutoff excludes ordinary browser/status-bar insets;
  * Safari has no exact keyboard-visibility API, so small floating keyboards cannot be
  * inferred this way. xterm's automatically focused helper only counts in direct typing.
+ * Once up, the keyboard counts as up until its occlusion ends, whatever holds the focus: a
+ * field unmounted under it (the chat's composer as the lens switches) or a tap that moves the
+ * focus to a button leaves the keyboard on screen for its own hide animation, and the shell,
+ * the sheets and the terminal's grid (#1045) follow the keyboard, not the focus.
  */
 const touch = window.matchMedia("(pointer: coarse)");
 const keyboard = (navigator as Navigator & {
@@ -59,12 +64,12 @@ const syncKeyboard = (): void => {
   const height = viewport?.height ?? window.innerHeight;
   const large = largeViewport.getBoundingClientRect().height;
   const remembered = unobstructedHeights.get(width);
-  const resizedWindow = remembered && large < remembered.large && height < large && large - height <= large * 0.2;
-  const reference = Math.max(large, resizedWindow ? 0 : remembered?.height ?? 0, window.innerHeight);
   const focused = touch.matches && typing(document.activeElement);
-  const visible = focused && ((keyboard?.boundingRect.height ?? 0) > 0
+  const keyboardActive = focused || root.hasAttribute("data-keyboard");
+  const reference = keyboardViewportReference(height, large, window.innerHeight, remembered, keyboardActive);
+  const visible = keyboardActive && ((keyboard?.boundingRect.height ?? 0) > 0
     || !!viewport && viewport.scale === 1 && reference - height > reference * 0.2);
-  if (!visible) unobstructedHeights.set(width, { large, height: resizedWindow ? Math.max(large, height, window.innerHeight) : Math.max(reference, height) });
+  if (!visible) unobstructedHeights.set(width, { large, height: Math.max(reference, height) });
   root.toggleAttribute("data-keyboard", visible);
   if (visible && viewport) root.style.setProperty("--app-height", `${Math.round(height)}px`);
   else {

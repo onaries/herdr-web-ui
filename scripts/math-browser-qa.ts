@@ -40,11 +40,14 @@ try {
     const path = new URL(request.url).pathname;
     // the chat asks for the pane's slash commands (skill chips); this fixture has none
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
+    // each page answers the conversation itself; one asked while the browser closes reaches here
+    if (path.endsWith("/pane/conversation")) return Response.json(conversation);
     return new Response(Bun.file(join(output, path === "/" ? "index.html" : path.slice(1))));
   } });
 
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  // The notice and button locators are English; do not inherit the host's system language.
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" });
   const errors: string[] = [];
   const scripts: string[] = [];
   const mathAssets: string[] = [];
@@ -86,7 +89,7 @@ try {
   assert.deepEqual(errors, []);
 
   // offline when the first expression comes: it and every later one keep their source form, quietly
-  const offline = await browser.newPage();
+  const offline = await browser.newPage({ locale: "en-US" });
   offline.on("pageerror", (error) => errors.push(error.message));
   await offline.route("**/api/pane/conversation?*", (route) => route.fulfill({ json: conversation }));
   write("Prose only, nothing to typeset.");
@@ -122,7 +125,7 @@ try {
   // a diagram chunk Mermaid loads on its own: its entry and the flowchart chunk load, then the
   // sequence diagram's is gone (a tab older than the server's build). Mermaid makes that a failed
   // render, as a diagram that does not parse is; Vite's loader still tells of it (lib/lazyChunk.ts)
-  const diagrams = await browser.newPage();
+  const diagrams = await browser.newPage({ locale: "en-US" });
   diagrams.on("pageerror", (error) => errors.push(error.message));
   await diagrams.route("**/api/pane/conversation?*", (route) => route.fulfill({ json: conversation }));
   write("```mermaid\ngraph LR\n  A[Start] --> B[End]\n```");
@@ -146,7 +149,7 @@ try {
 
   // only the stylesheet fails: Vite's loader never asks for a stylesheet twice, so a second try
   // would import the script alone and draw math unstyled. Every expression keeps its source.
-  const unstyled = await browser.newPage();
+  const unstyled = await browser.newPage({ locale: "en-US" });
   unstyled.on("pageerror", (error) => errors.push(error.message));
   await unstyled.route("**/api/pane/conversation?*", (route) => route.fulfill({ json: conversation }));
   write("Prose only, nothing to typeset.");

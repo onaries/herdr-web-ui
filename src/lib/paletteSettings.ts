@@ -18,10 +18,10 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
   return [
     { id: "appearance", label: t("Appearance"), aliases: t("theme dark light mode colors palette density language sidebar logos") },
     { id: "chat", label: t("Chat"), aliases: t("chat font size message width composer enter send thinking code") },
-    { id: "terminal", label: t("Terminal"), aliases: t("terminal font size cursor key bar keyboard clipboard") },
+    { id: "terminal", label: t("Terminal"), aliases: t("terminal font size key bar keyboard clipboard") },
     { id: "alerts", label: t("Alerts"), aliases: t("notifications sound push bell needs input finished") },
     { id: "voice", label: t("Voice input"), aliases: t("dictation microphone speech openai") },
-    { id: "usage", label: t("Subscription usage"), aliases: t("plan limits quota meters pace") },
+    { id: "usage", label: t("Subscription usage"), aliases: t("plan limits quota meters") },
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
     { id: "devices", label: t("Phone & devices"), aliases: t("phone install keep screen on app") },
     { id: "remote", label: t("Remote PCs"), aliases: t("machines computers ssh bridge plugins") },

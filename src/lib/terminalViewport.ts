@@ -8,14 +8,6 @@ export function validScroll(value: PaneScrollInfo | null | undefined): value is 
   return value != null && [value.offset_from_bottom, value.max_offset_from_bottom, value.viewport_rows].every(Number.isSafeInteger)
     && value.viewport_rows > 0 && value.max_offset_from_bottom >= 0 && value.offset_from_bottom >= 0 && value.offset_from_bottom <= value.max_offset_from_bottom;
 }
-export function scrollThumb(scroll: PaneScrollInfo, height: number, minimum = 24): { top: number; height: number } {
-  const size = Math.min(height, Math.max(minimum, height * scroll.viewport_rows / (scroll.max_offset_from_bottom + scroll.viewport_rows)));
-  return { height: size, top: (height - size) * (1 - scroll.offset_from_bottom / Math.max(1, scroll.max_offset_from_bottom)) };
-}
-export function offsetAtThumb(scroll: PaneScrollInfo, top: number, height: number, thumbHeight: number): number {
-  const ratio = Math.max(0, Math.min(1, top / Math.max(1, height - thumbHeight)));
-  return Math.round(scroll.max_offset_from_bottom * (1 - ratio));
-}
 /** a metrics read re-arms this soon while output is arriving */
 export const SCROLL_POLL_BUSY_MS = 250;
 /** the longest an idle, visible pane waits between metrics reads */

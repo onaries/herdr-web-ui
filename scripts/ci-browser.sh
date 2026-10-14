@@ -67,9 +67,13 @@ run_script scripts/deep-link-demo-regression.ts
 run_script scripts/chat-history-browser-qa.ts
 run_script scripts/omo-queue-browser-qa.ts
 run_script scripts/chat-virtual-browser-qa.ts
+run_script scripts/chat-scroll-padding-regression.ts
+run_script scripts/chat-selection-copy-regression.ts
 run_script scripts/chat-fallback-browser-qa.ts
 run_script scripts/grok-chat-browser-qa.ts
+run_script scripts/omo-chat-browser-qa.ts
 run_script scripts/agy-chat-browser-qa.ts
+run_script scripts/gjc-status-browser-regression.ts
 run_script scripts/math-browser-qa.ts
 run_script scripts/file-viewer-regression.ts
 run_script scripts/pwa-update-browser-qa.ts

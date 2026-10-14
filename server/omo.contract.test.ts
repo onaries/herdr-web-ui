@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
-import { labelOmoPanes } from "./conversation.ts";
-import { isOmoProcess, omoSessionForPane, omoTranscriptForPane } from "./omo.ts";
+import { labelOmoPanes, paneTranscript } from "./conversation.ts";
+import { isOmoProcess, omoPanes, omoSessionForPane, omoTranscriptForPane, omoTranscriptsOfCwd, type ProcessInfo } from "./omo.ts";
 import { createServer } from "./index.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
 import { startShellAgent } from "./shell-agent.ts";
@@ -21,19 +21,20 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-async function pane(id?: string): Promise<string> {
+async function launch(command: string, marker: string): Promise<string> {
   const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omo-binding" });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
-  await herdrRpc("pane.send_text", { pane_id: paneId, text: `${process.execPath} ${script}${id ? ` --session-id ${id}` : ""}\n` });
+  await herdrRpc("pane.send_text", { pane_id: paneId, text: `${command}\n` });
   for (let attempt = 0; attempt < 100; attempt++) {
     const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>("pane.process_info", { pane_id: paneId });
     // the stand-in itself, by its path: the shell's own startup processes come and go before it
-    if (info.process_info?.foreground_processes?.some((process) => process.argv?.includes(script))) return paneId;
+    if (info.process_info?.foreground_processes?.some((process) => process.argv?.includes(marker))) return paneId;
     await Bun.sleep(50);
   }
   throw new Error("test omo process did not start");
 }
+const pane = (id?: string) => launch(`${process.execPath} ${script}${id ? ` --session-id ${id}` : ""}`, script);
 const read = async (paneId: string) => omoTranscriptForPane(paneId, root, (await sessionSnapshot()).panes, root);
 const session = (id: string, timestamp = new Date().toISOString()) => {
   const path = join(dir, `${id}.jsonl`);
@@ -47,7 +48,15 @@ it("labels a running omo pane when herdr supplies no agent kind", async () => {
   try {
     expect(snapshot.panes.find((entry) => entry.pane_id === paneId)?.agent).toBeUndefined();
 
-    const labelled = await labelOmoPanes(snapshot);
+    // The fixture's process marker and the label probe are separate herdr reads.
+    // Wait for the label itself, keeping the original unlabelled snapshot for both checks.
+    const deadline = Date.now() + 5_000;
+    let labelled = await labelOmoPanes(snapshot);
+    while (labelled.panes.find((entry) => entry.pane_id === paneId)?.agent !== "omo") {
+      if (Date.now() >= deadline) throw new Error("test omo process was not labelled");
+      await Bun.sleep(50);
+      labelled = await labelOmoPanes(snapshot);
+    }
 
     expect(labelled.panes.find((entry) => entry.pane_id === paneId)?.agent).toBe("omo");
     expect(snapshot.panes.find((entry) => entry.pane_id === paneId)?.agent).toBeUndefined();
@@ -103,10 +112,10 @@ it("starts omo through the pane's shell and waits until omo is its foreground pr
 });
 
 // omo keeps no descriptor on its session file; it publishes a holder record instead
-const hold = async (paneId: string, id: string) => {
+const hold = async (paneId: string, id: string, store = dir, marker = script) => {
   const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: paneId });
-  const pid = info.process_info!.foreground_processes!.find((process) => isOmoProcess(process.argv ?? []))!.pid;
-  const holders = join(dir, "session-holders", encodeURIComponent(id));
+  const pid = info.process_info!.foreground_processes!.find((process) => process.argv?.includes(marker))!.pid;
+  const holders = join(store, "session-holders", encodeURIComponent(id));
   mkdirSync(holders, { recursive: true });
   writeFileSync(join(holders, `${pid}.json`), JSON.stringify({ pid, bootAtMs: 0, processStartedAtMs: Math.floor(processStartedAt(pid)! / 1000) * 1000, cwd: root }));
 };
@@ -207,4 +216,60 @@ it.skipIf(process.platform !== "linux")("ignores the background task logs omo ho
     await workspaceClose(created.workspace.workspace_id);
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+// a custom launcher's own name says nothing about omo, and a process's environment at
+// exec is read from /proc/<pid>/environ: both halves of that contract are Linux-only
+it.skipIf(process.platform !== "linux")("recognizes a custom launcher only by verified holders in an env-named store", async () => {
+  const launcher = join(root, "team-ai");
+  writeFileSync(launcher, "setInterval(() => {}, 1000);\n");
+  const agentDir = join(root, "custom-agent");
+  const store = join(agentDir, "sessions", `-${root.replaceAll("/", "-")}--`);
+  const paneId = await launch(`OMO_CODING_AGENT_DIR=${agentDir} ${process.execPath} ${launcher}`, launcher);
+  // the environment entry alone is no identity: nothing is held yet
+  expect(await omoSessionForPane(paneId, root, (await sessionSnapshot()).panes, root)).toEqual({ path: null, pending: null });
+  expect((await labelOmoPanes(await sessionSnapshot())).panes.find((pane) => pane.pane_id === paneId)?.agent).toBeUndefined();
+  // a held session omo has not written yet is pending, never another store's file
+  await hold(paneId, "custom-pending", store, launcher);
+  expect(await omoSessionForPane(paneId, root, (await sessionSnapshot()).panes, root)).toEqual({ path: null, pending: "custom-pending" });
+  expect((await labelOmoPanes(await sessionSnapshot())).panes.find((pane) => pane.pane_id === paneId)?.agent).toBe("omo");
+  const written = join(store, "2026-10-03T00-00-00-000Z_custom-pending.jsonl");
+  writeFileSync(written, JSON.stringify({ type: "session", id: "custom-pending", cwd: root, timestamp: new Date().toISOString() }) + "\n");
+  expect(await omoTranscriptForPane(paneId, root, (await sessionSnapshot()).panes, root)).toBe(realpathSync(written));
+  const snapshot = await sessionSnapshot();
+  const info = await herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId });
+  const processes = info.process_info?.foreground_processes ?? [];
+  const custom = processes.find((process) => process.argv?.includes(launcher));
+  expect(custom).toBeDefined();
+  if (!custom) throw new Error("custom launcher process missing");
+  expect(readlinkSync(`/proc/${custom.pid}/cwd`)).toBe(root);
+  // Older process-info responses omit cwd; both pane directory fields can be stale.
+  const withoutCwd = { process_info: { foreground_processes: processes.map(({ pid, argv }) => ({ pid, argv })) } };
+  const stale = snapshot.panes.filter((entry) => entry.pane_id === paneId).map((entry) =>
+    ({ ...entry, cwd: join(root, "stale-pane"), foreground_cwd: join(root, "stale-foreground") }));
+  const resolved = omoTranscriptsOfCwd(root, stale, new Map([[paneId, withoutCwd]]), root).get(paneId);
+  expect(resolved?.path).toBe(realpathSync(written));
+  expect(resolved?.pending).toBeNull();
+  for (const agent of ["codex", "devin", "gjc"]) {
+    const relabelled = { ...snapshot, panes: snapshot.panes.map((entry) => entry.pane_id === paneId ? { ...entry, agent } : entry) };
+    expect((await omoPanes(relabelled.panes)).get(paneId)?.path).toBe(realpathSync(written));
+    expect((await paneTranscript(paneId, undefined, relabelled)).source).toBe("omo-transcript");
+  }
+
+});
+
+it.skipIf(process.platform !== "linux")("recognizes a custom launcher in the default store and refuses a senpi-only one", async () => {
+  const plain = join(root, "plain-runner");
+  writeFileSync(plain, "setInterval(() => {}, 1000);\n");
+  const paneId = await launch(`env -u OMO_CODING_AGENT_DIR -u SENPI_CODING_AGENT_DIR -u PI_CODING_AGENT_DIR ${process.execPath} ${plain}`, plain);
+  await hold(paneId, "default-held", dir, plain);
+  const path = session("default-held", "2020-01-01T00:00:00Z");
+  expect(await omoTranscriptForPane(paneId, root, (await sessionSnapshot()).panes, root)).toBe(realpathSync(path));
+  // the same launcher under a store moved only by SENPI's variable is not omo
+  const senpi = join(root, "senpi-runner");
+  writeFileSync(senpi, "setInterval(() => {}, 1000);\n");
+  const otherDir = join(root, "senpi-state", "sessions", `-${root.replaceAll("/", "-")}--`);
+  const paneId2 = await launch(`env -u OMO_CODING_AGENT_DIR -u PI_CODING_AGENT_DIR SENPI_CODING_AGENT_DIR=${join(root, "senpi-state")} ${process.execPath} ${senpi}`, senpi);
+  await hold(paneId2, "senpi-held", otherDir, senpi);
+  expect(await omoSessionForPane(paneId2, root, (await sessionSnapshot()).panes, root)).toEqual({ path: null, pending: null });
 });

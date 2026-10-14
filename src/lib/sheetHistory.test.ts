@@ -98,7 +98,7 @@ describe("a phone's sheet in the history", () => {
     const start = fake.at();
     const leaveFirst = hooks.enter(() => {});
     leaveFirst();
-    // More → Move pane to…: the second sheet mounts in the first's closing click
+    // a sheet opened from a sheet's item: the second mounts in the first's closing click
     const leaveSecond = hooks.enter(() => {});
     await settled();
     expect(fake.at()).toBe(start + 1); expect(fake.marks()[start + 1]).toBe(true);

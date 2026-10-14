@@ -26,7 +26,7 @@
   "server/pty/session.test.ts": 4,
   "server/push.test.ts": 3,
   "server/reattach.contract.test.ts": 1,
-  "server/submit.contract.test.ts": 6,
+  "server/submit.contract.test.ts": 5,
   "server/tailscale.test.ts": 1,
   "server/updater.test.ts": 1,
   "src/lib/pluginRun.ts": 1,

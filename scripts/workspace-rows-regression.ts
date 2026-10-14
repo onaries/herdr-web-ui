@@ -225,8 +225,8 @@ try {
     "right-clicking another workspace keeps the active pane");
   await page.keyboard.press("Escape");
   await workspaceMenu.waitFor({ state: "detached" });
-  // Renaming a pane is still available on that pane's own menu.
-  await page.locator(`[data-layout-pane=${JSON.stringify(split.pane.pane_id)}] .pane-frame-menu`).click();
+  // Renaming a pane is still available on that pane's own menu (a mouse opens it by right-click).
+  await page.locator(`[data-layout-pane=${JSON.stringify(split.pane.pane_id)}] .pane-frame-head`).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Rename pane", exact: true }).click();
   const paneRename = page.getByRole("dialog", { name: "Rename pane", exact: true });
   const paneName = paneRename.getByRole("textbox", { name: "Pane name", exact: true });

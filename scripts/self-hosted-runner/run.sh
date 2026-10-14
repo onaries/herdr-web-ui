@@ -37,10 +37,32 @@ if [ -z "$REPO" ]; then
 fi
 HOST="$(hostname -s)"
 PREFIX="herdr-ci-${HOST}-"
+# Every runner joins this container's network namespace, so the runners of this PC share one
+# loopback: scripts/check.ts's slots (listening loopback ports) then bound the herdr-backed lanes
+# of all of them together, as they bound the runs of one PC. Not the host's network: a job still
+# cannot reach the host's own loopback services.
+NETNS="${PREFIX}net"
 
 if [ "$BUILD" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker build -t "$IMAGE" "$SCRIPT_DIR"
 fi
+
+start_netns() {
+  local running
+  running="$(docker inspect -f '{{.State.Running}}' "$NETNS" 2>/dev/null || true)"
+  [ "$running" = true ] && return
+  # only a stopped one is in the way; a missing one leaves nothing to remove
+  if [ "$running" = false ]; then docker rm "$NETNS" >/dev/null 2>&1 || true; fi
+  docker run -d --rm \
+    --name "$NETNS" \
+    --security-opt no-new-privileges \
+    --cap-drop ALL \
+    --entrypoint sleep \
+    "$IMAGE" infinity >/dev/null ||
+    # two slot loops restarting it at once: the other one's start wins, and a runner that still
+    # finds no namespace fails to start, and its loop tries again
+    echo "[$NETNS] could not start the shared network namespace container" >&2
+}
 
 slot_loop() {
   local slot="$1" name token container_status
@@ -54,8 +76,11 @@ slot_loop() {
     fi
     # No docker socket, no host mounts, no privileges. tini is already the entrypoint.
     # The token goes in on stdin (entrypoint.sh), so it is never in the container's environment.
+    # a runner started after the namespace container went away would have no network
+    start_netns
     if printf '%s\n' "$token" | docker run --rm -i \
       --name "$name" \
+      --network "container:$NETNS" \
       --security-opt no-new-privileges \
       --cap-drop ALL \
       --pids-limit 8192 \
@@ -89,6 +114,7 @@ cleanup() {
     docker stop -t 30 "${PREFIX}${slot}" >/dev/null 2>&1 || true
   done
   wait 2>/dev/null || true
+  docker stop -t 5 "$NETNS" >/dev/null 2>&1 || true
   # Remove any runner of this host that is still registered.
   ids="$(gh api "repos/$REPO/actions/runners" --paginate \
     --jq ".runners[] | select(.name | startswith(\"$PREFIX\")) | .id" 2>/dev/null || true)"
@@ -100,6 +126,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+start_netns
 for slot in $(seq 1 "$COUNT"); do
   slot_loop "$slot" &
   PIDS+=("$!")

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
-import { runMoreItem } from "./header-more.ts";
 import { chromePath } from "./chrome-path.ts";
 
 // Deep links (lib/deepLink.ts) on the unmodified app over the demo's fixture transport: an
@@ -99,36 +98,6 @@ try {
         assert.equal(await selected(page), DOCS);
       });
       console.log("PASS opening another pane is a history entry and a lens switch is not; Back and Forward return to each pane in its lens");
-
-      // a move gives a pane a new id: the address follows it on the pane's own entry, and an older
-      // entry naming the old id opens the pane where it went, with Forward's entries kept
-      await withPage(browser, `?ws=${wsOf(DOCS)}&pane=${encodeURIComponent(DOCS)}`, async (page) => {
-        await waitSelected(page, DOCS);
-        await page.locator(`.agents-sidebar .agent-item[data-pane="${INFRA}"] .agent-select`).click();
-        await waitQuery(page, "pane", INFRA);
-        await page.locator(`.agents-sidebar .agent-item[data-pane="${DOCS}"] .agent-select`).click();
-        await waitQuery(page, "pane", DOCS);
-        const length = await page.evaluate(() => history.length);
-        await runMoreItem(page, "Move pane to…");
-        const menu = page.getByRole("menu", { name: /^Move .+ to$/ });
-        await menu.waitFor();
-        await menu.getByRole("menuitem", { name: "infra", exact: true }).click();
-        await page.waitForFunction((old) => { const pane = new URLSearchParams(window.location.search).get("pane"); return pane !== null && pane !== old; }, DOCS, { timeout: 10_000 });
-        const moved = (await query(page))["pane"]!;
-        await waitSelected(page, moved);
-        assert.equal(await page.evaluate(() => history.length), length, "the moved pane's new id is written over its entry");
-        await page.goBack();
-        await waitSelected(page, INFRA);
-        await page.goBack();
-        await waitSelected(page, moved);
-        await waitQuery(page, "pane", moved);
-        await page.goForward();
-        await waitSelected(page, INFRA);
-        await page.goForward();
-        await waitSelected(page, moved);
-        assert.equal(await page.evaluate(() => history.length), length, "Back and Forward kept every entry");
-      });
-      console.log("PASS a moved pane keeps its history entry, and Back to an entry from before the move opens it under its new id");
 
       // an entry naming a PC since removed leaves the app where it is and says so, opens no dialog it
       // named; Forward still works
@@ -530,6 +499,37 @@ try {
       });
       console.log("PASS a pane Back selects under an open modal does not take the keyboard out of it");
 
+      // Phone touch controls cannot open the palette; resizing restores the Files entry.
+      const palettePhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
+      try {
+        await palettePhone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        const page = await palettePhone.newPage();
+        await page.goto(`${url}?pane=${encodeURIComponent(INFRA)}`);
+        await waitSelected(page, INFRA);
+        assert.equal(await page.locator(".palette-button").isVisible(), false, "the phone header has no palette button");
+        await page.locator(".header-more-button").tap();
+        const more = page.getByRole("dialog", { name: "More", exact: true });
+        await more.waitFor();
+        assert.equal(await more.getByRole("button", { name: "Command palette", exact: true }).count(), 0, "More has no palette entry");
+        await more.getByRole("button", { name: "Browse files", exact: true }).tap();
+        const files = page.getByRole("dialog", { name: "Files", exact: true });
+        await files.waitFor();
+        const browse = files.getByRole("button", { name: "Browse folders in the palette", exact: true });
+        assert.equal(await browse.count(), 0, "Files has no phone palette entry");
+        await page.setViewportSize({ width: 1024, height: 768 });
+        await browse.waitFor();
+        await browse.click();
+        const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
+        await palette.waitFor();
+        await page.keyboard.press("Escape");
+        await palette.waitFor({ state: "detached" });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await browse.waitFor({ state: "detached" });
+        await page.keyboard.press("ControlOrMeta+Shift+K");
+        await palette.waitFor();
+      } finally { await palettePhone.close(); }
+      console.log("PASS phone header, More and Files omit palette entry points; wider Files and keyboard shortcuts still open it");
+
       // a phone's ⋯ sheet is an entry of its own: Back closes it and stays on the pane; a sheet
       // closed by Cancel or by an item leaves no entry behind, so the next Back goes to the pane before
       const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
@@ -563,30 +563,18 @@ try {
         await waitSelected(page, INFRA);
         await page.goForward();
         await waitSelected(page, DOCS);
-        // an item that opens a dialog on the sheet's address keeps the sheet's entry: the New tab
-        // dialog stays up once the sheet's closing has settled, and Back closes the dialog alone
-        await more.tap();
-        await sheet.waitFor();
-        await sheet.getByRole("button", { name: "New tab", exact: true }).tap();
-        const creation = page.locator(".new-session-modal");
+        // an item that opens a dialog on the sheet's address keeps the sheet's entry: the tab menu's
+        // Rename pane dialog stays up once the sheet's closing has settled, and Back closes it alone
+        await page.locator(".tab-strip-menu").tap();
+        await page.getByRole("button", { name: "Rename pane", exact: true }).tap();
+        const creation = page.getByRole("dialog", { name: "Rename pane", exact: true });
         await creation.waitFor();
         await page.waitForTimeout(150);
-        assert.equal(await creation.isVisible(), true, "the New tab dialog stays up after the sheet's entry settles");
+        assert.equal(await creation.isVisible(), true, "the Rename pane dialog stays up after the sheet's entry settles");
         assert.equal(await page.evaluate(() => history.length), length + 1, "the dialog took the sheet's entry");
         await page.goBack();
         await creation.waitFor({ state: "detached" });
         assert.equal(await selected(page), DOCS, "Back closed the dialog and left the pane alone");
-        // a sheet opened from a sheet (More → Move pane to…) reuses the entry: one Back closes it
-        await more.tap();
-        await sheet.waitFor();
-        await sheet.getByRole("button", { name: "Move pane to…", exact: true }).tap();
-        const move = page.getByRole("dialog", { name: /^Move / });
-        await move.waitFor();
-        await page.waitForTimeout(150);
-        assert.equal(await page.evaluate(() => history.length), length + 1, "the second sheet took the first's entry");
-        await page.goBack();
-        await move.waitFor({ state: "detached" });
-        assert.equal(await selected(page), DOCS, "Back closed the second sheet and left the pane alone");
         // every other dialog is a sheet on a phone too: the plan and the palette close on Back
         const API = panes.api;
         await page.locator(`.agents-sidebar .agent-item[data-pane="${API}"] .agent-select`).evaluate((node) => (node as HTMLElement).click());
@@ -600,13 +588,10 @@ try {
         await page.goBack();
         await plan.waitFor({ state: "detached" });
         assert.equal(await selected(page), API, "Back closed the plan and left the pane alone");
-        await more.tap();
-        await sheet.waitFor();
-        await sheet.getByRole("button", { name: "Command palette", exact: true }).tap();
+        await page.keyboard.press("ControlOrMeta+Shift+K");
         const palette = page.getByRole("dialog", { name: "Command palette" });
         await palette.waitFor();
-        await page.waitForTimeout(150);
-        assert.equal(await page.evaluate(() => history.length), atApi + 1, "the palette took the More sheet's entry");
+        assert.equal(await page.evaluate(() => history.length), atApi + 1, "the palette is an entry");
         await page.goBack();
         await palette.waitFor({ state: "detached" });
         assert.equal(await selected(page), API, "Back closed the palette and left the pane alone");
@@ -618,7 +603,7 @@ try {
       } finally {
         await phone.close();
       }
-      console.log("PASS a phone's sheet, plan and palette close on Back without leaving their pane; Cancel, New tab and a second sheet leave no Back step behind");
+      console.log("PASS a phone's sheet, plan and palette close on Back without leaving their pane; Cancel and Rename pane leave no Back step behind");
     } finally {
       await browser.close();
     }

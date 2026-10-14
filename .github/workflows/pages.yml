@@ -1,10 +1,12 @@
 name: Website
-# Builds site/ into the GitHub Pages site (https://herdrweb.dev/) on every push to
+# Builds site/ into the GitHub Pages site (https://herdrweb.dev/) after CI succeeds for a push to
 # main: the page, and the browser demo, which is the app itself, so any client change is a site
 # change. README.md is a source too: the page's top video and feature clips are the README's
 # (docs/development.md, "README media").
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 permissions:
@@ -15,12 +17,18 @@ concurrency:
 jobs:
   validate:
     name: Validate source
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
   build:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ${{ vars.CI_SELF_HOSTED_LABELS && fromJSON(vars.CI_SELF_HOSTED_LABELS) || 'ubuntu-24.04' }}
     permissions:
       contents: read
@@ -29,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: ./.github/actions/setup-ci
       # poster frames and scaled stills (scripts/build-site.ts); the GitHub-hosted image has no
       # ffmpeg, the self-hosted runner image ships it and has no sudo
@@ -44,12 +52,23 @@ jobs:
       - run: bun scripts/build-site.ts
       - id: source
         name: Record built SHA
-        run: echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      needs.build.result == 'success' &&
+      (needs.validate.result == 'success' ||
+      (needs.validate.result == 'skipped' &&
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success')) &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
     needs: [validate, build]
     runs-on: ${{ vars.CI_SELF_HOSTED_LABELS && fromJSON(vars.CI_SELF_HOSTED_LABELS) || 'ubuntu-24.04' }}
     permissions:
@@ -63,7 +82,7 @@ jobs:
       - name: Verify deployment SHA is current
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           BUILT_SHA: ${{ needs.build.outputs.sha }}
         run: |
           set -euo pipefail
@@ -85,9 +104,9 @@ jobs:
       - name: Summarize deployment
         if: success()
         env:
-          VALIDATED_SHA: ${{ github.sha }}
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           BUILT_SHA: ${{ needs.build.outputs.sha }}
-          DEPLOYED_SHA: ${{ github.sha }}
+          DEPLOYED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           {
             printf 'Validated SHA: `%s`\n' "$VALIDATED_SHA"

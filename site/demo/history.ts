@@ -28,7 +28,7 @@ function cells(text: string): Cell[] {
 
 export const DEMO_LOG_LINES = [
   "release $ demo logs",
-  "Fictional checkout service logs. Search ERROR, WARN or ready; drag the scrollbar to browse.",
+  "Fictional checkout service logs. Search ERROR, WARN or ready; scroll to browse.",
   ...Array.from({ length: 180 }, (_, index) => {
     const n = index + 1;
     const time = `10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}`;

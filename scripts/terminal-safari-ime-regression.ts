@@ -34,7 +34,7 @@ export async function checkSafariIme(browser: Browser, origin: string, pane: str
     const deadline = Date.now() + 10_000;
     while (!(await check())) { assert(Date.now() < deadline, "Safari trace replay timed out"); await new Promise((resolve) => setTimeout(resolve, 25)); }
   };
-  const input = page.locator(".xterm-helper-textarea");
+  const input = page.locator(".pane-frame.is-current .xterm-helper-textarea");
   const reset = async () => {
     ready = false;
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);

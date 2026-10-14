@@ -144,9 +144,9 @@ try {
               // an opt-in palette is written to the document and saved, and its block of styles.css
               // reaches the page: its --term-* tokens read back as the theme xterm is given
               const palette = page.getByLabel("Colors", { exact: true });
-              await palette.selectOption("forest");
-              await page.waitForFunction(() => document.documentElement.dataset.palette === "forest");
-              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).palette), "forest");
+              await palette.selectOption("catppuccin");
+              await page.waitForFunction(() => document.documentElement.dataset.palette === "catppuccin");
+              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).palette), "catppuccin");
               const colors = await page.evaluate(() => {
                 const root = getComputedStyle(document.documentElement);
                 return {
@@ -156,8 +156,8 @@ try {
                   selectionBackground: root.getPropertyValue("--term-selection").trim(),
                 };
               });
-              assert.deepEqual(colors, terminalTheme("dark", "forest"), "Forest's --term-* tokens reach the page as the theme xterm is given");
-              if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `forest-palette-${width}.png`), fullPage: true });
+              assert.deepEqual(colors, terminalTheme("dark", "catppuccin"), "Catppuccin's --term-* tokens reach the page as the theme xterm is given");
+              if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `catppuccin-palette-${width}.png`), fullPage: true });
               // the pages after this one are checked on the default palette
               await palette.selectOption("amber");
               await page.waitForFunction(() => document.documentElement.dataset.palette === "amber");

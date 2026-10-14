@@ -187,6 +187,33 @@ export function maxRuns(env: Record<string, string | undefined>, cores = availab
   return count;
 }
 
+/**
+ * What a run calls its checkout to the runs that share its slots. A self-hosted CI runner shares its
+ * loopback with the other runner containers of its PC (scripts/self-hosted-runner/run.sh), and every
+ * one of them checks out to the same path, so there the runner's name (RUNNER_NAME, set by the
+ * Actions runner) is part of it: two runners are two checkouts.
+ */
+export function checkoutIdentity(checkout: string, env: Record<string, string | undefined> = process.env): string {
+  const runner = env["RUNNER_NAME"];
+  return runner ? `${runner}:${checkout}` : checkout;
+}
+
+/** The most CHECK_WAIT_SECONDS may ask for: two hours, past any CI job's timeout. */
+export const MAX_WAIT_SECONDS = 7200;
+
+/**
+ * How long a run waits for a slot when the run limit is reached: CHECK_WAIT_SECONDS (0 to 7200),
+ * else 0, which refuses at once. CI sets it: a job that finds the PC busy waits its turn instead
+ * of failing. A run in the same checkout, or a held resource, is still refused at once.
+ */
+export function waitSeconds(env: Record<string, string | undefined>): number {
+  const asked = env["CHECK_WAIT_SECONDS"];
+  if (asked === undefined || asked === "") return 0;
+  const seconds = /^\d+$/.test(asked) ? Number(asked) : Number.NaN;
+  if (!(seconds >= 0 && seconds <= MAX_WAIT_SECONDS)) throw new Error(`CHECK_WAIT_SECONDS must be a whole number from 0 to ${MAX_WAIT_SECONDS}, not "${asked}"`);
+  return seconds;
+}
+
 /** What a slot's holder says: its pid (NaN when what listens there is no run) and its checkout, when it names one. */
 export type Holder = { heldBy: number; checkout?: string };
 
@@ -316,6 +343,25 @@ export async function acquire(
   }
 }
 
+/**
+ * acquire, asked again every `pollMs` while the only refusal is a busy PC, until `waitMs` has
+ * passed. `onWait` hears the first busy refusal, so a waiting run says once whom it waits for.
+ */
+export async function acquireWaiting(
+  options: Parameters<typeof acquire>[0],
+  { waitMs, pollMs = 2_000, onWait }: { waitMs: number; pollMs?: number; onWait?: (holders: SlotHolder[]) => void },
+): ReturnType<typeof acquire> {
+  const deadline = Date.now() + waitMs;
+  let held = await acquire(options);
+  let told = false;
+  while ("refused" in held && held.refused === "busy" && Date.now() < deadline) {
+    if (!told) { onWait?.(held.holders); told = true; }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+    held = await acquire(options);
+  }
+  return held;
+}
+
 /** One line per holder for a refusal. */
 export function describeHolders(holders: readonly SlotHolder[]): string {
   return holders.map((holder) => Number.isNaN(holder.heldBy)
@@ -348,8 +394,21 @@ async function main(): Promise<void> {
   if (needsHerdr || resources.length > 0 || reports.length > 0) {
     try {
       let slots: number;
-      try { slots = needsHerdr ? maxRuns(process.env) : 0; } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
-      const held = await acquire({ slots, checkout: realpathSync(cwd), resources, reports });
+      let wait: number;
+      try {
+        slots = needsHerdr ? maxRuns(process.env) : 0;
+        wait = waitSeconds(process.env);
+      } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
+      const waitStarted = Date.now();
+      let waited = false;
+      const held = await acquireWaiting({ slots, checkout: checkoutIdentity(realpathSync(cwd)), resources, reports }, {
+        waitMs: wait * 1000,
+        onWait: (holders) => {
+          waited = true;
+          console.error(`check: the ${slots}-run limit is reached (${describeHolders(holders)}); waiting up to ${wait}s for a slot`);
+        },
+      });
+      if (waited && !("refused" in held)) console.error(`check: took a slot after ${Math.round((Date.now() - waitStarted) / 1000)}s`);
       if ("refused" in held) {
         const message = held.refused === "same-checkout"
           ? `another herdr-backed \`bun run check\` is running in this checkout, and the two would share dist/ and the generated types (${describeHolders(held.holders)}); wait for it to end or use another worktree`

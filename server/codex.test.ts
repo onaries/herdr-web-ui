@@ -816,13 +816,28 @@ describe("Codex submitted first exchange", () => {
     expect(matchCodexFirstExchange(screen, [row(), row("other")], started)).toBeNull();
   });
 
-  it("does not admit pre-start timestamps, missing prompt metadata or tiny answers", () => {
+  it("does not admit pre-start timestamps or missing prompt metadata (control)", () => {
     for (const time of [started - 1, Infinity, NaN]) {
       expect(matchCodexFirstExchange(screen, [row("new", time)], started)).toBeNull();
     }
     for (const time of [Infinity, NaN]) expect(matchCodexFirstExchange(screen, [row()], time)).toBeNull();
     expect(matchCodexFirstExchange(screen, [{ ...row(), firstUserMessage: "" }], started)).toBeNull();
-    expect(matchCodexFirstExchange(screen.replace(answer, "Ready"), [row("new", started, prompt, "Ready")], started)).toBeNull();
+  });
+
+  it("matches tiny first answers only with the exact submitted exchange (regression)", () => {
+    for (const reply of ["42", "Ready", "Y"]) {
+      expect(matchCodexFirstExchange(screen.replace(answer, reply), [row("new", started, prompt, reply)], started)).toBe("new");
+    }
+    expect(matchCodexFirstExchange(screen.replace(answer, ""), [row("new", started, prompt, "")], started)).toBeNull(); // control
+    expect(matchCodexFirstExchange(screen.replace(answer, "42"), [
+      row("new", started, prompt, "42"), row("old", started - 1, prompt, "42"),
+    ], started)).toBeNull(); // control: competing evidence
+  });
+
+  it("skips known Codex notices before the submitted prompt (regression)", () => {
+    for (const notice of ["Model changed to gpt-5", "Unrecognized command '/wat'", "Working directory changed to /tmp"]) {
+      expect(matchCodexFirstExchange(screen.replace(`› ${prompt}`, `• ${notice}\n\n› ${prompt}`), [row()], started)).toBe("new");
+    }
   });
 });
 

@@ -29,12 +29,6 @@ export interface AppActions {
   openNewTab: (target?: { machineId: string; workspaceId: string }) => void;
   /** the palette, blank or opened on `query` (a `>` prefix keeps the actions alone) */
   openPalette: (query?: string) => void;
-  /**
-   * A pane this client moved (POST /api/pane/move), under the id it answers to now: the lens
-   * and drafts kept under the old id follow it, and the selection too when it was the
-   * selected pane. A move made elsewhere (the TUI, another client) never moves the selection.
-   */
-  paneMoved: (machineId: string, previousPaneId: string, paneId: string) => void;
   /** A pane this page started an agent in opens in an agent's lens, whatever its first snapshot says. */
   agentStarted: (machineId: string, paneId: string) => void;
   openFind: () => void;

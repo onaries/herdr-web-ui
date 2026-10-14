@@ -77,10 +77,16 @@ running terminals: see [development](docs/development.md#checks).
   contract test (`server/api.contract.test.ts` for endpoints). A test that needs a live herdr is named
   `*.contract.test.ts`.
 - **herdr wire types:** never edit `shared/herdr-api.generated.ts`; run `bun run generate:types`.
-- **UI text:** every new `t("…")` string needs an entry in `src/lib/i18n.ko.ts`, `i18n.ja.ts`,
-  `i18n.zh.ts` and `i18n.tr.ts`, with the same placeholders. `bun run test:unit` fails on a missing, unused or
+- **UI text:** every new `t("…")` string needs an entry in `src/lib/i18n.ko.ts`, `i18n.ja.ts`
+  and `i18n.zh.ts`, with the same placeholders. `bun run test:unit` fails on a missing, unused or
   untranslated entry.
+- **UI languages:** the app keeps English, Korean, Japanese and Simplified Chinese and does not take
+  new ones. Every language has to translate each later string, so a PR that adds a language is
+  closed.
 - **UI:** component CSS uses the tokens in `src/styles.css` (see [DESIGN.md](DESIGN.md)).
+- **Color palettes:** the app keeps three (Amber, Charcoal, Catppuccin) and does not take new ones.
+  Every palette is a light and a dark block that each later token change has to fill in, so a PR
+  that adds a palette is closed.
 - **The browser demo:** the [demo](https://herdrweb.dev/demo/) redeploys on every
   merge to `main`. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
   else gets its 404.

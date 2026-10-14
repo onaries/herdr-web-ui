@@ -9,6 +9,90 @@ const storage = () => {
 const message = (id: string, state: PendingMessage["state"] = "queued", text = "check the tests"): PendingMessage => ({ id, request_id: 1, text, state, created_at: "2026-10-06T00:00:00Z" });
 
 describe("pending message ownership", () => {
+  it("regression: advances a persisted attempt only on a definitive no-input refusal", () => {
+    const port = storage(), store = new PendingMessageStore(() => port);
+    store.accept("p", message("h", "held"), null);
+    store.begin("p", "h"); store.unconfirm("p", "h");
+    store.fail("p", "h", { code: "agent_blocked", message: "nothing typed" }, false, 0);
+    store.end("p", "h");
+    expect(new PendingMessageStore(() => port).read("p")[0]!.resendGeneration).toBe(1);
+    store.begin("p", "h"); store.unconfirm("p", "h");
+    store.fail("p", "h", { code: "submit_changed", message: "uncertain" }, true, 1);
+    store.end("p", "h");
+    const restored = new PendingMessageStore(() => port).read("p")[0]!;
+    expect(restored.resendGeneration).toBe(1);
+    expect(restored.state).toBe("uncertain");
+  });
+  it("regression: duplicate refusal receipts advance once and an older uncertain receipt cannot poison the retry", () => {
+    const port = storage(), a = new PendingMessageStore(() => port), b = new PendingMessageStore(() => port);
+    a.accept("p", message("h", "held"), "owner-a");
+    a.begin("p", "h"); b.begin("p", "h"); b.unconfirm("p", "h");
+    a.fail("p", "h", { code: "agent_blocked", message: "nothing typed" }, false, 0);
+    b.fail("p", "h", { code: "agent_blocked", message: "nothing typed" }, false, 0);
+    a.end("p", "h"); b.end("p", "h");
+    a.fail("p", "h", { code: "submit_changed", message: "old receipt" }, true, 0);
+    const restored = new PendingMessageStore(() => port).read("p")[0]!;
+    expect(restored.resendGeneration).toBe(1);
+    expect(restored.state).toBe("held");
+  });
+  it("regression: an uncertain reply keeps its generation and survives another live owner's suspension", () => {
+    const port = storage(), a = new PendingMessageStore(() => port), b = new PendingMessageStore(() => port);
+    a.accept("p", message("h", "held"), "owner-a");
+    b.begin("p", "h"); b.unconfirm("p", "h");
+    b.fail("p", "h", { code: "submit_changed", message: "uncertain" }, true, 0);
+    b.end("p", "h"); a.refresh("p"); a.suspend("p", "owner-a");
+    const restored = new PendingMessageStore(() => port).read("p")[0]!;
+    expect(restored.state).toBe("uncertain");
+    expect(restored.resendGeneration).toBe(0);
+  });
+  it("regression: preserves another tab's resend mark when a live owner suspends", () => {
+    const port = storage(), first = new PendingMessageStore(() => port);
+    first.accept("p", message("h", "held"), "scope-a");
+    const second = new PendingMessageStore(() => port);
+    second.begin("p", "h");
+    expect(second.unconfirm("p", "h")).toBe(true);
+    first.refresh("p");
+    first.suspend("p", "scope-a");
+    expect(new PendingMessageStore(() => port).read("p")[0]!.state).toBe("uncertain");
+  });
+  it("regression: keeps another tab's resend mark through an authoritative row update", () => {
+    const port = storage(), first = new PendingMessageStore(() => port);
+    first.accept("p", message("h", "held"), "scope-a");
+    const second = new PendingMessageStore(() => port);
+    second.begin("p", "h"); second.unconfirm("p", "h");
+    first.accept("p", message("h", "held"), "scope-a");
+    first.suspend("p", "scope-a");
+    expect(new PendingMessageStore(() => port).read("p")[0]!.state).toBe("uncertain");
+  });
+  it("regression: an unsaved owner preserves a recovered storage resend mark", () => {
+    const port = storage();
+    let full = false;
+    const first = new PendingMessageStore(() => ({ ...port, setItem: (key, value) => {
+      if (full) throw new Error("full");
+      port.setItem(key, value);
+    } }));
+    first.accept("p", message("h", "held"), "scope-a");
+    full = true;
+    first.accept("p", message("other", "held"), "scope-a");
+    const second = new PendingMessageStore(() => port);
+    second.begin("p", "h"); second.unconfirm("p", "h");
+    full = false;
+    first.suspend("p", "scope-a");
+    const rows = new PendingMessageStore(() => port).read("p");
+    expect(rows.find((row) => row.id === "h")!.state).toBe("uncertain");
+    expect(rows.find((row) => row.id === "other")!.text).toBe("check the tests");
+  });
+  it("regression: refuses resend when both storage reads and writes throw", () => {
+    const port = storage(), store = new PendingMessageStore(() => port);
+    store.accept("p", message("h", "held"), null);
+    let blocked = false;
+    const tab = new PendingMessageStore(() => blocked ? {
+      getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); }, removeItem: () => {},
+    } : port);
+    tab.begin("p", "h");
+    blocked = true;
+    expect(tab.unconfirm("p", "h")).toBe(false);
+  });
   it("restores saved queued and sending text as uncertain, without arming delivery", () => {
     const port = storage(), live = new PendingMessageStore(() => port);
     live.accept("pc:pane", message("q"), "connection-1");

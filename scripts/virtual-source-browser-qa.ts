@@ -461,16 +461,11 @@ try {
   assert.deepEqual(errors, [], "no errors around the cuts");
   console.log("PASS a file past the line cap and one past the byte budget say so truthfully and end on their last complete line, the cap is marked and the line past it explained; a small source is unchanged");
 
-  // settings: colors off, theme
+  // settings: theme
   await open(page, "/src/mid.ts");
   await waitRows(page);
   await page.waitForFunction(() => document.querySelector("diffs-container")!.shadowRoot!.querySelectorAll("[data-line] span[style*='--herdr-code-token']").length > 0, undefined, { timeout: 20_000 });
-  await page.evaluate(() => window.virtualQA.settings({ highlightCode: false }));
-  await page.locator(".virtual-source:not([data-colored])").waitFor();
-  await waitRows(page);
-  assert.equal(await page.evaluate(() => document.querySelector("diffs-container")!.shadowRoot!.querySelectorAll("[data-line] span[style*='--herdr-code-token']").length), 0, "colors off: plain rows");
-  assert.equal(await page.locator(".file-viewer-notice").count(), 0, "plain by choice is not too long");
-  await page.evaluate(() => window.virtualQA.settings({ highlightCode: true, theme: "light" }));
+  await page.evaluate(() => window.virtualQA.settings({ theme: "light" }));
   await page.locator(".virtual-source[data-colored]").waitFor();
   await waitRows(page);
   await page.waitForFunction(() => document.documentElement.dataset["theme"] === "light");
@@ -486,7 +481,7 @@ try {
   await assertSyntaxPalette(page);
   await close(page);
   await page.evaluate(() => window.virtualQA.settings({ theme: "dark" }));
-  console.log("PASS Settings: colors off shows plain rows without a notice; the theme reaches the rows");
+  console.log("PASS Settings: the theme reaches the rows");
 
   // Markdown keeps its Preview budget; its source is virtualized past the line limit
   await open(page, "/docs/long.md");

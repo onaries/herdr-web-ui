@@ -11,7 +11,7 @@ import type {
   PaneFindResponse,
   PaneFindMatch,
 } from "../../shared/protocol.ts";
-import type { AgentInfo, AgentManifestInfo, AgentStartParams, PaneInfo, PaneLayoutSnapshot, PaneMoveParams, PaneMoveResult, PaneProcessInfo, PaneScrollInfo, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
+import type { AgentInfo, AgentManifestInfo, AgentStartParams, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, PaneScrollInfo, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
 import type { HerdrMethod, HerdrMethods, SingleHerdrMethod, UntypedHerdrMethod } from "./methods.ts";
 import type { HerdrIdentity } from "../../shared/machines.ts";
 
@@ -606,17 +606,6 @@ export async function paneClose(paneId: string, socketPath?: string): Promise<vo
 /** Focuses this exact pane, its tab and workspace, as a click in herdr's TUI does. */
 export async function paneFocus(paneId: string, socketPath?: string): Promise<void> {
   await herdrRpc("pane.focus", { pane_id: paneId }, socketPath);
-}
-
-/**
- * The pane into another tab, a new tab (of its workspace or another) or a new workspace
- * (herdr's `pane move`). A pane that leaves its workspace comes back under a new pane id;
- * `focus` false keeps herdr's own focus where it was (measured on 0.9.3: true moves it to the
- * pane). herdr answers `{ move_result }`; the result alone is returned.
- */
-export async function paneMove(params: PaneMoveParams, socketPath?: string): Promise<PaneMoveResult> {
-  const answer = await herdrRpc<{ move_result: PaneMoveResult }>("pane.move", { ...params } satisfies PaneMoveParams, socketPath);
-  return answer.move_result;
 }
 
 /**

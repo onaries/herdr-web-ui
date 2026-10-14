@@ -8,9 +8,14 @@ import type { ConversationTurn } from "../shared/protocol.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-pi-store-"));
 const store = join(root, "sessions");
-const slug = join(store, `--${root.replaceAll("/", "-")}--`);
+const slug = join(store, `--${root.replace(/[\\/:]/g, "-")}--`);
 mkdirSync(slug, { recursive: true });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+const canSymlink = (() => {
+  const probe = join(root, "symlink-capability");
+  try { symlinkSync(store, probe, "dir"); rmSync(probe); return true; }
+  catch (error) { if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") return false; throw error; }
+})();
 
 const session = (name: string, body: unknown[] = []) => {
   const path = join(slug, `${name}.jsonl`);
@@ -36,12 +41,14 @@ describe("pi's session store holds the transcript a pane reads", () => {
     expect(piTranscriptInStore(join(root, "missing.jsonl"), store)).toBeNull();
   });
 
-  it("refuses a link out of the store, a directory and a file that is not jsonl", () => {
+  it.skipIf(!canSymlink)("refuses a link out of the store", () => {
     const outside = join(root, "target.jsonl");
     writeFileSync(outside, "{}\n");
     const link = join(slug, "link.jsonl");
     symlinkSync(outside, link);
     expect(piTranscriptInStore(link, store)).toBeNull();
+  });
+  it("refuses a directory and a file that is not jsonl", () => {
     mkdirSync(join(slug, "dir.jsonl"), { recursive: true });
     expect(piTranscriptInStore(join(slug, "dir.jsonl"), store)).toBeNull();
     const other = join(slug, "notes.txt");
@@ -58,26 +65,30 @@ describe("pi's session store holds the transcript a pane reads", () => {
     expect(unwrittenSession(join(slug, "fresh.txt"), store)).toBeNull();
     expect(unwrittenSession("fresh.jsonl", store)).toBeNull();
     expect(unwrittenSession(join(root, "no-store", "fresh.jsonl"), join(root, "no-store"))).toBeNull();
+  });
+  it.skipIf(!canSymlink)("refuses a dangling session link", () => {
     const dangling = join(slug, "dangling.jsonl");
     symlinkSync(join(root, "nowhere.jsonl"), dangling);
     expect(unwrittenSession(dangling, store)).toBeNull();
   });
 
-  it("resolves the directories around an unwritten session before trusting its place", () => {
+  it.skipIf(!canSymlink)("resolves the directories around an unwritten session before trusting its place", () => {
     // a link in the store to a directory outside it does not make its children the store's
     mkdirSync(join(root, "outside-dir"), { recursive: true });
     symlinkSync(join(root, "outside-dir"), join(store, "escape"));
     expect(unwrittenSession(join(store, "escape", "fresh.jsonl"), store)).toBeNull();
     symlinkSync(join(root, "nowhere-dir"), join(store, "broken"));
     expect(unwrittenSession(join(store, "broken", "fresh.jsonl"), store)).toBeNull();
-    // a file where a directory should be holds no session
-    writeFileSync(join(slug, "plain"), "");
-    expect(unwrittenSession(join(slug, "plain", "fresh.jsonl"), store)).toBeNull();
     // the store reached through a link is still the store
     const alias = join(root, "store-alias");
     symlinkSync(store, alias);
     expect(unwrittenSession(join(slug, "fresh.jsonl"), alias)).toEqual({ id: "fresh", path: join(realpathSync(slug), "fresh.jsonl") });
     expect(unwrittenSession(join(alias, "fresh.jsonl"), store)).toEqual({ id: "fresh", path: join(realpathSync(store), "fresh.jsonl") });
+  });
+
+  it("a file where a directory should be holds no unwritten session", () => {
+    writeFileSync(join(slug, "plain"), "");
+    expect(unwrittenSession(join(slug, "plain", "fresh.jsonl"), store)).toBeNull();
   });
 
   it("follows PI_CODING_AGENT_SESSION_DIR the way Codex follows CODEX_HOME", () => {

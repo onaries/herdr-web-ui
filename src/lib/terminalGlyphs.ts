@@ -42,6 +42,9 @@ const FILL = 0.9;
 /** The most a wide glyph is enlarged, so it never towers over the Latin beside it. */
 const MAX_SCALE = 1.2;
 
+/** how many copies of a glyph xterm's WidthCache measures at once (WidthCacheSettings.REPEAT) */
+const XTERM_MEASURE_REPEAT = 32;
+
 /** marks a cell this module drew itself, so the observer does not take it for a span to adjust */
 const BOX_CLASS = "herdr-box-glyph";
 
@@ -333,8 +336,59 @@ export function adjustTerminalGlyphs(term: Terminal): () => void {
     placeBoxes();
   });
   observer.observe(rows, { childList: true, subtree: true });
+
+  /**
+   * An IME's pending text is not a row: xterm draws it in a box of its own over the cursor (the
+   * composition view), in the plain font size. A Hangul syllable the rows enlarge above stayed the
+   * font's narrow glyph there, so the syllable being typed looked smaller than every syllable
+   * before it until it was committed. The box gets the fit its row will give it.
+   */
+  const view = screen.querySelector<HTMLElement>(".composition-view");
+  const probe = document.createElement("span").style;
+  const fitView = (): void => {
+    if (!view) return;
+    const { fontFamily, fontSize, fontWeight } = term.options;
+    if (fontSize === undefined) return;
+    let size = `${fontSize}px`;
+    let spacing = "";
+    let padding = "";
+    const cellWidth = Number.parseFloat(screen.style.width) / term.cols;
+    const first = String.fromCodePoint((view.textContent ?? "").codePointAt(0) ?? 0x20);
+    // the row's spacing is xterm's, from its own measure of the glyph (WidthCache: a run of it in
+    // a span), which a canvas can measure differently (Hangul on macOS WebKit: 13px against 11.2px)
+    const xtermMeasure = term.element?.querySelector<HTMLElement>(".xterm-width-cache-measure-container .xterm-char-measure-element");
+    if (view.classList.contains("active") && cellWidth > 0 && xtermMeasure) {
+      // xterm's own element: what it held goes back once the width is read
+      const held = xtermMeasure.textContent;
+      xtermMeasure.textContent = first.repeat(XTERM_MEASURE_REPEAT);
+      const drawn = xtermMeasure.offsetWidth / XTERM_MEASURE_REPEAT;
+      xtermMeasure.textContent = held;
+      measure.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+      const glyphWidth = measure.measureText(first).width;
+      // a glyph wider than its one cell takes two in the row
+      const cells = drawn > cellWidth + MIN_SPACING_PX ? 2 : 1;
+      const fit = glyphFit(cells * cellWidth - drawn, glyphWidth, cellWidth);
+      if (fit) {
+        size = `${fontSize * fit.scale}px`;
+        spacing = `${fit.spacing}px`;
+        padding = `${fit.spacing / 2}px`;
+      }
+    }
+    // each write is a mutation this observer sees again: only what differs is written, compared
+    // as the browser stores it (15.600000000000001px reads back rounded)
+    probe.fontSize = size;
+    probe.letterSpacing = spacing;
+    probe.paddingLeft = padding;
+    if (view.style.fontSize !== probe.fontSize) view.style.fontSize = probe.fontSize;
+    if (view.style.letterSpacing !== probe.letterSpacing) view.style.letterSpacing = probe.letterSpacing;
+    if (view.style.paddingLeft !== probe.paddingLeft) view.style.paddingLeft = probe.paddingLeft;
+  };
+  // xterm writes the text, then its own font size, then once more on the next task
+  const viewObserver = new MutationObserver(fitView);
+  if (view) viewObserver.observe(view, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["style", "class"] });
   return () => {
     observer.disconnect();
+    viewObserver.disconnect();
     document.fonts?.removeEventListener("loadingdone", fontsArrived);
   };
 }

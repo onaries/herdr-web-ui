@@ -1141,6 +1141,9 @@
 
 .markdown-file {
   display: inline;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
   padding: 0;
   border: 0;
   background: none;

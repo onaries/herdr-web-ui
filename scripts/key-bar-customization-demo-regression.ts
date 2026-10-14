@@ -298,6 +298,30 @@ try {
           }
         }
 
+        // Chromium on Linux has no safe-area inset: give the page's stylesheet a 34px home-indicator
+        // inset. Only the bar that reaches the bottom of the screen keeps room for it, and every bar
+        // stands off the pane's edges.
+        const inset = await context.newPage();
+        await inset.route("**/*.css", async (route) => {
+          const response = await route.fetch();
+          await route.fulfill({ response, body: (await response.text()).replace(/env\(safe-area-inset-bottom(?:,\s*0px)?\)/g, "34px") });
+        });
+        await inset.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.api)}`);
+        const barBox = (): Promise<{ bottom: number; paddingBottom: string; paddingLeft: string }> => inset.locator(".key-bar").evaluate((row) => {
+          const style = getComputedStyle(row);
+          return { bottom: row.getBoundingClientRect().bottom, paddingBottom: style.paddingBottom, paddingLeft: style.paddingLeft };
+        });
+        await inset.locator(".key-bar").waitFor();
+        await inset.waitForFunction(() => document.querySelector(".key-bar")!.getBoundingClientRect().bottom >= innerHeight - 1);
+        assert.deepEqual(await barBox().then(({ paddingBottom, paddingLeft }) => ({ paddingBottom, paddingLeft })), { paddingBottom: "26px", paddingLeft: "8px" }, "the bar at the bottom of the screen keeps room for the home indicator, less its own padding");
+        await inset.evaluate(() => { document.querySelector(".key-bar")!.parentElement!.style.height = "700px"; });
+        await inset.waitForFunction(() => document.querySelector(".key-bar")!.getBoundingClientRect().bottom < innerHeight - 1);
+        // the bar re-places itself from a ResizeObserver, a frame after the layout moved
+        await inset.waitForFunction(() => getComputedStyle(document.querySelector(".key-bar")!).paddingBottom === "0px", undefined, { timeout: 5_000 });
+        assert.deepEqual(await barBox().then(({ paddingBottom, paddingLeft }) => ({ paddingBottom, paddingLeft })), { paddingBottom: "0px", paddingLeft: "8px" }, "a bar above the bottom of the screen has no home-indicator room");
+        await inset.close();
+        console.log("PASS only the bar at the bottom of the screen keeps home-indicator room, and every bar stands off the pane's edges");
+
         await page.setViewportSize({ width: 1280, height: 844 });
         await settled(page);
         const palette = page.getByRole("dialog", { name: "Command palette", exact: true });

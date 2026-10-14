@@ -14,8 +14,10 @@ const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-opencode-contract-"));
 const database = join(root, "opencode.db");
 const fakeOpencode = join(root, "bin", "opencode");
 const SESSION = "ses_contractTest01";
+const PAGING_SESSION = "ses_contractPaging01";
 const workspaces: string[] = [];
 let paneId: string;
+let pagingPaneId: string;
 let server: ReturnType<typeof createServer>;
 let db: Database;
 let seq = 0;
@@ -30,18 +32,33 @@ const add = (type: string, data: Record<string, unknown>, session = SESSION): st
     .run(id, session, type, seq, Date.now(), Date.now(), JSON.stringify(data));
   return id;
 };
-const turn = (prompt: string, answer: string) => {
-  add("user", { time: { created: Date.now() }, text: prompt, files: [], agents: [] });
+const turn = (prompt: string, answer: string, session = SESSION) => {
+  add("user", { time: { created: Date.now() }, text: prompt, files: [], agents: [] }, session);
   add("assistant", {
     time: { created: Date.now(), completed: Date.now() }, agent: "build", model: { id: "contract-model", providerID: "test", variant: "high" },
     content: [{ type: "text", text: answer }], finish: "stop", tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 20, write: 0 } },
-  });
-  add("idle", { time: { created: Date.now() }, outcome: "succeeded" });
+  }, session);
+  add("idle", { time: { created: Date.now() }, outcome: "succeeded" }, session);
 };
 
 /** The pane's session, as herdr's OpenCode integration reports it (herdr-tui-session.js). */
-const reportSession = (session: string) =>
-  herdrRpc("pane.report_agent_session", { pane_id: paneId, source: "herdr:opencode", agent: "opencode", agent_session_id: session, session_start_source: "select" });
+const reportSession = (session: string, targetPaneId = paneId) =>
+  herdrRpc("pane.report_agent_session", { pane_id: targetPaneId, source: "herdr:opencode", agent: "opencode", agent_session_id: session, session_start_source: "select" });
+
+const startOpencode = async (session: string): Promise<string> => {
+  const created = await workspaceCreate({ cwd: root, label: `herdr-web-ui-test-opencode-${session}` });
+  workspaces.push(created.workspace.workspace_id);
+  const targetPaneId = created.root_pane.pane_id;
+  await herdrRpc("pane.send_text", { pane_id: targetPaneId, text: `${fakeOpencode}\n` });
+  for (const deadline = Date.now() + 10_000;;) {
+    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === targetPaneId);
+    if (pane?.agent === "opencode") break;
+    if (Date.now() > deadline) throw new Error("test opencode did not start");
+    await Bun.sleep(50);
+  }
+  await reportSession(session, targetPaneId);
+  return targetPaneId;
+};
 
 beforeAll(async () => {
   db = new Database(database, { create: true });
@@ -52,24 +69,18 @@ beforeAll(async () => {
     CREATE UNIQUE INDEX session_message_session_seq_idx ON session_message (session_id, seq);
     CREATE INDEX session_message_session_type_seq_idx ON session_message (session_id, type, seq);
   `);
-  db.query("INSERT INTO session_v2 (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES (?, 'global', 'contract', ?, 'Contract', '2.0.24', 0, 0)").run(SESSION, root);
+  for (const session of [SESSION, PAGING_SESSION]) {
+    db.query("INSERT INTO session_v2 (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES (?, 'global', 'contract', ?, 'Contract', '2.0.24', 0, 0)").run(session, root);
+  }
   turn("Check chat", "Answer one");
 
   // herdr takes a session report only from an agent holding the pane: a stand-in OpenCode
   mkdirSync(join(root, "bin"), { recursive: true });
   writeFileSync(fakeOpencode, "#!/bin/sh\nsleep 600\n");
   chmodSync(fakeOpencode, 0o755);
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-opencode-contract" });
-  workspaces.push(created.workspace.workspace_id);
-  paneId = created.root_pane.pane_id;
-  await herdrRpc("pane.send_text", { pane_id: paneId, text: `${fakeOpencode}\n` });
-  for (const deadline = Date.now() + 10_000;;) {
-    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
-    if (pane?.agent === "opencode") break;
-    if (Date.now() > deadline) throw new Error("test opencode did not start");
-    await Bun.sleep(50);
-  }
-  await reportSession(SESSION);
+  // Keep paging on its own pane as well as session: a timeout does not cancel
+  // HTTP reads, and the other tests keep writing and switch their pane's session.
+  [paneId, pagingPaneId] = await Promise.all([startOpencode(SESSION), startOpencode(PAGING_SESSION)]);
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), opencodeDb: database });
 });
 
@@ -81,11 +92,11 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const url = (path: string, params: Record<string, string>) =>
-  `http://127.0.0.1:${server.port}${path}?${new URLSearchParams({ pane_id: paneId, ...params })}`;
+const url = (path: string, params: Record<string, string>, targetPaneId = paneId) =>
+  `http://127.0.0.1:${server.port}${path}?${new URLSearchParams({ pane_id: targetPaneId, ...params })}`;
 
-const read = async (params: Record<string, string> = {}): Promise<ConversationResponse> => {
-  const response = await fetch(url("/api/pane/conversation", params));
+const read = async (params: Record<string, string> = {}, targetPaneId = paneId): Promise<ConversationResponse> => {
+  const response = await fetch(url("/api/pane/conversation", params, targetPaneId));
   expect(response.status).toBe(200);
   return await response.json() as ConversationResponse;
 };
@@ -113,14 +124,20 @@ it("serves an OpenCode pane's session over HTTP, and an unchanged one as 304", a
 });
 
 it("pages a long session, and answers 409 for a cursor from another history", async () => {
-  for (let n = 0; n < 60; n++) turn(`p${n}`, `a${n}`);
-  const newest = await read();
+  // Batch fixture writes to reduce WAL frame volume, not per-commit fsyncs:
+  // this store uses WAL + synchronous=NORMAL.
+  db.transaction(() => {
+    turn("Check chat", "Answer one", PAGING_SESSION);
+    turn("Check again", "Answer two", PAGING_SESSION);
+    for (let n = 0; n < 60; n++) turn(`p${n}`, `a${n}`, PAGING_SESSION);
+  })();
+  const newest = await read({}, pagingPaneId);
   expect(typeof newest.cursor).toBe("string");
-  const older = await read({ before: newest.cursor! });
+  const older = await read({ before: newest.cursor! }, pagingPaneId);
   expect(older.history_id).toBe(newest.history_id);
   const prompts = [...older.turns, ...newest.turns].filter((entry) => entry.role === "user").map((entry) => (entry.parts[0] as { text: string }).text);
   expect(prompts).toEqual(["Check chat", "Check again", ...Array.from({ length: 60 }, (_, n) => `p${n}`)]);
-  const refused = await fetch(url("/api/pane/conversation", { before: `opencode-ses_elsewhere:${newest.cursor!.split(":")[1]}` }));
+  const refused = await fetch(url("/api/pane/conversation", { before: `opencode-ses_elsewhere:${newest.cursor!.split(":")[1]}` }, pagingPaneId));
   expect(refused.status).toBe(409);
   expect((await refused.json() as { error: { code: string } }).error.code).toBe("history_changed");
 });

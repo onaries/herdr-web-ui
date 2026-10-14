@@ -6,7 +6,7 @@ import { isJsonObject, jsonResponse } from "./http.ts";
 import { crossSiteFileRead } from "./file-view.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
-export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|plan|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories|diff\/files|diff\/file)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|plan|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|focus)|workspace\/(?:create|rename|move|close|directories|diff\/files|diff\/file)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
 
 
 /**

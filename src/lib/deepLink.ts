@@ -174,16 +174,6 @@ export function resolveLink(snapshot: Pick<SessionSnapshot, "workspaces" | "pane
   return { pane: null, workspace: null, note: link.pane || link.workspace ? "workspace-closed" : null };
 }
 
-/**
- * The place an entry written before a move names: a move gives the pane a new id (lib/paneMove.ts),
- * and the pane under it is the same, wherever the move took it. A moved pane that has since closed
- * leaves the entry as written, so its workspace still opens. No roster yet: the new id is followed.
- */
-export function followMoved(link: AppLink, moved: string | null, snapshot: Pick<SessionSnapshot, "panes"> | null | undefined): AppLink {
-  if (moved === null || (snapshot && !snapshot.panes.some((pane) => pane.pane_id === moved))) return link;
-  return { ...link, pane: moved, workspace: null, workspaceSlug: null };
-}
-
 /** Whether going from one place to another is a move the history keeps (another pane or PC). */
 export function isNavigation(from: Pick<AppLink, "machine" | "pane">, to: Pick<AppLink, "machine" | "pane">): boolean {
   return to.pane !== null && (from.machine !== to.machine || from.pane !== to.pane);

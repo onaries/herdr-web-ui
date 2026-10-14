@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createServer, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import * as herdr from "./herdr/client.ts";
 import * as conversation from "./conversation.ts";
+import { PtySession } from "./pty/session.ts";
 
 /**
  * Contract test for the composer's "submit" frame, against the real herdr server.
@@ -330,6 +331,8 @@ describe("WebSocket submit", () => {
         { text: "x".repeat(20_001), code: "invalid_submit_text" },
         { typed: true, code: "invalid_delivery" },
         { clear_draft: "draft", code: "invalid_delivery" },
+        { send_anyway: true, code: "invalid_delivery" },
+        { resend_id: "native-queue-copy", code: "invalid_delivery" },
         { pane_id: shell.pane, code: "agent_queue_unsupported" },
         { pane_id: agent.pane, code: "agent_queue_unsupported" },
         { pane_id: codex.pane, code: "input_not_ready" },
@@ -411,6 +414,53 @@ describe("WebSocket submit", () => {
     } finally { release.resolve(); restore(); text.mockRestore(); keys.mockRestore(); socket.close(); }
   });
 
+  it("rejects a held-copy resend combined with Send anyway before reserving or replaying its id", async () => {
+    const socket = await Socket.connect();
+    const from = chunks(shell).length;
+    const frame = { type: "submit", pane_id: shell.pane, text: "combined-copy-541", payload: "combined-copy-541", resend_id: "combined-contract-541" };
+    try {
+      socket.send({ ...frame, id: 550, send_anyway: true });
+      expect(await socket.result(550)).toMatchObject({ ok: false, code: "invalid_delivery" });
+      expect(typed(shell, from)).toBe("");
+      socket.send({ ...frame, id: 551 });
+      expect(await socket.result(551)).toMatchObject({ ok: true });
+      socket.send({ ...frame, id: 552, send_anyway: true });
+      expect(await socket.result(552)).toMatchObject({ ok: false, code: "invalid_delivery" });
+      const barrier = new Promise<void>((resolve, reject) => {
+        const watcher = watch(dirname(shell.log), () => {
+          if (typed(shell, from).includes("combination-barrier541")) { clearTimeout(timer); watcher.close(); resolve(); }
+        });
+        const timer = setTimeout(() => { watcher.close(); reject(new Error("combination recorder barrier timed out")); }, 5000);
+      });
+      socket.send({ type: "submit", id: 553, pane_id: shell.pane, text: "combination-barrier541", payload: "combination-barrier541" });
+      expect(await socket.result(553)).toMatchObject({ ok: true });
+      await barrier;
+      expect(typed(shell, from).split("combined-copy-541").length - 1).toBe(1);
+    } finally { socket.close(); }
+  }, 30_000);
+
+  it("regression: sends one held-copy resend across two connections", async () => {
+    const first = await Socket.connect(), second = await Socket.connect();
+    const from = chunks(shell).length;
+    try {
+      const frame = { type: "submit", pane_id: shell.pane, text: "held-copy-541", payload: "held-copy-541", resend_id: "held-copy-regression-541" };
+      first.send({ ...frame, id: 541 });
+      second.send({ ...frame, id: 542 });
+      expect(await first.result(541)).toMatchObject({ ok: true });
+      expect(await second.result(542)).toMatchObject({ ok: true });
+      // The recorder processing a later serialized message proves all preceding bytes arrived.
+      const barrier = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
+        const watcher = watch(dirname(shell.log), () => {
+          if (typed(shell, from).includes("barrier541")) { clearTimeout(timer); watcher.close(); resolve(); }
+        });
+      });
+      second.send({ type: "submit", id: 543, pane_id: shell.pane, text: "barrier541", payload: "barrier541" });
+      expect(await second.result(543)).toMatchObject({ ok: true });
+      await barrier;
+      expect(typed(shell, from).split("held-copy-541").length - 1).toBe(1);
+    } finally { first.close(); second.close(); }
+  }, 30_000);
   for (const failure of ["read", "menu", "clear", "keys", "send"] as const) {
     it(`reports a partial outcome for a ${failure} failure after clearing starts`, async () => {
       const socket = await Socket.connect();
@@ -706,6 +756,177 @@ describe("WebSocket submit", () => {
       prompt.mockRestore();
       screen.scroll.mockRestore();
       screen.read.mockRestore();
+      socket.close();
+    }
+  }, 30_000);
+
+  it("shows the box of a refusal that names no draft, then sends anyway once asked, through agent.prompt", async () => {
+    const socket = await Socket.connect();
+    const screen = mockClaudeInput(agent.pane, claudeInputScreen("! ls"));
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    const sendText = spyOn(herdr, "paneSendText").mockResolvedValue(undefined);
+    const sendKeys = spyOn(herdr, "paneSendKeys").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 90, pane_id: agent.pane, text: "chat message", payload: "chat message" });
+      const refused = await socket.result(90);
+      expect(refused).toMatchObject({ ok: false, code: "input_draft", box: "! ls" });
+      expect(refused.draft).toBeUndefined();
+      expect(prompt).not.toHaveBeenCalled();
+      socket.send({ type: "submit", id: 91, pane_id: agent.pane, text: "chat message", payload: "chat message", send_anyway: true });
+      expect(await socket.result(91)).toMatchObject({ ok: true, pane_id: agent.pane });
+      expect(prompt).toHaveBeenCalledWith(agent.pane, "chat message");
+      expect(sendText).not.toHaveBeenCalled();
+      expect(sendKeys).not.toHaveBeenCalled();
+      // the refusal is used up: a second send anyway is refused, typing nothing
+      socket.send({ type: "submit", id: 92, pane_id: agent.pane, text: "chat message", payload: "chat message", send_anyway: true });
+      expect(await socket.result(92)).toMatchObject({ ok: false, code: "pending_target_changed" });
+      expect(prompt).toHaveBeenCalledTimes(1);
+    } finally {
+      sendKeys.mockRestore(); sendText.mockRestore(); prompt.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("refuses send anyway without a refusal that showed the box, or after one that named a draft", async () => {
+    const socket = await Socket.connect();
+    const screen = mockClaudeInput(agent.pane, claudeInputScreen("❯ named draft"));
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    const sendText = spyOn(herdr, "paneSendText").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 93, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(93)).toMatchObject({ ok: false, code: "pending_target_changed" });
+      socket.send({ type: "submit", id: 94, pane_id: agent.pane, text: "chat", payload: "chat" });
+      const named = await socket.result(94);
+      expect(named).toMatchObject({ ok: false, code: "input_draft", draft: "named draft" });
+      expect(named.box).toBeUndefined();
+      socket.send({ type: "submit", id: 95, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(95)).toMatchObject({ ok: false, code: "pending_target_changed" });
+      expect(prompt).not.toHaveBeenCalled();
+      expect(sendText).not.toHaveBeenCalled();
+    } finally {
+      sendText.mockRestore(); prompt.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("refuses send anyway once Claude's session changed after the refusal", async () => {
+    const socket = await Socket.connect();
+    const screen = mockClaudeInput(agent.pane, claudeInputScreen("! ls"));
+    const original = herdr.paneGet;
+    let replaced = false;
+    const get = spyOn(herdr, "paneGet").mockImplementation(async (paneId, socketPath) => {
+      const pane = await original(paneId, socketPath);
+      return paneId === agent.pane && replaced ? { ...pane, agent_session: { kind: "session_id", source: "cli", value: "replacement-session", agent: "claude" } } : pane;
+    });
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 96, pane_id: agent.pane, text: "chat", payload: "chat" });
+      expect(await socket.result(96)).toMatchObject({ ok: false, code: "input_draft", box: "! ls" });
+      replaced = true;
+      socket.send({ type: "submit", id: 97, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(97)).toMatchObject({ ok: false, code: "pending_target_changed" });
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      prompt.mockRestore(); get.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("refuses send anyway over a box that changed since the refusal, and shows the new one", async () => {
+    const socket = await Socket.connect();
+    let shown = claudeInputScreen("! ls");
+    const screen = mockClaudeInput(agent.pane, () => shown);
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 102, pane_id: agent.pane, text: "chat", payload: "chat" });
+      expect(await socket.result(102)).toMatchObject({ ok: false, code: "input_draft", box: "! ls" });
+      shown = claudeInputScreen("! rm -rf build");
+      socket.send({ type: "submit", id: 103, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(103)).toMatchObject({ ok: false, code: "input_draft", box: "! rm -rf build" });
+      expect(prompt).not.toHaveBeenCalled();
+      // the box the user now saw may be sent over
+      socket.send({ type: "submit", id: 104, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(104)).toMatchObject({ ok: true });
+      expect(prompt).toHaveBeenCalledTimes(1);
+    } finally {
+      prompt.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("offers no send anyway over a box it cannot read whole, and refuses one", async () => {
+    const socket = await Socket.connect();
+    // a draft taller than the pane: only the bottom rule is on screen
+    const screen = mockClaudeInput(agent.pane, ["  more of a tall draft", "  its last line", claudeRule, "  footer"].join("\r\n"));
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 109, pane_id: agent.pane, text: "chat", payload: "chat" });
+      const refused = await socket.result(109);
+      expect(refused).toMatchObject({ ok: false, code: "input_draft" });
+      expect(refused.box).toBeUndefined();
+      socket.send({ type: "submit", id: 110, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(110)).toMatchObject({ ok: false, code: "pending_target_changed" });
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      prompt.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("refuses send anyway when the box changed past what the note shows", async () => {
+    const socket = await Socket.connect();
+    let shown = claudeInputScreen("! " + "x".repeat(220) + " OLD");
+    const screen = mockClaudeInput(agent.pane, () => shown);
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 105, pane_id: agent.pane, text: "chat", payload: "chat" });
+      const refused = await socket.result(105);
+      expect(refused).toMatchObject({ ok: false, code: "input_draft" });
+      // the note shows the box cut at 200 characters; the server keeps it whole
+      expect(refused.box).toBe(`! ${"x".repeat(198)}…`);
+      shown = claudeInputScreen("! " + "x".repeat(220) + " NEW");
+      socket.send({ type: "submit", id: 106, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(106)).toMatchObject({ ok: false, code: "input_draft" });
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      prompt.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("refuses send anyway when Claude's session is replaced while the box is read", async () => {
+    const socket = await Socket.connect();
+    let replaceOnRead = false;
+    let replaced = false;
+    const original = herdr.paneGet;
+    const get = spyOn(herdr, "paneGet").mockImplementation(async (paneId, socketPath) => {
+      const pane = await original(paneId, socketPath);
+      return paneId === agent.pane && replaced ? { ...pane, agent_session: { kind: "session_id", source: "cli", value: "replacement-after-check", agent: "claude" } } : pane;
+    });
+    const screen = mockClaudeInput(agent.pane, () => { if (replaceOnRead) replaced = true; return claudeInputScreen("! ls"); });
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 107, pane_id: agent.pane, text: "chat", payload: "chat" });
+      expect(await socket.result(107)).toMatchObject({ ok: false, code: "input_draft", box: "! ls" });
+      replaceOnRead = true;
+      socket.send({ type: "submit", id: 108, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true });
+      expect(await socket.result(108)).toMatchObject({ ok: false, code: "pending_target_changed" });
+      expect(replaced).toBe(true);
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      prompt.mockRestore(); get.mockRestore();
+      screen.scroll.mockRestore(); screen.read.mockRestore(); socket.close();
+    }
+  }, 30_000);
+
+  it("sends anyway only a chat message sent at once, without clearing a draft", async () => {
+    const socket = await Socket.connect();
+    try {
+      for (const [id, extra] of [[98, { delivery: "queue" }], [99, { typed: true }], [100, { clear_draft: "x" }], [101, { send_anyway: false }]] as const) {
+        socket.send({ type: "submit", id, pane_id: agent.pane, text: "chat", payload: "chat", send_anyway: true, ...extra });
+        expect(await socket.result(id)).toMatchObject({ ok: false, code: "invalid_delivery" });
+      }
+    } finally {
       socket.close();
     }
   }, 30_000);
@@ -1230,17 +1451,67 @@ describe("WebSocket submit", () => {
 
   it("sends a message typed right after a Stop only once the Stop reached the pane", async () => {
     const socket = await Socket.connect();
+    const originalWrite = PtySession.prototype.write;
+    const originalSendText = herdr.paneSendText;
+    let releaseStop: (() => void) | undefined;
+    // A busy sidecar can still hold a pty ESC when the later RPC paste reaches herdr.
+    // Force that interleaving without a clock: a pty ESC goes out only after the paste.
+    const write = spyOn(PtySession.prototype, "write").mockImplementation(function (this: PtySession, text) {
+      if (text === "\u001b") {
+        releaseStop = () => { originalWrite.call(this, text); };
+        return true;
+      }
+      return originalWrite.call(this, text);
+    });
+    const sendText = spyOn(herdr, "paneSendText").mockImplementation(async (...args) => {
+      const result = await originalSendText(...args);
+      if (args[0] === shell.pane && args[1] === "after") releaseStop?.();
+      return result;
+    });
     try {
-      socket.send({ type: "attach", pane_id: shell.pane, cols: 100, rows: 30 });
-      await socket.waitFor((message) => message.type === "pty-data" && message.pane_id === shell.pane);
-      await Bun.sleep(300);
+      await attached(socket, shell.pane);
       const from = chunks(shell).length;
-      socket.send({ type: "input", pane_id: shell.pane, text: "\u001b" });
+      socket.send({ type: "input", pane_id: shell.pane, text: "\u001b", stop: true });
       socket.send({ type: "submit", id: 8, pane_id: shell.pane, text: "after", payload: "after" });
-      await socket.result(8);
+      expect(await socket.result(8)).toMatchObject({ ok: true });
       await received(shell, from, 1);
       expect(typed(shell, from)).toBe("\u001bafter\r");
     } finally {
+      write.mockRestore();
+      sendText.mockRestore();
+      socket.close();
+    }
+  }, 30_000);
+
+  it("keeps a terminal ESC in order with the typing around it", async () => {
+    const socket = await Socket.connect();
+    await attached(socket, shell.pane);
+    const originalWrite = PtySession.prototype.write;
+    const originalSendText = herdr.paneSendText;
+    const held: Array<() => void> = [];
+    const flush = () => { for (const write of held.splice(0)) write(); };
+    // Hold the pty's writes as a busy sidecar would: they go out once all three frames were
+    // written, or once something sent through herdr meanwhile reached the pane ahead of them.
+    const write = spyOn(PtySession.prototype, "write").mockImplementation(function (this: PtySession, text) {
+      held.push(() => { originalWrite.call(this, text); });
+      if (held.length === 3) flush();
+      return true;
+    });
+    const sendText = spyOn(herdr, "paneSendText").mockImplementation(async (...args) => {
+      const result = await originalSendText(...args);
+      if (args[0] === shell.pane) flush();
+      return result;
+    });
+    try {
+      const from = chunks(shell).length;
+      socket.send({ type: "input", pane_id: shell.pane, text: "x" });
+      socket.send({ type: "input", pane_id: shell.pane, text: "\u001b" });
+      socket.send({ type: "input", pane_id: shell.pane, text: "y\r" });
+      await received(shell, from, 1);
+      expect(typed(shell, from)).toBe("x\u001by\r");
+    } finally {
+      write.mockRestore();
+      sendText.mockRestore();
       socket.close();
     }
   }, 30_000);
@@ -1558,6 +1829,129 @@ describe("typing without terminal attach, at the edges", () => {
       bare.stop();
     }
   }, 30_000);
+
+  for (const [label, secret] of [["emoji", "\u{1F642}"], ["accent", "a\u00e9z"]] as const) {
+    it(`refuses a mirrored non-ASCII ${label} secret without typing anything (#1065)`, async () => {
+      // Given a real recorder showing a password prompt on a mirrored pane.
+      const target = await recorder(`secret-${label}`, process.execPath, "Password:");
+      const bare = createServer({ port: 0, stateDir: join(root, `secret-${label}`), terminalAttach: false });
+      const sender = await Socket.connect(bare.port);
+      const send = spyOn(herdr, "paneSendText");
+      const keys = spyOn(herdr, "paneSendKeys");
+      try {
+        await attached(sender, target.pane);
+        const from = chunks(target).length;
+        const result = sender.waitFor((message) => message.type === "secret-result" && message.id === 1065);
+        // When Unicode is submitted, even surrounded by printable ASCII.
+        sender.send({ type: "secret", id: 1065, pane_id: target.pane, prompt: "Password:", secret });
+        const response = await result;
+        // Then no text or key RPC is issued, no bytes arrive, and the existing refusal is returned.
+        expect(send).not.toHaveBeenCalled();
+        expect(keys).not.toHaveBeenCalled();
+        expect(typed(target, from)).toBe("");
+        expect(response).toMatchObject({ ok: false, code: "invalid_secret" });
+      } finally {
+        send.mockRestore();
+        keys.mockRestore();
+        sender.close();
+        bare.stop();
+      }
+    }, 30_000);
+  }
+
+  for (const transition of ["none", "rejoin", "observe", "observe-back", "enter-connect"] as const) {
+    const secret = "sensitive900";
+    it(`clears a mirrored ASCII secret instead of entering it after ${transition} (#900)`, async () => {
+      // Given a real masked shell read and a second client keeping the mirror alive.
+      const label = `secret-ASCII-${transition}`;
+      const output = join(root, `${label}.result`);
+      const script = join(root, `${label}.sh`);
+      writeFileSync(script, `printf 'Password:'; read -s p; printf '%s' "$p" | od -An -tx1 | tr -d '[:space:]' > '${output}'\n`);
+      const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+        "workspace.create", { label: `herdr-web-ui-test-${label}`, cwd: root, focus: false },
+      );
+      workspaces.push(created.workspace.workspace_id);
+      const pane = created.root_pane.pane_id;
+      const bare = createServer({ port: 0, stateDir: join(root, label), terminalAttach: false });
+      const sender = await Socket.connect(bare.port);
+      const keeper = await Socket.connect(bare.port);
+      const entered = deferred();
+      const gate = deferred();
+      const originalSend = herdr.paneSendText;
+      const originalKeys = herdr.paneSendKeys;
+      const send = spyOn(herdr, "paneSendText").mockImplementation(async (paneId, text, socketPath, guard) => {
+        await originalSend(paneId, text, socketPath, guard);
+        if (paneId === pane && text === secret && transition !== "enter-connect") {
+          entered.resolve();
+          await gate.promise;
+        }
+      });
+      const keys = spyOn(herdr, "paneSendKeys").mockImplementation(async (paneId, sent, socketPath, guard) => {
+        if (paneId === pane && sent.includes("Enter") && transition === "enter-connect") {
+          entered.resolve();
+          await gate.promise;
+        }
+        return originalKeys(paneId, sent, socketPath, guard);
+      });
+      let watcher: ReturnType<typeof watch> | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // Subscribe before starting the reader; the command itself contains no prompt text.
+        const prompt = keeper.waitFor((message) => message.type === "pty-data" && message.pane_id === pane && message.data.includes("Password:"));
+        await attached(keeper, pane);
+        await herdr.paneSendText(pane, `exec bash '${script}'\n`);
+        await prompt;
+        await attached(sender, pane);
+        const completed = new Promise<string>((resolve, reject) => {
+          watcher = watch(root, (_event, filename) => {
+            if (filename !== `${label}.result` || !existsSync(output)) return;
+            const text = readFileSync(output, "utf8");
+            if (text) resolve(text);
+          });
+          timer = setTimeout(() => reject(new Error("masked read did not finish within 5s")), 5000);
+        });
+        const result = sender.waitFor((message) => message.type === "secret-result" && message.id === 900);
+        // When authority changes after the real text RPC, or while Enter connects.
+        sender.send({ type: "secret", id: 900, pane_id: pane, prompt: "Password:", secret });
+        await entered.promise;
+        if (transition === "rejoin" || transition === "enter-connect") {
+          sender.send({ type: "detach", pane_id: pane });
+          await attached(sender, pane);
+        } else if (transition === "observe" || transition === "observe-back") {
+          sender.send({ type: "role", mode: "observe" });
+          await sender.waitFor((message) => message.type === "role-ack" && message.mode === "observe");
+          if (transition === "observe-back") {
+            sender.send({ type: "role", mode: "interact" });
+            await sender.waitFor((message) => message.type === "role-ack" && message.mode === "interact");
+          }
+        }
+        gate.resolve();
+        const response = await result;
+        // Then controls keep normal delivery; regressions refuse stale authority and erase the buffer.
+        if (transition === "none") {
+          expect(response).toMatchObject({ ok: true }); // control
+          expect(await completed).toBe(Buffer.from(secret).toString("hex")); // control
+        } else {
+          expect(response).toMatchObject({
+            ok: false, code: transition.startsWith("observe") ? "read_only" : "not_attached",
+          }); // regression (fails on main)
+          expect(keys).toHaveBeenLastCalledWith(pane, Array(secret.length).fill("Backspace"));
+          await originalSend(pane, "X");
+          await originalKeys(pane, ["Enter"]);
+          expect(await completed).toBe("58"); // only X; no residual secret bytes
+        }
+      } finally {
+        gate.resolve();
+        watcher?.close();
+        clearTimeout(timer);
+        send.mockRestore();
+        keys.mockRestore();
+        sender.close();
+        keeper.close();
+        bare.stop();
+      }
+    }, 30_000);
+  }
 
   it("presses no chord for a sender that switched to observe and back while herdr was being reached (#545)", async () => {
     const bare = createServer({ port: 0, stateDir: join(root, "push-role-keys"), terminalAttach: false });

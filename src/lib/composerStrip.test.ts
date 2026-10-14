@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { composerStrip } from "./composerStrip.ts";
+import { composerStrip, worktreeRepoName } from "./composerStrip.ts";
 
 describe("composerStrip", () => {
   it("draws nothing without a folder or a branch, blank strings included", () => {
@@ -20,5 +20,22 @@ describe("composerStrip", () => {
 
   it("draws both when both are known", () => {
     expect(composerStrip({ cwd: "~/dev/api", branch: "feature/strip" })).toEqual({ folder: "api", path: "~/dev/api", branch: "feature/strip" });
+  });
+
+  it("names a linked worktree's repository in the folder's place, the path kept for its title", () => {
+    expect(composerStrip({ cwd: "/home/sam/.herdr/worktrees/api/worktree-lucky-forest-f1c8", branch: "worktree/lucky-forest-f1c8", repo: "api" }))
+      .toEqual({ folder: "api", path: "/home/sam/.herdr/worktrees/api/worktree-lucky-forest-f1c8", branch: "worktree/lucky-forest-f1c8" });
+    expect(composerStrip({ repo: "api" })).toEqual({ folder: "api", path: null, branch: null });
+    expect(composerStrip({ cwd: "/home/sam/dev/api-login", repo: " " })).toEqual({ folder: "api-login", path: "/home/sam/dev/api-login", branch: null });
+  });
+});
+
+describe("worktreeRepoName", () => {
+  it("names the repository only for a linked worktree", () => {
+    const worktree = { checkout_path: "/w", repo_key: "k", repo_root: "/r", repo_name: "api" };
+    expect(worktreeRepoName({ worktree: { ...worktree, is_linked_worktree: true } })).toBe("api");
+    expect(worktreeRepoName({ worktree: { ...worktree, is_linked_worktree: false } })).toBeNull();
+    expect(worktreeRepoName({ worktree: null })).toBeNull();
+    expect(worktreeRepoName(undefined)).toBeNull();
   });
 });

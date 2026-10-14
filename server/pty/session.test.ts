@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { PtySession } from "./session.ts";
+import { PtySession, writeLine } from "./session.ts";
 
 /**
  * The attach command is `herdr terminal attach`, and herdr's CLI picks its socket from
@@ -115,4 +115,43 @@ describe("PtySession", () => {
       expect(Bun.spawnSync(["pgrep", "-f", tag]).stdout.length).toBe(0);
     } finally { session.kill(); }
   }, 12000);
+});
+
+describe("writeLine", () => {
+  // Only a child that really closes its stdin handle reaches EPIPE on Windows: Python's os.close(0) does;
+  // Bun's and Node's closeSync(0) / stdin.destroy() and an exited child do not, so skip where Python is absent.
+  // Windows' Microsoft Store alias (WindowsApps\python.exe) is on PATH with no Python behind it: it exits non-zero.
+  const python = Bun.which(process.platform === "win32" ? "python" : "python3");
+  const runs = python !== null && Bun.spawnSync([python, "-c", ""], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  it.skipIf(!runs)("survives a child that already closed its stdin", async () => {
+    // on Windows the write settles later and an EPIPE rejects the returned promise instead of throwing
+    const rejections: unknown[] = []; const track = (error: unknown) => rejections.push(error);
+    process.on("unhandledRejection", track);
+    let proc: ReturnType<typeof Bun.spawn> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const child = Bun.spawn([
+        python!, "-c",
+        "import os,threading; os.close(0); os.write(1,b'closed\\n'); os.close(1); threading.Event().wait()",
+      ], { stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+      proc = child;
+      const ready = await Promise.race([
+        new Response(child.stdout).text(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Child did not close stdin within 2 seconds")), 2000);
+        }),
+      ]);
+      clearTimeout(timer);
+      expect(ready).toBe("closed\n");
+      expect(child.exitCode).toBeNull();
+      writeLine(child.stdin, "{}\n");
+      await Bun.sleep(300); // fixed wait: observe delayed unhandled rejections after the pipe write
+      expect(rejections).toEqual([]);
+    } finally {
+      clearTimeout(timer);
+      proc?.kill();
+      await proc?.exited;
+      process.off("unhandledRejection", track);
+    }
+  });
 });

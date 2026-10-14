@@ -287,22 +287,6 @@
   }
 }
 
-/* Contrast: the stepper and, before it, the way back to the palette's own drawing. At the default
-   that arrow keeps its place, unseen, so the row does not shift as the step changes */
-.settings-contrast {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.settings-contrast > .icon-button {
-  color: var(--text-dim);
-}
-
-.settings-contrast > .icon-button:disabled {
-  visibility: hidden;
-}
-
 @media (max-width: 640px) {
   .settings-dialog {
     grid-template-columns: minmax(0, 1fr);
@@ -373,10 +357,6 @@
     flex-basis: 100%;
   }
 
-  /* under its sentence, the arrow and the stepper keep to the end of the line, where the row has them */
-  .settings-row.is-wide > .settings-contrast {
-    justify-content: flex-end;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

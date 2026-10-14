@@ -251,7 +251,7 @@ shortIt("handles a Windows stored cwd prefix using a Linux fixture process", asy
   expect(await codexTranscriptPath(root, cwd, home, [fixturePane(root, cwd)])).toBe(path);
 });
 
-shortIt("requires a submitted first prompt and substantive answer, not a composer or quote", async () => {
+shortIt("requires a submitted first prompt and exact answer, not a composer or quote (control)", async () => {
   await shortSession();
   for (const shown of [
     `OpenAI Codex (v1.0)\n› ${shortPrompt}`,
@@ -266,7 +266,10 @@ shortIt("requires a submitted first prompt and substantive answer, not a compose
   }
   shortRollout(path, shortPrompt, "Ready");
   screen = shortScreen.replace(shortAnswer, "Ready");
-  expect(await resolve()).toBeNull();
+  expect(await resolve()).toBe(path); // regression: a tiny but exact answer is sufficient
+  shortRollout(path, shortPrompt, "");
+  screen = shortScreen.replace(shortAnswer, "");
+  expect(await resolve()).toBeNull(); // control: no answer is not a submitted exchange
 });
 
 shortIt("retains older resumed later turns as competitors to a new first prompt", async () => {

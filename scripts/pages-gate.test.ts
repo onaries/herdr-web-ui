@@ -53,29 +53,83 @@ const pageJob = (name: string): string => indentedSection(pages, "jobs", name, 2
 const ciJob = (name: string): string => indentedSection(ci, "jobs", name, 2);
 
 describe("Pages deployment gate", () => {
-  it("runs reusable CI validation in parallel with the site build and requires both before deployment", () => {
+  it("runs reusable CI only for a manual main dispatch, alongside the site build", () => {
     const validate = pageJob("validate");
     const build = pageJob("build");
     const deploy = pageJob("deploy");
     expect(validate).toContain("uses: ./.github/workflows/ci.yml");
+    expect(validate).toContain("if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'");
     expect(build).not.toContain("needs:");
     expect(deploy).toMatch(/needs:\s*\[validate, build\]/);
   });
 
   it("only runs on main, pins checkout to the triggering SHA, and serializes without canceling deployments", () => {
-    expect(pages).toMatch(/push:\n\s+branches: \[main\]/);
     expect(pages).toMatch(/workflow_dispatch:\n/);
     for (const name of ["validate", "build", "deploy"]) {
-      expect(pageJob(name)).toContain("if: github.ref == 'refs/heads/main'");
+      expect(pageJob(name)).toContain("github.ref == 'refs/heads/main'");
     }
     expect(pages).toMatch(/^  group: pages$/m);
     expect(pages).toContain("cancel-in-progress: false");
     expect(ci).toMatch(/group: validation-/);
     expect(pageJob("validate")).toContain("permissions:\n      contents: read");
-    expect(pageJob("build")).toContain("ref: ${{ github.sha }}");
     for (const name of ["windows-install", "fast", "integration", "browser-main", "browser-other"]) {
       expect(ciJob(name)).toContain("ref: ${{ github.sha }}");
     }
+  });
+
+  for (const [name, pattern] of [
+    ["CI workflow completion", /workflow_run:\n\s+workflows: \[CI\]/],
+    ["completed runs only", /workflow_run:\n\s+workflows: \[CI\]\n\s+types: \[completed\]/],
+    ["main runs only", /workflow_run:\n\s+workflows: \[CI\]\n\s+types: \[completed\]\n\s+branches: \[main\]/],
+  ] as const) {
+    it(`triggers on ${name}`, () => {
+      expect(pages).toMatch(pattern);
+    });
+  }
+
+  it("does not trigger another Website run directly on push", () => {
+    expect(pages).not.toMatch(/^  push:/m);
+  });
+
+  for (const job of ["build", "deploy"]) {
+    for (const condition of [
+      "github.event_name == 'workflow_dispatch' ||",
+      "(github.event_name == 'workflow_run' &&",
+      "github.event.workflow_run.conclusion == 'success' &&",
+      "github.event.workflow_run.event == 'push' &&",
+      "github.event.workflow_run.head_repository.full_name == github.repository))",
+    ]) {
+      it(`gates ${job} on ${condition}`, () => {
+        expect(pageJob(job)).toContain(condition);
+      });
+    }
+  }
+
+  for (const condition of [
+    "always() &&",
+    "needs.build.result == 'success' &&",
+    "(needs.validate.result == 'success' ||",
+    "(needs.validate.result == 'skipped' &&",
+    "github.event_name == 'workflow_run' &&\n      github.event.workflow_run.conclusion == 'success')) &&",
+  ]) {
+    it(`requires deployment dependency result ${condition}`, () => {
+      expect(pageJob("deploy")).toContain(condition);
+    });
+  }
+
+  for (const [job, field] of [
+    ["build", "ref"],
+    ["deploy", "EXPECTED_SHA"],
+    ["deploy", "VALIDATED_SHA"],
+    ["deploy", "DEPLOYED_SHA"],
+  ]) {
+    it(`uses the completed CI head SHA for ${field}`, () => {
+      expect(pageJob(job)).toContain(`${field}: \${{ github.event.workflow_run.head_sha || github.sha }}`);
+    });
+  }
+
+  it("records the checked-out commit rather than workflow_run's default-branch SHA", () => {
+    expect(pageJob("build")).toContain('echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"');
   });
 
   it("fails closed on a current-main API error and refuses an outdated build before deployment", () => {
@@ -140,12 +194,25 @@ describe("Browser lane script lists", () => {
   it("splits the serial lane across the CI browser jobs with nothing dropped or run twice", () => {
     const shards = ["browser-main", "browser-other"].map((name) => {
       const job = ciJob(name);
-      expect(job).toContain("run: bun scripts/ci-browser-parallel.ts");
+      expect(job).toContain("run: bun run check run -- bun scripts/ci-browser-parallel.ts");
       return selectBrowserScripts(serial, env(job, "BROWSER_SCRIPTS"), env(job, "BROWSER_EXCLUDE"));
     });
     const all = shards.flat();
     expect(all.length).toBe(serial.length);
     expect([...all].sort()).toEqual([...serial].sort());
+  });
+
+  it("runs every herdr-backed lane under a shared check slot that it waits for", () => {
+    expect(ciJob("integration")).toContain("run: bun run check integration");
+    for (const name of ["integration", "browser-main", "browser-other"]) {
+      const job = ciJob(name);
+      expect(env(job, "CHECK_MAX_RUNS")).toMatch(/^[1-8]$/);
+      const wait = Number(env(job, "CHECK_WAIT_SECONDS"));
+      const timeout = Number(job.match(/^    timeout-minutes: (\d+)$/m)?.[1]);
+      expect(wait).toBeGreaterThan(0);
+      // the job outlives its longest wait, with room for the lane itself
+      expect(timeout * 60).toBeGreaterThanOrEqual(wait + 600);
+    }
   });
 
   it("calls a script that passed only on its second run flaky, and one that failed again a failure", () => {
@@ -182,6 +249,19 @@ describe("Browser lane script lists", () => {
 });
 
 describe("Extracted UI checks", () => {
+  it("refuses a direct mobile viewport run in unit mode instead of silently passing", () => {
+    // Given a unit run, no browser or herdr fixture is allowed.
+    // When the shared helper is invoked directly, it must execute its entrypoint.
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("./mobile-viewport-regression.ts", import.meta.url))], {
+      encoding: "utf8", timeout: 5_000,
+      env: { ...process.env, HERDR_TEST_MODE: "unit" },
+    });
+    // Then the unit-mode guard rejects the run rather than returning an empty success.
+    expect(result.error).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("HERDR_TEST_MODE=unit");
+  });
+
   const moved = [
     "checkPushSettings", "checkWakeLock", "checkSecretInput", "checkTerminalCopy", "checkPaneFind",
     "checkUsageMeters", "checkNotificationStartup", "checkNotificationView", "checkMobileViewport",

@@ -16,7 +16,7 @@ export async function checkTerminalFileInput(page: Page, socket: WebSocket): Pro
     socket.on("framesent", listener);
   });
   await page.locator(".conn-live").waitFor();
-  const host = page.locator(".pane-terminal");
+  const host = page.locator(".pane-frame.is-current .pane-terminal");
   const path = "/Users/test/Downloads/monthly-report.json";
   const unbracket = (text: string): string => text.replace(/^\x1b\[200~/, "").replace(/\x1b\[201~$/, "");
   const dropped = input();
@@ -29,7 +29,7 @@ export async function checkTerminalFileInput(page: Page, socket: WebSocket): Pro
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
   await page.evaluate((text) => navigator.clipboard.writeText(text), path);
-  await page.locator(".xterm-helper-textarea").focus();
+  await host.locator(".xterm-helper-textarea").focus();
   const pasted = input();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
   assert.equal(unbracket(await pasted), path);

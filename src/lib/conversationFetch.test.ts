@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { fetchPaneConversation, conversationAnswerBytes } from "./api.ts";
+import { fetchPaneConversation, conversationAnswerBytes, peekPaneConversation } from "./api.ts";
 import { ConversationRefresh } from "./conversationRefresh.ts";
 import type { ConversationResponse } from "../../shared/protocol.ts";
 
@@ -75,6 +75,63 @@ describe("conversation polling", () => {
     await fetchPaneConversation("big:p0");
     expect([...asked.values()]).toEqual([null]);
   });
+});
+
+describe("conversation peek", () => {
+  it("reuses a bounded newest page only for the matching page limit", async () => {
+    const asked: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      asked.push(String(url));
+      return new Response(JSON.stringify({ source: "omo-transcript", turns: [], cursor: null }), { status: 200, headers: { etag: "\"bounded\"" } });
+    }) as typeof fetch;
+    const answer = await fetchPaneConversation("peek:bounded", "local", { limit: 12 });
+    expect(peekPaneConversation("peek:bounded", "local", { limit: 12 })).toBe(answer);
+    expect(peekPaneConversation("peek:bounded")).toBeUndefined();
+    expect(peekPaneConversation("peek:bounded", "local", { limit: 20 })).toBeUndefined();
+    expect(asked).toEqual(["/api/pane/conversation?pane_id=peek%3Abounded&limit=12"]);
+  });
+
+  it("hands back the newest page last answered, without asking the server", async () => {
+    let asked = 0;
+    globalThis.fetch = (async (_url: string) => {
+      asked += 1;
+      return new Response(JSON.stringify({ source: "claude-transcript", turns: [], cursor: null }), { status: 200, headers: { etag: "\"p\"" } });
+    }) as typeof fetch;
+    const answer = await fetchPaneConversation("peek:p1");
+    expect(peekPaneConversation("peek:p1")).toBe(answer);
+    expect(peekPaneConversation("peek:p1", "local")).toBe(answer);
+    expect(asked).toBe(1);
+  });
+
+  it("has nothing for a pane never read, or read on another PC", async () => {
+    globalThis.fetch = (async (_url: string) => new Response(JSON.stringify({ source: "claude-transcript", turns: [], cursor: null }), { status: 200, headers: { etag: "\"q\"" } })) as typeof fetch;
+    expect(peekPaneConversation("peek:never")).toBeUndefined();
+    await fetchPaneConversation("peek:p2", "pc-a");
+    expect(peekPaneConversation("peek:p2", "pc-a")).toBeDefined();
+    expect(peekPaneConversation("peek:p2")).toBeUndefined();
+  });
+
+  it("never hands back an older page", async () => {
+    globalThis.fetch = (async (_url: string) => new Response(JSON.stringify({ source: "claude-transcript", turns: [], cursor: "c:1" }), { status: 200, headers: { etag: "\"r\"" } })) as typeof fetch;
+    await fetchPaneConversation("peek:p3", "local", { before: "c:5" });
+    expect(peekPaneConversation("peek:p3")).toBeUndefined();
+  });
+});
+
+it("reports a newest read in flight, so a fresh attach's connected edge can leave it to that read", async () => {
+  refreshClock();
+  const refresh = new ConversationRefresh();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  let reads = 0;
+  refresh.setRead(async () => { reads += 1; await promise; });
+  expect(refresh.reading).toBe(false);
+  refresh.refresh();
+  expect(refresh.reading).toBe(true);
+  resolve();
+  await settleRefresh();
+  expect(refresh.reading).toBe(false);
+  expect(reads).toBe(1);
+  refresh.stop();
 });
 
 it("counts a compressed answer by its parsed body, not the bytes on the wire", () => {

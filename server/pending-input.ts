@@ -1,6 +1,24 @@
 import type { AgentStatus, PendingMessage } from "../shared/protocol.ts";
 
-export interface PendingIdentity { agent: string | null; terminalId: string; session: string | null }
+export interface PendingIdentity {
+  agent: string | null;
+  terminalId: string;
+  session: string | null;
+  processPid?: number | null;
+  processBirth?: number | null;
+  omoSession?: string | null;
+}
+
+/** An identity learned after enqueue is not a replacement; only mutually known parts disagree. */
+export function samePendingIdentity(before: PendingIdentity, after: PendingIdentity, platform: NodeJS.Platform = process.platform): boolean {
+  const changed = <T>(a: T | null | undefined, b: T | null | undefined) => a != null && b != null && a !== b;
+  return before.agent === after.agent && before.terminalId === after.terminalId
+    && !changed(before.session, after.session) && !changed(before.omoSession, after.omoSession)
+    && !changed(before.processPid, after.processPid)
+    // macOS derives birth from whole elapsed seconds; reads of one PID drift by up to a second.
+    && (before.processBirth == null || after.processBirth == null
+      || (platform === "darwin" ? Math.abs(before.processBirth - after.processBirth) <= 1000 : before.processBirth === after.processBirth));
+}
 export interface PendingRecord<Owner, Lease> {
   owner: Owner;
   paneId: string;
@@ -10,6 +28,7 @@ export interface PendingRecord<Owner, Lease> {
   inFlight: boolean;
 }
 type Fault = { code: string; message: string };
+interface HeldCopyReply { ok: boolean; code?: string; message?: string }
 type Removed = { id: string; outcome: "sent" | "discarded" };
 /** `by`: the message whose send opened the gate */
 interface TurnGate { by: string; committed: boolean; sawWorking: boolean; completed: boolean; deadline: number | null; restart?: "interruption" | "working" }
@@ -33,6 +52,7 @@ export class PendingInputs<Owner, Lease> {
   private readonly gates = new Map<string, TurnGate>();
   private readonly closed = new Map<Owner, number>();
   private readonly removed = new Map<string, { owner: Owner; paneId: string; outcome: Removed["outcome"] }>();
+  private readonly resends = new Map<string, { id: string; fingerprint: string; reply: Promise<HeldCopyReply>; settledAt: number | null; sent: boolean }>();
 
   constructor(
     private readonly changed: (owner: Owner, paneId: string, messages: PendingMessage[], removed?: Removed[]) => void,
@@ -40,6 +60,28 @@ export class PendingInputs<Owner, Lease> {
     private readonly startTimeoutMs = PENDING_START_TIMEOUT_MS,
     private readonly newId: () => string = () => crypto.randomUUID(),
   ) {}
+
+  /** Cross-connection held copies share one outcome; never evict an in-flight send. */
+  resend(paneId: string, id: string, fingerprint: string, task: () => Promise<HeldCopyReply>, generation = 0): Promise<HeldCopyReply> {
+    const key = JSON.stringify([paneId, id, generation]);
+    this.expireResends();
+    const previous = this.resends.get(key);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new PendingInputError("invalid_submit_id", "This resend id already belongs to another message");
+      return previous.reply;
+    }
+    if (this.resends.size >= MAX_PENDING_TOTAL) throw new PendingInputError("pending_limit", "Too many held-copy sends are still retained; try again later");
+    const entry: { id: string; fingerprint: string; settledAt: number | null; sent: boolean; reply: Promise<HeldCopyReply> } = { id, fingerprint, settledAt: null, sent: false, reply: Promise.resolve().then(task) };
+    this.resends.set(key, entry);
+    entry.reply.then((reply) => { entry.sent = reply.ok; entry.settledAt = this.now(); }, () => { entry.settledAt = this.now(); });
+    return entry.reply;
+  }
+
+  private expireResends(): void {
+    for (const [key, entry] of this.resends) {
+      if (entry.settledAt !== null && !(entry.sent && this.records.has(entry.id)) && this.now() - entry.settledAt >= CLOSED_RETENTION_MS) this.resends.delete(key);
+    }
+  }
 
   list(owner: Owner, paneId: string): PendingMessage[] {
     return [...this.records.values()].filter((item) => item.owner === owner && item.paneId === paneId).map((item) => ({ ...item.message, ...(item.message.error ? { error: { ...item.message.error } } : {}) }));
@@ -120,7 +162,8 @@ export class PendingInputs<Owner, Lease> {
       this.records.delete(item.message.id);
       this.remember(item, "sent");
       this.publish(item.owner, item.paneId, [{ id: item.message.id, outcome: "sent" }]);
-      if (this.gates.get(item.paneId)?.completed) this.gates.delete(item.paneId);
+      const gate = this.gates.get(item.paneId);
+      if (gate?.completed || (gate?.by === item.message.id && !gate.committed)) this.gates.delete(item.paneId);
       return;
     }
     item.message.state = uncertain ? "uncertain" : retryWhenReady ? "queued" : "held";
@@ -204,6 +247,7 @@ export class PendingInputs<Owner, Lease> {
   close(owner: Owner): void { this.hold(owner); this.closed.set(owner, this.now()); }
 
   expire(): void {
+    this.expireResends();
     for (const [paneId, gate] of this.gates) {
       if (gate.deadline !== null && this.now() >= gate.deadline && ![...this.records.values()].some((item) => item.paneId === paneId && item.inFlight)) {
         this.holdPane(paneId, { code: "pending_turn_unconfirmed", message: "The next turn did not start in time; review and send the remaining messages explicitly" });

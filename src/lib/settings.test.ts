@@ -15,13 +15,6 @@ it("keeps a tab's pane while out of use until this device turns the pause on", (
   expect(sanitizeSettings({ releasePaneAway: "true" }).releasePaneAway).toBe(false);
 });
 
-it("shrinks a narrow split pane's font until this device turns it off", () => {
-  expect(DEFAULT_SETTINGS.narrowPaneFont).toBe(true);
-  expect(sanitizeSettings({}).narrowPaneFont).toBe(true);
-  expect(sanitizeSettings({ narrowPaneFont: false }).narrowPaneFont).toBe(false);
-  expect(sanitizeSettings({ narrowPaneFont: "false" }).narrowPaneFont).toBe(true);
-});
-
 it("keeps the screen wake lock off until this device explicitly enables it", () => {
   expect(DEFAULT_SETTINGS.keepScreenOn).toBe(false);
   expect(sanitizeSettings({}).keepScreenOn).toBe(false);
@@ -34,29 +27,6 @@ it("keeps the screen wake lock off until this device explicitly enables it", () 
   expect(sanitizeSettings({ terminalWheelSpeed: 99 }).terminalWheelSpeed).toBe(10);
   expect(sanitizeSettings({ terminalWheelSpeed: 0 }).terminalWheelSpeed).toBe(1);
   expect(sanitizeSettings({ terminalWheelSpeed: "3" }).terminalWheelSpeed).toBe(1);
-});
-
-it("takes twenty files from one paste, pick or drop unless this device chose another whole number from 1 to 50", () => {
-  expect(sanitizeSettings({}).attachLimit).toBe(20);
-  expect(sanitizeSettings({ attachLimit: 4 }).attachLimit).toBe(4);
-  expect(sanitizeSettings({ attachLimit: 7.4 }).attachLimit).toBe(7);
-  expect(sanitizeSettings({ attachLimit: 500 }).attachLimit).toBe(50);
-  expect(sanitizeSettings({ attachLimit: 0 }).attachLimit).toBe(1);
-  expect(sanitizeSettings({ attachLimit: "8" }).attachLimit).toBe(20);
-  expect(SETTING_SCOPE.attachLimit).toBe("device");
-});
-
-it("keeps the terminal cursor at a block that blinks unless a saved shape or blink says otherwise", () => {
-  expect(DEFAULT_SETTINGS.terminalCursorStyle).toBe("block");
-  expect(DEFAULT_SETTINGS.terminalCursorBlink).toBe(true);
-  expect(sanitizeSettings({}).terminalCursorStyle).toBe("block");
-  expect(sanitizeSettings({}).terminalCursorBlink).toBe(true);
-  expect(sanitizeSettings({ terminalCursorStyle: "bar" }).terminalCursorStyle).toBe("bar");
-  expect(sanitizeSettings({ terminalCursorStyle: "underline" }).terminalCursorStyle).toBe("underline");
-  // a value no shape answers for falls back, never breaking the UI on a stale or hand-edited record
-  expect(sanitizeSettings({ terminalCursorStyle: "pipe" }).terminalCursorStyle).toBe("block");
-  expect(sanitizeSettings({ terminalCursorBlink: false }).terminalCursorBlink).toBe(false);
-  expect(sanitizeSettings({ terminalCursorBlink: "false" }).terminalCursorBlink).toBe(true);
 });
 
 it("keeps sidebar rows on two lines unless one line was chosen", () => {
@@ -103,10 +73,8 @@ describe("telemetry settings snapshot", () => {
       sidebarRows: "one",
       agentOrder: "activity",
       agentMarks: "mono",
-      palette: "forest",
+      palette: "catppuccin",
       terminalFontSize: 22,
-      terminalCursorStyle: "underline",
-      terminalCursorBlink: false,
       terminalWheelSpeed: 10,
       chatFontSize: 11,
       chatWidth: "wide",
@@ -120,6 +88,10 @@ describe("telemetry settings snapshot", () => {
       voiceLanguage: "ko-KR",
       wrapCode: true,
       markdownWidth: "full",
+      paletteLight: "charcoal",
+      paletteDark: "amber",
+      uiFontSize: 18,
+      diffStyle: "split",
     });
     const snapshot = telemetrySettingsSnapshot(settings);
 
@@ -131,10 +103,8 @@ describe("telemetry settings snapshot", () => {
       sidebarRows: "one",
       agentOrder: "activity",
       agentMarks: "mono",
-      palette: "forest",
+      palette: "catppuccin",
       terminalFontSize: 22,
-      terminalCursorStyle: "underline",
-      terminalCursorBlink: false,
       terminalWheelSpeed: 10,
       chatFontSize: 11,
       chatWidth: "wide",
@@ -148,6 +118,10 @@ describe("telemetry settings snapshot", () => {
       voiceLanguage: "ko-KR",
       wrapCode: true,
       markdownWidth: "full",
+      paletteLight: "charcoal",
+      paletteDark: "amber",
+      uiFontSize: 18,
+      diffStyle: "split",
     });
     expect(telemetrySettings(snapshot)).toEqual(snapshot);
     expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toMatchObject({
@@ -158,6 +132,7 @@ describe("telemetry settings snapshot", () => {
       quickRepliesCustom: false,
       quickReplyCount: DEFAULT_SETTINGS.quickReplies.length,
       usageHiddenCount: 0,
+      usageOrderCustom: false,
     });
   });
 
@@ -183,6 +158,7 @@ describe("telemetry settings snapshot", () => {
       quickRepliesCustom: true,
       quickReplyCount: 1,
       usageHiddenCount: 1,
+      usageOrderCustom: true,
     });
     for (const key of ["keyBarExtras", "keyBarItems", "shortcutOverrides", "terminalFontFamily", "chatFontFamily", "quickReplies", "usageOrder", "usageHidden"]) {
       expect(snapshot).not.toHaveProperty(key);
@@ -535,15 +511,6 @@ describe("microphone button", () => {
   });
 });
 
-describe("suggestion chip", () => {
-  it("stays on until turned off in settings", () => {
-    expect(DEFAULT_SETTINGS.showSuggestionChip).toBe(true);
-    expect(sanitizeSettings({}).showSuggestionChip).toBe(true);
-    expect(sanitizeSettings({ showSuggestionChip: false }).showSuggestionChip).toBe(false);
-    expect(sanitizeSettings({ showSuggestionChip: "no" }).showSuggestionChip).toBe(true);
-  });
-});
-
 describe("quick replies row", () => {
   it("stays hidden until chosen in settings", () => {
     expect(DEFAULT_SETTINGS.showQuickReplies).toBe(false);
@@ -553,10 +520,6 @@ describe("quick replies row", () => {
     expect(sanitizeSettings({ showUsage: true }).showUsage).toBe(true);
     expect(sanitizeSettings({ showUsage: 1 }).showUsage).toBe(false);
     expect(DEFAULT_SETTINGS.usageCount).toBe("used");
-    // the pace is shown only once chosen
-    expect(DEFAULT_SETTINGS.usagePace).toBe(false);
-    expect(sanitizeSettings({ usagePace: true }).usagePace).toBe(true);
-    expect(sanitizeSettings({ usagePace: "yes" }).usagePace).toBe(false);
     expect(sanitizeSettings({ usageCount: "left" }).usageCount).toBe("left");
     expect(sanitizeSettings({ usageCount: "half" }).usageCount).toBe("used");
     expect(DEFAULT_SETTINGS.usageGlance).toBe("week");
@@ -568,24 +531,32 @@ describe("quick replies row", () => {
   });
 });
 
+describe("language", () => {
+  it("keeps a listed language and loads a removed one (Turkish) as System", () => {
+    expect(sanitizeSettings({ language: "ko" }).language).toBe("ko");
+    expect(sanitizeSettings({ language: "tr" }).language).toBe("system");
+  });
+});
+
 describe("palette", () => {
   it("defaults to amber, the look before this setting, and keeps only a known palette", () => {
     expect(DEFAULT_SETTINGS.palette).toBe("amber");
     // settings stored before palettes existed carry no palette key
     expect(sanitizeSettings({ theme: "light" }).palette).toBe("amber");
-    expect(sanitizeSettings({ palette: "report" }).palette).toBe("report");
     expect(sanitizeSettings({ palette: "charcoal" }).palette).toBe("charcoal");
     expect(sanitizeSettings({ palette: "catppuccin" }).palette).toBe("catppuccin");
-    expect(sanitizeSettings({ palette: "lilac" }).palette).toBe("lilac");
-    expect(sanitizeSettings({ palette: "forest" }).palette).toBe("forest");
     expect(sanitizeSettings({ palette: "pink" }).palette).toBe("amber");
   });
 
-  it("preserves Forest through a saved settings round-trip and unrelated edits", () => {
-    const saved = sanitizeSettings({ palette: "forest", theme: "dark" });
+  it("loads a removed palette (report, lilac, forest) as amber", () => {
+    for (const removed of ["report", "lilac", "forest"]) expect(sanitizeSettings({ palette: removed }).palette).toBe("amber");
+  });
+
+  it("preserves Catppuccin through a saved settings round-trip and unrelated edits", () => {
+    const saved = sanitizeSettings({ palette: "catppuccin", theme: "dark" });
     const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
-    expect(reloaded.palette).toBe("forest");
-    expect(sanitizeSettings({ ...reloaded, theme: "light" }).palette).toBe("forest");
+    expect(reloaded.palette).toBe("catppuccin");
+    expect(sanitizeSettings({ ...reloaded, theme: "light" }).palette).toBe("catppuccin");
   });
 
   const css = readFileSync(join(import.meta.dir, "..", "styles.css"), "utf8");
@@ -594,21 +565,14 @@ describe("palette", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     return css.slice(start, css.indexOf("}", start));
   };
-  const paper = '[data-theme="light"]:is([data-palette="report"], [data-palette="charcoal"])';
   // each case lists its blocks from the most specific to the base; the first one naming a token wins
   const cases = [
     { theme: "dark", palette: "amber", layers: [":root"] },
     { theme: "light", palette: "amber", layers: ['[data-theme="light"]', ":root"] },
-    { theme: "dark", palette: "report", layers: ['[data-theme="dark"][data-palette="report"]', ":root"] },
-    { theme: "light", palette: "report", layers: [paper, '[data-theme="light"]', ":root"] },
     { theme: "dark", palette: "charcoal", layers: ['[data-theme="dark"][data-palette="charcoal"]', ":root"] },
-    { theme: "light", palette: "charcoal", layers: ['[data-theme="light"][data-palette="charcoal"]', paper, '[data-theme="light"]', ":root"] },
+    { theme: "light", palette: "charcoal", layers: ['[data-theme="light"][data-palette="charcoal"]', '[data-theme="light"]', ":root"] },
     { theme: "dark", palette: "catppuccin", layers: ['[data-theme="dark"][data-palette="catppuccin"]', ":root"] },
     { theme: "light", palette: "catppuccin", layers: ['[data-theme="light"][data-palette="catppuccin"]', '[data-theme="light"]', ":root"] },
-    { theme: "dark", palette: "lilac", layers: ['[data-theme="dark"][data-palette="lilac"]', ":root"] },
-    { theme: "light", palette: "lilac", layers: ['[data-theme="light"][data-palette="lilac"]', '[data-theme="light"]', ":root"] },
-    { theme: "dark", palette: "forest", layers: ['[data-theme="dark"][data-palette="forest"]', ":root"] },
-    { theme: "light", palette: "forest", layers: ['[data-theme="light"][data-palette="forest"]', '[data-theme="light"]', ":root"] },
   ] as const;
   const tokens = (layers: readonly string[]) => (name: string): string =>
     layers.map((selector) => block(selector).match(new RegExp(`--${name}: ([^;]+);`))?.[1]).find((value) => value !== undefined)!;
@@ -719,13 +683,6 @@ describe("default lens", () => {
   });
 });
 
-it("highlights code unless turned off, and keeps a stored choice only when it is a boolean", () => {
-  expect(DEFAULT_SETTINGS.highlightCode).toBe(true);
-  expect(sanitizeSettings({ highlightCode: false }).highlightCode).toBe(false);
-  expect(sanitizeSettings({ highlightCode: "no" }).highlightCode).toBe(true);
-  expect(sanitizeSettings({}).highlightCode).toBe(true);
-});
-
 it("keeps the file viewer's wrap setting only when it is a boolean", () => {
   expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
   expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
@@ -738,18 +695,6 @@ it("keeps the Markdown preview's width to readable or full, readable by default"
   for (const bad of ["narrow", "medium", "wide", "", null, 80]) expect(sanitizeSettings({ markdownWidth: bad }).markdownWidth).toBe("readable");
 });
 
-it("keeps page overlap whole, bounded and persistent, including full-viewport paging", () => {
-  expect(DEFAULT_SETTINGS.pageOverlapRows).toBe(1);
-  expect(sanitizeSettings({}).pageOverlapRows).toBe(1);
-  expect(sanitizeSettings({ pageOverlapRows: 0 }).pageOverlapRows).toBe(0);
-  expect(sanitizeSettings({ pageOverlapRows: 3.6 }).pageOverlapRows).toBe(4);
-  expect(sanitizeSettings({ pageOverlapRows: -8 }).pageOverlapRows).toBe(0);
-  expect(sanitizeSettings({ pageOverlapRows: 101 }).pageOverlapRows).toBe(100);
-  for (const value of ["3", null, true, NaN, Infinity]) expect(sanitizeSettings({ pageOverlapRows: value }).pageOverlapRows).toBe(1);
-  const saved = sanitizeSettings({ ...DEFAULT_SETTINGS, pageOverlapRows: 3 });
-  expect(sanitizeSettings(JSON.parse(JSON.stringify(saved))).pageOverlapRows).toBe(3);
-});
-
 describe("shared settings", () => {
   it("shares exactly the settings SETTING_SCOPE marks shared", () => {
     const shared = Object.entries(SETTING_SCOPE).filter(([, scope]) => scope === "shared").map(([key]) => key).sort();
@@ -758,12 +703,3 @@ describe("shared settings", () => {
   });
 });
 
-it("keeps plain chat paging opt-in and saves the keyboard choice on this device", () => {
-  expect(DEFAULT_SETTINGS.chatPageKeys).toBe(false);
-  expect(SETTING_SCOPE.chatPageKeys).toBe("device");
-  expect(SETTING_SCOPE.pageOverlapRows).toBe("device");
-  for (const chatPageKeys of [true, false]) {
-    expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ chatPageKeys })))).chatPageKeys).toBe(chatPageKeys);
-  }
-  for (const chatPageKeys of [null, "true", 1]) expect(sanitizeSettings({ chatPageKeys }).chatPageKeys).toBe(false);
-});

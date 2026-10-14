@@ -4,7 +4,7 @@ import { useT } from "../lib/i18n.ts";
 import { pushSupported, testDevicePush } from "../lib/push.ts";
 import { useSettings } from "../lib/settings.ts";
 
-type Result = Awaited<ReturnType<typeof testDevicePush>> | "failed" | "sending" | null;
+type Result = Awaited<ReturnType<typeof testDevicePush>> | "gone" | "failed" | "sending" | null;
 
 export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean> }) {
   const { settings } = useSettings();
@@ -13,7 +13,7 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
   const supported = pushSupported();
   const denied = globalThis.Notification?.permission === "denied";
   const busy = result === "sending";
-  const enable = !settings.alertsOn || result === "missing" || result === "permission";
+  const enable = !settings.alertsOn || result === "missing" || result === "gone" || result === "permission";
 
   const send = async (repair: boolean) => {
     setResult("sending");
@@ -21,7 +21,9 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
       if (repair) setResult(await onEnable() ? "sent" : "failed");
       else setResult(await testDevicePush());
     } catch (error) {
-      setResult(error instanceof ApiError && error.code === "subscription_not_found" ? "missing" : "failed");
+      // gone: the push service retired the endpoint; Turn alerts on again subscribes this device anew
+      const code = error instanceof ApiError ? error.code : null;
+      setResult(code === "subscription_not_found" ? "missing" : code === "subscription_gone" ? "gone" : "failed");
     }
   };
 
@@ -37,6 +39,7 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
               : denied ? t("Allow notifications in your browser settings, then try again.")
               : result === "sent" ? t("Test notification sent. Check this device for the alert.")
               : result === "missing" ? t("This device's push subscription is missing. Turn alerts on again.")
+              : result === "gone" ? t("The push service retired this device's subscription. Turn alerts on again to make a new one.")
               : result === "permission" ? t("Allow notifications to test alerts on this device.")
               : result === "failed" ? t("Could not send the test notification. Try again.")
               : !settings.alertsOn ? t("Alerts off") : null}

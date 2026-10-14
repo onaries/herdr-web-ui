@@ -96,11 +96,11 @@ export function unavailableMessage(t: Translate, answer: RepoDiffFilePatch): str
 }
 
 /**
- * Whether a patch is colored in the package's worker: the setting, a language the app colors,
+ * Whether a patch is colored in the package's worker: a language the app colors,
  * and the same bounds as a virtualized source, counted on the patch text itself.
  */
-export function diffColorable(highlightCode: boolean, name: string, patch: string): boolean {
-  return highlightCode && canHighlight(languageForPath(name)) && patch.length <= VIRTUAL_HIGHLIGHT_CHARS && countLines(patch) <= VIRTUAL_HIGHLIGHT_LINES;
+export function diffColorable(name: string, patch: string): boolean {
+  return canHighlight(languageForPath(name)) && patch.length <= VIRTUAL_HIGHLIGHT_CHARS && countLines(patch) <= VIRTUAL_HIGHLIGHT_LINES;
 }
 
 /** The style drawn: split needs two columns of code, which a phone's width cannot hold. */

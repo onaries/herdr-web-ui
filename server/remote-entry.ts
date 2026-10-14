@@ -18,8 +18,8 @@ process.env["PATH"] = `${join(bundle, "bin")}${delimiter}${process.env["PATH"] ?
 const session = process.env["HERDR_REMOTE_SESSION"];
 // herdr puts its sockets under XDG_CONFIG_HOME when it is set (GitHub's Linux runners and some
 // desktops set it), so the bridge must look where the daemon it starts will listen; on
-// Windows they live under %APPDATA%\herdr (`herdr status server`)
-const herdrConfig = windows ? join(process.env["APPDATA"] || join(homedir(), "AppData", "Roaming"), "herdr") : join(process.env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "herdr");
+// Windows they live under XDG_CONFIG_HOME when set, then %APPDATA%\herdr (`herdr status server`)
+const herdrConfig = windows ? join(process.env["XDG_CONFIG_HOME"] || process.env["APPDATA"] || join(homedir(), "AppData", "Roaming"), "herdr") : join(process.env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "herdr");
 process.env["HERDR_SOCKET"] = session ? join(herdrConfig, "sessions", session, "herdr.sock") : join(herdrConfig, "herdr.sock");
 function staleWindowsMarker(path: string): boolean {
   return staleMarker(readFileSync(path, "utf8"), (pid) => {

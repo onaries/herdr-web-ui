@@ -18,9 +18,10 @@ handling, and Chrome `notranslate` metadata. These are not supplied by the 0.4.3
 The MacBook checkout retains only the OmO question-key and `notranslate` patches, with their
 tests; it does not need duplicate terminal selection, scrolling, or resize patches.
 
-Use upstream's virtualized chat and in-memory reading-position restoration. The chat
-unmounts when switching to the terminal or leaving its presented pane; do not restore
-the private hidden-chat DOM retention patch. The 12-prompt newest-page limit remains
+Use upstream's virtualized chat, recent-tab mount retention and cached newest-page
+display. Do not restore the private hidden-chat DOM retention patch; pane retention
+and visibility must follow upstream's attachment and resize ownership rules. The
+12-prompt newest-page limit remains
 separate because it bounds transcript reading and response work, not DOM rendering.
 Position restoration applies only when the saved turn is in the newly loaded page;
 an older unloaded turn falls back to the latest messages. Expanded work and fetched
@@ -42,6 +43,13 @@ preserve pending local work first; the updater refuses a dirty checkout. Resolve
 without discarding personal changes. Do not run the legacy plugin installer or `apply.sh`
 over this fork. Push `origin/nucbox` only when explicitly requested. Refresh the browser after
 deployment, and check remote bundle compatibility before updating the MacBook separately.
+
+Even a frontend-only commit requires a WebUI service restart after rebuilding. The
+supervisor captures its revision at startup, while Vite embeds the build's Git revision.
+Serving a newer frontend from an older supervisor makes the update notice persist after
+every reload. After deployment, verify that `/api/updates` `current_revision` and
+`/api/health` `web_ui.revision` match the commit used for the frontend build. Restart
+only `herdr-web-ui.service`, with the user's approval; never restart native agent sessions.
 
 ## Local operation
 

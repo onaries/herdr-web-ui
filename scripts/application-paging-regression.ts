@@ -80,8 +80,6 @@ sys.stdout.flush()
   await until(async () => read() === "\x1b[5~\x1b[6~\x1b[5~", "plain PageUp remains application input in the terminal lens");
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Chat");
-  const toggle = page.getByRole("switch", { name: "PageUp / PageDown scroll chat", exact: true });
-  assert.equal(await toggle.getAttribute("aria-checked"), "false", "plain chat paging stays off for an existing settings record without this new field");
   const before = read();
   await page.keyboard.press("ControlOrMeta+Shift+PageDown");
   assert.equal(read(), before, "a modal prevents application paging");

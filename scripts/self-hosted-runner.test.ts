@@ -36,6 +36,8 @@ printf 'docker %s\\n' "$*" >> "$RUNNER_TEST_LOG"
 case "$1" in
   image) exit 0 ;;
   run)
+    # the shared network namespace container is detached and reads no token
+    [ "$2" = -d ] && exit 0
     IFS= read -r token || exit 1
     shift
     name=""
@@ -84,11 +86,14 @@ esac
   }
 }
 
+/** A runner container: it reads its registration token on stdin. */
+const runnerRun = /^docker run --rm -i /;
+
 describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () => {
   it("runs without CPU or memory quotas by default", () => {
     const { result, calls } = runRunner();
     expect(result.status).toBe(0);
-    const dockerRun = calls.split("\n").find((call) => call.startsWith("docker run "));
+    const dockerRun = calls.split("\n").find((call) => runnerRun.test(call));
     expect(dockerRun).toBeDefined();
     expect(dockerRun).not.toContain("--cpus");
     expect(dockerRun).not.toContain("--memory");
@@ -103,7 +108,28 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
   it("returns failure when registration-token retrieval fails", () => {
     const { result, calls } = runRunner({ ghTokenExitCode: 1 });
     expect(result.status).toBe(1);
-    expect(calls).not.toContain("docker run");
+    expect(calls.split("\n").filter((call) => runnerRun.test(call))).toEqual([]);
+  });
+
+  it("starts every runner in one shared network namespace, never the host's, and stops it last", () => {
+    const { result, calls } = runRunner({ count: 2 });
+    expect(result.status).toBe(0);
+    const lines = calls.split("\n");
+    const namespace = lines.findIndex((call) => /^docker run -d .*--entrypoint sleep .* infinity$/.test(call));
+    expect(namespace).toBeGreaterThanOrEqual(0);
+    const name = lines[namespace]!.match(/--name (\S+)/)![1]!;
+    expect(name).toMatch(/^herdr-ci-.+-net$/);
+    expect(lines[namespace]).toContain("--cap-drop ALL");
+    expect(lines[namespace]).not.toContain("--network");
+    const runners = lines.map((call, index) => ({ call, index })).filter(({ call }) => runnerRun.test(call));
+    expect(runners).toHaveLength(2);
+    for (const { call, index } of runners) {
+      expect(index).toBeGreaterThan(namespace);
+      expect(call).toContain(`--network container:${name}`);
+      expect(call).not.toContain("--network host");
+    }
+    const stopped = lines.findIndex((call) => call.startsWith(`docker stop`) && call.endsWith(` ${name}`));
+    expect(stopped).toBeGreaterThan(Math.max(...lines.map((call, index) => (call.startsWith("docker stop") && !call.endsWith(` ${name}`) ? index : -1))));
   });
 
   it("propagates a failed slot's status when multiple one-shot slots run", () => {

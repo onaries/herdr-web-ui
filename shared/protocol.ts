@@ -12,8 +12,6 @@ export type {
   AgentSessionInfo,
   AgentStatus,
   PaneInfo,
-  PaneMoveReason,
-  PaneMoveResult,
   PaneLayoutPane,
   PaneLayoutRect,
   PaneLayoutSnapshot,
@@ -22,13 +20,12 @@ export type {
   ReadFormat,
   ReadSource,
   SessionSnapshot,
-  SplitDirection,
   Subscription as HerdrSubscriptionSpec,
   TabInfo,
   WorkspaceInfo,
 } from "./herdr-api.generated.ts";
 
-import type { AgentStatus, PaneInfo, PaneMoveResult, PaneScrollInfo, SessionSnapshot, SplitDirection, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -132,11 +129,6 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/pane/rename { pane_id, label } -> { ok: true } (pane.rename; empty label clears it)
  *  POST   /api/pane/focus { pane_id } -> { ok: true } (pane.focus: herdr brings its workspace,
  *         tab and pane to the front, also while the tab is zoomed)
- *  POST   /api/pane/move   { pane_id, destination, focus? } -> PaneMoved (pane.move: the pane into
- *         another tab of its workspace, a new tab there or in another workspace, or a new workspace;
- *         a pane that leaves its workspace gets a NEW pane id, reported beside previous_pane_id; an
- *         emptied tab or workspace closes behind it; focus defaults to false, so herdr's own focus
- *         stays where it was and only the caller follows the pane)
  *  POST   /api/agent/rename { pane_id, name } -> { ok: true } (agent.rename on the pane's live agent:
  *         the name other tools address it by, `herdr agent prompt <name>`; null clears it. herdr
  *         owns the rule (shared/agent-name.ts) and answers invalid_agent_name, agent_name_taken or,
@@ -236,8 +228,10 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  PATCH  /api/devices/:id  { label }    -> PairedDevice;  DELETE /api/devices/:id -> 204 (revoked at its next request)
  *  GET    /api/push                      -> PushKey (the VAPID application server key)
  *  POST   /api/push/subscribe { subscription }  -> 204 (a browser PushSubscription JSON; upsert by endpoint)
+ *         | 410 subscription_gone (its push service answered 404/410 for that endpoint since the server
+ *         started: the browser must unsubscribe and subscribe anew; an older server never says it)
  *  DELETE /api/push/subscribe { endpoint }      -> 204
- *  POST   /api/push/test      { endpoint }      -> 204 | 404 subscription_not_found | 502 push_failed
+ *  POST   /api/push/test      { endpoint }      -> 204 | 404 subscription_not_found | 410 subscription_gone | 502 push_failed
  *  GET    /api/usage[?refresh=1]         -> UsageReport (plan limits of the AI subscriptions signed in on this PC)
  *  Errors: non-2xx with { error: { code, message } }
  *
@@ -902,33 +896,6 @@ export interface WorkspaceCreated {
  */
 export type TabCreated = WorkspaceCreated;
 
-/**
- * POST /api/pane/move: where the pane goes. herdr's PaneMoveDestination with the `type` the
- * generated union widens to a string spelled out, so a caller cannot send a kind herdr has not got.
- * `tab` lands beside the tab's focused pane (`target_pane_id` names another) on the side `split`
- * says, right when absent; `new_tab` without a workspace stays in the pane's own.
- */
-export type MovePaneDestination =
-  | { type: "tab"; tab_id: string; split?: SplitDirection; target_pane_id?: string | null; ratio?: number | null }
-  | { type: "new_tab"; workspace_id?: string | null; label?: string | null }
-  | { type: "new_workspace"; label?: string | null; tab_label?: string | null };
-
-export interface MovePaneRequest {
-  pane_id: string;
-  destination: MovePaneDestination;
-  /** herdr's focus follows the pane when true; absent or false leaves it where it was */
-  focus?: boolean;
-}
-
-/**
- * POST /api/pane/move: herdr's move result. `pane` is the pane where it now stands, under a new
- * `pane_id` when it changed workspace (`previous_pane_id` is the one the caller sent); `changed`
- * false with `reason: "same_tab"` means it already was where it was asked to go. `created_tab`
- * and `created_workspace` name what the move made, `closed_tab_id` and `closed_workspace_id` what
- * it emptied and herdr closed behind it.
- */
-export type PaneMoved = PaneMoveResult;
-
 /** The two ways herdr splits a pane: a new pane to its right, or below it. */
 export type SplitPaneDirection = "right" | "down";
 
@@ -1090,7 +1057,7 @@ export interface PushPayload {
 /** WebSocket at /ws
  *
  *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
- *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | role {mode}
+ *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | release-size {pane_id} | role {mode}
  *    | pty-ack {pane_id, stream_id, offset} | secret {id, pane_id, prompt, secret}
  *    | watch {pane_id, cols, rows} | unwatch {pane_id} | conversation-watch {pane_id, enabled}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
@@ -1139,7 +1106,9 @@ export type ClientMessage =
   | { type: "conversation-watch"; pane_id: string; enabled: boolean }
   /** a pane another web bridge holds (`attach_held`): take herdr's attach slot from it, here, now */
   | { type: "take-over"; pane_id: string }
-  | { type: "input"; pane_id: string; text: string }
+  /** `stop`: the composer's Stop (text a lone ESC). The bridge sends it in the pane's turn, after typing
+   * still on its way, and a message sent next waits for it; an older bridge types it like any key. */
+  | { type: "input"; pane_id: string; text: string; stop?: true }
   | { type: "keys"; pane_id: string; keys: string[] }
   /** a composer message, sent to servers whose snapshot lists "submit": the server types it and
    * its own Enter after a short gap, and answers with a submit-result of the same id. `text` is
@@ -1159,16 +1128,30 @@ export type ClientMessage =
    * native queue acceptance. It uses the same bounded request-id receipts as queue delivery.
    * `clear_draft`: an immediate chat message only, sent again over the `draft` its input_draft
    * refusal named: the server clears Claude's input box first while it still holds exactly that,
-   * and refuses again (input_draft) when it holds anything else or does not read empty after. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold" | "agent-queue"; clear_draft?: string }
+   * and refuses again (input_draft) when it holds anything else or does not read empty after.
+   * `send_anyway`: an immediate chat message only, sent again after an input_draft refusal that
+   * named no draft and showed the box (`box`): the server sends once over that box, only into the same
+   * Claude terminal and session that refusal was for (else pending_target_changed), and only while the
+   * box still shows that `box` or reads empty (else input_draft again, with the new box). Not with
+   * `clear_draft`.
+   * `resend_id`: stable held-copy ID for immediate chat resends across connections; the bridge
+   * shares the first outcome for 60 seconds after settlement. `resend_generation` defaults to 0;
+   * only a definitive no-input refusal permits the next attempt generation. Not with `send_anyway`:
+   * that combination returns invalid_delivery before reserving or replaying an ID. No `clear_draft`.
+   * Older peers ignore it. */
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold" | "agent-queue"; clear_draft?: string; send_anyway?: true; resend_id?: string; resend_generation?: number }
   /** `agent-queue` requires "pending-agent-queue": transfers this same bridge ID to OmO with
    * paste + Ctrl+Q. Success removes it as sent without opening a turn gate; a failure keeps it
    * held, or uncertain if input may have reached the terminal. The receipt proves key delivery. */
-  | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" | "agent-queue" }
+  | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" | "agent-queue"; resend_generation?: number }
   /** Masked input: revalidate the visible prompt, type literal bytes + Enter immediately.
    * Never queued, retried, sent through agent.prompt, or echoed in a result. */
   | { type: "secret"; id: number; pane_id: string; prompt: string; secret: string }
   | { type: "resize"; pane_id: string; cols: number; rows: number }
+  /** this client's terminal is covered again (the chat lens): if the pty has its grid, the server sizes
+   * the pty for the latest grid of another interact client still showing the terminal, or leaves it.
+   * Never answered; an older server ignores it, so it needs no feature. */
+  | { type: "release-size"; pane_id: string }
   /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
   | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
   | { type: "role"; mode: ClientRole }
@@ -1204,9 +1187,12 @@ export type ServerMessage =
   /** ok after Enter/Ctrl+Q delivery, or bridge acceptance (`pending`); never native queue acceptance or an agent execution acknowledgement.
    * `draft`: on an immediate send's input_draft, the one-row draft in Claude's input box that a send
    * with `clear_draft` may clear (absent when the box is not one the server clears).
+   * `box`: on an immediate send's input_draft that names no draft, what the server read in Claude's
+   * input box (plain rows, cut at 200 characters; empty when no whole box could be read). Present
+   * only when a send with `send_anyway` may follow; an older server never sends it.
    * `submit_partial`: the explicitly confirmed terminal draft was cleared, but the send's
    * deadline then expired before the message was sent; never a nothing-typed receipt. */
-  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string }
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string; box?: string }
   | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string }
   /** Owner-only receipt and state; only an explicit removed outcome permits deleting a retained client message. */
   | { type: "pending-messages"; pane_id: string; messages: PendingMessage[]; removed?: Array<{ id: string; outcome: "sent" | "discarded" }> }

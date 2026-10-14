@@ -80,7 +80,7 @@ export async function gjcPidUnderShell(
 }
 
 /** Forget the process table kept between Windows polls. */
-export function forgetGjcState(): void { processTable = null; }
+export function forgetGjcState(): void { processTable = null; transcriptFlights.clear(); }
 
 /**
  * Where `file` sits inside `root`, as path segments, or null when it is not inside. The
@@ -260,21 +260,52 @@ export function validateGjcSdkTranscript(binding: GjcSdkBinding, cwd: string, ag
 type GjcPaneProcessInfo = { process_info?: { shell_pid?: unknown; foreground_processes?: { pid?: unknown; argv?: unknown }[] } };
 type GjcProcessIdentity = { pid: number; birth: number };
 
+type GjcTranscriptOptions = {
+  platform?: string;
+  processInfo?: (paneId: string) => Promise<GjcPaneProcessInfo | null>;
+  processBirth?: (pid: number) => number | null;
+  sdkTranscript?: typeof gjcSdkTranscript;
+  readProcessTable?: () => Promise<ProcessRow[]>;
+};
+
+/** Each SDK lookup spawns the gjc CLI, so equivalent pane/directory/I/O contexts share one flight. */
+const transcriptFlights = new Map<string, Set<{ options: GjcTranscriptOptions; flight: Promise<string | null> }>>();
+
 /**
  * Resolves only while the SDK-selected GJC process is still foreground in this pane with the
- * same birth identity. Optional I/O callbacks keep this race check fixture-testable.
+ * same birth identity. Optional I/O callbacks keep this race check fixture-testable. Overlapping
+ * reads with the same lookup context share a lookup; nothing outlives it, so the next read verifies the
+ * exact session again (a /new keeps the pid and can keep the old file).
  */
-export async function gjcTranscriptForPane(
+export function gjcTranscriptForPane(
   paneId: string,
   cwd: string,
   home = process.env["HOME"] ?? "",
-  options: {
-    platform?: string;
-    processInfo?: (paneId: string) => Promise<GjcPaneProcessInfo | null>;
-    processBirth?: (pid: number) => number | null;
-    sdkTranscript?: typeof gjcSdkTranscript;
-    readProcessTable?: () => Promise<ProcessRow[]>;
-  } = {},
+  options: GjcTranscriptOptions = {},
+): Promise<string | null> {
+  const key = JSON.stringify([paneId, cwd, home, options.platform ?? process.platform]);
+  const flights = transcriptFlights.get(key) ?? new Set<{ options: GjcTranscriptOptions; flight: Promise<string | null> }>();
+  for (const shared of flights) {
+    if (shared.options.processInfo === options.processInfo
+      && shared.options.processBirth === options.processBirth
+      && shared.options.sdkTranscript === options.sdkTranscript
+      && shared.options.readProcessTable === options.readProcessTable) return shared.flight;
+  }
+  const flight: Promise<string | null> = lookupGjcTranscript(paneId, cwd, home, options).finally(() => {
+    flights.delete(entry);
+    if (transcriptFlights.get(key) === flights && flights.size === 0) transcriptFlights.delete(key);
+  });
+  const entry = { options, flight };
+  flights.add(entry);
+  transcriptFlights.set(key, flights);
+  return flight;
+}
+
+async function lookupGjcTranscript(
+  paneId: string,
+  cwd: string,
+  home: string,
+  options: GjcTranscriptOptions,
 ): Promise<string | null> {
   const platform = options.platform ?? process.platform;
   const agentDir = join(home, ".gjc", "agent");
