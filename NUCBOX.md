@@ -2,7 +2,7 @@
 
 This checkout runs the `nucbox` branch of <https://github.com/onaries/herdr-web-ui>.
 `origin` is the personal fork; `upstream` is <https://github.com/devswha/herdr-web-ui>.
-Native agy and dsh conversations, recent-first transcript pages, retained chat screens,
+Native agy and dsh conversations, recent-first transcript pages,
 input and paste fixes, and the live compaction indicator are tracked here.
 
 ## Patch ownership after 0.4.3
@@ -12,11 +12,19 @@ and background-window resize protection. Do not reapply the old fixed-grid or na
 clamps: they are absent from the operating source. Upstream protects a pane from inactive
 windows; it does not impose the old height limit on an active browser window.
 
-Keep the personal agy/dsh transcript readers, recent-first 12-prompt pages, retained chat
-screens, OmO question save/submit keys, live compaction indicator, stale-cwd image-paste
+Keep the personal agy/dsh transcript readers, recent-first 12-prompt pages,
+OmO question save/submit keys, live compaction indicator, stale-cwd image-paste
 handling, and Chrome `notranslate` metadata. These are not supplied by the 0.4.3 release.
 The MacBook checkout retains only the OmO question-key and `notranslate` patches, with their
 tests; it does not need duplicate terminal selection, scrolling, or resize patches.
+
+Use upstream's virtualized chat and in-memory reading-position restoration. The chat
+unmounts when switching to the terminal or leaving its presented pane; do not restore
+the private hidden-chat DOM retention patch. The 12-prompt newest-page limit remains
+separate because it bounds transcript reading and response work, not DOM rendering.
+Position restoration applies only when the saved turn is in the newly loaded page;
+an older unloaded turn falls back to the latest messages. Expanded work and fetched
+outputs survive virtual-row eviction, but reset when the chat itself unmounts.
 
 ## Updating
 

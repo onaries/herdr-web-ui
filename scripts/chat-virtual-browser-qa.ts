@@ -173,12 +173,27 @@ try {
     const after = await metrics(page);
     const anchorY = await page.evaluate((key) => [...document.querySelectorAll<HTMLElement>("[data-chat-row]")].find((row) => row.dataset.chatRow === key)?.getBoundingClientRect().top, away.anchor.key);
     assert.ok(anchorY !== undefined && Math.abs(anchorY - away.anchor.y) <= 1, JSON.stringify({ away, after, anchorY }));
+    await page.evaluate(() => window.chatQa.mount(false));
+    await page.locator(".chat-frame").waitFor({ state: "detached" });
+    await page.evaluate(() => window.chatQa.mount(true));
+    await page.waitForFunction(({ text, y }) => {
+      const view = document.querySelector(".chat-view");
+      if (!view) return false;
+      const top = view.getBoundingClientRect().top;
+      const row = [...view.querySelectorAll<HTMLElement>("[data-chat-row]")]
+        .filter((row) => row.getBoundingClientRect().bottom > top)
+        .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+      return row?.textContent === text && Math.abs(row.getBoundingClientRect().top - y) <= 1;
+    }, away.anchor);
+    console.log(`PASS ${width} ${theme}: remount restores the same reading turn and pixel offset`);
+    const restored = await metrics(page);
+    assert.ok(restored.anchor);
     await page.evaluate((height) => window.chatQa.resize(height - 180), height);
     await page.waitForFunction((height) => document.querySelector(".terminal-stack")?.getBoundingClientRect().height === height - 180, height);
-    const resizedY = await page.evaluate((key) => [...document.querySelectorAll<HTMLElement>("[data-chat-row]")].find((row) => row.dataset.chatRow === key)?.getBoundingClientRect().top, away.anchor.key);
+    const resizedY = await page.evaluate((key) => [...document.querySelectorAll<HTMLElement>("[data-chat-row]")].find((row) => row.dataset.chatRow === key)?.getBoundingClientRect().top, restored.anchor.key);
     assert.ok(resizedY !== undefined && Math.abs(resizedY - away.anchor.y) <= 1, "composer-height change preserves the reading anchor");
     await page.evaluate((height) => window.chatQa.resize(height), height);
-    await page.getByRole("button", { name: "New messages" }).click();
+    await page.getByRole("button", { name: "Jump to latest", exact: true }).click();
     await settleBottom(page);
     console.log(`PASS ${width} ${theme}: PageUp stays at its anchor through output and explicit latest rearms follow`);
 

@@ -221,11 +221,6 @@ export function PaneTerminal({
   }, [findRequest]);
   const chatViewRef = useRef(chatView);
   chatViewRef.current = chatView;
-  const [retainedChatPane, setRetainedChatPane] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    if (chatView) setRetainedChatPane(paneId);
-    else if (retainedChatPane !== paneId) setRetainedChatPane(null);
-  }, [chatView, paneId, retainedChatPane]);
   // what the grid's region announces: the pane's own name, or the grid's kind while none is open
   const terminalName = terminalLabel(paneId, title, t);
   /** read by the wheel handler, which is attached once for the terminal's life */
@@ -2627,7 +2622,7 @@ export function PaneTerminal({
           onApplicationPage={sendApplicationPage}
           enabled={presented && connected && outputReady && !chatView && !held && !ended && !released && !unsupported}
           interactive={!observing && !secretActive && !viewportSearching} search={searchState} onError={setInputError} />}
-        {paneId !== null && ((presented && chatView) || retainedChatPane === paneId) && (
+        {presented && paneId !== null && chatView && (
           <RenderBoundary resetKey={paneId} fallback={(retry) => (
             <div className="chat-view"><div className="chat-empty" role="alert">
               <p>{t("The chat can't be shown. The terminal still works.")}</p>
@@ -2642,8 +2637,7 @@ export function PaneTerminal({
             paneId={paneId}
             cwd={cwd}
             onOpenDiff={onOpenDiff}
-            active={presented && chatView && active}
-            hidden={!presented || !chatView}
+            active={active}
             pageScroll={pageScroll}
             refreshKey={chatRefresh}
             invalidationKey={chatInvalidation}

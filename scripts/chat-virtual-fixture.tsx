@@ -12,6 +12,7 @@ declare global {
       page: (direction: -1 | 1) => void;
       resize: (height: number) => void;
       machine: (machine: string) => void;
+      mount: (mounted: boolean) => void;
     };
   }
 }
@@ -20,17 +21,19 @@ function Fixture() {
   const [refresh, setRefresh] = useState(0);
   const [height, setHeight] = useState(window.innerHeight);
   const [machine, setMachine] = useState("local");
+  const [mounted, setMounted] = useState(true);
   const pageScroll = useRef<((direction: -1 | 1) => void) | null>(null);
   window.chatQa = {
     refresh: () => setRefresh((value) => value + 1),
     page: (direction) => pageScroll.current?.(direction),
     resize: setHeight,
     machine: setMachine,
+    mount: setMounted,
   };
   return <div className="terminal-host"><div className="terminal-stack is-chat" style={{ position: "relative", height, width: "100%" }}>
     <MachineContext.Provider value={machine}>
       <Profiler id="chat" onRender={() => window.dispatchEvent(new Event("chat-qa-commit"))}>
-        <ChatView key={machine} paneId="same-pane" refreshKey={refresh} connected ended={false} agent={null} agentStatus="working" pageScroll={pageScroll} />
+        {mounted && <ChatView key={machine} paneId="same-pane" refreshKey={refresh} connected ended={false} agent={null} agentStatus="working" pageScroll={pageScroll} />}
       </Profiler>
     </MachineContext.Provider>
   </div></div>;

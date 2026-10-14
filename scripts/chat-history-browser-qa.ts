@@ -287,21 +287,13 @@ try {
   await shows("local/a", "local/b");
   await select("a", "remote-pc");
   await shows("remote-pc/a", "local/a");
-  await page.evaluate(() => {
-    const view = document.querySelector(".chat-view");
-    if (!view) throw new Error("no retained chat");
-    (window as unknown as { retainedChat: Element | null }).retainedChat = view;
-    const talk = document.querySelector(".chat-turn")!;
-    talk.setAttribute("data-retained-chat-test", "yes");
-  });
   await page.evaluate(() => window.qa.view(false));
-  await page.locator('.chat-view').waitFor({ state: 'hidden' });
-  assert.equal(await page.locator('[data-retained-chat-test]').count(), 1, "terminal lens retains chat DOM and data");
+  await page.locator(".chat-frame").waitFor({ state: "detached" });
+  const reread = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/pane/conversation"));
   await page.evaluate(() => window.qa.view(true));
-  await page.locator('.chat-view').waitFor({ state: 'visible' });
-  assert.equal(await page.evaluate(() => document.querySelector('.chat-view') === (window as unknown as {retainedChat:Element}).retainedChat), true, "chat lens reuses the existing view");
+  await (await reread).finished();
   await shows("remote-pc/a", "local/a");
-  console.log("PASS terminal/chat toggles reuse the same loaded chat DOM");
+  console.log("PASS terminal/chat toggles release chat DOM and reload the correct conversation");
   // A late success and a late error from B must neither replace nor erase A's chat.
   for (const status of [200, 503]) {
     held.add("remote-pc/b");

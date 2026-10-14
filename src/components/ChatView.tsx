@@ -90,7 +90,6 @@ export interface ChatViewProps {
   onOpenDiff?: (target: RepoDiffTarget) => void;
   /** Only the active pane owns the chat-local Mod+F shortcut. */
   active?: boolean;
-  hidden?: boolean;
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
   refreshKey: number;
   /** bumped by a conversation push; coalesced at the former 2s polling cadence */
@@ -716,7 +715,7 @@ function TerminalFallback({ paneId }: { paneId: string }) {
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, hidden = false, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -886,7 +885,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   }, [paneId, agentStatus]);
 
   useEffect(() => {
-    if (hidden || !visible) return;
+    if (!visible) return;
     let cancelled = false;
     /** The turns between the held start and where the newest page now starts, a page at a time; null when they cannot be joined. */
     const turnsBetween = async (held: string | null, start: string): Promise<ConversationTurn[] | null> => {
@@ -1009,7 +1008,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       onConversationWatch?.(paneId, false);
       conversationRefresh.stop();
     };
-  }, [hidden, paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
+  }, [paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
 
   // Sends, status/history repairs and visibility return read immediately without cancelling
   // the answer in flight. The reader is installed before this effect requests its first read.
@@ -1024,7 +1023,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     if (seen.pane === paneId && seen.key !== invalidationKey && visible) conversationRefresh.invalidate();
   }, [paneId, invalidationKey, visible, conversationRefresh]);
 
-  useEffect(() => { conversationRefresh.setPushes(!hidden && conversationPushes); }, [hidden, conversationPushes, conversationRefresh]);
+  useEffect(() => { conversationRefresh.setPushes(conversationPushes); }, [conversationPushes, conversationRefresh]);
 
   // A scrollback stand-in has no native file for the server to watch. Its source is the
   // pane's own screen, so terminal output is the invalidation, under the same 2s bound.
@@ -1042,7 +1041,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   }, [connected, visible, conversationRefresh]);
 
   const loadOlder = useCallback(async (): Promise<void> => {
-    if (hidden) return;
     const node = scroller.current;
     if (node === null || loadingOlder.current || typeof olderCursor !== "string") return;
     const before = olderCursor;
@@ -1085,7 +1083,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
         if (olderGeneration.current === generation) loadingOlder.current = false;
       }
     });
-  }, [hidden, fetchPaneConversation, olderCursor, paneId, conversationRefresh]);
+  }, [fetchPaneConversation, olderCursor, paneId, conversationRefresh]);
 
   // Reconcile the estimated prepend with the actual reader row, through the list's
   // own scroll command. No scrollHeight delta or second virtualizer owns the position.
@@ -1101,7 +1099,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   // menu can appear while idle without any file mutation. Keep their independent 2s poll.
   const pollPrompt = connected && !ended && agent !== null;
   useEffect(() => {
-    if (hidden) return;
     if (!pollPrompt) { setPrompt(null); setCompacting(false); setRestored(null); onSuggestionRef.current?.(paneId, null); onRestoredRef.current?.(paneId, null); return; }
     if (!visible) return;
     let cancelled = false;
@@ -1126,7 +1123,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     };
     void readPrompt();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [hidden, pollPrompt, paneId, promptPollKey, promptRefreshKey, fetchPanePromptState, visible]);
+  }, [pollPrompt, paneId, promptPollKey, promptRefreshKey, fetchPanePromptState, visible]);
 
   useEffect(() => {
     onPrompt?.(paneId, prompt);
@@ -1145,13 +1142,12 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   // Before paint and without animation: an opened conversation starts at its end
   // instead of scrolling there from the top.
   useLayoutEffect(() => {
-    if (hidden) return;
     const node = scroller.current;
     if (node !== null && stickToBottom.current) {
       if (state.source === "conversation") timeline.current?.scrollToEnd({ animated: false });
       else node.scrollTop = node.scrollHeight;
     }
-  }, [hidden, state, prompt, agentStatus, connected, ended]);
+  }, [state, prompt, agentStatus, connected, ended]);
 
   // A resized composer, a raised keyboard or a narrower window shrinks the view
   // without a scroll event; a reader at the end stays at the end, at once. So does a
@@ -1160,7 +1156,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   // the reader's hand (a folded block opened, a whole output asked for): following the end there
   // would jump past what was just opened. New messages follow in the layout effect above.
   useEffect(() => {
-    if (hidden) return;
     const node = scroller.current;
     if (node === null) return;
     let lane = "";
@@ -1180,19 +1175,18 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     observer.observe(node);
     if (node.firstElementChild !== null) observer.observe(node.firstElementChild);
     return () => observer.disconnect();
-  }, [hidden, state.source, ChatTimeline]);
+  }, [state.source, ChatTimeline]);
   // One of the app's faces arrived (font-display: swap; a unicode-range chunk on the first Korean
   // answer): the conversation rewraps with no width, size or family string changed, so the
   // observer above takes it for one that only grew taller. A reader at the end stays at the end.
   const faces = useFacesArrived();
   useLayoutEffect(() => {
-    if (hidden) return;
     const node = scroller.current;
     if (node !== null && stickToBottom.current) {
       if (timeline.current) timeline.current.scrollToEnd({ animated: false });
       else node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     }
-  }, [hidden, faces]);
+  }, [faces]);
   // a tap or a drag down the transcript puts a phone's keyboard away to read (lib/keyboard.ts)
   useEffect(() => {
     const node = scroller.current;
@@ -1200,7 +1194,6 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   }, [state.source, ChatTimeline]);
 
   const onScroll = (): void => {
-    if (hidden) return;
     const node = scroller.current;
     if (node === null) return;
     const distanceFromBottom = node.scrollHeight - node.clientHeight - node.scrollTop;
@@ -1292,8 +1285,8 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   const held = turns.length + (abandoned?.count ?? 0);
   // before paint: the greeting replaces the line below in the same frame, not one after it
   useLayoutEffect(() => {
-    onRead?.(paneId, !hidden && known ? { blank, turns: held, history: historyId } : null);
-  }, [hidden, onRead, paneId, known, blank, held, historyId]);
+    onRead?.(paneId, known ? { blank, turns: held, history: historyId } : null);
+  }, [onRead, paneId, known, blank, held, historyId]);
   // the chat left the screen (another lens): nothing is known of it until it is read again
   useLayoutEffect(() => () => onRead?.(paneId, null), [onRead, paneId]);
 
@@ -1407,7 +1400,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   return <ChatDiffContext.Provider value={diffContext}><ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
-    <div className="chat-frame" style={hidden ? { display: "none" } : undefined}>
+    <div className="chat-frame">
     {state.source === "conversation" && findOpen && <ChatFind key={timelineScope} rows={searchRows} older={typeof olderCursor === "string"} olderState={olderState} onOlder={loadOlder} onMatch={showMatch} onClose={closeFind} />}
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
