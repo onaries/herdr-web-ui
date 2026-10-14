@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { sheetsSettled } from "./sheets-settled.ts";
 
 async function checkLayout(): Promise<void> {
   const fixture = mkdtempSync(join(tmpdir(), "herdr-web-ui-viewer-layout-"));
@@ -66,7 +67,7 @@ async function checkLayout(): Promise<void> {
         return new Response(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="teal"/></svg>`,
           { headers: { "content-type": "image/svg+xml" } });
       }
-      return new Response(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="stylesheet" href="/styles.css?safe=${url.searchParams.get("safe") ?? "none"}"></head><body><div id="root"></div><script src="/entry.js"></script></body></html>`,
+      return new Response(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="stylesheet" href="/styles.css?safe=${url.searchParams.get("safe") ?? "none"}"></head><body><div id="root"></div><script type="module" src="/entry.js"></script></body></html>`,
         { headers: { "content-type": "text/html" } });
     } });
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
@@ -95,6 +96,8 @@ async function checkLayout(): Promise<void> {
             const image = document.querySelector<HTMLImageElement>(".file-viewer-media");
             return image?.complete && image.naturalWidth > 0;
           });
+          // a phone's viewer rises into place (styles.css): measure where it comes to rest
+          await sheetsSettled(page);
           const geometry = await page.evaluate(() => {
             const rect = (element: Element) => {
               const { x, y, width, height, right, bottom } = element.getBoundingClientRect();

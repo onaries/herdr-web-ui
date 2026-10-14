@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { HerdrPane, InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
 import { codexTranscriptPath, paneCodexHome, unansweredCodexQuestions, type QueuedQuestion } from "./codex.ts";
-import { HerdrError, paneRead, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
+import { HerdrError, paneRead, paneScrollInfo, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
 import { omoTranscriptForPane } from "./omo.ts";
 import { OmoAskReader, omoAsksAfter, type OmoAskCall, type OmoAsks } from "./omo-ask.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
@@ -30,16 +30,20 @@ const CLAUDE_TABS_RE = /^←\s+[☐☒☑✔]/;
 const CLAUDE_CONFIRM_HINT_RE = /enter to confirm.*esc to (?:cancel|exit|go back)/i;
 /** Claude Code took invisible characters out of a message and holds it in its input (2.1.294) */
 const CLAUDE_HELD_HINT_RE = /^Removed (\d+) invisible characters?\s*·\s*review and press \S+ to send$/i;
-// Claude Code's `/model` list, by the two keys it takes a pick with: Enter saves it as the default
-// for new sessions, `s` keeps it to this session
-const CLAUDE_MODEL_HINT_RE = /enter to set as default.*\bs to use this session only.*esc to cancel/i;
 // Claude Code's `/effort` slider (2.1.294), the same two keys in other words: Enter saves the level
 // as the default for new sessions, `s` keeps it to this session
 const CLAUDE_EFFORT_HINT_RE = /←\/→ to adjust\s*·\s*enter to confirm\s*·\s*s for this session only\s*·\s*esc to cancel/i;
 // The slider by its keys alone, for the guard that keeps the fallback card and pending input off
 // it: a hint cut inside a word, or drawn without `s`, is still a slider whose Enter saves a default
-const CLAUDE_EFFORT_GUARD_RE = new RegExp(["←/→ to adjust · Enter to confirm", "Esc to cancel"]
+const guardRe = (parts: string[]): RegExp => new RegExp(parts
   .map((part) => [...part.replace(/\s+/g, "")].map((char) => char.replace(/[/.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*")).join(".*"), "i");
+const CLAUDE_EFFORT_GUARD_RE = guardRe(["←/→ to adjust · Enter to confirm", "Esc to cancel"]);
+// Claude Code's `/model` list, by the two keys it takes a pick with: Enter saves it as the default
+// for new sessions, `s` keeps it to this session. Read with spaces optional, as the slider's, for a
+// hint a narrow pane cut inside a word (#542)
+const CLAUDE_MODEL_GUARD_RE = guardRe(["Enter to set as default", "s to use this session only", "Esc to cancel"]);
+/** lines a hint is read over at most: a phone-width pane wraps the model list's over seven (#542) */
+const CLAUDE_HINT_LINES = 16;
 // Codex's `/model` lists, by the footer of the row under the cursor (its keymap's own words): a
 // row that only opens the next list takes Enter, a row that picks takes `s` for this session and
 // Enter to save the pick as the default (`enter apply` on Ultra)
@@ -118,6 +122,8 @@ type Responder =
   | "pi-confirm"
   | "pi-input"
   | "pi-model"
+  | "hermes-question"
+  | "hermes-input"
   | "fallback-menu"
   | "fallback-gjc-menu"
   | "fallback-keys";
@@ -180,6 +186,17 @@ function wrapped(lines: string[], index: number, span = 3): string {
   return lines.slice(index, index + span).map(cleanLine).filter((line) => line && !isDivider(line)).join(" ");
 }
 
+/** Lines as one, every space taken out: a hint a narrow pane wrapped anywhere, inside a word too, reads whole. */
+function compactLines(lines: string[]): string {
+  return lines.map(cleanLine).filter((line) => !isDivider(line)).join("").replace(/\s+/g, "");
+}
+
+/** Whether hint `re` (spaces optional between its characters) begins line `index` and is read whole by line `end`. */
+function hintAt(lines: string[], index: number, re: RegExp, end = index + CLAUDE_HINT_LINES): boolean {
+  if (!cleanLine(lines[index] ?? "") || isDivider(cleanLine(lines[index]!))) return false;
+  return re.exec(compactLines(lines.slice(index, end)))?.index === 0;
+}
+
 function nearestQuestion(lines: string[], beforeIndex: number): string | null {
   for (let index = beforeIndex - 1; index >= Math.max(0, beforeIndex - 14); index -= 1) {
     const line = cleanLine(lines[index]!);
@@ -220,8 +237,9 @@ function parseNumberedRows(lines: string[], start: number, end: number): Numbere
     const match = lines[index]!.replace(ANSI_RE, "").trim().match(NUMBERED_OPTION_RE);
     if (!match) continue;
     let label = match[3]!.trim();
-    const checked = /^\[[xX✓]\]/.test(label);
-    label = label.replace(/^\[[ xX✓]\]\s*/, "").trim();
+    // Claude Code 2.1.296 ticks a row with ✔, older ones with ✓
+    const checked = /^\[[xX✓✔]\]/.test(label);
+    label = label.replace(/^\[[ xX✓✔]\]\s*/, "").trim();
     rows.push({ number: Number.parseInt(match[2]!, 10), label, selected: Boolean(match[1]), checked, lineIndex: index });
   }
   for (let index = 0; index < rows.length; index += 1) {
@@ -513,7 +531,12 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   // with a preview the options end at the rule above "Chat about this": nothing under it is theirs
   const end = preview ? findLastIndex(lines.slice(0, hintIndex), (line) => isDivider(line)) : hintIndex;
   const rows = menuRows(lines, Math.max(0, hintIndex - 64), end);
-  if (!sequentialRows(rows) || rows.filter((row) => row.selected).length !== 1) return null;
+  // a multiple choice draws an unnumbered Submit row between the typed answer and "Chat about
+  // this", which the cursor moves through like any other row
+  const submitLine = rows.length < 2 ? undefined
+    : lines.slice(rows.at(-2)!.lineIndex + 1, rows.at(-1)!.lineIndex).map(cleanLine).find((line) => /^(?:[›>❯]\s*)?Submit$/.test(line));
+  const onSubmit = submitLine !== undefined && SELECTED_RE.test(submitLine);
+  if (!sequentialRows(rows) || rows.filter((row) => row.selected).length !== (onSubmit ? 0 : 1)) return null;
   const chatIndex = rows.findIndex((row) => row.label === "Chat about this");
   let customIndex = rows.findIndex((row) => /^Type something\.?$/i.test(row.label));
   // typed into, the row shows the draft instead of "Type something.", with the cursor on it or
@@ -532,7 +555,12 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   const chip = tabs === null ? claudeChip(lines, rows[0]!.lineIndex) : null;
   if (!question) return null;
   const optionRows = preview ? rows : rows.slice(0, customIndex);
-  const multiSelect = optionRows.some((row) => /^\s*(?:[›>❯]\s*)?\d+\.\s+\[[ xX✓]\]/.test(lines[row.lineIndex]!));
+  const multiSelect = optionRows.some((row) => /^\s*(?:[›>❯]\s*)?\d+\.\s+\[[ xX✓✔]\]/.test(lines[row.lineIndex]!));
+  if (onSubmit && !multiSelect) return null;
+  const submit = multiSelect && submitLine !== undefined;
+  const rowAt = rows.findIndex((row) => row.selected);
+  // the cursor's place among the rows it moves through, Submit counted before the last one
+  const selectedIndex = onSubmit ? rows.length - 1 : submit && rowAt === rows.length - 1 ? rowAt + 1 : rowAt;
   const current = tabs?.tabs.findIndex((tab) => !tab.answered) ?? -1;
   // a bar cut off by a narrow pane does not show how many questions there are
   const title = tabs && current >= 0 ? `${tabs.tabs[current]!.label}${tabs.whole && tabs.tabs.length > 1 ? ` · ${current + 1} of ${tabs.tabs.length}` : ""}`
@@ -542,8 +570,9 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
     options: optionRows.map((row) => ({ label: row.label, description: row.description ?? null })),
     multi_select: multiSelect, custom_option_index: multiSelect || preview ? null : customIndex,
   }, {
-    responder: "claude-question", menuLabels: rows.map((row) => row.label),
-    selectedIndex: rows.findIndex((row) => row.selected),
+    responder: "claude-question",
+    menuLabels: submit ? [...rows.slice(0, -1).map((row) => row.label), "Submit", rows.at(-1)!.label] : rows.map((row) => row.label),
+    selectedIndex,
     checkedOptionIndices: optionRows.flatMap((row, index) => row.checked ? [index] : []),
     customMenuIndex: preview ? null : customIndex, rejectWithEscapeIndex: null,
     // an answer typed into the draft would join it, so once the cursor is in the row it is
@@ -1319,11 +1348,19 @@ export function removedInvisible(sent: string, shown: string): number {
 const heldCandidates = new Map<string, { text: string; at: number }>();
 /** Long enough to read the card and answer it; a message kept past this is the user's own business */
 const HELD_WINDOW_MS = 10 * 60_000;
+/** What the chat last sent to each pane: Claude Code puts that text back in its input box when the send is cancelled right after it. */
+const chatSent = new Map<string, string>();
 
 /** A message the chat just sent to a pane: one with invisible characters may be held by Claude Code. */
 export function noteSubmitted(paneId: string, text: string): void {
+  chatSent.set(paneId, text);
   if (INVISIBLE_CHAR_RE.test(text)) heldCandidates.set(paneId, { text, at: Date.now() });
   else heldCandidates.delete(paneId);
+}
+
+/** The text of the pane's last successful chat send (noteSubmitted), or none. */
+export function lastChatSubmitted(paneId: string): string | null {
+  return chatSent.get(paneId) ?? null;
 }
 
 /** What the chat sent a pane that Claude Code may be holding, for the readers that ask whether it waits. */
@@ -1689,15 +1726,19 @@ export function modelListWaits(agent: string, screen: string): boolean {
  * saves the row under the cursor as the default for every new session. `hint`: the effort slider's
  * instead, whose Enter saves a default the same way.
  */
-function claudeModelListWaits(screen: string, hint: RegExp = CLAUDE_MODEL_HINT_RE): boolean {
+function claudeModelListWaits(screen: string, hint: RegExp = CLAUDE_MODEL_GUARD_RE): boolean {
   const visible = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter((line) => line && !isDivider(line));
-  // wider than the reader's own window: a hint wrapped further than it reads is still this list's.
-  // The match runs into the line it ends at, as in promptTailIsActive: a hint that ended above
-  // later output is an answered list's, and holds nothing
-  const ends = (lines: string[], end: number): boolean => [1, 2, 3, 4, 5, 6].some((span) => {
-    const from = Math.max(0, end - span);
-    return hint.test(lines.slice(from, end).join(" ")) && (span === 1 || !hint.test(lines.slice(from, end - 1).join(" ")));
-  });
+  // The hint is read with its spaces taken out over as many lines as a narrow pane wraps it to,
+  // also inside a word. The shortest run of lines holding it must begin with it, so the same
+  // words quoted in Claude's output (`\u23fa Example: Enter to set\u2026`) are no list, and run into
+  // the line it ends at, as in promptTailIsActive: a hint that ended above later output is an
+  // answered list's, and holds nothing
+  const ends = (lines: string[], end: number): boolean => {
+    for (let from = end - 1; from >= Math.max(0, end - CLAUDE_HINT_LINES); from -= 1) {
+      if (hint.test(compactLines(lines.slice(from, end)))) return hintAt(lines, from, hint, end) && !hint.test(compactLines(lines.slice(from, end - 1)));
+    }
+    return false;
+  };
   // Claude's own footer under the open list (the session's rule, its task list) is no later
   // output, and it sits under a wrapped hint as under a whole one
   const shown = withoutClaudeTasks(visible, ends);
@@ -1706,7 +1747,8 @@ function claudeModelListWaits(screen: string, hint: RegExp = CLAUDE_MODEL_HINT_R
 
 function parseClaudeModel(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
-  const hintIndex = findLastIndex(lines, (_, index) => CLAUDE_MODEL_HINT_RE.test(wrapped(lines, index)));
+  // read as the guard reads it, so the card and the guard agree (#542)
+  const hintIndex = findLastIndex(lines, (_, index) => hintAt(lines, index, CLAUDE_MODEL_GUARD_RE));
   if (hintIndex < 0) return null;
   const { rows, below, last, unread } = listRows(lines, hintIndex, CLAUDE_MODEL_ROW_RE, CLAUDE_MODEL_MORE_RE);
   const under = lines.slice(last + 1, hintIndex).filter((line) => line.trim() !== "").length;
@@ -1847,6 +1889,9 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   const ends = (re: RegExp): boolean => [1, 2, 3].some((span) =>
     re.test(shown.slice(-span).join(" ")) && (span === 1 || !re.test(shown.slice(-span, -1).join(" "))));
   if (prompt.responder === "omp-question") return ends(OMP_SINGLE_HINT_RE) || ends(OMP_MULTI_HINT_RE);
+  // Hermes keeps its status line (and maybe the hint's wrapped tail) under the hint; an answered
+  // question leaves the screen, so a hint among the last few lines is the live one
+  if (prompt.responder === "hermes-question" || prompt.responder === "hermes-input") return shown.slice(-4).some((line) => HERMES_HINT_RE.test(line));
   if (prompt.responder === "codex-menu") return ends(CODEX_CONTINUE_HINT_RE);
   if (prompt.responder === "codex-question") return ends(CODEX_ASK_HINT_RE);
   if (prompt.responder === "codex-async-question") return cleanLines.slice(-4).some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line)) || ends(CODEX_ASYNC_ASK_HINT_RE);
@@ -1861,7 +1906,7 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   if (prompt.responder === "claude-confirm") return ends(CLAUDE_CONFIRM_HINT_RE);
   // its parser already found the hint over the input box with only the footer under it
   if (prompt.responder === "claude-held") return true;
-  if (prompt.responder === "claude-model") return ends(CLAUDE_MODEL_HINT_RE);
+  if (prompt.responder === "claude-model") return claudeModelListWaits(screen);
   if (prompt.responder === "claude-effort") return ends(CLAUDE_EFFORT_HINT_RE);
   if (prompt.responder === "codex-model") return ends(/(?:^|\s)enter select\s*·\s*esc back$|(?:^|\s)enter (?:default|apply)\s*·\s*s session\s*·\s*esc back$/i);
   if (prompt.responder === "omo-question" || prompt.responder === "omo-review" || prompt.responder === "omo-typing") {
@@ -2169,6 +2214,99 @@ function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
   });
 }
 
+/**
+ * Hermes's clarify question, as its Ink TUI draws it (ui-tui/src/components/prompts.tsx):
+ *
+ *   ask 1 question
+ *   ▸ Pick a colour
+ *     ▸ 1. Red (Recommended)
+ *       2. Blue
+ *       3. Other (type your answer)
+ *   0/1 answered · ↑/↓ select · Enter confirm and continue · Tab/Shift+Tab switch question · Esc/Ctrl+C cancel
+ *
+ * An open question, or "Other" once picked, shows a `> ` line instead of the rows. A batch of
+ * questions shows each one's line (✓ answered, · waiting) and expands only the active (▸) one,
+ * so the card is that question; the next one becomes the next card.
+ */
+const HERMES_HINT_RE = /^(\d+)\/(\d+) answered · /;
+const HERMES_ASK_RE = /^ask \d+ questions?$/;
+const HERMES_ROW_RE = /^(▸ )?(\[[ x]\] )?(\d+)\. (.+)$/;
+const HERMES_OTHER = "Other (type your answer)";
+
+function parseHermesClarify(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
+  const hintIndex = findLastIndex(lines, (line) => HERMES_HINT_RE.test(line.trim()));
+  if (hintIndex < 0) return null;
+  const askIndex = findLastIndex(lines.slice(0, hintIndex), (line) => HERMES_ASK_RE.test(line.trim()));
+  if (askIndex < 0) return null;
+  const block = lines.slice(askIndex + 1, hintIndex).filter((line) => line.trim());
+  const indent = (line: string) => line.length - line.trimStart().length;
+  const at = block.findIndex((line) => line.trimStart().startsWith("▸ ") && !HERMES_ROW_RE.test(line.trim()));
+  if (at < 0) return null;
+  const base = indent(block[at]!);
+  // the question wraps at its own indent; its rows (or `> ` line) sit deeper
+  let end = at + 1;
+  while (end < block.length && indent(block[end]!) === base && !/^[▸·✓] /.test(block[end]!.trim())) end += 1;
+  const question = block.slice(at, end).map((line) => line.trim()).join(" ").slice(2);
+  const member: string[] = [];
+  for (let i = end; i < block.length && indent(block[i]!) > base; i += 1) member.push(block[i]!.trim());
+  const [answered, total] = lines[hintIndex]!.trim().match(HERMES_HINT_RE)!.slice(1).map(Number);
+  const body = total! > 1 ? `${answered}/${total} answered` : null;
+  // text already on the `>` line (typed in the terminal, or a typed answer Tab brought back)
+  // would join the answer: the line is emptied first, after the cursor and before it (its
+  // TextInput's ctrl+k and ctrl+u, on every platform)
+  const typed = (text: string): AnswerStep[] => [...keySteps(["ctrl+k", "ctrl+u"]), { text }, ...keySteps([KEY.enter])];
+  if (member[0]?.startsWith(">")) {
+    return finishPrompt("hermes", {
+      kind: "question", title: "Question", question, body,
+      options: [{ label: "Type your answer", description: null }], multi_select: false, custom_option_index: 0,
+    }, {
+      responder: "hermes-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0,
+      rejectWithEscapeIndex: null, customSteps: typed,
+    });
+  }
+  const rows: { label: string; selected: boolean; box: boolean; checked: boolean }[] = [];
+  for (const line of member) {
+    const row = line.match(HERMES_ROW_RE);
+    if (row && Number(row[3]) === rows.length + 1) rows.push({ label: row[4]!, selected: Boolean(row[1]), box: Boolean(row[2]), checked: row[2] === "[x] " });
+    else if (rows.length) rows.at(-1)!.label += ` ${line}`; // a label wrapped onto the next line
+    else return null;
+  }
+  if (rows.length < 2 || rows.at(-1)!.label !== HERMES_OTHER) return null;
+  const selectedIndex = rows.findIndex((row) => row.selected);
+  if (selectedIndex < 0) return null;
+  const choices = rows.slice(0, -1);
+  // a multi-select question draws a box on every choice; its Other row has none
+  const multi = choices.every((row) => row.box);
+  if (!multi && choices.some((row) => row.box)) return null;
+  const checked = choices.flatMap((row, index) => row.checked ? [index] : []);
+  return finishPrompt("hermes", {
+    kind: "question", title: "Question", question, body,
+    options: choices.map((row) => ({ label: row.label.replace(/ \(Recommended\)$/i, ""), description: null })),
+    // typed text on a multi-select question joins the ticks, which the card has no way to say
+    multi_select: multi, custom_option_index: multi ? null : choices.length,
+  }, {
+    responder: "hermes-question", menuLabels: rows.map((row) => row.label), selectedIndex,
+    checkedOptionIndices: checked, customMenuIndex: multi ? null : choices.length, rejectWithEscapeIndex: null,
+    // Enter on the Other row opens its `>` line
+    ...(multi ? {} : { customSteps: (text: string) => [...keySteps([...navigationKeys(choices.length - selectedIndex), KEY.enter]), ...typed(text)] }),
+    // Space ticks the row under the cursor; Enter then locks the ticked rows
+    ...(multi ? { multiSteps: (picked: number[]) => {
+      const want = new Set(picked);
+      let cursor = selectedIndex;
+      const keys: string[] = [];
+      for (const index of choices.keys()) {
+        if (want.has(index) === checked.includes(index)) continue;
+        keys.push(...navigationKeys(index - cursor), KEY.space);
+        cursor = index;
+      }
+      // Enter on the Other row opens its text line instead of locking the ticks
+      if (cursor === choices.length) keys.push(KEY.up);
+      return keySteps([...keys, KEY.enter]);
+    } } : {}),
+  });
+}
+
 function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null, omoTrusted = true, omoOpen: OmoAsk[] = [], sent: string | null = null, working = false): ParsedPrompt | null {
   const omo = () => {
     const forms = (ask: OmoAsk | null, trusted: boolean) => [parseOmoQuestion(screen, ask, trusted), parseOmoTyping(screen, ask, trusted), parseOmoReview(screen, ask, trusted)];
@@ -2187,6 +2325,8 @@ function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null
         ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
         : agent === "pi"
           ? [parsePiModel(screen), parsePiDialog(screen), ...omo()]
+        : agent === "hermes"
+          ? [parseHermesClarify(screen)]
         : agent === "omo" || agent === ""
           ? omo()
           : [];
@@ -2787,6 +2927,92 @@ export function claudeInputDraft(live: string, colors: string | null): boolean {
   return cursor && !grey;
 }
 
+/** Positive proof of an ordinary empty input box, never absence of a readable box. */
+export function claudeInputEmpty(live: string, colors: string | null): boolean {
+  const box = claudeInputBox(live);
+  return box !== null && box !== "clipped" && box.plain[0]?.startsWith("❯") === true
+    && !claudeInputDraft(live, colors);
+}
+
+/** What empties a one-row Claude input box: the row after the cursor, then before it (measured on 2.1.295; Ctrl+Y puts it back). */
+export const CLAUDE_CLEAR_INPUT_KEYS = ["ctrl+k", "ctrl+u"];
+
+/**
+ * The draft the chat may offer to clear before it sends (claudeInputDraft with the same reads):
+ * typed text on the only row of a `❯` box, read with verified colors, as the user sees it there.
+ * CLAUDE_CLEAR_INPUT_KEYS edit one screen row, so a draft on more rows (a long line wraps), bash
+ * mode, a pasted or image placeholder and a box read without colors are not offered: null.
+ */
+export function claudeClearableDraft(live: string, colors: string | null): string | null {
+  if (colors === null || !claudeInputDraft(live, colors)) return null;
+  const box = claudeInputBox(live);
+  if (box === null || box === "clipped" || box.plain.length !== 1 || !box.plain[0]!.startsWith("❯")) return null;
+  if (/\[(?:Pasted text #\d+|Image #\d+)/.test(box.plain[0]!)) return null;
+  // plain rows trim their right edge for screen parsing. Match the raw row instead: a
+  // trailing space, or another space after Claude's one separator, belongs to the user.
+  const rowText = (row: string): string => row.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "");
+  const row = rowText(box.raw[0]!);
+  const shown = claudeInputBox(colors);
+  if (shown === null || shown === "clipped" || shown.raw.length !== 1 || rowText(shown.raw[0]!) !== row) return null;
+  const draft = row.slice(1).replace(/^[ \u00a0]/, "");
+  return draft.trim() === "" ? null : draft;
+}
+
+/**
+ * The chat's own message back in Claude's box (claudeRestoredDraft), only when the live screen holds
+ * it: a pane scrolled into its history can show an older box with the same words. The viewport read
+ * the route already made is checked first, so a box without the copy costs no further read; then
+ * the live screen's box is read as the send paths read it, with the viewport's colors only where
+ * viewportShowsLive verifies they show that screen.
+ */
+async function restoredOnLiveScreen(paneId: string, viewport: string): Promise<string | null> {
+  const sent = lastChatSubmitted(paneId);
+  const plain = (text: string): string => text.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "");
+  if (claudeRestoredDraft(plain(viewport), viewport, sent) === null) return null;
+  const detection = async (): Promise<string> => (await paneRead({ paneId, source: "detection", format: "text", timeoutMs: SUGGESTION_READ_MS })).text;
+  const before = await detection();
+  if (!claudeInputDraft(before, null)) return null;
+  const scrollBefore = await paneScrollInfo(paneId);
+  const colors = (await paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })).text;
+  const scrollAfter = await paneScrollInfo(paneId);
+  const live = await detection();
+  return viewportShowsLive(scrollBefore, scrollAfter, colors, before, live) ? claudeRestoredDraft(live, colors, sent) : null;
+}
+
+/**
+ * The chat's own last message back in Claude Code's input box as typed text, where Claude puts it
+ * when the send right before is cancelled: `sent` when the box is a draft (`claudeInputDraft`, so
+ * typed text on a verified viewport) holding exactly it — the `❯` of the first row dropped, the
+ * wrapped rows joined with nothing (a split word) or one space (a wrap between words), each row's
+ * own spaces as they are (U+00A0 read as a space). Anything else a
+ * draft could be — bash mode, a clipped box, a `[Pasted text #`/`[Image #` placeholder, other or
+ * edited words — and a box that is no known draft, unverified colors or nothing sent answer null.
+ */
+export function claudeRestoredDraft(live: string, colors: string | null, sent: string | null): string | null {
+  if (sent === null || sent.trim() === "" || colors === null || !claudeInputDraft(live, colors)) return null;
+  const box = claudeInputBox(live);
+  if (box === null || box === "clipped" || !box.plain[0]?.startsWith("❯")) return null;
+  if (/\[(?:Pasted text #\d+|Image #\d+)/.test(box.plain.join(" "))) return null;
+  // each row's own words exactly (the box's U+00A0 as a space), its marker, indentation and padding
+  // aside; where the terminal wrapped, a word split in two joins with nothing between, and a wrap
+  // between words with one space or line break. Any other change to the spaces is the user's edit.
+  const rows = box.plain.map((row, index) => (index === 0 ? row.slice(1) : row).replace(/\u00a0/g, " ").trim());
+  // walked row by row over the set of places the sent text can be at, never a regex: one built from
+  // the rows backtracks exponentially over a box of blank rows
+  const text = sent.replace(/\u00a0/g, " ").trim();
+  let at = new Set([0]);
+  rows.forEach((row, index) => {
+    const next = new Set<number>();
+    for (const from of at) {
+      // a wrap between words leaves one space or line break before the next row; within a word, none
+      const starts = index === 0 ? [from] : /\s/.test(text[from] ?? "") ? [from, from + 1] : [from];
+      for (const start of starts) if (text.startsWith(row, start)) next.add(start + row.length);
+    }
+    at = next;
+  });
+  return at.has(text.length) ? sent : null;
+}
+
 /**
  * Whether a colored viewport read shows the live screen, so claudeInputDraft may take its colors:
  * the viewport at the bottom of the pane's history before and after the colored read, or, only when
@@ -2833,6 +3059,7 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
   for (const known of askings.keys()) if (!panes.some((candidate) => candidate.pane_id === known)) askings.delete(known);
   for (const known of answerTurns.keys()) if (!panes.some((candidate) => candidate.pane_id === known)) answerTurns.delete(known);
   for (const known of heldCandidates.keys()) if (!panes.some((candidate) => candidate.pane_id === known)) heldCandidates.delete(known);
+  for (const known of chatSent.keys()) if (!panes.some((candidate) => candidate.pane_id === known)) chatSent.delete(known);
   const pane = panes.find((candidate) => candidate.pane_id === paneId);
   if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
   const agent = pane.agent ?? "";
@@ -2866,8 +3093,10 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
 }
 
 /** Only the live loader near the input, never a quoted mention in older output. */
+// The tail is 24 lines: codex parks its todo block, input box and status rows between the
+// loader and the bottom, and a 12-line slice cut the loader off (2026-10-13 report).
 export function paneIsCompacting(screen: string): boolean {
-  return screen.split("\n").slice(-12).some((line) => /^\s*[─━]*\s*[\u2800-\u28ff◐◓◑◒]?\s*(?:Auto[- ]compacting|Compacting(?: context| before next prompt)?|Context overflow detected, compacting)(?:\.{3}|…)(?:\s*\((?:esc|escape|ctrl\+c) to cancel\)[^\n]*)?\s*[─━]*\s*$/i.test(line));
+  return screen.split("\n").slice(-24).some((line) => /^\s*[─━]*\s*[\u2800-\u28ff◐◓◑◒]?\s*(?:Auto[- ]compacting|Compacting(?: context| before next prompt)?|Context overflow detected, compacting)(?:\.{3}|…)(?:\s*\((?:esc|escape|ctrl\+c)(?: to cancel\)[^\n]*|[^)\n]*(?:…|\.{3})))?\s*[─━]*\s*$/i.test(line));
 }
 
 /**
@@ -2876,7 +3105,9 @@ export function paneIsCompacting(screen: string): boolean {
  * agent draws its next menu at the bottom, out of that viewport.
  */
 async function liveScreen(paneId: string): Promise<string> {
-  return (await paneRead({ paneId, source: "detection", format: "text" })).text;
+  // an explicit window: the default detection view can end below the loader line (codex's todo
+  // block and status rows), which paneIsCompacting's tail scan must still see
+  return (await paneRead({ paneId, source: "detection", format: "text", lines: 40 })).text;
 }
 
 /** omo's form or its widget on a screen, by a line of its key hint: worth a look in the pane's session. */
@@ -2898,7 +3129,7 @@ async function readKnownPrompt(
   codexHome?: string,
   panes: HerdrPane[] = [],
 ): Promise<{ prompt: InteractivePrompt | null; screen?: string }> {
-  if (!["claude", "omp", "codex", "omo", "pi", "gjc", ""].includes(agent)) return { prompt: null };
+  if (!["claude", "omp", "codex", "omo", "pi", "gjc", "hermes", ""].includes(agent)) return { prompt: null };
   const screen = await liveScreen(paneId);
   // omo's form reads its text from the session's call, the screen showing where the form stands
   const omoAsks = ["omo", "pi", "claude", ""].includes(agent) && pane.cwd && OMO_FORM_RE.test(screen)
@@ -3037,21 +3268,29 @@ export interface PromptRequestOptions {
 
 export async function handlePromptRequest(request: Request, url: URL, options: PromptRequestOptions = {}): Promise<Response | null> {
   if (url.pathname !== "/api/pane/prompt" && url.pathname !== "/api/pane/prompt/answer") return null;
+  // the answer being handled, once its body was read: what the log line says even when the handling throws
+  let answerLog: { paneId: string; matched: boolean } | null = null;
   try {
     if (url.pathname === "/api/pane/prompt") {
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
       const paneId = url.searchParams.get("pane_id")?.trim();
       if (!paneId) return badRequest("missing_pane_id", "pane_id is required.");
       const { agent, status, prompt, screen } = await readPrompt(paneId, options.codexHome);
-      // no menu up: what Claude suggests typing next, for the composer's placeholder. Only a
-      // nicety: it is read only while Claude waits for the next prompt (a working agent shows
-      // none), and a failed or slow read of it (a herdr without ansi reads, a busy one) leaves
-      // the prompt answer as it is, on time.
-      const suggestion = prompt === null && agent === "claude" && (status === "idle" || status === "done")
+      // no menu up: what Claude suggests typing next, for the composer's placeholder, and the chat's
+      // own last message where Claude put it back into the box on a cancel. Only a nicety: it is read
+      // only while Claude waits for the next prompt (a working agent shows none), and a failed or
+      // slow read of it (a herdr without ansi reads, a busy one) leaves the prompt answer as it is,
+      // on time.
+      const box = prompt === null && agent === "claude" && (status === "idle" || status === "done")
         ? await paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
-          .then((read) => parseClaudeSuggestion(read.text), () => null)
+          .then((read) => read.text, () => null)
         : null;
-      return jsonResponse({ prompt, suggestion, ...(screen && paneIsCompacting(screen) ? { compacting: true } : {}) });
+      return jsonResponse({
+        prompt,
+        suggestion: box === null ? null : parseClaudeSuggestion(box),
+        restored: box === null ? null : await restoredOnLiveScreen(paneId, box).catch(() => null),
+        ...(screen && paneIsCompacting(screen) ? { compacting: true } : {}),
+      });
     }
 
     if (request.method !== "POST") return badRequest("method_not_allowed", "POST is required.");
@@ -3069,11 +3308,14 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     // one sent meanwhile waits until the queue is opened, answered and closed again
     const serialize = options.serialize ?? (<T>(_paneId: string, task: () => Promise<T>) => task());
     const form: { answered?: string } = {};
+    const log = { paneId: body.pane_id, matched: false };
+    answerLog = log;
     const response = await serialize(body.pane_id, async () => {
       // given up while it waited its turn: nothing is read, opened or sent for it
       if (request.signal.aborted) return promptChanged();
       const { prompt, agent, pane, panes } = await readPrompt(body.pane_id, options.codexHome);
       if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
+      log.matched = true;
       // checked against the card before anything is sent: an invalid answer never opens the queue
       let steps: AnswerStep[];
       try {
@@ -3278,8 +3520,22 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     // the wait for the form's next step only reads the pane: after the pane's turn, so a message
     // queued for it meanwhile is not held up behind the polls
     if (form.answered !== undefined) await formMovedOn(body.pane_id, form.answered, options.codexHome);
+    await logAnswer(log, response);
     return response;
   } catch (error) {
-    return errorResponse(error);
+    // a read or a send that threw (a herdr timeout, 502) is an outcome too
+    const response = errorResponse(error);
+    if (answerLog !== null) await logAnswer(answerLog, response);
+    return response;
   }
+}
+
+/** One line per answer that got as far as the pane: the pane, whether the card's prompt still stood, and the
+ * refusal's own code (prompt_changed, invalid_answer, agent_blocked, a herdr error...). Never the answer. The pane
+ * id is the client's until the snapshot has checked it, so it is logged as a JSON string: one field, whatever it holds. */
+async function logAnswer(log: { paneId: string; matched: boolean }, response: Response): Promise<void> {
+  const outcome = response.ok ? "ok" : ((await response.clone().json().catch(() => null)) as { error?: { code?: string } } | null)?.error?.code ?? `status_${response.status}`;
+  // quoted as JSON: a space or a newline in the client's id cannot pass for a field of the line
+  const pane = JSON.stringify(log.paneId.slice(0, 80));
+  console.log(`[prompt/answer] pane=${pane} prompt_matched=${log.matched} outcome=${outcome}`);
 }

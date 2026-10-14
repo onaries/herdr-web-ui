@@ -59,6 +59,7 @@ let landing: ReturnType<typeof setTimeout> | undefined;
 let pending: { from: unknown; depth: number; level: SettingsLevel | null; expired: boolean; reopened: boolean; claim: boolean } | null = null;
 let observed: unknown = typeof window === "undefined" ? undefined : window.history.state;
 let writing = false;
+let loadedOnSettings = false;
 
 function releasePending(): void { pending = null; rewinding = 0; clearTimeout(landing); }
 
@@ -125,6 +126,13 @@ export function recordSettings(levels: readonly SettingsLevel[]): void {
 }
 
 /**
+ * Whether this load began on an entry Settings left, which it steps out of. Asked rather than
+ * read from the history by whoever opens Settings from the address: the step lands when the
+ * browser gets to it, before or after the app first draws, and either address may name Settings.
+ */
+export function loadedOnSettingsEntry(): boolean { return loadedOnSettings; }
+
+/**
  * Tells when the history moved: the Settings entry it landed on (null: under the dialog), and
  * whether the move was this module's own stepping back, which the dialog already shows.
  */
@@ -156,5 +164,5 @@ if (typeof window !== "undefined") {
   });
   // a reload keeps the history and not the dialog: step out of the entries it left
   const left = settingsEntry(window.history.state);
-  if (left !== null) rewind(left.depth);
+  if (left !== null) { loadedOnSettings = true; rewind(left.depth); }
 }

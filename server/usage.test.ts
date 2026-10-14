@@ -96,8 +96,8 @@ describe("providers", () => {
     expect(report.providers).toEqual([{
       id: "codex", key: "codex:user-1__acct-1", account: "me@example.com", plan: "pro", problem: null, checked_at: new Date(NOW).toISOString(),
       windows: [
-        { kind: "session", scope: null, used_percent: 12, resets_at: new Date(NOW + HOUR).toISOString() },
-        { kind: "week", scope: null, used_percent: 77, resets_at: new Date(NOW + 2 * HOUR).toISOString() },
+        { kind: "session", scope: null, used_percent: 12, resets_at: new Date(NOW + HOUR).toISOString(), starts_at: new Date(NOW - 4 * HOUR).toISOString() },
+        { kind: "week", scope: null, used_percent: 77, resets_at: new Date(NOW + 2 * HOUR).toISOString(), starts_at: new Date(NOW + 2 * HOUR - 7 * 24 * HOUR).toISOString() },
       ],
     }]);
     const headers = requests[0]!.init.headers as Record<string, string>;
@@ -118,9 +118,9 @@ describe("providers", () => {
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer k");
     expect(usage!.plan).toBe("max");
     expect(usage!.windows).toEqual([
-      { kind: "session", scope: null, used_percent: 42, resets_at: "2026-09-29T14:00:00.000Z" },
-      { kind: "week", scope: null, used_percent: 63.4, resets_at: "2026-10-03T00:00:00.000Z" },
-      { kind: "week", scope: "Sonnet", used_percent: 5, resets_at: null },
+      { kind: "session", scope: null, used_percent: 42, resets_at: "2026-09-29T14:00:00.000Z", starts_at: "2026-09-29T09:00:00.000Z" },
+      { kind: "week", scope: null, used_percent: 63.4, resets_at: "2026-10-03T00:00:00.000Z", starts_at: "2026-09-26T00:00:00.000Z" },
+      { kind: "week", scope: "Sonnet", used_percent: 5, resets_at: null, starts_at: null },
     ]);
   });
 
@@ -138,9 +138,9 @@ describe("providers", () => {
     } });
     const [usage] = (await new UsageService(context("darwin"), only("claude")).report()).providers;
     expect(usage!.windows).toEqual([
-      { kind: "session", scope: null, used_percent: 42, resets_at: "2026-09-29T14:00:00.000Z" },
-      { kind: "week", scope: "Sonnet", used_percent: 5, resets_at: null },
-      { kind: "week", scope: "Fable", used_percent: 30, resets_at: "2026-10-11T19:59:00.000Z" },
+      { kind: "session", scope: null, used_percent: 42, resets_at: "2026-09-29T14:00:00.000Z", starts_at: "2026-09-29T09:00:00.000Z" },
+      { kind: "week", scope: "Sonnet", used_percent: 5, resets_at: null, starts_at: null },
+      { kind: "week", scope: "Fable", used_percent: 30, resets_at: "2026-10-11T19:59:00.000Z", starts_at: null },
     ]);
   });
 
@@ -366,7 +366,7 @@ describe("providers", () => {
       config: { currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2026-09-25T00:00:00Z", end: "2026-10-02T00:00:00Z" } },
     } });
     const [usage] = (await new UsageService(context(), only("grok")).report()).providers;
-    expect(usage!.windows).toEqual([{ kind: "week", scope: null, used_percent: 0, resets_at: "2026-10-02T00:00:00.000Z" }]);
+    expect(usage!.windows).toEqual([{ kind: "week", scope: null, used_percent: 0, resets_at: "2026-10-02T00:00:00.000Z", starts_at: "2026-09-25T00:00:00.000Z" }]);
   });
 
   it("reads every Grok account signed in", async () => {
@@ -399,8 +399,8 @@ describe("providers", () => {
     const [usage] = (await new UsageService(context("darwin"), only("antigravity")).report()).providers;
     // a bucket without a fraction is left out, never shown as exhausted
     expect(usage!.windows).toEqual([
-      { kind: "session", scope: null, used_percent: 25, resets_at: "2026-09-29T16:00:00.000Z" },
-      { kind: "session", scope: "Other models", used_percent: 100, resets_at: "2026-09-29T15:00:00.000Z" },
+      { kind: "session", scope: null, used_percent: 25, resets_at: "2026-09-29T16:00:00.000Z", starts_at: null },
+      { kind: "session", scope: "Other models", used_percent: 100, resets_at: "2026-09-29T15:00:00.000Z", starts_at: null },
     ]);
   });
 
@@ -459,9 +459,9 @@ describe("providers", () => {
       id: "opencode",
       plan: "Go",
       windows: [
-        { kind: "session", scope: null, used_percent: 10, resets_at: "2026-09-29T16:00:00.000Z" },
-        { kind: "week", scope: null, used_percent: 45, resets_at: "2026-10-05T00:00:00.000Z" },
-        { kind: "month", scope: null, used_percent: 20, resets_at: "2026-10-27T00:00:00.000Z" },
+        { kind: "session", scope: null, used_percent: 10, resets_at: "2026-09-29T16:00:00.000Z", starts_at: null },
+        { kind: "week", scope: null, used_percent: 45, resets_at: "2026-10-05T00:00:00.000Z", starts_at: null },
+        { kind: "month", scope: null, used_percent: 20, resets_at: "2026-10-27T00:00:00.000Z", starts_at: null },
       ],
     });
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_test");
@@ -677,7 +677,7 @@ describe("accounts across reads (review fixes)", () => {
       },
     };
   }
-  const window = (used: number) => ({ kind: "session" as const, scope: "5h", used_percent: used, resets_at: null });
+  const window = (used: number) => ({ kind: "session" as const, scope: "5h", used_percent: used, resets_at: null, starts_at: null });
 
   it("does not show the previous account's numbers when the same place now holds another account's failing sign-in", async () => {
     let signIn = { source: "/home/me/.codex", token: "alice-token", expiresAt: null, account: { id: "alice", label: "alice@example.com" } };

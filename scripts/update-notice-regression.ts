@@ -50,6 +50,15 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     await page.goto(origin);
     const notice = page.locator(".update-notice").filter({ hasText: /herdr web ui|update|Step|Starting/i }).first();
     const fits = async (label: string) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${label}: nothing overflows sideways`);
+    // a release's line is one row on a phone: its sentence, its buttons and its bar share one top
+    const oneLine = async (label: string) => assert.equal(await page.evaluate(() => {
+      const line = document.querySelector(".update-notice.is-line");
+      if (!line) return "no line";
+      const rows = new Set([...line.querySelectorAll(":scope > *, .bridge-progress-step, .bridge-progress-bar")].map((item) => Math.round(item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2)));
+      const text = line.querySelector(":scope > span, .bridge-progress-step > span");
+      const wrapped = text ? text.getBoundingClientRect().height > parseFloat(getComputedStyle(text).fontSize) * 2 : false;
+      return rows.size === 1 && !wrapped ? "one" : `rows ${[...rows].join(",")}${wrapped ? ", wrapped" : ""}`;
+    }), "one", `${label}: the line is one row`);
 
     // one button, and no detour through Settings
     await page.getByText("herdr web ui v9.9.9 is available.", { exact: true }).waitFor();
@@ -58,6 +67,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     assert.ok(await page.locator(".pane-column > .update-notice").count() > 0, "the notice is drawn in the pane column");
     assert.equal(await page.locator(":not(.pane-column) > .update-notice").count(), 0, "and nowhere else");
     await fits("available");
+    await oneLine("available");
     await shot("1-available");
     await page.getByRole("button", { name: "Update", exact: true }).click();
     await page.getByText("Starting the update…", { exact: true }).waitFor();
@@ -69,6 +79,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     await page.getByText("Step 4 of 5", { exact: true }).waitFor();
     assert.equal(await notice.getByRole("progressbar").getAttribute("aria-valuenow"), "70");
     await fits("installing");
+    await oneLine("installing");
     await shot("2-installing");
     status = { ...status, phase: "restarting", step: "restart" };
     await page.getByText("Step 5 of 5", { exact: true }).waitFor();
@@ -77,6 +88,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     status = { ...status, phase: "error", step: null, available: true, error: "bun run build failed: fixture" };
     await page.getByText("The update could not be installed.", { exact: true }).waitFor();
     await fits("failed");
+    await oneLine("failed");
     await shot("3-failed");
     await page.getByRole("button", { name: "Details", exact: true }).click();
     await page.getByRole("dialog", { name: "Settings" }).getByText("bun run build failed: fixture").waitFor();

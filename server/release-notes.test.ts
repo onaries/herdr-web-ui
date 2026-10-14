@@ -213,7 +213,7 @@ describe("this repository's own summaries", () => {
   /** patch notes are read at a glance: a line longer than this is a sentence from the changelog */
   const LINE = 90;
 
-  it("tells every release since in all four languages", () => {
+  it("tells every release since in every language the app has", () => {
     const missing = released.filter((version) => compareVersions(version, BEFORE)! > 0)
       .flatMap((version) => SUMMARY_LANGUAGES.filter((language) => !summaries.get(version)?.[language]).map((language) => `${version} ${language}`));
     expect(missing).toEqual([]);

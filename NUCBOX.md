@@ -5,24 +5,35 @@ This checkout runs the `nucbox` branch of <https://github.com/onaries/herdr-web-
 Native agy and dsh conversations, recent-first transcript pages, retained chat screens,
 input and paste fixes, and the live compaction indicator are tracked here.
 
+## Patch ownership after 0.4.3
+
+Use upstream implementations for terminal selection and copying, wheel and touch scrolling,
+and background-window resize protection. Do not reapply the old fixed-grid or native-height
+clamps: they are absent from the operating source. Upstream protects a pane from inactive
+windows; it does not impose the old height limit on an active browser window.
+
+Keep the personal agy/dsh transcript readers, recent-first 12-prompt pages, retained chat
+screens, OmO question save/submit keys, live compaction indicator, stale-cwd image-paste
+handling, and Chrome `notranslate` metadata. These are not supplied by the 0.4.3 release.
+The MacBook checkout retains only the OmO question-key and `notranslate` patches, with their
+tests; it does not need duplicate terminal selection, scrolling, or resize patches.
+
 ## Updating
 
 Keep the operating checkout on `nucbox` and `HERDR_WEB_AUTO_UPDATE=0` in the systemd unit.
 The WebUI release installer expects `main` and must not replace this custom branch.
-Review pending local work before integrating upstream:
+Use the persistent-fork updater for a clean checkout. It merges upstream, runs the fast
+checks, commits the merge, rebuilds with the final revision and restarts only WebUI:
 
 ```sh
-git fetch upstream
-git switch nucbox
-git merge upstream/main
-bun run check fast
-CHROME_CDP=http://127.0.0.1:9222 bun scripts/chat-history-browser-qa.ts
-systemctl --user restart herdr-web-ui.service
-git push origin nucbox
+update-herdr-web-ui --ref v0.4.5
 ```
 
-Resolve conflicts before building. Do not discard local changes to make a merge pass.
-The repository check includes the production build. Refresh the browser after deployment.
+Choose the requested release tag (for example, `v0.4.5`), or omit `--ref` to merge upstream `main`. Review and
+preserve pending local work first; the updater refuses a dirty checkout. Resolve conflicts
+without discarding personal changes. Do not run the legacy plugin installer or `apply.sh`
+over this fork. Push `origin/nucbox` only when explicitly requested. Refresh the browser after
+deployment, and check remote bundle compatibility before updating the MacBook separately.
 
 ## Local operation
 

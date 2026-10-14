@@ -524,4 +524,13 @@ describe("quotes nested beyond reason", () => {
     const [outer] = parseMarkdown("> one\n> > two");
     expect(outer?.type === "blockquote" && outer.blocks.map((block) => block.type)).toEqual(["paragraph", "blockquote"]);
   });
+
+  it("reads ![alt](src) as an image whose fallback is the `!` and the link it was", () => {
+    expect(parseInline("see ![a pic](img/a.png) now")).toEqual([
+      { type: "text", value: "see " },
+      { type: "image", alt: "a pic", src: "img/a.png", fallback: [{ type: "text", value: "!" }, { type: "file", path: "img/a.png", children: [{ type: "text", value: "a pic" }] }] },
+      { type: "text", value: " now" },
+    ]);
+    expect(parseInline("![x](https://a.dev/x.png)")[0]).toMatchObject({ type: "image", fallback: [{ type: "text", value: "!" }, { type: "link", href: "https://a.dev/x.png" }] });
+  });
 });

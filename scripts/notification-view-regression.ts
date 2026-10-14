@@ -45,7 +45,8 @@ export async function checkNotificationView(browser: Browser, origin: string): P
     await page.locator(".conn-live").waitFor();
     await shows(agent, "Chat transcript");
     assert.equal(await saved(), "terminal", "an alert does not replace the lens the pane remembered");
-    assert.equal(await page.evaluate(() => window.location.search), "", "the alert's address is taken off once read");
+    // the address is a deep link like any other (lib/deepLink.ts): it names the pane and the lens shown
+    await page.waitForFunction((id) => { const query = new URLSearchParams(window.location.search); return query.get("pane") === id && query.get("view") === "chat"; }, agent);
     if (process.env.UI_EVIDENCE_DIR) {
       mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
       await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "notification-chat-one-shot.png") });

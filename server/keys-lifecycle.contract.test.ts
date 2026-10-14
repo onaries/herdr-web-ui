@@ -4,9 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as herdr from "./herdr/client.ts";
 import { createServer } from "./index.ts";
+import { PtySession } from "./pty/session.ts";
+
+/** A left click as xterm reports it with herdr's SGR mouse mode on: press, then release. */
+const CLICK = "\x1b[<0;5;3M\x1b[<0;5;3m";
 
 /** Hold one keys RPC so the next chord or text waits across attachment transitions. */
-async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "refresh", input = false) {
+async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "refresh", input = false, text = "queued text") {
   const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-keys-lifecycle-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
   const sockets: WebSocket[] = [];
@@ -20,6 +24,12 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
   const textSpy = spyOn(herdr, "paneSendText").mockImplementation(async (pane, text) => {
     texts.push(text);
     return originalText(pane, text);
+  });
+  const written: string[] = [];
+  const originalWrite = PtySession.prototype.write;
+  const writeSpy = spyOn(PtySession.prototype, "write").mockImplementation(function (this: PtySession, data: string) {
+    written.push(data);
+    return originalWrite.call(this, data);
   });
   const spy = spyOn(herdr, "paneSendKeys").mockImplementation(async (pane, keys) => {
     calls.push(keys);
@@ -58,7 +68,7 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
     }
     owner.send({ type: "keys", pane_id: pane, keys: ["ctrl+right"] });
     await until(() => calls.length === 1);
-    owner.send(input ? { type: "input", pane_id: pane, text: "queued text" }
+    owner.send(input ? { type: "input", pane_id: pane, text }
       : { type: "keys", pane_id: pane, keys: ["ctrl+alt+shift+left"] });
     if (leave !== "none" && leave !== "refresh") owner.send({ type: "detach", pane_id: pane });
     // An acknowledged later frame is a barrier: the queued key and detach were handled.
@@ -76,9 +86,16 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
     }
     release();
     if (leave === "none" || leave === "refresh") {
-      if (input) {
+      if (input && text === CLICK) {
+        // a mouse report keeps the attach input path, where herdr encodes it for the program's
+        // own mouse mode; pane.send_text would type its bytes literally (#667)
+        await until(() => written.includes(CLICK) || texts.length > 0);
+        expect(texts).toEqual([]);
+        expect(written).toContain(CLICK);
+        expect(owner.seen.filter((frame) => frame.type === "error")).toEqual([]);
+      } else if (input) {
         await until(() => texts.length === 1);
-        expect(texts).toEqual(["queued text"]);
+        expect(texts).toEqual([text]);
       } else {
         await until(() => calls.length === 2);
         expect(calls[1]).toEqual(["ctrl+alt+shift+left"]);
@@ -89,6 +106,7 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
       await until(() => texts.length > 0 || owner.seen.some((frame) => frame.type === "error" && frame.code === "input_failed"));
       expect(calls).toEqual([["ctrl+right"]]);
       expect(texts).toEqual([]);
+      expect(written).not.toContain(text);
       expect(owner.seen.filter((frame) => frame.type === "error").map((frame) => frame.code)).toEqual(["input_failed"]);
     }
   } finally {
@@ -97,6 +115,7 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
     server.stop();
     spy.mockRestore();
     textSpy.mockRestore();
+    writeSpy.mockRestore();
     if (workspace) await herdr.workspaceClose(workspace).catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
   }
@@ -113,6 +132,10 @@ it("drops queued text after its sender detaches while a peer keeps the attachmen
 it("drops queued text after its attachment is replaced", () => queuedKeys("replace", true), 20_000);
 it("drops queued text after its sender detaches and rejoins the same attachment", () => queuedKeys("reattach", true), 20_000);
 it("preserves queued text on repeated attach without detach", () => queuedKeys("refresh", true), 20_000);
+
+it("writes a click queued behind an arrow into the attach, not through send_text", () => queuedKeys("none", true, CLICK), 20_000);
+it("drops a queued click after its sender detaches while a peer keeps the attachment", () => queuedKeys("detach", true, CLICK), 20_000);
+it("drops a queued click after its attachment is replaced", () => queuedKeys("replace", true, CLICK), 20_000);
 
 it("cancels a pending attach continuation when detach and reattach installs a new claim", async () => {
   const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-attach-claim-"));

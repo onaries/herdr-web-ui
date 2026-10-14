@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { handle, readEvent, requestCountry, type Env } from "./worker.ts";
+import { REPORTED_SETTINGS, RETIRED_SETTINGS } from "../shared/telemetry.ts";
+import { handle, readEvent, requestCountry, SETTINGS, type Env } from "./worker.ts";
 
 const event = {
   event: "update", install_id: "0b5f3c2e-8a51-4c47-9d0e-3f6a2b1c9e84", version: "0.4.2", previous_version: "0.4.1",
@@ -28,7 +29,7 @@ describe("telemetry receiver", () => {
     expect(response.status).toBe(204);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.query).toContain("INSERT OR IGNORE");
-    expect(rows[0]!.values).toEqual(["2026-10-08", "update", event.install_id, "0.4.2", "0.4.1", "linux", "x64", "plugin", "KR"]);
+    expect(rows[0]!.values).toEqual(["2026-10-08", "update", event.install_id, "0.4.2", "0.4.1", "linux", "x64", "plugin", "KR", null]);
     expect(JSON.stringify(rows)).not.toContain("203.0.113.9");
     expect(JSON.stringify(rows)).not.toMatch(/Seoul|04524|37\.5/);
   });
@@ -42,6 +43,17 @@ describe("telemetry receiver", () => {
     for (const country of ["US", "KR"]) expect(requestCountry(from(post("{}"), { country }))).toBe(country);
   });
 
+  test("keeps the names of changed settings it knows, sorted, and tells none changed from none told", () => {
+    // installs older than a setting's removal still name it: the Worker keeps counting those
+    expect([...SETTINGS].sort()).toEqual([...REPORTED_SETTINGS, ...RETIRED_SETTINGS].sort());
+    expect(readEvent({ ...event, changed_settings: ["theme", "agentCards", "theme"] }, now)?.changed_settings).toBe("agentCards,theme");
+    expect(readEvent({ ...event, changed_settings: [] }, now)?.changed_settings).toBe("");
+    // an older app sends no list; a newer one may name a setting this Worker does not know yet
+    expect(readEvent(event, now)?.changed_settings).toBeNull();
+    expect(readEvent({ ...event, changed_settings: null }, now)?.changed_settings).toBeNull();
+    expect(readEvent({ ...event, changed_settings: ["theme", "somethingNew", 7, "D2Coding, monospace"] }, now)?.changed_settings).toBe("theme");
+  });
+
   describe("against the real table", () => {
     const schema = readFileSync(join(import.meta.dir, "schema.sql"), "utf8");
     const readme = readFileSync(join(import.meta.dir, "README.md"), "utf8");
@@ -52,13 +64,15 @@ describe("telemetry receiver", () => {
       const fresh = new Database(":memory:");
       fresh.exec(schema);
       const migrated = new Database(":memory:");
-      migrated.exec(schema.replace("  country TEXT,\n", ""));
+      migrated.exec(schema.replace("  country TEXT,\n", "").replace("  changed_settings TEXT,\n", ""));
       // a table from before the country was kept refuses the event: the ALTER goes first
       await expect(send(sqlite(migrated), event, "KR")).rejects.toThrow(/country/);
-      migrated.exec(/"(ALTER TABLE events ADD COLUMN[^"]+)"/.exec(readme)![1]!);
+      const alters = [...readme.matchAll(/"(ALTER TABLE events ADD COLUMN[^"]+)"/g)].map((match) => match[1]!);
+      expect(alters).toHaveLength(2);
+      for (const alter of alters) migrated.exec(alter);
       for (const db of [fresh, migrated]) {
-        expect((await send(sqlite(db), event, "KR")).status).toBe(204);
-        expect(db.query("SELECT country, version FROM events").all()).toEqual([{ country: "KR", version: "0.4.2" }]);
+        expect((await send(sqlite(db), { ...event, changed_settings: ["planFlow", "agentCards"] }, "KR")).status).toBe(204);
+        expect(db.query("SELECT country, version, changed_settings FROM events").all()).toEqual([{ country: "KR", version: "0.4.2", changed_settings: "agentCards,planFlow" }]);
       }
     });
 
@@ -79,6 +93,24 @@ describe("telemetry receiver", () => {
       expect(counts).toHaveLength(2);
       expect(counts).toContainEqual(["US", 1]);
       expect(counts).toContainEqual([null, 1]);
+    });
+
+    test("the README's settings query counts, of the installs that told their settings, those that changed each", async () => {
+      const db = new Database(":memory:");
+      db.exec(schema);
+      const env = sqlite(db);
+      const ids = ["11111111-2222-4333-8444-555555555555", "22222222-3333-4444-8555-666666666666", "33333333-4444-4555-8666-777777777777"];
+      // one install changed its mind between versions: its last answer counts; one changed nothing; one never told
+      await send(env, { ...event, install_id: ids[0], version: "0.4.1", previous_version: "0.4.0", changed_settings: ["theme"] });
+      await send(env, { ...event, install_id: ids[0], changed_settings: ["agentCards", "planFlow"] });
+      await send(env, { ...event, install_id: ids[1], changed_settings: [] });
+      await send(env, { ...event, install_id: ids[2] });
+      const query = /-- installs that changed each appearance setting[^\n]*\n(?:--[^\n]*\n)*(WITH[\s\S]+?;)/.exec(readme)![1]!;
+      const counts = db.query(query).all().map((row) => Object.values(row as object));
+      expect(counts).toHaveLength(SETTINGS.size);
+      expect(counts).toContainEqual(["agentCards", 1, 2]);
+      expect(counts).toContainEqual(["planFlow", 1, 2]);
+      expect(counts).toContainEqual(["theme", 0, 2]);
     });
   });
 

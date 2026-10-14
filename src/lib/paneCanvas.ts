@@ -1,6 +1,21 @@
 import type { PaneLayoutSnapshot } from "../../shared/protocol.ts";
 type PaneLayoutSplit = PaneLayoutSnapshot["splits"][number];
 
+/** Where a split has no room: a tab's panes are shown one at a time (PaneCanvas) and picked from the tab's menu (TabStrip). */
+export const SOLO_PANE_QUERY = "(max-width: 768px)";
+
+/**
+ * The pane a tab shows alone, or null when every pane is drawn: herdr's zoomed pane, else on a
+ * narrow screen the selected pane (herdr's focused one, then the first, while the selection is
+ * not in this tab). A narrow screen changes only what this browser draws, never herdr's zoom.
+ */
+export function soloPane(layout: PaneLayoutSnapshot | null, paneIds: readonly string[], selectedPaneId: string | null, narrow: boolean): string | null {
+  if (layout?.zoomed) return layout.focused_pane_id;
+  if (!narrow || paneIds.length < 2) return null;
+  if (selectedPaneId !== null && paneIds.includes(selectedPaneId)) return selectedPaneId;
+  return layout !== null && paneIds.includes(layout.focused_pane_id) ? layout.focused_pane_id : paneIds[0]!;
+}
+
 /** macOS Control-click opens a context menu even though its pointer button is the left one. */
 export function paneContextPress(event: { button: number; ctrlKey: boolean }, apple: boolean): boolean {
   return event.button === 2 || (apple && event.button === 0 && event.ctrlKey);

@@ -1,8 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { ConversationMonitor } from "./conversation-monitor.ts";
 import { createServer } from "./index.ts";
 import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
@@ -17,6 +18,7 @@ import { descriptorPath, type BridgeDescriptor } from "./bridge.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
+import { forgetTranscriptState } from "./conversation.ts";
 
 /**
  * Contract test for herdr-web-ui's HTTP + WS surface.
@@ -40,6 +42,161 @@ afterAll(() => {
 
 const base = () => `http://localhost:${server.port}`;
 
+describe("Grok conversation API", () => {
+  it.skipIf(process.platform !== "linux")("uses exact process/session evidence, validators and revision-bound output refs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-grok-contract-"));
+    const id = "00000000-0000-4000-8000-000000000001";
+    const directory = join(root, "sessions", "%2Ffictional", id);
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, "updates.jsonl");
+    const event = (update: object, extension = false) => JSON.stringify({ timestamp: 1700000000, method: extension ? "_x.ai/session/update" : "session/update", params: { sessionId: id, update } }) + "\n";
+    const user = event({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "fictional prompt" }, _meta: { promptIndex: 0 } });
+    const call = event({ sessionUpdate: "tool_call", toolCallId: "fictional-call", title: "Read", rawInput: { path: "fiction.txt" } });
+    const output = (text: string) => event({ sessionUpdate: "tool_call_update", toolCallId: "fictional-call", content: [{ type: "content", content: { type: "text", text } }] });
+    writeFileSync(path, user + call + output("x".repeat(5000)));
+    const events = join(directory, "events.jsonl");
+    writeFileSync(events, "");
+    // A native stand-in owns the fd evidence and only sleeps; no model or user's store.
+    const executable = join(root, "grok");
+    copyFileSync("/bin/sleep", join(root, "grok-1.0.50-linux-x86_64")); symlinkSync("grok-1.0.50-linux-x86_64", executable); chmodSync(executable, 0o755);
+    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-grok-api" });
+    let app: ReturnType<typeof createServer> | undefined;
+    try {
+      const paneId = created.root_pane.pane_id;
+      await herdrRpc("pane.send_text", { pane_id: paneId, text: `${executable} 600 3<${events}\n` });
+      for (const deadline = Date.now() + 10_000;;) {
+        if ((await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent === "grok") break;
+        if (Date.now() > deadline) throw new Error("fixture Grok process did not start");
+        await Bun.sleep(50);
+      }
+      let reportSequence = 0;
+      // Stands in for the SessionStart report Grok's herdr integration makes: Herdr 0.9.3
+      // replaces a Grok ID only for a newer "new" report.
+      const report = (session: string, source = "new") => herdrRpc("pane.report_agent_session", { pane_id: paneId, agent: "grok", source: "herdr:grok", seq: ++reportSequence, agent_session_id: session, session_start_source: source });
+      await report(id);
+      app = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), grokHome: root });
+      const url = `http://127.0.0.1:${app.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`;
+      const first = await fetch(url);
+      const body = await first.json();
+      expect(body.source).toBe("grok-transcript");
+      expect(body.activity).toBe("working");
+      expect(body.turns[0].parts[0].text).toBe("fictional prompt");
+      expect((await fetch(url, { headers: { "if-none-match": first.headers.get("etag")! } })).status).toBe(304);
+      const ref = body.turns[1].parts[0].output_ref;
+      const outputUrl = `http://127.0.0.1:${app.port}/api/pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref })}`;
+      const whole = await fetch(outputUrl);
+      expect(whole.headers.get("cache-control")).toBe("private, no-store");
+      expect(await whole.text()).toBe("x".repeat(5000));
+      appendFileSync(path, output("y".repeat(5000)));
+      expect((await fetch(outputUrl)).status).toBe(404);
+      const next = await fetch(url);
+      expect(next.headers.get("etag")).not.toBe(first.headers.get("etag"));
+      appendFileSync(path, event({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "fictional thought" } }));
+      const thinking = await fetch(url);
+      expect((await thinking.json()).activity).toBe("thinking");
+      expect(thinking.headers.get("etag")).not.toBe(next.headers.get("etag"));
+      appendFileSync(path, event({ sessionUpdate: "turn_completed" }));
+      expect((await (await fetch(url)).json()).activity).toBe("idle");
+      appendFileSync(path, event({ sessionUpdate: "rewind_marker", target_prompt_index: 0 }, true));
+      expect((await fetch(`${url}&from=${encodeURIComponent(`${body.history_id}:0`)}`)).status).toBe(409);
+      const local = await fetch(url.replace("/api/pane/", "/api/machines/local/pane/"));
+      expect((await local.json()).turns).toEqual([]);
+      const missing = "00000000-0000-4000-8000-000000000002";
+      await report(missing, "resume");
+      expect((await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent_session?.value).toBe(id);
+      await report(missing);
+      for (const deadline = Date.now() + 5000;;) {
+        if ((await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent_session?.value === missing) break;
+        if (Date.now() > deadline) throw new Error("Herdr did not apply the second session report");
+        await Bun.sleep(50);
+      }
+      expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
+    } finally {
+      app?.stop(); await workspaceClose(created.workspace.workspace_id);
+      forgetTranscriptState(); rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
+describe("Agy conversation API", () => {
+  it.skipIf(process.platform !== "linux")("binds the selected held lock, honors saved rewinds and recovers from an unwritten store", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-agy-contract-"));
+    const id = "00000000-0000-4000-8000-000000000031";
+    const path = join(root, "brain", id, ".system_generated", "logs", "transcript_full.jsonl");
+    mkdirSync(join(path, ".."), { recursive: true });
+    mkdirSync(join(root, "conversations")); mkdirSync(join(root, "presence"));
+    const lock = join(root, "presence", `${id}.lock`);
+    writeFileSync(lock, "");
+    // Another unheld lock in the same store must never select a conversation.
+    writeFileSync(join(root, "presence", "00000000-0000-4000-8000-000000000032.lock"), "");
+    const executable = join(root, "agy");
+    copyFileSync("/bin/sleep", executable); chmodSync(executable, 0o755);
+    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-agy-api" });
+    let app: ReturnType<typeof createServer> | undefined, db: Database | undefined;
+    let monitor: ConversationMonitor | undefined;
+    try {
+      const paneId = created.root_pane.pane_id;
+      await herdrRpc("pane.send_text", { pane_id: paneId, text: `${executable} 600 3<${lock}\n` });
+      for (const deadline = Date.now() + 10_000;;) {
+        if ((await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent === "agy") break;
+        if (Date.now() > deadline) throw new Error("fixture Agy process did not start");
+        await Bun.sleep(50);
+      }
+      app = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
+      const url = `http://127.0.0.1:${app.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`;
+      expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
+      db = new Database(join(root, "conversations", `${id}.db`));
+      db.exec("PRAGMA journal_mode=WAL; CREATE TABLE steps(idx INTEGER PRIMARY KEY)");
+      const empty = await (await fetch(url)).json();
+      expect(empty.source).toBe("agy-transcript"); expect(empty.turns).toEqual([]);
+      const row = (step_index: number, type: string, content: string) => JSON.stringify({ step_index, type, status: "DONE", content }) + "\n";
+      db.exec("INSERT INTO steps VALUES (0), (1)");
+      writeFileSync(path, row(0, "USER_INPUT", "fictional prompt") + row(1, "GENERIC", "x".repeat(5000)));
+      const first = await fetch(url), body = await first.json();
+      expect(body.source).toBe("agy-transcript");
+      expect(body.activity).toBe("working");
+      expect(body.turns[0].parts[0].text).toBe("fictional prompt");
+      expect((await fetch(url, { headers: { "if-none-match": first.headers.get("etag")! } })).status).toBe(304);
+      const ref = body.turns[1].parts[0].output_ref;
+      const outputUrl = `http://127.0.0.1:${app.port}/api/pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref })}`;
+      expect(await (await fetch(outputUrl)).text()).toBe("x".repeat(5000));
+      db.exec("INSERT INTO steps VALUES (2)");
+      appendFileSync(path, row(2, "PLANNER_RESPONSE", "Finished"));
+      const completed = await fetch(url, { headers: { "if-none-match": first.headers.get("etag")! } });
+      expect(completed.status).toBe(200);
+      expect((await completed.json()).activity).toBe("idle");
+      expect(completed.headers.get("etag")).not.toBe(first.headers.get("etag"));
+      db.exec("INSERT INTO steps VALUES (3)");
+      appendFileSync(path, row(3, "USER_INPUT", "New work"));
+      expect((await (await fetch(url)).json()).activity).toBe("working");
+      const changes: string[] = [];
+      monitor = new ConversationMonitor((_pane, signature) => changes.push(signature));
+      monitor.watch(paneId);
+      const changed = async (count: number) => {
+        for (const deadline = Date.now() + 5000; changes.length <= count;) {
+          if (Date.now() > deadline) throw new Error("Agy catalog change was not pushed");
+          await Bun.sleep(20);
+        }
+      };
+      await changed(0);
+      const beforeCut = changes.length;
+      db.exec("DELETE FROM steps WHERE idx >= 1");
+      await changed(beforeCut);
+      expect((await (await fetch(url)).json()).turns).toHaveLength(1);
+      expect((await fetch(`${url}&from=${encodeURIComponent(`${body.history_id}:0`)}`)).status).toBe(409);
+      expect((await fetch(outputUrl)).status).toBe(404);
+      forgetTranscriptState();
+      const local = await fetch(url.replace("/api/pane/", "/api/machines/local/pane/"));
+      expect((await local.json()).turns).toHaveLength(1);
+      db.exec("DROP TABLE steps");
+      expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
+    } finally {
+      monitor?.stop(); app?.stop(); db?.close(); await workspaceClose(created.workspace.workspace_id);
+      forgetTranscriptState(); rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
 describe("single-pane context lookup", () => {
   for (const route of ["commands", "files"] as const) {
     it(`rejects an unknown pane on /api/pane/${route} with the shared error envelope`, async () => {
@@ -50,6 +207,21 @@ describe("single-pane context lookup", () => {
       expect(typeof body.error.message).toBe("string");
     });
   }
+});
+
+describe("GET /api/pane/plan", () => {
+  it("requires GET and a pane id with the shared error envelope", async () => {
+    for (const [url, method, code] of [
+      [`${base()}/api/pane/plan`, "GET", "missing_pane_id"],
+      [`${base()}/api/pane/plan?pane_id=w9999:p9999`, "POST", "method_not_allowed"],
+    ] as const) {
+      const response = await fetch(url, { method });
+      expect(response.status).toBe(400);
+      const body: ApiError = await response.json();
+      expect(body.error.code).toBe(code);
+      expect(typeof body.error.message).toBe("string");
+    }
+  });
 });
 
 describe("Devin conversation API", () => {
@@ -850,7 +1022,7 @@ describe("workspace and discovery endpoints", () => {
 
     const prompt = await fetch(`${base()}/api/pane/prompt?pane_id=${encodeURIComponent(paneId)}`);
     expect(prompt.status).toBe(200);
-    expect(await prompt.json()).toEqual({ prompt: null, suggestion: null });
+    expect(await prompt.json()).toEqual({ prompt: null, suggestion: null, restored: null });
 
     for (const [path, body] of [
       ["/api/workspace/rename", { workspace_id: workspaceId, label: `${label}-renamed` }],
@@ -1988,6 +2160,82 @@ describe("web push", () => {
     expect(pushed!.urgency).toBe("high");
     expect(pushed!.vapidValid).toBe(true);
   }, 40_000);
+
+  it("sends no device an alert while a connected page says it is in use, and alerts again once it is not (#751)", async () => {
+    let created: Awaited<ReturnType<typeof workspaceCreate>> | undefined;
+    let dir: string | undefined;
+    let device: FakePushService | undefined;
+    let bridge: ReturnType<typeof createServer> | undefined;
+    let page: RecordingSocket | undefined;
+    try {
+      created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-push-presence" });
+      const paneId = created.root_pane.pane_id;
+      dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-push-presence-"));
+      device = await startFakePushService();
+      bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: dir, machines: false, pushLoopbackHttp: true,
+        alertTiming: { short: 0, long: 0, longTurn: 0 } });
+      const subscribe = await fetch(`http://127.0.0.1:${bridge.port}/api/push/subscribe`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: device.subscription }),
+      });
+      expect(subscribe.status).toBe(204);
+      page = await RecordingSocket.connect(`ws://127.0.0.1:${bridge.port}/ws`);
+      // a connection's frames are handled in order: the role-ack says the presence before it was read
+      const tell = async (active: boolean): Promise<void> => {
+        page!.seen.length = 0;
+        page!.send({ type: "presence", active });
+        page!.send({ type: "role", mode: "interact" });
+        await page!.waitFor((message) => message.type === "role-ack", "role-ack after presence", 5_000);
+      };
+      const report = async (state: "working" | "blocked"): Promise<boolean> => {
+        // only a frame this report caused may answer it
+        page!.seen.length = 0;
+        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state });
+        return page!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === state,
+          `${state} on the page`, 2_500).then(() => true).catch(() => false);
+      };
+      const alerts = () => device!.received.filter((push) => push.payload.pane_id === paneId);
+
+      await tell(true);
+      // the collector may still be subscribing to the new pane: alternate until a blocked lands
+      let blocked = false;
+      for (let attempt = 0; attempt < 8 && !blocked; attempt++) {
+        await report("working");
+        blocked = await report("blocked");
+      }
+      expect(blocked).toBe(true);
+      await bridge.alertsSettled();
+      expect(alerts()).toHaveLength(0);
+
+      await tell(false);
+      expect(await report("working")).toBe(true);
+      expect(await report("blocked")).toBe(true);
+      const pushed = await device.waitFor((push) => push.payload.pane_id === paneId, "alert once no page is in use", 5_000);
+      expect(pushed.payload.body).toBe("waiting for your input");
+
+      // a page that leaves without saying so no longer holds the alerts back
+      await tell(true);
+      page.close();
+      page = undefined;
+      const watcher = await RecordingSocket.connect(`ws://127.0.0.1:${bridge.port}/ws`);
+      page = watcher;
+      // the server reads the close on its own time: alternate until an alert comes, which only
+      // happens once the closed page stopped holding them back
+      let alerted = false;
+      for (let attempt = 0; attempt < 8 && !alerted; attempt++) {
+        expect(await report("working")).toBe(true);
+        expect(await report("blocked")).toBe(true);
+        await bridge.alertsSettled();
+        alerted = alerts().length === 2;
+      }
+      expect(alerted).toBe(true);
+    } finally {
+      page?.close();
+      bridge?.stop();
+      device?.stop();
+      if (created) await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("reports a Codex unknown after work as done over WS and HTTP and delivers its completion push", async () => {
     // Exercise the real collector -> CompletionTracker -> PushService path using

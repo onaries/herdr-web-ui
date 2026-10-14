@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { InstallMethod, TelemetryEvent, TelemetryStatus } from "../shared/telemetry.ts";
+import { NOTICE_VERSION, reportedSettings, type InstallMethod, type ReportedSetting, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { updateRequestAllowed } from "./update-api.ts";
 
@@ -23,9 +23,13 @@ export const NOTICE_GRACE_MS = 10 * 60_000;
 interface Saved {
   install_id: string;
   enabled: boolean;
+  /** when the current notice (notice_version) was shown; null before, and for a file that saw only an older notice */
   notice_seen_at: string | null;
+  notice_version: number;
   /** the version the last delivered event was for; null before the first one */
   reported_version: string | null;
+  /** what a browser last told of its appearance settings; null before one has */
+  changed_settings: ReportedSetting[] | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -50,8 +54,11 @@ function readSaved(file: string): Saved | null {
     return {
       install_id: value["install_id"],
       enabled: value["enabled"] !== false,
-      notice_seen_at: typeof value["notice_seen_at"] === "string" ? value["notice_seen_at"] : null,
+      // a notice from before it said what is sent now does not count: it is shown again first
+      notice_seen_at: value["notice_version"] === NOTICE_VERSION && typeof value["notice_seen_at"] === "string" ? value["notice_seen_at"] : null,
+      notice_version: NOTICE_VERSION,
       reported_version: typeof value["reported_version"] === "string" ? value["reported_version"] : null,
+      changed_settings: reportedSettings(value["changed_settings"]),
     };
   } catch { return null; }
 }
@@ -81,7 +88,7 @@ export class Telemetry {
   }) {
     this.file = join(options.stateDir, FILE);
     const saved = readSaved(this.file);
-    this.saved = saved ?? { install_id: randomUUID(), enabled: true, notice_seen_at: null, reported_version: null };
+    this.saved = saved ?? { install_id: randomUUID(), enabled: true, notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, changed_settings: null };
     if (!saved) {
       try { this.persist(); } catch (error) {
         // the app still starts; telemetry just stays silent
@@ -130,6 +137,7 @@ export class Telemetry {
       os: this.options.platform ?? process.platform,
       arch: this.options.arch ?? process.arch,
       install_method: installMethod(this.options.env),
+      changed_settings: this.saved.changed_settings,
     };
   }
 
@@ -143,9 +151,11 @@ export class Telemetry {
     };
   }
 
-  change(patch: { enabled?: boolean; notice_seen?: true }): TelemetryStatus {
+  change(patch: { enabled?: boolean; notice_seen?: true; changed_settings?: ReportedSetting[] }): TelemetryStatus {
     this.refresh();
     if (patch.enabled !== undefined) this.saved.enabled = patch.enabled;
+    // kept for the next event; telling it sends nothing by itself
+    if (patch.changed_settings !== undefined) this.saved.changed_settings = patch.changed_settings;
     if (patch.notice_seen && this.saved.notice_seen_at === null) this.saved.notice_seen_at = new Date(this.now()).toISOString();
     this.persist();
     // turned off while an event is on its way: stop it rather than let it land
@@ -202,8 +212,10 @@ export async function handleTelemetryRequest(request: Request, telemetry?: Telem
   try { body = await request.json(); } catch { return badRequest("invalid_json", "The body is not JSON"); }
   if (!isJsonObject(body)) return badRequest("invalid_body", "Send an object");
   const { enabled, notice_seen } = body;
+  const changed = body["changed_settings"] === undefined ? undefined : reportedSettings(body["changed_settings"]);
+  if (changed === null) return badRequest("invalid_body", "changed_settings is a list of reported setting names");
   if (enabled !== undefined && typeof enabled !== "boolean") return badRequest("invalid_body", "enabled is a boolean");
   if (notice_seen !== undefined && notice_seen !== true) return badRequest("invalid_body", "notice_seen can only be true");
-  try { return reply(telemetry.change({ ...(enabled !== undefined ? { enabled } : {}), ...(notice_seen ? { notice_seen } : {}) })); }
+  try { return reply(telemetry.change({ ...(enabled !== undefined ? { enabled } : {}), ...(notice_seen ? { notice_seen } : {}), ...(changed !== undefined ? { changed_settings: changed } : {}) })); }
   catch (error) { return errorResponse(error); }
 }

@@ -36,6 +36,73 @@
   flex: none;
 }
 
+/* one row of three: a short name is shown whole, and only a long one gives way to an ellipsis */
+.new-session-folder-chips-frame {
+  position: relative;
+  min-width: 0;
+}
+
+/* only the chips that fit are drawn (RecentFolderChips), so the row clips nothing: a focused chip's ring shows whole */
+.new-session-folder-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+}
+
+.new-session-folder-chips > .new-session-folder-chip { flex: none; }
+/* the first chip gives way when even it and "+N" do not fit */
+.new-session-folder-chips > .new-session-folder-chip:first-child { flex: 0 1 auto; }
+
+.new-session-folder-more {
+  font-variant-numeric: tabular-nums;
+}
+
+/* the chips' own widths, measured where nothing sees them (RecentFolderChips): the measuring row
+   is as wide as every chip, so it sits in a clipped box the size of the frame and adds no overflow */
+.new-session-folder-measure-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.new-session-folder-measure {
+  display: flex;
+  gap: var(--space-2);
+  width: max-content;
+}
+
+.new-session-folder-chip {
+  min-width: 0;
+  max-width: 16rem;
+  border-radius: var(--radius-pill);
+}
+
+/* a phone keeps them on one row and swipes it sideways */
+@media (max-width: 640px), (pointer: coarse) {
+  .new-session-folder-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .new-session-folder-chips::-webkit-scrollbar { display: none; }
+  .new-session-folder-chips > .new-session-folder-chip,
+  .new-session-folder-chips > .new-session-folder-chip:first-child { flex: none; max-width: 12rem; scroll-snap-align: start; }
+}
+
+.new-session-folder-chip svg {
+  flex: none;
+}
+
+.new-session-folder-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* New tab: the folder is the workspace's, shown as a fact in a dashed box, not asked for */
 .new-session-folder {
   display: flex;

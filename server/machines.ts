@@ -715,13 +715,14 @@ export class MachineManager {
 }
 
 /**
- * A pane after a status frame: a frame that names a count of background tasks replaces
- * it; one that names none leaves it. Every frame says whether the pane waits on its turn's work.
+ * A pane after a status frame: a frame that names background tasks or a plan replaces
+ * them; one that names neither leaves them. Every frame says whether the pane waits on its turn's work.
  */
 export function paneAfterStatus(p: HerdrPane, message: Extract<ServerMessage, { type: "pane-status" }>): HerdrPane {
-  const { background_tasks: before, background_wait: _waited, ...pane } = p;
+  const { background_tasks: before, background_wait: _waited, plan: planBefore, ...pane } = p;
   const tasks = message.background_tasks === undefined ? before : message.background_tasks > 0 ? message.background_tasks : undefined;
-  return { ...pane, agent_status: message.agent_status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}) };
+  const plan = message.plan === undefined ? planBefore : message.plan ?? undefined;
+  return { ...pane, agent_status: message.agent_status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}), ...(plan === undefined ? {} : { plan }) };
 }
 
 /** A remote PC's panes as its alerts take them: one waiting on its turn's background work is working. */

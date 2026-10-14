@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, ListChecks, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
-import type { AgentStatus, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { AgentStatus, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import type { AppActions } from "../lib/actions.ts";
@@ -105,6 +105,18 @@ export function BackgroundBadge({ count }: { count?: number }) {
   return (
     <span className="background-count" title={label} aria-label={label} data-testid="background-tasks">
       <Layers aria-hidden="true" />{count}
+    </span>
+  );
+}
+
+/** How far the pane's plan has got: a count beside the state word, quiet once every step is done. */
+export function PlanBadge({ plan }: { plan?: PlanSummary }) {
+  const t = useT();
+  if (!plan || plan.total <= 0) return null;
+  const label = t("Plan: {done} of {total} done", { done: plan.done, total: plan.total });
+  return (
+    <span className={`plan-count${plan.done === plan.total ? " is-done" : ""}`} title={plan.current ? `${label} · ${plan.current}` : label} aria-label={label} data-testid="plan-progress">
+      <ListChecks aria-hidden="true" />{plan.done}/{plan.total}
     </span>
   );
 }

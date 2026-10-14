@@ -6,5 +6,4 @@ Describe the problem and resulting behavior.
 
 ## Validation
 
-List relevant checks and results. For UI changes, include a screenshot or recording
-from an owned demo/test session. For HTTP/WS changes, include contract-test coverage.
+List relevant checks and results. For HTTP/WS changes, include contract-test coverage.

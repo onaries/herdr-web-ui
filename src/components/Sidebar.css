@@ -423,8 +423,9 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   to { transform: rotate(360deg); }
 }
 
-/* background tasks still running: a number beside the state, quieter than it */
-.background-count {
+/* background tasks still running, and a pane's plan: a number beside the state, quieter than it */
+.background-count,
+.plan-count {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -436,7 +437,8 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   font-variant-numeric: tabular-nums;
 }
 
-.background-count svg {
+.background-count svg,
+.plan-count svg {
   width: var(--space-3);
   height: var(--space-3);
 }
@@ -456,6 +458,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   flex: 0 0 auto;
   flex-direction: column;
   padding: var(--space-2) var(--side-gutter) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+}
+
+/* Keep the footer at the bottom when both lists are short after the upper section folds. */
+.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .sidebar-footer {
+  margin-top: auto;
 }
 
 .sidebar-footer-action {
@@ -532,5 +539,28 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
     transition: none;
   }
 
-  .sidebar-status[data-status="working"] svg { animation: none; }
+  /* no turn, but RUN still has to read apart from BG, the same arc held still: it fades in steps */
+  .sidebar-status[data-status="working"] svg { animation: pulse var(--dur-pulse) var(--ease-pulse) infinite; }
+}
+
+/* a finger presses a row as an iPhone list row is pressed: it fills, it does not dim (styles.css) */
+@media (hover: none) and (pointer: coarse) {
+  .workspace-header:has(> .pane-select:active),
+  .sidebar-footer-action:active {
+    background: var(--side-hover);
+  }
+
+  .pane-select:active,
+  .sidebar-footer-action:active {
+    opacity: 1;
+  }
+}
+
+/* a pane's plan: its glyph in the working color until every step is done */
+.plan-count svg {
+  color: var(--status-working);
+}
+
+.plan-count.is-done svg {
+  color: var(--status-done);
 }

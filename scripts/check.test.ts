@@ -16,14 +16,15 @@ const git = (cwd: string, ...args: string[]): void => {
 };
 
 describe("plan", () => {
-  it("reads the modes: the fast steps, the lanes, both, or one command", () => {
-    expect(plan(["fast"])).toEqual({ fast: true, lanes: [], command: null, build: false });
-    expect(plan(["browser"])).toEqual({ fast: false, lanes: ["browser"], command: null, build: false });
-    expect(plan(["browser", "integration"])).toEqual({ fast: false, lanes: ["integration", "browser"], command: null, build: false });
-    expect(plan(["full"])).toEqual({ fast: true, lanes: ["integration", "browser"], command: null, build: false });
-    expect(plan(["run", "bun", "test", "./a.test.ts"])).toEqual({ fast: false, lanes: [], command: ["bun", "test", "./a.test.ts"], build: false });
-    expect(plan(["run", "--build", "bun", "scripts/browser-qa.ts"])).toEqual({ fast: false, lanes: [], command: ["bun", "scripts/browser-qa.ts"], build: true });
-    expect(plan(["run", "--build", "--", "bun", "scripts/browser-qa.ts"])).toEqual({ fast: false, lanes: [], command: ["bun", "scripts/browser-qa.ts"], build: true });
+  it("reads the modes: the fast steps, the lanes, both, concurrent, or one command", () => {
+    expect(plan(["fast"])).toEqual({ fast: true, lanes: [], command: null, build: false, concurrent: false });
+    expect(plan(["browser"])).toEqual({ fast: false, lanes: ["browser"], command: null, build: false, concurrent: false });
+    expect(plan(["browser", "integration"])).toEqual({ fast: false, lanes: ["integration", "browser"], command: null, build: false, concurrent: false });
+    expect(plan(["full"])).toEqual({ fast: true, lanes: ["integration", "browser"], command: null, build: false, concurrent: false });
+    expect(plan(["concurrent"])).toEqual({ fast: false, lanes: ["integration", "browser"], command: null, build: false, concurrent: true });
+    expect(plan(["run", "bun", "test", "./a.test.ts"])).toEqual({ fast: false, lanes: [], command: ["bun", "test", "./a.test.ts"], build: false, concurrent: false });
+    expect(plan(["run", "--build", "bun", "scripts/browser-qa.ts"])).toEqual({ fast: false, lanes: [], command: ["bun", "scripts/browser-qa.ts"], build: true, concurrent: false });
+    expect(plan(["run", "--build", "--", "bun", "scripts/browser-qa.ts"])).toEqual({ fast: false, lanes: [], command: ["bun", "scripts/browser-qa.ts"], build: true, concurrent: false });
   });
 
   it("refuses what it does not know instead of running something else", () => {
@@ -33,6 +34,7 @@ describe("plan", () => {
   it("uses the existing lock for herdr-backed run commands and never serializes inline credentials", () => {
     expect(needsLock(plan(["run", "bun", "test", "./a.contract.test.ts"]))).toBe(true);
     expect(needsLock(plan(["fast"]))).toBe(false);
+    expect(needsLock(plan(["concurrent"]))).toBe(true);
     expect(sanitizeCommand(["bun", "--api-token", "private", "--access-token=value", "https://example.test/?token=secret"]))
       .toEqual(["bun", "--api-token", "[REDACTED]", "--access-token=[REDACTED]", "https://example.test/?token=[REDACTED]"]);
   });

@@ -7,32 +7,35 @@ import type { UsageReport } from "../shared/protocol.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
 const at = (hours: number): string => new Date(Date.now() + hours * 3600_000).toISOString();
-const REPORT: UsageReport = {
+/** Built when it is asked for: its times, and the paces measured from them, hold however late in the run that is. */
+const report = (): UsageReport => ({
   providers: [
-    { id: "claude", key: "claude:u1", account: "me@example.com", plan: "max", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [
-      { kind: "session", scope: null, used_percent: 42, resets_at: at(2.2) },
-      { kind: "week", scope: null, used_percent: 63.4, resets_at: at(82) },
-      { kind: "week", scope: "Sonnet", used_percent: 5, resets_at: null },
+    { id: "claude", key: "claude:u1", account: "me@example.com", plan: "max", problem: null, checked_at: at(0), windows: [
+      // 2.8 hours into the session at 15%/h: lasts to the reset
+      { kind: "session", scope: null, used_percent: 42, resets_at: at(2.2), starts_at: at(2.2 - 5) },
+      // 86 hours into the week: runs out in about 2 days, 1.4 days before the reset
+      { kind: "week", scope: null, used_percent: 63.4, resets_at: at(82), starts_at: at(82 - 168) },
+      { kind: "week", scope: "Sonnet", used_percent: 5, resets_at: null, starts_at: null },
     ] },
-    { id: "codex", key: "codex:work", account: "me@work.example", plan: "pro", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [
-      { kind: "session", scope: null, used_percent: 12, resets_at: at(0.8) },
-      { kind: "week", scope: null, used_percent: 91, resets_at: at(99) },
+    { id: "codex", key: "codex:work", account: "me@work.example", plan: "pro", problem: null, checked_at: at(0), windows: [
+      { kind: "session", scope: null, used_percent: 12, resets_at: at(0.8), starts_at: at(0.8 - 5) },
+      { kind: "week", scope: null, used_percent: 91, resets_at: at(99), starts_at: at(99 - 168) },
     ] },
     { id: "codex", key: "codex:home", account: "me@example.com", plan: "plus", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [
-      { kind: "week", scope: null, used_percent: 30, resets_at: at(120) },
+      { kind: "week", scope: null, used_percent: 30, resets_at: at(120), starts_at: null },
     ] },
-    { id: "cursor", key: "cursor:c1", account: null, plan: "pro", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [{ kind: "month", scope: null, used_percent: 20, resets_at: at(300) }] },
-    { id: "copilot", key: "copilot:me", account: "me", plan: "free", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [{ kind: "month", scope: "Chat", used_percent: 0, resets_at: at(34) }] },
-    { id: "grok", key: "grok:g1", account: null, plan: null, problem: "rate_limited", checked_at: "2026-09-29T11:40:00Z", windows: [{ kind: "week", scope: null, used_percent: 0, resets_at: null }] },
+    { id: "cursor", key: "cursor:c1", account: null, plan: "pro", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [{ kind: "month", scope: null, used_percent: 20, resets_at: at(300), starts_at: null }] },
+    { id: "copilot", key: "copilot:me", account: "me", plan: "free", problem: null, checked_at: "2026-09-29T12:00:00Z", windows: [{ kind: "month", scope: "Chat", used_percent: 0, resets_at: at(34), starts_at: null }] },
+    { id: "grok", key: "grok:g1", account: null, plan: null, problem: "rate_limited", checked_at: "2026-09-29T11:40:00Z", windows: [{ kind: "week", scope: null, used_percent: 0, resets_at: null, starts_at: null }] },
     { id: "antigravity", key: "antigravity@keychain", account: null, plan: null, problem: "expired", checked_at: null, windows: [] },
   ],
-};
+});
 
 async function staged(context: BrowserContext): Promise<string[]> {
   const asked: string[] = [];
   await context.route("**/api/usage*", (route) => {
     asked.push(new URL(route.request().url()).search);
-    return route.fulfill({ json: REPORT });
+    return route.fulfill({ json: report() });
   });
   return asked;
 }
@@ -60,12 +63,27 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await page.keyboard.press("Escape");
     await strip.waitFor();
 
-    // three chips and "+4" past four accounts, in the server's order, each its plan's week; one near its limit is red; two Codex accounts apart
+    // the pace is a setting of its own, off until chosen: no warning in the strip, no red hairline on a low share, no mark or rate in the popover
+    assert.doesNotMatch(await strip.getAttribute("aria-label") ?? "", /Runs out/);
+    assert.equal(await page.locator(".usage-chip.is-fast").count(), 0);
+    await strip.click();
+    await page.getByRole("dialog", { name: "Subscription usage", exact: true }).locator(".usage-row").first().waitFor();
+    assert.equal(await page.locator(".usage-bar-pace, .usage-row-pace").count(), 0);
+    await page.keyboard.press("Escape");
+    await settingsButton.click();
+    await openSettingsPage(page, "Subscription usage");
+    await page.getByRole("switch", { name: "Show pace", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.locator(".usage-chip.is-fast").first().waitFor();
+
+    // three chips and "+4" past four accounts, in the server's order, each its plan's week; one near its limit is red; two Codex accounts apart;
+    // a week running out before its reset says when, and its hairline turns red while its share is still low
     assert.equal(await page.locator(".usage-chip").count(), 3);
     assert.equal(await page.locator(".usage-more").textContent(), "+4");
-    assert.equal(await strip.getAttribute("aria-label"),
-      "Subscription usage: Claude · me@example.com 63%, Codex · me@work.example 91%, Codex · me@example.com 30%, Cursor 20%, Copilot · me 0%, Grok 0%, Antigravity —");
+    assert.match(await strip.getAttribute("aria-label") ?? "",
+      /^Subscription usage: Claude · me@example\.com 63% \(Runs out in 2d 1h\), Codex · me@work\.example 91% \(Runs out in 6h \d+m\), Codex · me@example\.com 30%, Cursor 20%, Copilot · me 0%, Grok 0%, Antigravity —$/);
     assert.equal(await page.locator(".usage-chip").nth(1).evaluate((chip) => chip.classList.contains("is-high")), true);
+    assert.deepEqual(await page.locator(".usage-chip").evaluateAll((chips) => chips.map((chip) => chip.classList.contains("is-fast"))), [true, true, false]);
     assert.equal(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth), true, "the chips fit beside Settings");
     const [settings, meters] = await Promise.all([page.locator(".sidebar-footer-row .sidebar-footer-action").boundingBox(), strip.boundingBox()]);
     assert.ok(settings && meters && settings.x + settings.width <= meters.x, "Settings and the meters do not overlap");
@@ -77,6 +95,14 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     assert.equal(await popover.getByRole("meter").count(), 9);
     assert.equal(await popover.locator(".usage-account").first().textContent(), "me@example.com");
     assert.equal(await popover.locator(".usage-row.is-high").count(), 1);
+    // the pace of every window whose start is known: a marker where an even pace would be, the rate, and when it runs out if before the reset
+    assert.equal(await popover.locator(".usage-bar-pace").count(), 4);
+    const paces = await popover.locator(".usage-row-pace").allTextContents();
+    [/^15%\/h$/, /^18%\/day · Runs out in 2d 1h$/, /^2\.\d%\/h$/, /^32%\/day · Runs out in 6h \d+m$/].forEach((pattern, index) => assert.match(paces[index] ?? "", pattern));
+    assert.equal(paces.length, 4);
+    const marker = () => popover.locator(".usage-bar-pace").first().evaluate((el) => parseFloat((el as HTMLElement).style.left));
+    const usedMarker = await marker();
+    assert.ok(usedMarker > 55 && usedMarker < 58, `a session 2.8 of 5 hours in puts the marker 56% along, not ${usedMarker}%`);
     assert.equal(await popover.locator(".usage-note.is-problem").count(), 1, "only the expired sign-in reads as an error");
     if (process.env.UI_EVIDENCE_DIR) {
       mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
@@ -98,12 +124,14 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await page.getByRole("button", { name: "Move Cursor up", exact: true }).click();
     await page.keyboard.press("Escape");
     assert.equal(await strip.getAttribute("aria-label"),
-      "Subscription usage: Claude · me@example.com 37% left, Cursor 80% left, Codex · me@example.com 70% left, Copilot · me 100% left, Grok 100% left, Antigravity —");
+      "Subscription usage: Claude · me@example.com 37% left (Runs out in 2d 1h), Cursor 80% left, Codex · me@example.com 70% left, Copilot · me 100% left, Grok 100% left, Antigravity —");
     assert.deepEqual(await page.locator(".usage-chip-value").allTextContents(), ["37%", "80%", "70%"]);
     await strip.click();
     assert.deepEqual((await names()).slice(0, 3), ["Claude · me@example.com", "Cursor", "Codex · me@example.com"], "a hidden account is left out of the popover too");
     assert.equal(await popover.locator(".usage-provider").count(), 6);
     assert.equal(await popover.locator(".usage-row-value").first().textContent(), "58% left");
+    const leftMarker = await marker();
+    assert.ok(leftMarker > 42 && leftMarker < 45, `counting what is left, the marker sits where an even pace leaves 44%, not ${leftMarker}%`);
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-popover-left.png") });
     await page.keyboard.press("Escape");
     await settingsButton.click();

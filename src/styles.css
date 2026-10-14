@@ -7,7 +7,7 @@
  * the attribute); `[data-density="compact"]` overrides the type scale and row
  * heights. The base blocks are the amber palette, the default and the look before
  * settings load; `[data-palette]` blocks override them for the opt-in report,
- * charcoal and catppuccin palettes. xterm cannot read CSS custom properties, so the --term-* group
+ * charcoal, catppuccin, lilac and forest palettes. xterm cannot read CSS custom properties, so the --term-* group
  * is mirrored in settings.ts `terminalTheme()`.
  * Component-scoped rules live beside their component (Sidebar.css,
  * PaneTerminal.css, ...); this file owns the app shell, the header and the
@@ -55,6 +55,11 @@
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);
+  /* glass: a phone's header over the chat and the input card over the transcript's end, as an
+     iPhone's bars are. Mixed from the theme's own surfaces, so every theme and palette has them */
+  --bar-bg: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  --card-glass: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  --glass-blur: saturate(180%) blur(20px);
   --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
   --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
@@ -172,8 +177,12 @@
      every display refresh for as long as an agent works (60+ a second), which stutters a
      video playing beside the app; two steps draw about one frame a second */
   --ease-pulse: steps(2, jump-none);
+  /* a phone's sheet rises on the spring and drops faster than it rose */
+  --dur-sheet: 360ms;
+  --dur-sheet-out: 240ms;
 
   /* layers */
+  --z-header: 4;
   --z-banner: 5;
   --z-popover: 10;
   --z-scrim: 15;
@@ -544,6 +553,90 @@
   --term-fg: #2b2d4d;
   --term-cursor: #4a42c2;
   --term-selection: #dcd7f8;
+}
+
+/* Forest: low-saturation green-grey surfaces for long sessions. The accent stays green, while
+   working, blocked and done keep separate status hues. */
+[data-theme="dark"][data-palette="forest"] {
+  --bg: #101a16;
+  --bg-panel: #16231d;
+  --bg-elevated: #1d2d25;
+  --bg-hover: #263b30;
+  --bg-input: #132019;
+  --border: #2d4437;
+  --border-strong: #3d5b49;
+  --text: #d4e5d8;
+  --text-dim: #9ab9a3;
+  --text-strong: #edf7ef;
+  --accent: #8fd3a2;
+  --accent-tint: rgba(143, 211, 162, 0.14);
+  --primary: #8fd3a2;
+  --primary-hover: #a7dfb5;
+  --primary-text: #102016;
+  --primary-tint: rgba(143, 211, 162, 0.16);
+  --status-idle: #9ab9a3;
+  --status-working: #79c7d4;
+  --status-blocked: #ffa294;
+  --status-done: #91d69a;
+  --status-working-tint: rgba(121, 199, 212, 0.14);
+  --status-blocked-tint: rgba(255, 162, 148, 0.14);
+  --status-done-tint: rgba(145, 214, 154, 0.14);
+  --danger-tint: rgba(255, 162, 148, 0.12);
+  --danger-text: #ffd7d0;
+  --scrim: rgba(6, 14, 10, 0.6);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --term-bg: #16231d;
+  --term-fg: #d4e5d8;
+  --term-cursor: #8fd3a2;
+  --term-selection: #31513e;
+  --syntax-keyword: #e6a96d;
+  --syntax-string: #91d69a;
+  --syntax-number: #d2b18a;
+  --syntax-type: #79c7d4;
+  --syntax-variable: #d4e5d8;
+  --syntax-meta: #c2a0d8;
+}
+
+[data-theme="light"][data-palette="forest"] {
+  --bg: #eaf2ed;
+  --bg-panel: #f7fbf8;
+  --bg-elevated: #edf5ef;
+  --bg-hover: #e1eee5;
+  --bg-input: #ffffff;
+  --border: #c9ddd0;
+  --border-strong: #a7c3b2;
+  --text: #20352a;
+  --text-dim: #4f6d5a;
+  --text-strong: #15291e;
+  --accent: #2c7648;
+  --accent-tint: rgba(44, 118, 72, 0.1);
+  --primary: #397f50;
+  --primary-hover: #2f6e44;
+  --primary-text: #ffffff;
+  --primary-tint: rgba(57, 127, 80, 0.12);
+  --status-idle: #4f6d5a;
+  --status-working: #166578;
+  --status-blocked: #a02b20;
+  --status-done: #225f32;
+  --status-working-tint: rgba(22, 101, 120, 0.12);
+  --status-blocked-tint: rgba(160, 43, 32, 0.1);
+  --status-done-tint: rgba(34, 95, 50, 0.12);
+  --danger-tint: rgba(160, 43, 32, 0.1);
+  --danger-text: #9d3022;
+  --scrim: rgba(24, 52, 35, 0.35);
+  --shadow-drawer: 0 0 40px rgba(24, 52, 35, 0.22);
+  --shadow-pop: 0 16px 48px rgba(24, 52, 35, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(24, 52, 35, 0.07);
+  --term-bg: #f7fbf8;
+  --term-fg: #20352a;
+  --term-cursor: #2c7648;
+  --term-selection: #cfe5d5;
+  --syntax-keyword: #9c4f15;
+  --syntax-string: #225f32;
+  --syntax-number: #865d13;
+  --syntax-type: #166578;
+  --syntax-variable: #20352a;
+  --syntax-meta: #68489c;
 }
 
 [data-chat-width="narrow"] {
@@ -1347,6 +1440,59 @@ button {
   }
 }
 
+/* A phone's sheet moves as an iPhone's does: it rises from the bottom edge over a scrim that
+   darkens with it, follows a finger dragged down, and drops back down however it was closed.
+   lib/sheets.ts drives the drag and puts a closed sheet's last frame back for .is-leaving.
+   Every surface on a .modal-scrim is a sheet here: the dialogs, the palette, the row sheet. */
+@media (max-width: 640px) {
+  .modal-scrim {
+    animation: scrim-in var(--dur-sheet) var(--ease-out);
+  }
+
+  .modal-scrim > * {
+    animation: sheet-in var(--dur-sheet) var(--ease-spring);
+  }
+
+  /* A stroke on a sheet or its scrim is the sheet's: it pans nothing behind it, the chat
+     included. Its own lists still scroll, each a scroll container where touch-action starts
+     afresh, and keep their overscroll to themselves; a drag down is lib/sheets.ts's. Two
+     fingers still zoom the page, begun on a sheet as anywhere else (WCAG 1.4.4). */
+  .modal-scrim,
+  .modal-scrim > * {
+    touch-action: pinch-zoom;
+  }
+
+  .modal-scrim * {
+    overscroll-behavior: contain;
+  }
+
+  .modal-scrim.is-leaving {
+    pointer-events: none;
+    animation: scrim-out var(--dur-sheet-out) var(--ease-out) forwards;
+  }
+
+  .modal-scrim.is-leaving > * {
+    animation: sheet-out var(--dur-sheet-out) var(--ease-out) forwards;
+  }
+}
+
+@keyframes scrim-in {
+  from { background-color: transparent; }
+}
+
+@keyframes scrim-out {
+  to { background-color: transparent; }
+}
+
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+}
+
+/* no `from`: a sheet let go mid-drag drops from where the finger left it */
+@keyframes sheet-out {
+  to { transform: translateY(100%); }
+}
+
 /* A phone's keyboard is up (lib/viewport.ts): the scrim ends where the keyboard begins, as the
    shell does. An iPhone home screen app keeps the layout viewport at full height under the
    keyboard, so a sheet on the screen's bottom edge sat behind it, its text field included. */
@@ -1542,6 +1688,7 @@ button {
     width: min(88vw, var(--sidebar-w));
     transform: translateX(-100%);
     visibility: hidden;
+    touch-action: pan-y;
     box-shadow: var(--shadow-drawer);
     transition:
       transform var(--dur-base) var(--ease-out),
@@ -1554,12 +1701,23 @@ button {
     transition-delay: 0s;
   }
 
+  /* on the page while the drawer is closed too: a swipe begun on it closes the drawer, and an
+     element that left the page would take the rest of the stroke's touches with it (lib/edgeSwipe.ts) */
   .scrim {
     display: block;
     position: fixed;
     inset: calc(var(--header-h) + env(safe-area-inset-top, 0px)) 0 0 0;
     z-index: var(--z-scrim);
     background: var(--scrim);
+    opacity: 0;
+    pointer-events: none;
+    touch-action: none;
+    transition: opacity var(--dur-base) var(--ease-out);
+  }
+
+  .scrim.is-open {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
@@ -1597,12 +1755,102 @@ button {
   .view-switch .header-desktop-only { display: none; }
 }
 
+/* ---------- phone: an app, not a page ---------- */
+
+/* Over the chat on a phone the header is glass, as an iPhone's bar is: the transcript scrolls on
+   under it, blurred, instead of stopping at a ruled edge. Only when the transcript is right under
+   the header; a tab strip or a notice between them keeps the plain bar. The header pulls the body
+   up under itself by its own height (--header-over), and the stack gives that height back above
+   everything in it, so a prompt card, the held messages and the composer never go under the bar:
+   only the transcript reaches up into it (ChatView.css), its first line still below it, and the
+   banners start below it (PaneTerminal.css). The terminal lens keeps the bar in the flow as before. */
+@media (max-width: 768px) {
+  .app:has(> .app-body > .pane-column.is-chat > .terminal-host:first-child) {
+    --header-over: calc(var(--header-h) + env(safe-area-inset-top, 0px));
+  }
+
+  .app:has(> .app-body > .pane-column.is-chat > .terminal-host:first-child) > .app-header {
+    z-index: var(--z-header);
+    margin-bottom: calc(-1 * var(--header-over));
+    background: var(--bar-bg);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+
+/* A finger, not a mouse. The app's own controls are not text: a long press on a row, a tab or a
+   button opens no loupe, selection or link callout, while what is read (the transcript, code,
+   a file, a field) keeps them. Page pinch zoom stays available on ordinary content; the terminal's
+   own pinch sizes its font. A press shows at once, as a dim, in place of the amber box a mouse's
+   :active draws. */
+@media (hover: none) and (pointer: coarse) {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  .app-header,
+  .sidebar,
+  .tab-strip,
+  .key-bar,
+  .menu,
+  .row-sheet,
+  .modal-header,
+  .modal-footer,
+  .settings-nav,
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  label,
+  summary {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .icon-button:active,
+  .icon-button[aria-expanded="true"] {
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .icon-button.is-outlined:active,
+  .icon-button.is-outlined[aria-expanded="true"] {
+    border-color: var(--border);
+  }
+
+  /* no weight of its own: a row that fills when pressed (an iPhone list row) says so in its own
+     stylesheet, with its opacity left whole */
+  :where(button, [role="button"], a):where(:active:not(:disabled)) {
+    opacity: 0.55;
+  }
+
+  .menu-item:active {
+    opacity: 1;
+    background: var(--bg-hover);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
+  .scrim,
   .icon-button,
   .btn,
   .error-retry {
     transition: none;
+  }
+
+  .modal-scrim,
+  .modal-scrim > * {
+    animation: none;
   }
 
   .badge-working::before,

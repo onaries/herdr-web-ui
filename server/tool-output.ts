@@ -11,10 +11,11 @@ const WHOLE_OUTPUT_TOOLS = new Set(["create_goal", "update_goal", "get_goal"]);
 const WHOLE_OUTPUT_CHARS = 16_000;
 
 /** Sets a tool part's output, cut to what a page carries, keeping what it takes to fetch the rest. */
-export function trimOutput(tool: Extract<ConversationPart, { kind: "tool" }>, output: string, ref: string): void {
+export function trimOutput(tool: Extract<ConversationPart, { kind: "tool" }>, output: string, ref: string, fullSize?: number): void {
   const limit = WHOLE_OUTPUT_TOOLS.has(tool.name) ? WHOLE_OUTPUT_CHARS : TOOL_OUTPUT_CHARS;
-  if (output.length <= limit) { tool.output = output; return; }
+  const size = fullSize ?? output.length;
+  if (size <= limit) { tool.output = output; return; }
   tool.output = `${output.slice(0, limit)}\n… trimmed`;
   tool.output_ref = ref;
-  tool.output_size = output.length;
+  tool.output_size = size;
 }

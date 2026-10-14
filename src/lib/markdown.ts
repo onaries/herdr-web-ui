@@ -1,4 +1,5 @@
 import { fileUriPath } from "./terminalFileLinks.ts";
+import { parseHtmlBlock, startsHtml } from "./markdownHtml.ts";
 
 export type InlineNode =
   | { type: "text"; value: string }
@@ -6,6 +7,8 @@ export type InlineNode =
   | { type: "math"; value: string }
   | { type: "strong" | "em" | "del"; children: InlineNode[] }
   | { type: "link"; href: string; children: InlineNode[] }
+  /** `![alt](src)`; `fallback` is what a surface that draws no images shows after the `!` */
+  | { type: "image"; alt: string; src: string; fallback: InlineNode[]; /** CSS pixels, from an HTML `<img width>` */ width?: number }
   /** a link to a local file (`[report](/repo/out/REPORT.md)`): its label opens the path */
   | { type: "file"; path: string; children: InlineNode[] };
 
@@ -27,8 +30,9 @@ export interface ListBlock {
 
 export type MarkdownBlock =
   | { type: "math"; value: string }
-  | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; content: InlineNode[] }
-  | { type: "paragraph"; lines: InlineNode[][] }
+  /** `align`: centered by the HTML a README wrote it in (lib/markdownHtml.ts) */
+  | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; content: InlineNode[]; align?: "center" }
+  | { type: "paragraph"; lines: InlineNode[][]; align?: "center" }
   | ListBlock
   | { type: "blockquote"; blocks: MarkdownBlock[] }
   | { type: "code"; language: string; value: string }
@@ -169,8 +173,11 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
   let offset = 0;
   for (const match of inlineMarks(source)) {
     const index = match.index ?? 0;
-    if (index > offset) nodes.push({ type: "text", value: source.slice(offset, index) });
     let token = match[0];
+    // the `!` of an image stays in the text before its bracket
+    const image = token.startsWith("[") && index > offset && source[index - 1] === "!";
+    const textEnd = image ? index - 1 : index;
+    if (textEnd > offset) nodes.push({ type: "text", value: source.slice(offset, textEnd) });
     // like an http address it stops at the first non-ASCII character (`file:///tmp/a.md에서`); a
     // name with other letters in it is percent-encoded in a URI
     if (token.startsWith("file:///")) {
@@ -196,9 +203,11 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
       // a label holds no `]`, so no link nests in one: only emphasis counts toward the depth
       const href = safeMarkdownHref(target) ?? webLikeHref(target);
       const file = href === null ? markdownFileTarget(target) : null;
-      nodes.push(href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
+      const shown: InlineNode = href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
         : file !== null ? { type: "file", path: file, children: parseInline(label, false, depth) }
-        : { type: "text", value: label });
+        : { type: "text", value: label };
+      if (image) nodes.push({ type: "image", alt: label, src: target, fallback: [{ type: "text", value: "!" }, shown] });
+      else nodes.push(shown);
     } else if (token.startsWith("**") || token.startsWith("__")) {
       nodes.push({ type: "strong", children: parseInline(token.slice(2, -2), links, depth + 1) });
     } else if (token.startsWith("~~")) {
@@ -252,9 +261,9 @@ function parseTable(lines: string[], start: number, within = 0): { block: Markdo
 }
 
 
-function startsBlock(lines: string[], index: number): boolean {
+function startsBlock(lines: string[], index: number, html = false): boolean {
   const line = lines[index] ?? "";
-  return /^\s*\\\[/.test(line) || /^\s{0,3}```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line) || /^(?:\s*[-*_]){3,}\s*$/.test(line) || listLine.test(line)
+  return (html && startsHtml(line)) || /^\s*\\\[/.test(line) || /^\s{0,3}```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line) || /^(?:\s*[-*_]){3,}\s*$/.test(line) || listLine.test(line)
     || startsTable(lines, index);
 }
 
@@ -361,7 +370,8 @@ export function foldCode(value: string): { head: string; lines: number } | null 
 /** Quotes nest by one call each: past this many levels, what is left is read as plain lines. */
 const MAX_QUOTE_DEPTH = 32;
 
-export function parseMarkdown(source: string, depth = 0): MarkdownBlock[] {
+/** `html`: a file's markdown, whose HTML blocks are read as markdown (lib/markdownHtml.ts); an agent's text keeps them as text */
+export function parseMarkdown(source: string, depth = 0, html = false): MarkdownBlock[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: MarkdownBlock[] = [];
   let index = 0;
@@ -412,6 +422,13 @@ export function parseMarkdown(source: string, depth = 0): MarkdownBlock[] {
       unclosedMath = next;
     }
 
+    if (html && startsHtml(line)) {
+      const read = parseHtmlBlock(lines, index);
+      blocks.push(...read.blocks);
+      index = read.next;
+      continue;
+    }
+
     const heading = /^(#{1,6})\s+(.+)$/s.exec(line);
     if (heading !== null) {
       blocks.push({ type: "heading", level: (heading[1] ?? "#").length as 1 | 2 | 3 | 4 | 5 | 6, content: parseInline(heading[2] ?? "") });
@@ -429,7 +446,7 @@ export function parseMarkdown(source: string, depth = 0): MarkdownBlock[] {
       const quoted: string[] = [];
       while (index < lines.length && /^\s*>/.test(lineAt(lines, index))) quoted.push(lineAt(lines, index++).replace(/^\s*>\s?/, ""));
       // a line of thousands of ">" (text nobody wrote by hand) would otherwise overflow the stack
-      blocks.push({ type: "blockquote", blocks: depth < MAX_QUOTE_DEPTH ? parseMarkdown(quoted.join("\n"), depth + 1)
+      blocks.push({ type: "blockquote", blocks: depth < MAX_QUOTE_DEPTH ? parseMarkdown(quoted.join("\n"), depth + 1, html)
         : [{ type: "paragraph", lines: quoted.map((quotedLine) => parseInline(quotedLine)) }] });
       continue;
     }
@@ -449,7 +466,7 @@ export function parseMarkdown(source: string, depth = 0): MarkdownBlock[] {
     }
 
     const paragraph: InlineNode[][] = [];
-    while (index < lines.length && lineAt(lines, index).trim() !== "" && (paragraph.length === 0 || !startsBlock(lines, index))) {
+    while (index < lines.length && lineAt(lines, index).trim() !== "" && (paragraph.length === 0 || !startsBlock(lines, index, html))) {
       paragraph.push(parseInline(lineAt(lines, index)));
       index += 1;
     }

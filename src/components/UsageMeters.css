@@ -68,7 +68,8 @@
   color: var(--status-blocked);
 }
 
-.usage-chip.is-high .usage-chip-bar {
+.usage-chip.is-high .usage-chip-bar,
+.usage-chip.is-fast .usage-chip-bar {
   background: linear-gradient(to right, var(--status-blocked) var(--fill), var(--border-strong) var(--fill));
 }
 
@@ -202,6 +203,7 @@
 }
 
 .usage-bar {
+  position: relative;
   grid-column: 1 / -1;
   height: 4px;
   overflow: hidden;
@@ -214,6 +216,27 @@
   height: 100%;
   border-radius: inherit;
   background: var(--text-dim);
+}
+
+/* where an even pace would be by now */
+.usage-bar-pace {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-strong);
+}
+
+.usage-row-pace {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-row-runs-out {
+  color: var(--status-blocked);
 }
 
 .usage-row.is-high .usage-row-value {

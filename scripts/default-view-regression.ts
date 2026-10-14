@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser } from "playwright-core";
-import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { herdrRpc, paneSplit, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
 /** Settings > Chat > Panes open in: one choice puts every agent pane on that lens, the ones that remembered another included. */
@@ -50,6 +50,22 @@ export async function checkDefaultView(browser: Browser, origin: string): Promis
     await page.waitForFunction(() => document.querySelector(".view-switch button[aria-pressed='true']")?.getAttribute("title")?.startsWith("Live terminal") === true);
     assert.deepEqual(errors, []);
     console.log("PASS one choice in Settings opens every agent pane in the chat");
+
+    // a shell split beside an agent opens its terminal under the chat default, and keeps it when
+    // an agent starts in it: the lens of a pane in use is never switched under the user
+    const shell = (await paneSplit(one, "right", false)).pane_id;
+    // the split opens beside the agent: a click in its frame selects it, as in herdr
+    await page.locator(`.pane-select[title^="${one} —"]`).click();
+    const frame = page.locator(`.pane-frame[data-layout-pane="${shell}"]`);
+    await frame.locator(".pane-frame-body").click({ position: { x: 40, y: 40 } });
+    await page.locator(`.pane-frame.is-current[data-layout-pane="${shell}"]`).waitFor();
+    await page.waitForFunction(() => document.querySelector(".view-switch button[aria-pressed='true']")?.getAttribute("title")?.startsWith("Live terminal") === true);
+    await herdrRpc("pane.report_agent", { pane_id: shell, source: "manual", agent: "claude", state: "working" });
+    // the header names the pane's agent once the app has seen it start
+    await page.locator(".context-title .agent-mark.claude").waitFor({ timeout: 10_000 });
+    assert.match((await lens()) ?? "", /^Live terminal/, "an agent starting in the open shell leaves it on its terminal");
+    assert.deepEqual(errors, []);
+    console.log("PASS a shell in use keeps its terminal when an agent starts in it");
   } finally {
     await context.close();
     for (const workspace of workspaces) await workspaceClose(workspace).catch(() => undefined);

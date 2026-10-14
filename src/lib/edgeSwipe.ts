@@ -3,6 +3,11 @@
  * as the menu button does, and a swipe to the left closes it again. Only at the drawer's
  * width (<=768px, styles.css) and only for a mostly horizontal stroke, so the terminal's
  * one-finger scrolling and the transcript's vertical scrolling keep working.
+ *
+ * While the finger is down the drawer is under it, as an iPhone's is: it moves with the
+ * stroke rather than playing a slide of its own, and where it is let go, and how fast, decide
+ * whether it stays open (`drawerSettles`). The stylesheet's slide then carries it the rest
+ * of the way from there.
  */
 
 /** A stroke has to start this close to the left edge to open the drawer. */
@@ -11,6 +16,10 @@ export const EDGE_PX = 24;
 export const SWIPE_PX = 56;
 /** Movement below this is not a direction yet. */
 const SLOP_PX = 10;
+/** A flick at least this fast (px per ms) settles the drawer the way it went, wherever it is let go. */
+export const FLING_SPEED = 0.35;
+/** A finger that rests this long before it lifts has stopped: it lets go with no flick. */
+const REST_MS = 100;
 
 export type SwipeVerdict = "open" | "close" | "claim" | "pending" | "ignore";
 
@@ -25,6 +34,16 @@ export function swipeVerdict(drawerOpen: boolean, startX: number, dx: number, dy
   if (!drawerOpen && dx > 0) return dx >= SWIPE_PX ? "open" : "claim";
   if (drawerOpen && dx < 0) return -dx >= SWIPE_PX ? "close" : "claim";
   return "ignore";
+}
+
+/**
+ * Whether a drawer let go with `shown` px of its `width` on screen, moving at `speed` px/ms
+ * (rightward positive), stays open: a flick decides, else whether more than half of it shows.
+ */
+export function drawerSettles(shown: number, width: number, speed: number): boolean {
+  if (speed >= FLING_SPEED) return true;
+  if (speed <= -FLING_SPEED) return false;
+  return shown > width / 2;
 }
 
 /** A dialog, the palette or a sheet is up: a swipe there is theirs, not the drawer's under them. */
@@ -55,18 +74,25 @@ function selecting(): boolean {
 /** Listens on the whole document; returns the cleanup. */
 export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean) => void): () => void {
   const narrow = window.matchMedia("(max-width: 768px)");
-  let start: { x: number; y: number; open: boolean } | null = null;
+  let start: { x: number; y: number; open: boolean; at: number } | null = null;
   // a recognised swipe owns the stroke until the finger lifts, after the drawer moved too
   let claimed = false;
   let done = false;
+  // what the drawer is set to now, and where the finger has it: its width on screen, and how fast it moved
+  let state = false;
+  let follow: { drawer: HTMLElement; scrim: HTMLElement | null; width: number; shown: number; x: number; at: number; speed: number } | null = null;
   const onStart = (event: TouchEvent): void => {
     const touch = event.touches[0];
-    const open = isOpen();
+    // the last stroke still holds the drawer: a second finger, or its end never came (the element
+    // it began on left the page and took its touches with it). It lets go where it was first
+    const open = follow !== null ? onEnd() : isOpen();
     start = event.touches.length === 1 && touch && narrow.matches && document.querySelector(MODAL) === null && (open || !scrolledAside(event.target))
       && !editable(event.target) && !selecting()
-      ? { x: touch.clientX, y: touch.clientY, open } : null;
+      ? { x: touch.clientX, y: touch.clientY, open, at: event.timeStamp } : null;
     claimed = false;
     done = false;
+    state = open;
+    follow = null;
   };
   const onMove = (event: TouchEvent): void => {
     const touch = event.touches[0];
@@ -86,11 +112,55 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     event.preventDefault();
     event.stopPropagation();
     if (!done && (verdict === "open" || verdict === "close")) {
-      setOpen(verdict === "open");
+      state = verdict === "open";
+      setOpen(state);
       done = true;
     }
+    track(touch.clientX - start.x, touch.clientX, event.timeStamp);
   };
-  const onEnd = (): void => { start = null; claimed = false; done = false; };
+  /** Puts the drawer under the finger, `dx` from where the stroke began. */
+  const track = (dx: number, x: number, at: number): void => {
+    if (start === null) return;
+    if (follow === null) {
+      const drawer = document.getElementById?.("workspace-drawer") ?? null;
+      if (drawer === null) return;
+      const scrim = document.querySelector<HTMLElement>(".scrim");
+      // a flick may lift after one move: its speed so far is measured from where the finger came down
+      const speed = at > start.at ? (x - start.x) / (at - start.at) : 0;
+      follow = { drawer, scrim, width: drawer.getBoundingClientRect().width, shown: 0, x, at, speed };
+      // the stroke draws the drawer now: no slide of the stylesheet's, and shown even while it is closing
+      drawer.style.transition = "none";
+      drawer.style.visibility = "visible";
+      if (scrim !== null) scrim.style.transition = "none";
+    }
+    const shown = Math.min(follow.width, Math.max(0, (start.open ? follow.width : 0) + dx));
+    if (at > follow.at) follow.speed = (x - follow.x) / (at - follow.at);
+    follow.shown = shown;
+    follow.x = x;
+    follow.at = at;
+    follow.drawer.style.transform = `translateX(${shown - follow.width}px)`;
+    if (follow.scrim !== null) follow.scrim.style.opacity = String(shown / Math.max(1, follow.width));
+  };
+  /** Ends the stroke; returns what the drawer is set to now. */
+  const onEnd = (event?: TouchEvent): boolean => {
+    const held = follow;
+    start = null;
+    claimed = false;
+    done = false;
+    follow = null;
+    if (held === null) return state;
+    // a finger that rested before it lifted, or a stroke handed back mid-way, flicks nothing
+    const rested = event === undefined || event.timeStamp - held.at > REST_MS;
+    const open = drawerSettles(held.shown, held.width, rested ? 0 : held.speed);
+    if (open !== state) setOpen(open);
+    state = open;
+    // the stylesheet's slide takes it from where the finger left it to where it settles
+    held.drawer.style.transition = "";
+    held.drawer.style.visibility = "";
+    held.drawer.style.transform = "";
+    if (held.scrim !== null) { held.scrim.style.transition = ""; held.scrim.style.opacity = ""; }
+    return open;
+  };
   document.addEventListener("touchstart", onStart, { capture: true, passive: true });
   document.addEventListener("touchmove", onMove, { capture: true, passive: false });
   document.addEventListener("touchend", onEnd, { capture: true, passive: true });

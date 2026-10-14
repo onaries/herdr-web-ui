@@ -5,6 +5,26 @@ import { RenderBoundary } from "../components/RenderBoundary.tsx";
 
 const turn = (text: string, end?: string): ConversationTurn => ({ role: "assistant", ts: "2026-10-02T00:00:00Z", ...(end ? { end_ts: end } : {}), parts: [{ kind: "text", text }] });
 
+test("an immutable settled message is scanned only once across repeated renders", () => {
+  const value = turn("settled");
+  const parts = value.parts;
+  let reads = 0;
+  Object.defineProperty(value, "parts", { get: () => { reads++; return parts; } });
+  const first = turnRevision(value, true);
+  const initialReads = reads;
+  expect(initialReads).toBeGreaterThan(0);
+  expect(turnRevision(value, true)).toBe(first);
+  expect(reads).toBe(initialReads);
+  expect(turnRevision(turn("changed"), true)).not.toBe(first);
+});
+
+test("ordinary revision reads still detect mutation, including same-length edits", () => {
+  const value = turn("ab");
+  const first = turnRevision(value);
+  value.parts = [{ kind: "text", text: "cd" }];
+  expect(turnRevision(value)).not.toBe(first);
+});
+
 test("a turn parsed again unchanged keeps its revision; new content or a later end changes it", () => {
   expect(turnRevision(turn("same"))).toBe(turnRevision(structuredClone(turn("same"))));
   expect(turnRevision(turn("same"))).not.toBe(turnRevision(turn("same, and more")));

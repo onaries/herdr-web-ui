@@ -43,6 +43,7 @@
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition:
@@ -67,6 +68,11 @@
   background: var(--bg-elevated);
   border-color: var(--accent);
   color: var(--text-strong);
+}
+
+/* a key shows its press in its own colours, not with the dim other buttons take (styles.css) */
+.key:active {
+  opacity: 1;
 }
 
 @media (pointer: coarse), (max-width: 768px) {

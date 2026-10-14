@@ -21,6 +21,7 @@ import { recentProcessTable } from "./gjc-runtime.ts";
 import type { ProcessRow } from "./windows-processes.ts";
 
 const MAX_PROJECT_NAME = 200;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Claude's executable; a Windows one (backslashes or `.exe`) is matched without case, as Windows names files. */
 function isClaudeExecutable(text = ""): boolean {
@@ -182,6 +183,46 @@ async function isFile(path: string): Promise<boolean> {
 /** Store + session id → the file a project scan found it in; checked again on every use. */
 const found = new Map<string, string>();
 
+/** How much of a transcript's end is read for a `continued-in` record: only metadata follows one. */
+const CONTINUED_TAIL_BYTES = 64 * 1024;
+
+/**
+ * The session Claude continued in, when this transcript ends in a `continued-in` record with no
+ * user or assistant turn after it. Only the file's tail is read, since this runs on every lookup.
+ * A file that cannot be read names no continuation: its own reader reports the failure.
+ */
+async function continuedInSession(path: string): Promise<string | null> {
+  let text: string;
+  try {
+    const file = await open(path, constants.O_RDONLY);
+    try {
+      const size = (await file.stat()).size;
+      const start = Math.max(0, size - CONTINUED_TAIL_BYTES);
+      const buffer = Buffer.alloc(size - start);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
+      text = buffer.subarray(0, bytesRead).toString("utf8");
+      // a tail that starts mid-line drops that partial line
+      if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return null;
+  }
+  let continued: string | null = null;
+  for (const line of text.split("\n")) {
+    if (!line.includes('"type"')) continue;
+    try {
+      const entry = JSON.parse(line) as { type?: unknown; continuedInSessionId?: unknown };
+      if (entry.type === "user" || entry.type === "assistant") continued = null;
+      else if (entry.type === "continued-in" && typeof entry.continuedInSessionId === "string" && SESSION_ID.test(entry.continuedInSessionId)) {
+        continued = entry.continuedInSessionId;
+      }
+    } catch { /* a torn tail line cannot name the active session */ }
+  }
+  return continued;
+}
+
 export function forgetClaudeSessions(): void {
   found.clear();
   processDirs.clear();
@@ -277,27 +318,42 @@ export async function claudeProcessSession(
  */
 export async function claudeTranscriptFile(home: string, session: string, cwds: readonly (string | null | undefined)[], configDir = join(home, ".claude")): Promise<string | null> {
   const projects = join(configDir, "projects");
-  const file = `${session}.jsonl`;
-  for (const cwd of cwds) {
-    if (!cwd) continue;
-    const path = join(projects, claudeProjectDir(cwd), file);
-    if (await isFile(path)) return path;
+  const locate = async (id: string): Promise<string | null> => {
+    const file = `${id}.jsonl`;
+    for (const cwd of cwds) {
+      if (!cwd) continue;
+      const path = join(projects, claudeProjectDir(cwd), file);
+      if (await isFile(path)) return path;
+    }
+    const key = `${projects}\0${id}`;
+    const known = found.get(key);
+    if (known !== undefined && await isFile(known)) return known;
+    found.delete(key);
+    let entries: string[];
+    try { entries = await readdir(projects); } catch (error) { if (absent(error)) return null; throw error; }
+    // one unreadable project must not hide the session in another: an error counts only without a hit
+    const checks = await Promise.allSettled(entries.map(async (entry) => {
+      const path = join(projects, entry, file);
+      return await isFile(path) ? path : null;
+    }));
+    for (const check of checks) {
+      if (check.status === "fulfilled" && check.value !== null) { found.set(key, check.value); return check.value; }
+    }
+    const failed = checks.find((check) => check.status === "rejected");
+    if (failed) throw failed.reason;
+    return null;
+  };
+
+  const seen = new Set<string>([session]);
+  let path = await locate(session);
+  while (path !== null) {
+    const next = await continuedInSession(path);
+    if (next === null || seen.has(next)) return path;
+    seen.add(next);
+    // a continuation whose file is not there keeps the transcript that named it
+    const nextPath = await locate(next);
+    if (nextPath === null) return path;
+    path = nextPath;
   }
-  const key = `${projects}\0${session}`;
-  const known = found.get(key);
-  if (known !== undefined && await isFile(known)) return known;
-  found.delete(key);
-  let entries: string[];
-  try { entries = await readdir(projects); } catch (error) { if (absent(error)) return null; throw error; }
-  // one unreadable project must not hide the session in another: an error counts only without a hit
-  const checks = await Promise.allSettled(entries.map(async (entry) => {
-    const path = join(projects, entry, file);
-    return await isFile(path) ? path : null;
-  }));
-  for (const check of checks) {
-    if (check.status === "fulfilled" && check.value !== null) { found.set(key, check.value); return check.value; }
-  }
-  const failed = checks.find((check) => check.status === "rejected");
-  if (failed) throw failed.reason;
   return null;
 }

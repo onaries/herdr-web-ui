@@ -1,16 +1,19 @@
-import type { MouseEvent, PointerEvent, ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Keyboard } from "lucide-react";
 
 import "./KeyBar.css";
 
 import type { KeyBarExtra, KeyBarKey, StickyModifiers } from "../lib/keys.ts";
 import { keyBarItemId, keyBarItemLabel, type KeyBarItem, type KeyBarKeyItem } from "../lib/keyBar.ts";
+import { createKeyRepeat, isRepeatableKeyBarItem, type KeyRepeat } from "../lib/keyRepeat.ts";
 import { useT } from "../lib/i18n.ts";
 
 export type { KeyBarKey };
 
 export interface KeyBarProps {
   disabled?: boolean;
+  /** Changing the terminal target or lens cancels any held arrow. */
+  holdScope?: string;
   /** Modifier buttons toggle; other keys go to the terminal. */
   onKey: (item: KeyBarKeyItem) => void;
   modifiers: StickyModifiers;
@@ -35,10 +38,51 @@ interface KeyProps {
   label?: string;
   pressed?: boolean;
   onPress: () => void;
+  repeatable?: boolean;
+  holdScope?: string;
   children: ReactNode;
 }
 
-function Key({ dataKey, label, pressed, onPress, children, disabled }: KeyProps) {
+function Key({ dataKey, label, pressed, onPress, children, disabled, repeatable, holdScope }: KeyProps) {
+  const onPressRef = useRef(onPress);
+  onPressRef.current = onPress;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  const pointerRef = useRef({ id: null as number | null, pendingClick: false, cancelClick: false });
+  const repeatRef = useRef<KeyRepeat | null>(null);
+  if (repeatable && repeatRef.current === null) {
+    repeatRef.current = createKeyRepeat(() => {
+      if (!disabledRef.current) onPressRef.current();
+    });
+  }
+
+  const cancelHold = useCallback(() => {
+    const pointer = pointerRef.current;
+    if (pointer.pendingClick) pointer.cancelClick = true;
+    pointer.id = null;
+    repeatRef.current?.cancel();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!repeatable || disabled) {
+      cancelHold();
+      return;
+    }
+    const onVisibilityChange = (): void => {
+      if (document.hidden) cancelHold();
+    };
+    window.addEventListener("blur", cancelHold);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelHold();
+      window.removeEventListener("blur", cancelHold);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [cancelHold, disabled, holdScope, repeatable]);
+
+  const cancelPointer = (event: PointerEvent<HTMLButtonElement>): void => {
+    if (pointerRef.current.id === event.pointerId) cancelHold();
+  };
   return (
     <button
       type="button"
@@ -48,9 +92,43 @@ function Key({ dataKey, label, pressed, onPress, children, disabled }: KeyProps)
       aria-label={label}
       aria-pressed={pressed}
       tabIndex={-1}
-      onPointerDown={keepFocus}
+      onPointerDown={(event) => {
+        keepFocus(event);
+        if (!repeatable || disabled || event.button !== 0 || !event.isPrimary || pointerRef.current.id !== null) return;
+        const pointer = pointerRef.current;
+        pointer.id = event.pointerId;
+        pointer.pendingClick = true;
+        pointer.cancelClick = false;
+        repeatRef.current?.press(event.clientX, event.clientY);
+        // Capture keeps release/move visible outside the key; browser panning can still cancel it.
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+      }}
+      onPointerMove={repeatable ? (event) => {
+        if (pointerRef.current.id !== event.pointerId) return;
+        if (repeatRef.current?.move(event.clientX, event.clientY)) pointerRef.current.cancelClick = true;
+      } : undefined}
+      onPointerUp={repeatable ? (event) => {
+        if (pointerRef.current.id !== event.pointerId) return;
+        repeatRef.current?.release();
+        // Ignore the lost capture that follows release, preserving the click gate.
+        pointerRef.current.id = null;
+      } : undefined}
+      onPointerCancel={repeatable ? cancelPointer : undefined}
+      onLostPointerCapture={repeatable ? cancelPointer : undefined}
       onMouseDown={keepFocus}
-      onClick={onPress}
+      onContextMenu={keepFocus}
+      onClick={() => {
+        if (!repeatable) {
+          onPress();
+          return;
+        }
+        const pointer = pointerRef.current;
+        const allowed = repeatRef.current?.takeClick() ?? true;
+        const cancelled = pointer.cancelClick;
+        pointer.pendingClick = false;
+        pointer.cancelClick = false;
+        if (allowed && !cancelled && !disabled) onPress();
+      }}
     >
       {children}
     </button>
@@ -95,7 +173,7 @@ export const EXTRA_KEY_CAPS: Partial<Record<KeyBarExtra, { cap: string; label?: 
  * for touch, a hardware keyboard already has all of them. Hence role="group", not
  * toolbar: a toolbar promises arrow-key navigation between items, which these skip.
  */
-export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping, onToggleDirect, disabled }: KeyBarProps) {
+export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping, onToggleDirect, disabled, holdScope }: KeyBarProps) {
   const t = useT();
   return (
     <div className="key-bar" role="group" aria-label={t("Terminal keys")}>
@@ -120,7 +198,8 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
           : item.key === "PageUp" ? t("Page up")
           : item.key === "PageDown" ? t("Page down")
           : extra?.label ? t(extra.label) : undefined;
-        return <Key key={keyBarItemId(item)} disabled={disabled} dataKey={item.modifiers === undefined ? item.key : keyBarItemId(item)} label={label} onPress={() => onKey(item)}>
+        return <Key key={keyBarItemId(item)} disabled={disabled} dataKey={item.modifiers === undefined ? item.key : keyBarItemId(item)} label={label} onPress={() => onKey(item)}
+          repeatable={isRepeatableKeyBarItem(item)} holdScope={holdScope}>
           {arrow && item.modifiers === undefined ? <Chevron direction={arrow.direction} /> : keyBarItemLabel(item)}
         </Key>;
       })}

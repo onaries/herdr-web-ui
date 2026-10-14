@@ -10,6 +10,30 @@
   overflow-y: auto;
 }
 
+/* hints that are paths (New workspace's "+N" folders): room for them, and the path, not the name, is cut */
+.row-menu-paths {
+  max-width: min(420px, calc(100vw - var(--space-4)));
+}
+
+.row-menu-paths .menu-item-main {
+  flex: 0 1 auto;
+  max-width: 50%;
+}
+
+.row-menu-paths .menu-item-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* opened from inside a dialog (New workspace's "+N" folders): over the dialog */
+.row-menu.is-over-modal {
+  z-index: calc(var(--z-modal) + 1);
+}
+
 .row-menu .menu-item:focus-visible {
   outline: none;
   background: var(--bg-hover);
@@ -149,6 +173,11 @@
 .row-sheet-item:focus-visible {
   outline: none;
   background: var(--bg-hover);
+}
+
+/* the row fills when pressed, as an iPhone's does: it does not dim as a lone button would (styles.css) */
+.row-sheet-item:active {
+  opacity: 1;
 }
 
 .row-sheet-cancel {

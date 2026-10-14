@@ -1,18 +1,61 @@
 name: CI
 on:
   pull_request:
+    # ready_for_review: a draft run skips the heavy checks, so leaving draft must run them.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
   workflow_call:
 permissions:
   contents: read
+env:
+  BUN_VERSION: 1.4.2
 concurrency:
   group: validation-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      draft: ${{ steps.filter.outputs.draft }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - id: filter
+        run: |
+          # Draft PR detection
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="HEAD~1"; fi
+          CHANGED=$(git diff --name-only "$BASE" HEAD || echo "")
+          if [ -z "$CHANGED" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if echo "$CHANGED" | grep -qvE '^(docs/|\.md$|\.txt$|LICENSE|\.github/ISSUE_TEMPLATE/)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "Only documentation changes detected, skipping heavy tests"
+          fi
   windows-install:
     name: Native Windows install
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     env:
@@ -23,14 +66,35 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-windows-${{ runner.arch }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-windows-${{ runner.arch }}-${{ env.BUN_VERSION }}-
+      # A required check: a draft run must not report it green without running it, or a stale
+      # draft result could satisfy the merge gate. Marking the PR ready reruns CI.
+      - name: Fail on draft PRs (Windows tests not run)
+        if: needs.changes.outputs.draft == 'true'
+        run: |
+          Write-Host "::error::Draft PR: the Windows install tests did not run. Mark the PR ready for review to run them."
+          exit 1
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install.test.ps1
+        if: needs.changes.outputs.draft != 'true'
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/preflight.ps1
+        if: needs.changes.outputs.draft != 'true'
       - run: bun install --frozen-lockfile
+        if: needs.changes.outputs.draft != 'true'
       - run: bun run build
+        if: needs.changes.outputs.draft != 'true'
       - run: bun test ./scripts/windows-plugin.test.ts ./scripts/plugin-runtime.test.ts ./scripts/phone-setup.test.ts ./server/windows-native.test.ts
+        if: needs.changes.outputs.draft != 'true'
   macos-session:
     name: Native macOS session identity
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-15
     timeout-minutes: 5
     env:
@@ -41,28 +105,49 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-macos-${{ runner.arch }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-macos-${{ runner.arch }}-${{ env.BUN_VERSION }}-
+      - name: Skip heavy tests on draft PRs
+        if: needs.changes.outputs.draft == 'true'
+        run: |
+          echo "Draft PR detected, skipping macOS tests"
+          exit 0
       - run: bun install --frozen-lockfile
+        if: needs.changes.outputs.draft != 'true'
       - run: bun test ./server/claude-store.test.ts ./server/process-start.test.ts
+        if: needs.changes.outputs.draft != 'true'
   fast:
     name: Fast checks
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       CHECK_DIR: ${{ github.workspace }}/.ci
+      UNIT_TEST_WORKERS: 4
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-
       - run: bun install --frozen-lockfile
-      # scripts/check.ts is what a developer runs too: workflow syntax (checksum-pinned actionlint),
-      # generated types, typecheck, build, unit tests (no herdr required)
       - run: bun run check fast
       - name: Preserve check report and verification logs
         if: always()
@@ -78,11 +163,12 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
   integration:
-    name: Integration and browser
+    name: Integration tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
-      # where the run's own herdr keeps its config and state (scripts/check.ts): kept, for the failure logs
       CHECK_DIR: ${{ github.workspace }}/.ci
     steps:
       - uses: actions/checkout@v7
@@ -90,11 +176,24 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ env.BUN_VERSION }}
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-
+      - name: Skip heavy tests on draft PRs
+        if: needs.changes.outputs.draft == 'true'
+        run: |
+          echo "Draft PR detected, skipping integration tests"
+          exit 0
       - name: Install checksum-pinned herdr 0.9.3
+        if: needs.changes.outputs.draft != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/herdr-bin"
           curl --fail --location --retry 3 https://github.com/herdrdev/herdr/releases/download/v0.9.3/herdr-linux-x86_64 -o "$RUNNER_TEMP/herdr-bin/herdr"
@@ -102,21 +201,190 @@ jobs:
           chmod +x "$RUNNER_TEMP/herdr-bin/herdr"
           echo "$RUNNER_TEMP/herdr-bin" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
-      # A build, then the two lanes side by side on a herdr of the run's own, which it stops when
-      # it ends. The lanes share nothing: the integration files run on herdr sessions of their own.
-      - name: Integration tests (updater restart and rollback included) beside the browser regressions
-        run: bun run check integration browser
+        if: needs.changes.outputs.draft != 'true'
+      - name: Integration tests (updater restart and rollback included)
+        if: needs.changes.outputs.draft != 'true'
+        run: bun run check integration
       - name: Preserve check report and verification logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: herdr-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: integration-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .ci/report.json
             .ci/**/*.log
             .ci/config/herdr/sessions/*/test-server.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+  browser-main:
+    name: Browser regression (ui-regression)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CHECK_DIR: ${{ github.workspace }}/.ci
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-
+      - name: Skip heavy tests on draft PRs
+        if: needs.changes.outputs.draft == 'true'
+        run: |
+          echo "Draft PR detected, skipping browser-main tests"
+          exit 0
+      - name: Install checksum-pinned herdr 0.9.3
+        if: needs.changes.outputs.draft != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/herdr-bin"
+          curl --fail --location --retry 3 https://github.com/herdrdev/herdr/releases/download/v0.9.3/herdr-linux-x86_64 -o "$RUNNER_TEMP/herdr-bin/herdr"
+          echo "18a8dc65f1c2fa485884344356dea1cfd911c6f06cf46fa78e193f4087f4dba7  $RUNNER_TEMP/herdr-bin/herdr" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/herdr-bin/herdr"
+          echo "$RUNNER_TEMP/herdr-bin" >> "$GITHUB_PATH"
+      - run: bun install --frozen-lockfile
+        if: needs.changes.outputs.draft != 'true'
+      - name: Get Playwright version
+        if: needs.changes.outputs.draft != 'true'
+        id: playwright-version
+        run: echo "version=$(bun -e 'console.log(require("playwright-core/package.json").version)')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browser
+        if: needs.changes.outputs.draft != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-linux-${{ runner.arch }}-${{ steps.playwright-version.outputs.version }}
+      - run: bun run build
+        if: needs.changes.outputs.draft != 'true'
+      - name: Browser regression (ui-regression.ts)
+        if: needs.changes.outputs.draft != 'true'
+        env:
+          BROWSER_SCRIPTS: scripts/ui-regression.ts
+        run: bun scripts/ci-browser-parallel.ts
+      - name: Preserve browser logs and evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-main-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .ci/browser-logs/**
             .ci/browser-evidence/**/*.png
             .ci/browser-evidence/**/*.json
             .ci/browser-evidence/**/*.zip
           include-hidden-files: true
           if-no-files-found: ignore
+  browser-other:
+    name: Browser regression (other scripts)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CHECK_DIR: ${{ github.workspace }}/.ci
+      BROWSER_WORKERS: 4
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-linux-${{ runner.arch }}-${{ env.BUN_VERSION }}-
+      - name: Skip heavy tests on draft PRs
+        if: needs.changes.outputs.draft == 'true'
+        run: |
+          echo "Draft PR detected, skipping browser-other tests"
+          exit 0
+      - name: Install checksum-pinned herdr 0.9.3
+        if: needs.changes.outputs.draft != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/herdr-bin"
+          curl --fail --location --retry 3 https://github.com/herdrdev/herdr/releases/download/v0.9.3/herdr-linux-x86_64 -o "$RUNNER_TEMP/herdr-bin/herdr"
+          echo "18a8dc65f1c2fa485884344356dea1cfd911c6f06cf46fa78e193f4087f4dba7  $RUNNER_TEMP/herdr-bin/herdr" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/herdr-bin/herdr"
+          echo "$RUNNER_TEMP/herdr-bin" >> "$GITHUB_PATH"
+      - run: bun install --frozen-lockfile
+        if: needs.changes.outputs.draft != 'true'
+      - name: Get Playwright version
+        if: needs.changes.outputs.draft != 'true'
+        id: playwright-version
+        run: echo "version=$(bun -e 'console.log(require("playwright-core/package.json").version)')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browser
+        if: needs.changes.outputs.draft != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-linux-${{ runner.arch }}-${{ steps.playwright-version.outputs.version }}
+      - run: bun run build
+        if: needs.changes.outputs.draft != 'true'
+      - name: Browser regression (parallel)
+        if: needs.changes.outputs.draft != 'true'
+        env:
+          # Every script of scripts/ci-browser.sh except the one browser-main runs.
+          BROWSER_EXCLUDE: scripts/ui-regression.ts
+        run: bun scripts/ci-browser-parallel.ts
+      - name: Preserve browser logs and evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-other-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .ci/browser-logs/**
+            .ci/browser-evidence/**/*.png
+            .ci/browser-evidence/**/*.json
+            .ci/browser-evidence/**/*.zip
+          include-hidden-files: true
+          if-no-files-found: ignore
+  integration-browser:
+    name: Integration and browser
+    needs: [changes, integration, browser-main, browser-other]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.changes.outputs.code }}" = "false" ]; then
+            echo "Skipped: only documentation changes"
+            exit 0
+          fi
+          # A required check: a draft run skipped the heavy tests, so it must not report green,
+          # or a stale draft result could satisfy the merge gate. Marking the PR ready reruns CI.
+          if [ "${{ needs.changes.outputs.draft }}" = "true" ]; then
+            echo "::error::Draft PR: integration and browser tests did not run. Mark the PR ready for review to run them."
+            exit 1
+          fi
+          if [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "Integration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.browser-main.result }}" != "success" ]; then
+            echo "Browser regression (ui-regression) failed"
+            exit 1
+          fi
+          if [ "${{ needs.browser-other.result }}" != "success" ]; then
+            echo "Browser regression (other scripts) failed"
+            exit 1
+          fi
+          echo "All tests passed"

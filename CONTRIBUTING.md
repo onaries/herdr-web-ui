@@ -33,7 +33,9 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
   managed by a maintainer for a genuine code dependency; code conflicts and approval gates are
   scheduling constraints, not reasons to stack. See the [coordinated-work procedure](docs/development.md#coordinated-work).
   Contributors must not assume elevated permissions or that a stack has been authorized.
-- One change per PR. PRs are squash merged, so the PR title becomes the commit:
+- One change per PR. Changes that cannot stand apart, because one needs another's code, may share
+  a PR: keep each as its own commit, in the order they depend on each other, and say in the
+  description what needs what. PRs are squash merged, so the PR title becomes the commit:
   `type(scope): summary`, for example `fix(chat): keep the finished turn finished after Send`.
   The merge adds `(#N)`.
 - Fill in the [PR template](.github/pull_request_template.md): what changed and how you checked it.
@@ -74,11 +76,10 @@ running terminals: see [development](docs/development.md#checks).
   contract test (`server/api.contract.test.ts` for endpoints). A test that needs a live herdr is named
   `*.contract.test.ts`.
 - **herdr wire types:** never edit `shared/herdr-api.generated.ts`; run `bun run generate:types`.
-- **UI text:** every new `t("…")` string needs an entry in `src/lib/i18n.ko.ts`, `i18n.ja.ts` and
-  `i18n.zh.ts`, with the same placeholders. `bun run test:unit` fails on a missing, unused or
+- **UI text:** every new `t("…")` string needs an entry in `src/lib/i18n.ko.ts`, `i18n.ja.ts`,
+  `i18n.zh.ts` and `i18n.tr.ts`, with the same placeholders. `bun run test:unit` fails on a missing, unused or
   untranslated entry.
-- **UI:** component CSS uses the tokens in `src/styles.css` (see [DESIGN.md](DESIGN.md)); attach a
-  screenshot or recording from a test or demo session.
+- **UI:** component CSS uses the tokens in `src/styles.css` (see [DESIGN.md](DESIGN.md)).
 - **The browser demo:** the [demo](https://herdrweb.dev/demo/) redeploys on every
   merge to `main`. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
   else gets its 404.

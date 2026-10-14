@@ -8,9 +8,9 @@ import { useWholeOutput } from "../src/lib/useWholeOutput.ts";
 import { MachineContext } from "../src/lib/machineContext.tsx";
 import "../src/styles.css";
 
-declare global { interface Window { qa: { requests: { url: string; signal: AbortSignal; resolve: (text: string) => void; reject: () => void }[]; commits: string[][]; answered: string[]; target: (url: string, scope: string) => void; chat: (pane: string, machine?: string) => void; select: (pane: string, machine: string, agent?: string) => void; refresh: () => void } } }
+declare global { interface Window { qa: { requests: { url: string; signal: AbortSignal; resolve: (text: string) => void; reject: () => void }[]; commits: string[][]; answered: string[]; target: (url: string, scope: string) => void; chat: (pane: string, machine?: string) => void; agent: (agent: string | null) => void; select: (pane: string, machine: string, agent?: string) => void; refresh: () => void } } }
 const nativeFetch = window.fetch;
-window.qa = { requests: [], commits: [], answered: [], target: () => {}, chat: () => {}, select: () => {}, refresh: () => {} };
+window.qa = { requests: [], commits: [], answered: [], target: () => {}, chat: () => {}, agent: () => {}, select: () => {}, refresh: () => {} };
 window.fetch = (input, init) => {
   const url = String(input);
   if (!url.includes("tool-output") && !url.startsWith("/qa-output")) {
@@ -34,12 +34,14 @@ function Fixture() {
   const [pane, setPane] = useState("a");
   const [machine, setMachine] = useState("local");
   const [refresh, setRefresh] = useState(0);
+  const [agent, setAgent] = useState<string | null>("omo");
+  window.qa.agent = setAgent;
   const output = useWholeOutput(target.url, target.scope);
   window.qa.target = (url, scope) => setTarget({ url, scope });
   window.qa.chat = (pane, machine = "local") => { setPane(pane); setMachine(machine); };
   window.qa.refresh = () => setRefresh((value) => value + 1);
   return <><button id="fetch-output" onClick={() => { output.load(); output.load(); }}>Load output</button><output id="output">{output.state}:{output.text}</output>
-    <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><ChatView key={machine} paneId={pane} refreshKey={refresh} connected={true} ended={false} agent="omo" agentStatus={null} /></MachineContext.Provider></div></>;
+    <div style={{ position: "relative", height: 600 }}><MachineContext.Provider value={machine}><ChatView key={machine} paneId={pane} refreshKey={refresh} connected={true} ended={false} agent={agent} agentStatus={null} /></MachineContext.Provider></div></>;
 }
 function Product({ pane, machine, agent }: { pane: string; machine: string; agent: string }) {
   const [chat, setChat] = useState(true);

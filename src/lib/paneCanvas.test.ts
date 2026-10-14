@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { layoutTopology, paneContextPress, splitPath, splitRatioAt } from "./paneCanvas.ts";
+import { layoutTopology, paneContextPress, soloPane, splitPath, splitRatioAt } from "./paneCanvas.ts";
 import type { PaneLayoutSnapshot } from "../../shared/protocol.ts";
 
 const layout: PaneLayoutSnapshot = {
@@ -34,5 +34,24 @@ describe("native pane canvas", () => {
     resized.panes.push({...resized.panes[0]!,pane_id:"w1:p2"});
     expect(layoutTopology(resized)).not.toBe(layoutTopology(layout));
     expect(layoutTopology({...layout,zoomed:true})).not.toBe(layoutTopology(layout));
+  });
+});
+
+describe("the pane a tab shows alone", () => {
+  const panes = ["w1:p1", "w1:p2"];
+  it("draws every pane on a wide screen, and one where a split has no room", () => {
+    expect(soloPane(layout, panes, "w1:p2", false)).toBeNull();
+    expect(soloPane(layout, panes, "w1:p2", true)).toBe("w1:p2");
+    expect(soloPane(layout, ["w1:p1"], "w1:p1", true)).toBeNull();
+  });
+  it("falls back to herdr's focused pane, then the first, while the selection is not in the tab", () => {
+    expect(soloPane(layout, panes, "w9:p1", true)).toBe("w1:p1");
+    expect(soloPane(layout, panes, null, true)).toBe("w1:p1");
+    expect(soloPane({ ...layout, focused_pane_id: "w9:p9" }, ["w1:p2", "w1:p1"], null, true)).toBe("w1:p2");
+  });
+  it("shows herdr's zoomed pane whatever the screen and the selection", () => {
+    const zoomed = { ...layout, zoomed: true, focused_pane_id: "w1:p2" };
+    expect(soloPane(zoomed, panes, "w1:p1", false)).toBe("w1:p2");
+    expect(soloPane(zoomed, panes, "w1:p1", true)).toBe("w1:p2");
   });
 });

@@ -12,7 +12,7 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
@@ -92,6 +92,11 @@ function addAgent(pane: Pane): void {
 /** The OmO pane's background tasks (the composer's "2 background tasks"), timed from now. */
 const OMO_TASKS_PANE = "docs";
 const ago = (minutes: number): string => new Date(Date.now() - minutes * 60_000).toISOString();
+const planSteps: PlanStep[] = [
+  { id: "1", label: "Trace replayed requests", active: null, status: "completed", blocked_by: [], owner: null, started_at: ago(8), ended_at: ago(6) },
+  { id: "2", label: "Count idempotent replays", active: "Adding the replay metric", status: "in_progress", blocked_by: ["1"], owner: null, started_at: ago(5), ended_at: null },
+  { id: "3", label: "Cover the metric with tests", active: null, status: "pending", blocked_by: ["2"], owner: null, started_at: null, ended_at: null },
+];
 const omoTasks = () => [
   { id: "st_demo1", title: "Check every link in the guide", category: "quick", model: "Claude Haiku 4.5", status: "running", started_at: ago(3), ended_at: null, turns: 6, tool_calls: 41, tokens: 52_300 },
   { id: "st_demo2", title: "Rewrite the install section for Windows", category: "writing", model: "Claude Opus 5.5", status: "running", started_at: ago(1), ended_at: null, turns: 2, tool_calls: 7, tokens: 18_900 },
@@ -146,6 +151,7 @@ function backfillPanes(): void {
 }
 backfillPanes();
 for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === OMO_TASKS_PANE) Object.assign(pane, { background_tasks: 2 });
+for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === "api") Object.assign(pane, { plan: { done: 1, total: planSteps.length, current: "Adding the replay metric" } });
 
 // Fictional repositories keep their checkout catalog after a workspace closes. The list joins
 // each checkout to the current snapshot, so closed checkouts can be opened again without git.
@@ -190,6 +196,7 @@ function createDemoWorkspace(cwd: string, label: string, agent: string | null, w
   if (agent) {
     keyOfPane.set(pane.pane_id, pane.pane_id);
     chats.set(pane.pane_id, { turns: [], metadata: { model: agent === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", reasoning_effort: "medium" } });
+    conversationChanged(pane.pane_id);
     setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
   }
   return { workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null };
@@ -218,6 +225,7 @@ function closeDemoWorkspaces(ids: Set<string>): void {
 
 const sseListeners = new Set<SseListener>();
 const sockets = new Set<DemoSocket>();
+const conversationVersions = new Map<string, number>();
 
 // herdr names an unnamed tab by its place in the row and moves that name up when an earlier tab
 // closes; a renamed tab keeps its name. The demo tracks which tabs still carry the automatic name.
@@ -402,6 +410,12 @@ function setStatus(paneId: string, status: AgentStatus): void {
   for (const socket of sockets) socket.push({ type: "pane-status", pane_id: paneId, agent_status: status });
 }
 
+function conversationChanged(paneId: string): void {
+  const revision = (conversationVersions.get(paneId) ?? 0) + 1;
+  conversationVersions.set(paneId, revision);
+  for (const socket of sockets) socket.push({ type: "conversation-changed", pane_id: paneId, signature: `demo:${revision}` });
+}
+
 function structureChanged(): void {
   emitSse({ type: "machines", machines });
   emitSse({ type: "machine-message", machine_id: local.id, message: { type: "session-changed" } });
@@ -454,12 +468,14 @@ function submitToChat(paneId: string, text: string): void {
   const chat = key ? chats.get(key) : undefined;
   if (!chat) return;
   chat.turns.push({ role: "user", ts: now(), parts: [{ kind: "text", text }] });
+  conversationChanged(paneId);
   const agent = agentOf(paneId);
   if (replying.has(paneId)) return;
   replying.add(paneId);
   setStatus(paneId, "working");
   setTimeout(() => {
     chat.turns.push({ role: "assistant", ts: now(), end_ts: now(), parts: [{ kind: "text", text: `This is the demo, so nothing ran. In the real app that message went to ${agent} in this pane, and its answer would be written here as it arrives, with its commands and edits folded above it.` }] });
+    conversationChanged(paneId);
     finishDemoTurn(paneId);
   }, CHAT_ANSWER_MS);
 }
@@ -478,6 +494,7 @@ function answerPrompt(paneId: string, optionIndex: number | undefined): void {
         : [{ kind: "tool", name: "exec", summary: "git push origin feat/export-guard", input: JSON.stringify({ cmd: "git push origin feat/export-guard" }, null, 2), output: "To github.com:acme/web-dashboard.git\n * [new branch]      feat/export-guard -> feat/export-guard" },
           { kind: "text", text: "Pushed `feat/export-guard`. The export button is guarded and the branch is ready for a pull request." }],
     });
+    if (chat) conversationChanged(paneId);
     finishDemoTurn(paneId);
   }, PROMPT_ANSWER_TURN_MS);
 }
@@ -512,30 +529,33 @@ const DEMO_FILES = ["src/routes/payments.ts", "src/lib/idempotency.ts", "src/met
 function usageReport(): UsageReport {
   const now = Date.now();
   const at = (hours: number) => new Date(now + hours * 3_600_000).toISOString();
+  // Claude and Codex state a window's length (5 h, 7 days), so the server knows when it began; the others do not
+  const session = (hours: number) => ({ resets_at: at(hours), starts_at: at(hours - 5) });
+  const week = (hours: number) => ({ resets_at: at(hours), starts_at: at(hours - 168) });
   const checked = new Date(now).toISOString();
   return { providers: [
     { id: "claude", key: "claude:demo-claude", account: "sam@example.com", plan: "max", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 38, resets_at: at(2.4) },
-      { kind: "week", scope: null, used_percent: 61, resets_at: at(78) },
-      { kind: "week", scope: "Sonnet", used_percent: 12, resets_at: at(78) },
+      { kind: "session", scope: null, used_percent: 38, ...session(2.4) },
+      { kind: "week", scope: null, used_percent: 61, ...week(78) },
+      { kind: "week", scope: "Sonnet", used_percent: 12, ...week(78) },
     ] },
     { id: "codex", key: "codex:demo-codex-work", account: "sam@work.example", plan: "pro", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 22, resets_at: at(1.2) },
-      { kind: "week", scope: null, used_percent: 84, resets_at: at(97) },
+      { kind: "session", scope: null, used_percent: 22, ...session(1.2) },
+      { kind: "week", scope: null, used_percent: 84, ...week(97) },
     ] },
     { id: "codex", key: "codex:demo-codex-home", account: "sam@example.com", plan: "plus", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 5, resets_at: at(3.1) },
-      { kind: "week", scope: null, used_percent: 31, resets_at: at(140) },
+      { kind: "session", scope: null, used_percent: 5, ...session(3.1) },
+      { kind: "week", scope: null, used_percent: 31, ...week(140) },
     ] },
     { id: "cursor", key: "cursor:demo-cursor", account: "sam@example.com", plan: "pro", problem: null, checked_at: checked, windows: [
-      { kind: "month", scope: null, used_percent: 27, resets_at: at(290) },
-      { kind: "month", scope: "Cursor models", used_percent: 19, resets_at: at(290) },
-      { kind: "month", scope: "Other models", used_percent: 8, resets_at: at(290) },
+      { kind: "month", scope: null, used_percent: 27, resets_at: at(290), starts_at: null },
+      { kind: "month", scope: "Cursor models", used_percent: 19, resets_at: at(290), starts_at: null },
+      { kind: "month", scope: "Other models", used_percent: 8, resets_at: at(290), starts_at: null },
     ] },
     { id: "opencode", key: "opencode:demo-opencode", account: null, plan: "Go", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 10, resets_at: at(3.2) },
-      { kind: "week", scope: null, used_percent: 28, resets_at: at(18) },
-      { kind: "month", scope: null, used_percent: 15, resets_at: at(520) },
+      { kind: "session", scope: null, used_percent: 10, resets_at: at(3.2), starts_at: null },
+      { kind: "week", scope: null, used_percent: 28, resets_at: at(18), starts_at: null },
+      { kind: "month", scope: null, used_percent: 15, resets_at: at(520), starts_at: null },
     ] },
   ] };
 }
@@ -642,8 +662,14 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const chat = key ? chats.get(key) : undefined;
     const agent = agentOf(paneId);
     if (!chat) return json({ source: "scrollback", turns: [] });
-    const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "devin" ? "devin-transcript" : "omp-transcript";
+    const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "devin" ? "devin-transcript" : agent === "hermes" ? "hermes-transcript" : "omp-transcript";
+    // These demo fixtures have no native Grok/Agy lifecycle: omit optional activity.
     return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null });
+  }
+  if (path === "/api/pane/plan") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    if (!paneId) return error("missing_pane_id", "pane_id query parameter is required", 400);
+    return json({ plan: keyOfPane.get(paneId) === "api" ? { steps: planSteps } : null, server_time: new Date().toISOString() } satisfies PanePlan);
   }
   if (path === "/api/pane/prompt") return json({ prompt: keyOfPane.get(paneId) === "web" && promptOpen ? { ...PROMPT, id: promptId } : null });
   if (path === "/api/pane/prompt/answer") {
@@ -1031,6 +1057,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (agent) {
       keyOfPane.set(pane.pane_id, pane.pane_id);
       chats.set(pane.pane_id, { turns: [], metadata: { model: agent === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", reasoning_effort: "medium" } });
+      conversationChanged(pane.pane_id);
       setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
     }
     structureChanged();
@@ -1138,6 +1165,7 @@ class DemoSocket extends EventTarget {
   private readonly pending = new Map<string, PendingMessage[]>();
   private readonly outcomes = new Map<string, { paneId: string; outcome: "sent" | "discarded" }>();
   private readonly requests = new Map<number, { signature: string; reply?: ServerMessage }>();
+  private readonly conversationInterests = new Set<string>();
   /** the pretend shell's current line, per shell pane */
   private readonly lines = new Map<string, string>();
 
@@ -1153,7 +1181,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "secret-input", "input-ready"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1166,6 +1194,19 @@ class DemoSocket extends EventTarget {
 
   push(message: ServerMessage): void {
     if (this.readyState !== 1) return;
+    if (message.type === "conversation-changed" && (!this.attached.has(message.pane_id) || !this.conversationInterests.has(message.pane_id))) return;
+    if (message.type === "pty-exit") {
+      this.attached.delete(message.pane_id);
+      this.conversationInterests.delete(message.pane_id);
+    }
+    if (message.type === "session-changed") {
+      for (const paneId of this.attached) {
+        if (!paneOf(paneId)) {
+          this.attached.delete(paneId);
+          this.conversationInterests.delete(paneId);
+        }
+      }
+    }
     const event = new MessageEvent("message", { data: JSON.stringify(message) });
     this.onmessage?.(event);
     this.dispatchEvent(event);
@@ -1173,10 +1214,10 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; pending_id?: string; action?: unknown };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
-      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, pending_id: message.pending_id, action: message.action });
+      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, pending_id: message.pending_id, action: message.action });
       const previous = this.requests.get(message.id!);
       if (previous) {
         if (previous.signature !== signature) {
@@ -1209,6 +1250,9 @@ class DemoSocket extends EventTarget {
         if (this.mode === "observe") this.holdPending(undefined, "read_only", "This connection now only watches. Pending messages will not be sent automatically.");
         this.push({ type: "role-ack", mode: this.mode });
         break;
+      case "presence":
+        // the demo sends no alerts, so whether the page is in use holds nothing back
+        break;
       case "attach":
         if (message.pane_id) { this.resizeGrid(message.pane_id, message.cols, message.rows); this.attach(message.pane_id); }
         break;
@@ -1226,6 +1270,20 @@ class DemoSocket extends EventTarget {
         if (message.pane_id) {
           this.attached.delete(message.pane_id);
           this.holdPending(message.pane_id, "not_attached", "This pane was detached. Pending messages will not be sent automatically.");
+          this.conversationInterests.delete(message.pane_id);
+        }
+        break;
+      case "conversation-watch":
+        if (typeof message.pane_id !== "string" || message.pane_id.trim() === "" || typeof message.enabled !== "boolean") {
+          this.push({ type: "error", code: "invalid_conversation_watch", message: "pane_id must be a nonempty string and enabled must be a boolean" });
+        } else if (message.enabled) {
+          if (!this.attached.has(message.pane_id)) {
+            this.push({ type: "error", code: "not_attached", message: "conversation interest requires an attached pane", pane_id: message.pane_id });
+          } else {
+            this.conversationInterests.add(message.pane_id);
+          }
+        } else {
+          this.conversationInterests.delete(message.pane_id);
         }
         break;
       case "input": if (message.pane_id && message.text !== undefined) this.typed(message.pane_id, message.text); break;
@@ -1239,19 +1297,22 @@ class DemoSocket extends EventTarget {
           break;
         }
         if (message.pane_id && message.text !== undefined && message.id !== undefined) {
-          const queued = message.delivery === "queue";
+          const queued = message.delivery === "queue" || message.delivery === "hold";
           const text = queued ? message.text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n") : message.text;
           let code: string | null = null;
           if ((message.delivery !== undefined && message.delivery !== "immediate" && !queued) || (queued && message.typed !== undefined && message.typed !== false)) code = "invalid_delivery";
+          else if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
+            || queued || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
           else if (this.mode === "observe") code = "read_only";
+          else if (message.clear_draft !== undefined) code = "unsupported";
           else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
           else if (queued) code = this.pendingTargetError(message.pane_id);
           if (code) {
             this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." });
             break;
           }
-          if (queued && paneOf(message.pane_id)?.agent_status === "working") {
-            const pending: PendingMessage = { id: `demo-pending-${nextPending++}`, request_id: message.id, text, state: "queued", created_at: now() };
+          if (queued && (message.delivery === "hold" || paneOf(message.pane_id)?.agent_status === "working")) {
+            const pending: PendingMessage = { id: `demo-pending-${nextPending++}`, request_id: message.id, text, state: message.delivery === "hold" ? "held" : "queued", created_at: now() };
             this.pending.set(message.pane_id, [...(this.pending.get(message.pane_id) ?? []), pending]);
             const reply: ServerMessage = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true, pending: structuredClone(pending) };
             this.rememberRequest(reply);
@@ -1388,11 +1449,17 @@ class DemoSocket extends EventTarget {
   }
 
   private attach(paneId: string): void {
+    const pane = paneOf(paneId);
+    if (!pane) {
+      this.attached.delete(paneId);
+      this.conversationInterests.delete(paneId);
+      this.push({ type: "error", code: "pane_not_found", message: "no such pane", pane_id: paneId });
+      return;
+    }
     this.attached.add(paneId);
     this.publishPending(paneId);
     this.push({ type: "input-ready", pane_id: paneId });
     const key = keyOfPane.get(paneId);
-    const pane = paneOf(paneId);
     if (histories.has(paneId)) { this.renderHistory(paneId); return; }
     if (key === "shell") {
       let at = 0;
@@ -1463,6 +1530,8 @@ class DemoSocket extends EventTarget {
     this.holdPending();
     for (const timer of this.timers) clearTimeout(timer);
     sockets.delete(this);
+    this.attached.clear();
+    this.conversationInterests.clear();
     const event = new CloseEvent("close", { code, reason, wasClean: true });
     this.onclose?.(event);
     this.dispatchEvent(event);
@@ -1490,6 +1559,7 @@ setTimeout(() => {
     { kind: "text", text: "Added `payments_idempotent_replays_total`, incremented where a stored response is replayed, and exposed with the other counters on `/metrics`. 6 tests pass." },
   );
   turn.end_ts = now();
+  conversationChanged(paneId);
   finishDemoTurn(paneId);
 }, 4500);
 

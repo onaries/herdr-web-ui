@@ -37,7 +37,22 @@ export function submitNotTyped(code: string): boolean {
     "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft"].includes(code);
 }
 
+/** A send refused over a one-row draft in Claude's terminal input box: the note, and the draft a send may clear first. */
+export interface DraftRefusal { note: string; draft: string }
+
+/** submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`). */
+export function submitRefusal(code: string, message: string, draft?: string): string | DraftRefusal {
+  if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };
+  return submitNote(code, message);
+}
+
+/** The same message as typed, however a terminal wrapped or indented it: equal once all whitespace is gone. */
+export function sameMessage(a: string, b: string): boolean {
+  const bare = (text: string): string => text.replace(/[\s\u00a0]+/gu, "");
+  return bare(a) !== "" && bare(a) === bare(b);
+}
 export function submitNote(code: string, message: string): string {
+  if (code === "submit_partial") return t("Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.");
   if (code === "agent_blocked") return t("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
   if (code === "read_only") return t("Not sent: this view only watches the pane.");
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");

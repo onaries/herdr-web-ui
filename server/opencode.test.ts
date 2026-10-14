@@ -58,6 +58,60 @@ function store(session = "ses_test1") {
   return { path, db, session, add, prompt, answer, idle };
 }
 
+// OpenCode 1.x's own tables, as its service creates them (columns the reader never touches left out):
+// one `message` row per user prompt or assistant step, its blocks in `part` rows, ordered by time.
+const SCHEMA_V1 = `
+CREATE TABLE session (
+  id text PRIMARY KEY, project_id text NOT NULL, slug text NOT NULL, directory text NOT NULL,
+  title text NOT NULL, version text NOT NULL, revert text, model text,
+  time_created integer NOT NULL, time_updated integer NOT NULL
+);
+CREATE TABLE message (
+  id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL
+);
+CREATE INDEX message_session_time_created_id_idx ON message (session_id, time_created, id);
+CREATE TABLE part (
+  id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL
+);
+CREATE INDEX part_message_id_id_idx ON part (message_id, id);
+CREATE INDEX part_session_idx ON part (session_id);
+`;
+
+/** A 1.x store (`session`/`message`/`part`, no `session_v2`), and a writer that appends like OpenCode's service. */
+function storeV1(session = "ses_old1") {
+  const path = join(root, `opencode-v1-${++stores}.db`);
+  const db = new Database(path, { create: true });
+  opened.push(db);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec(SCHEMA_V1);
+  db.query("INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES (?, 'global', 'slug', ?, 'Old', '1.18.32', ?, ?)").run(session, root, T0, T0);
+  let clock = T0;
+  let parts = 0;
+  const message = (role: string, data: Record<string, unknown>): string => {
+    const id = `msg_${(++ids).toString().padStart(6, "0")}V1`;
+    clock += 1;
+    db.query("INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)")
+      .run(id, session, clock, clock, JSON.stringify({ role, time: { created: clock }, ...data }));
+    return id;
+  };
+  const part = (messageId: string, data: Record<string, unknown>): void => {
+    clock += 1;
+    db.query("INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(`prt_${(++parts).toString().padStart(6, "0")}V1`, messageId, session, clock, clock, JSON.stringify(data));
+  };
+  const user = (text: string): string => {
+    const id = message("user", { agent: "build", model: { modelID: "deepseek-v4.1-flash", providerID: "opencode-go" }, summary: { diffs: [] } });
+    part(id, { type: "text", text });
+    return id;
+  };
+  const assistant = (blocks: Record<string, unknown>[], extra: Record<string, unknown> = {}): string => {
+    const id = message("assistant", { modelID: "deepseek-v4.1-flash", providerID: "opencode-go", ...extra });
+    for (const block of blocks) part(id, block);
+    return id;
+  };
+  return { path, db, session, message, part, user, assistant };
+}
+
 const page = (answer: OpencodeAnswer) => {
   if (answer.kind !== "page") throw new Error(`expected a page, got ${JSON.stringify(answer)}`);
   return answer;
@@ -414,10 +468,11 @@ describe("a page of an OpenCode session", () => {
     expect(second.turns[1]!.parts).toEqual([{ kind: "text", text: "work done" }]);
   });
 
-  it("keeps the terminal for a session it does not hold, a 1.x store and a missing one, and creates nothing", () => {
+  it("keeps the terminal for a session it does not hold, a store whose tables are missing and a missing one, and creates nothing", () => {
     const s = store();
     expect(opencodeConversation(s.path, "ses_missing")).toEqual({ kind: "unavailable", reason: "session_not_found" });
     expect(opencodeConversation(s.path, "../etc")).toEqual({ kind: "unavailable", reason: "no_session_id" });
+    // a store with neither the 2.x nor the whole 1.x table set is not one this reader can page
     const v1 = join(root, "v1.db");
     const old = new Database(v1, { create: true });
     opened.push(old);
@@ -541,5 +596,127 @@ describe("what a page refers to", () => {
     }
     expect(opencodeToolOutput(s.path, s.session, `${step}:0`)).toBe("y".repeat(6000));
     expect(opencodeImage(s.path, s.session, `opencode:${step}:0`)?.mediaType).toBe("image/png");
+  });
+});
+
+describe("an OpenCode 1.x session (session/message/part)", () => {
+  it("reads a 1.x store, folding a prompt's steps into one answer, and names its model and usage", () => {
+    const s = storeV1();
+    s.user("first prompt");
+    s.assistant([
+      { type: "reasoning", text: "think it through" },
+      { type: "tool", tool: "bash", callID: "call_1", state: { status: "completed", input: { command: "echo hi" }, output: "hi", metadata: { exit: 0 } } },
+    ], { finish: "tool-calls" });
+    s.assistant([{ type: "text", text: "done" }], { finish: "stop", tokens: { input: 10, output: 5, reasoning: 1, cache: { read: 100, write: 0 } } });
+    const answer = page(opencodeConversation(s.path, s.session));
+    expect(answer.cursor).toBeNull();
+    expect(answer.history_id).toBe(`opencode-${s.session}`);
+    expect(answer.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+    expect(answer.turns[0]!.parts).toEqual([{ kind: "text", text: "first prompt" }]);
+    expect(answer.turns[1]!.parts).toEqual([
+      { kind: "thinking", text: "think it through" },
+      { kind: "tool", name: "bash", summary: "echo hi", input: JSON.stringify({ command: "echo hi" }, null, 2), output: "hi" },
+      { kind: "text", text: "done" },
+    ]);
+    expect(answer.metadata).toEqual({ model: "deepseek-v4.1-flash", reasoning_effort: null, context: { used: 116, window: null } });
+  });
+
+  it("keeps a picture pasted in a 1.x prompt, and serves it by the ref the page gave it", () => {
+    const s = storeV1();
+    const id = s.message("user", { agent: "build" });
+    s.part(id, { type: "text", text: "look at this" });
+    s.part(id, { type: "file", mime: "image/png", url: `data:image/png;base64,${PNG.toString("base64")}` });
+    const parts = page(opencodeConversation(s.path, s.session)).turns[0]!.parts;
+    expect(parts).toEqual([
+      { kind: "image", media_type: "image/png", ref: `opencode:${id}:0` },
+      { kind: "text", text: "look at this" },
+    ]);
+    expect(Buffer.from(opencodeImage(s.path, s.session, `opencode:${id}:0`)!.bytes).equals(PNG)).toBe(true);
+  });
+
+  it("serves a 1.x tool's cut output and its picture by the refs the page gave them", () => {
+    const s = storeV1();
+    s.user("read it");
+    const step = s.assistant([
+      { type: "text", text: "reading" },
+      { type: "tool", tool: "read", callID: "call_1", state: {
+        status: "completed", input: { filePath: "big.log" }, output: "y".repeat(5000),
+        attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${PNG.toString("base64")}` }],
+      } },
+    ], { finish: "stop" });
+    const tool = page(opencodeConversation(s.path, s.session)).turns
+      .flatMap((turn) => turn.parts).find((part): part is Extract<ConversationPart, { kind: "tool" }> => part.kind === "tool")!;
+    expect(tool.output_ref).toBe(`${step}:1`);
+    expect(tool.output_size).toBe(5000);
+    expect(opencodeToolOutput(s.path, s.session, tool.output_ref!)).toBe("y".repeat(5000));
+    expect(opencodeToolOutput(s.path, s.session, `${step}:0`)).toBeNull();
+    expect(opencodeImage(s.path, s.session, tool.images![0]!.ref)?.mediaType).toBe("image/png");
+    expect(Buffer.from(opencodeImage(s.path, s.session, tool.images![0]!.ref)!.bytes).equals(PNG)).toBe(true);
+  });
+
+  it("shows a 1.x step's error and keeps the terminal for a session the store does not hold", () => {
+    const s = storeV1();
+    s.user("go");
+    s.assistant([
+      { type: "tool", tool: "edit", callID: "call_1", state: { status: "error", input: { filePath: "x" }, error: "No changes to apply: oldString and newString are identical." } },
+    ], { finish: "stop", error: { name: "ProviderError", data: { message: "Rate limited" } } });
+    const answer = page(opencodeConversation(s.path, s.session));
+    const parts = answer.turns[1]!.parts as Extract<ConversationPart, { kind: "tool" }>[];
+    expect(parts[0]!.error).toBe(true);
+    expect(parts[0]!.output).toBe("No changes to apply: oldString and newString are identical.");
+    expect(answer.turns[1]!.parts).toContainEqual({ kind: "text", text: "Error: Rate limited" });
+    expect(opencodeConversation(s.path, "ses_missing")).toEqual({ kind: "unavailable", reason: "session_not_found" });
+  });
+
+  it("pages a 1.x session by prompt, and the pages meet exactly", () => {
+    const s = storeV1();
+    for (let n = 0; n < 120; n++) { s.user(`p${n}`); s.assistant([{ type: "text", text: `a${n}` }], { finish: "stop" }); }
+    const newest = page(opencodeConversation(s.path, s.session));
+    expect(newest.turns.length).toBe(100);
+    expect(newest.turns[0]!.parts).toEqual([{ kind: "text", text: "p70" }]);
+    expect(newest.cursor).toMatch(/^opencode-ses_old1:\d+$/);
+    const middle = page(opencodeConversation(s.path, s.session, { before: newest.cursor! }));
+    const all = [...middle.turns, ...newest.turns].filter((turn) => turn.role === "user").map((turn) => (turn.parts[0] as { text: string }).text);
+    expect(all).toEqual(Array.from({ length: 100 }, (_, n) => `p${n + 20}`));
+    expect(opencodeConversation(s.path, s.session, { before: `opencode-ses_other:${newest.cursor!.split(":")[1]}` })).toEqual({ kind: "history_changed" });
+  });
+
+  it("hides a reverted 1.x suffix from the pages and from the row references", () => {
+    const s = storeV1();
+    for (let n = 0; n < 51; n++) { s.user(`p${n}`); s.assistant([{ type: "text", text: `a${n}` }], { finish: "stop" }); }
+    const step = s.assistant([
+      { type: "text", text: "reading" },
+      { type: "tool", tool: "read", callID: "call_1", state: {
+        status: "completed", input: { filePath: "big.log" }, output: "y".repeat(5000),
+        attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${PNG.toString("base64")}` }],
+      } },
+    ], { finish: "stop" });
+    const later = s.user("after undo");
+    s.part(later, { type: "file", mime: "image/png", url: `data:image/png;base64,${PNG.toString("base64")}` });
+
+    // before the undo the step is readable, so the nulls after it are not passing on nothing
+    const tool = page(opencodeConversation(s.path, s.session)).turns.flatMap((turn) => turn.parts)
+      .find((part): part is Extract<ConversationPart, { kind: "tool" }> => part.kind === "tool")!;
+    expect(tool.output_ref).toBe(`${step}:1`);
+    expect(opencodeToolOutput(s.path, s.session, tool.output_ref!)).toBe("y".repeat(5000));
+    expect(opencodeImage(s.path, s.session, tool.images![0]!.ref)).not.toBeNull();
+
+    s.db.query("UPDATE session SET revert = ? WHERE id = ?").run(JSON.stringify({ messageID: step }), s.session);
+
+    const newest = page(opencodeConversation(s.path, s.session));
+    expect(newest.cursor).not.toBeNull();
+    const older = page(opencodeConversation(s.path, s.session, { before: newest.cursor! }));
+    const parts = [...older.turns, ...newest.turns].flatMap((turn) => turn.parts);
+    expect(parts.some((part) => part.kind === "tool")).toBe(false);
+    expect(parts.some((part) => part.kind === "text" && part.text === "after undo")).toBe(false);
+    expect(parts.some((part) => part.kind === "image" && part.ref === `opencode:${later}:0`)).toBe(false);
+    expect(opencodeToolOutput(s.path, s.session, tool.output_ref!)).toBeNull();
+    expect(opencodeImage(s.path, s.session, tool.images![0]!.ref)).toBeNull();
+  });
+
+  it("leaves an oversized 1.x session to the terminal instead of loading it whole", () => {
+    const s = storeV1();
+    s.db.transaction(() => { for (let n = 0; n < 5001; n++) s.user(`p${n}`); })();
+    expect(opencodeConversation(s.path, s.session)).toEqual({ kind: "unavailable", reason: "transcript_missing" });
   });
 });

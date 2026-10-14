@@ -36,6 +36,8 @@ function contextOf(used: number, model: string | null, window: number | null, be
 export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata): ConversationMetadata {
   // `before` is what the text preceding this one said: the fold picks up where it stopped
   const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
+  // Agy's exported rows do not attest the selected model or reasoning effort.
+  if (source === "agy-transcript") return metadata;
   // pi states the provider on the same records that state usage, so the window is asked for
   // from what this line says rather than remembered across sources
   let piProvider: string | null = null;
@@ -43,7 +45,13 @@ export function parseConversationMetadata(text: string, source: ConversationResp
     let entry: RecordValue;
     try { entry = record(JSON.parse(line)); } catch { continue; }
     if (isContextClear(entry, source)) { metadata.model = null; metadata.reasoning_effort = null; piProvider = null; delete metadata.context; continue; }
-    if (source === "codex-transcript") {
+    if (source === "grok-transcript") {
+      const update = record(record(entry.params).update);
+      if (entry.method === "session/update" && update.sessionUpdate === "user_message_chunk") {
+        const model = label(record(update._meta).modelId);
+        if (model) metadata.model = model;
+      }
+    } else if (source === "codex-transcript") {
       const event = record(entry.payload);
       if (entry.type === "event_msg" && event.type === "token_count") {
         // what the last request filled, against the window Codex itself states

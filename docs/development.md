@@ -14,12 +14,19 @@ bun run dev      # Vite on :5173, proxies /api and /ws
 
 ## Checks
 
+Production builds create Brotli (`.br`) and gzip (`.gz`) sidecars for JavaScript and CSS under
+`dist/assets/`. The static handler negotiates these with `Accept-Encoding` and sends
+`Vary: Accept-Encoding`; a client that excludes every available representation gets 406.
+Older builds without sidecars retain identity responses. The shell and service worker keep
+their revalidation policy, and user files and API responses are never compressed by this path.
+
 `bun run check` runs what CI runs, from the same script (`scripts/check.ts`):
 
 ```bash
 bun run check fast                  # CI's Fast checks: workflow syntax, generated types, typecheck, build, unit tests
 bun run check integration browser   # CI's Integration and browser: a build, then both lanes side by side
 bun run check full                  # fast, then both lanes
+bun run check concurrent            # full, with the unit tests moved beside both lanes: same steps, less wall time
 bun run check run bun test --timeout 15000 ./server/api.contract.test.ts   # one command on the same isolated herdr
 bun run check run --build bun scripts/ui-regression.ts                     # build and browser script under the same lock
 ```
@@ -44,6 +51,14 @@ checkout. (`check run` runs only its named command unless `--build` is supplied.
 Admission is serialized briefly on port 41745. After taking a candidate slot, the run checks all
 eight slots again for its checkout and counts every active holder against its requested limit,
 including holders above its candidate range. A busy admission port refuses rather than waits.
+
+`check concurrent` runs the same steps as `check full`: workflow syntax, generated types,
+typecheck and build first, then the unit tests side by side with both lanes instead of before them.
+
+Unit tests run in parallel processes; `UNIT_TEST_WORKERS` sets the count (default: min(cores/2, 8)
+locally, 4 in CI). Each file runs independently in its own process; no shared state between
+processes. The queue is ordered largest file first, so long files start early. Without `sh`
+(native Windows) the files run serially in one process.
 Explicit `CHECK_DIR` and `CHECK_REPORT` paths are claimed exclusively by canonical path, even for
 `fast`, before writing reports, logs or isolated state. Pid markers are released at exit after the
 final report and session cleanup; a dead owner's marker is reclaimed under serialized admission.
@@ -82,10 +97,12 @@ bun test                        # needs herdr installed; creates and removes its
 bun run test:ui                 # browser regression against isolated test servers
 bun scripts/sticky-modifiers-regression.ts # mobile held keys through real legacy/Kitty PTYs
 bun scripts/key-bar-customization-demo-regression.ts # mobile key layout, saved combinations and migration on demo fixtures
+bun scripts/key-bar-hold-repeat-regression.ts # phone touch-arrow taps, holds, swipes and sticky Ctrl on demo fixtures
 bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px and a 320px phone, and Back stepping out of the dialog
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
 bun scripts/math-browser-qa.ts  # chat math: KaTeX loads with the first expression
+bun scripts/recent-folders-regression.ts # owned workspaces: PC-scoped history, reload, three chips on one row that fill Directory, pending and failures
 bun run test:ssh                # remote-PC integration over SSH
 bun scripts/fresh-install-docker.ts [owner/repo] [ref]  # a new user's install in a bare Ubuntu (Docker)
 ```
@@ -99,6 +116,10 @@ after a herdr restart. It prints the time each step took. `KEEP=1` leaves the co
 Tests run against a herdr session of their own, `herdr-web-ui-test`. The first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
 
 Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH` otherwise. After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
+
+`HEADED=1 bun scripts/chat-browser-qa.ts` opens its owned native-transcript fixture in a
+visible Chrome window. Its detected Codex fixture process keeps the rollout open; no
+real model is invoked by this script. Set `CHROME_PATH` to the macOS Chrome binary there.
 
 For isolated phone viewer and keyboard layout regressions (no herdr session; the demo runner builds the real client locally):
 
@@ -114,9 +135,121 @@ bun scripts/sidebar-activity-demo-regression.ts # Agents order Activity and Quie
 bun scripts/prompt-dock-demo-regression.ts    # the prompt card docked over the input card: its place, its height on a short phone, the grip, a typed pick
 bun scripts/plugin-actions-demo-regression.ts # a plugin action that ends after the server stopped waiting: the late failure said, a traceback's height on a phone with its keyboard up
 bun scripts/font-swap-demo-regression.ts      # the app's faces arriving late on a slow link: a reader at the end of a chat stays there, a tab strip the user scrolled stays put
+bun scripts/narrow-pane-demo-regression.ts    # a split pane under 80 columns: the smaller font, its setting, a zoom, and a pane no font can bring to 80
 ```
 
 `FILE_VIEWER_CASE=landscape-notch` selects a viewer case; `FILE_VIEWER_CSS=/path/to/before.css` compares another stylesheet. These checks use Chromium mobile emulation and synthetic safe-area/keyboard geometry; they cannot verify actual iOS Safari keyboard dismissal or notch insets. The existing `bun scripts/file-viewer-regression.ts` separately checks history with an owned herdr pane. The original `scripts/mobile-viewport-regression.ts` exports `checkMobileViewport` for the real-app `bun run test:ui` suite; it also checks the command palette and xterm focus transitions. The demo runners build the real client into a temporary directory, inject the committed fictional-session transport and serve it only on loopback; they do not use a live herdr session or download website media. Run on its own, each builds the client itself (`scripts/demo-build.ts`); the browser lane builds it once and names the directory in `HERDR_DEMO_BUILD`, and each runner copies that instead. They exercise real-app viewport and alert geometry, but not live herdr connectivity.
+
+## Conversation refresh
+
+The chat reads `/api/pane/conversation` after a `conversation-changed` WebSocket frame.
+The frame contains only `pane_id` and an opaque `signature`; REST remains the authoritative
+paged conversation, including metadata and history identity.
+
+A mounted, visible Chat enables `conversation-watch {pane_id, enabled:true}` on its existing
+machine-bound WebSocket, after attaching. Bridges advertise the `"conversation-watch"` feature;
+older bridges receive no unknown control frame, and their visible Chat reads every 2 s as before.
+The client retains current interest through reconnect, replaying it after attachment and
+capability discovery. Hiding the page, leaving Chat or unmounting disables interest. The bridge
+drops interest with the attachment, and the client asks again with the pane's next attach: a
+tab that let go of its pane while out of use (Settings → Use alongside herdr's own window) has
+no pushes while it only watches, so it reads every 2 s, and gets pushes back when it attaches.
+Observers may subscribe without gaining input or resize authority.
+
+The bridge shares one native-file monitor per interested attached pane and one 250 ms stat
+timer. Terminal-only and hidden clients do not keep a conversation monitor alive. The monitor
+resolves through existing provider/process evidence, checks file identity, size and timestamps
+without parsing turns, and rechecks session resolution every 5 s (2 s while a transcript is
+missing). The last interested client, failed/ended attachment and server stop release it.
+
+Newest-page refreshes are single-flight. Push-triggered reads start at least 2 s apart using
+monotonic elapsed time, with one trailing refresh at a fixed deadline: continuous writes cannot
+keep postponing it. A push after idle reads immediately. Initial display, explicit sends,
+status/history repairs, reconnect and visibility return bypass that delay but not serialization.
+Gap fills run inside the newest read. An older page starts once the newest read in flight has
+settled, so a history change found there drops it first, but it never holds the next newest read
+back: a clear or a new turn shows while a slow older page loads. A visible Chat with pushes retains a 10 s
+backstop for lost notifications; without pushes (an older bridge, a released pane) the backstop
+is the former 2 s poll. Hidden Chat starts no new automatic reads or queued
+pagination work; returning preserves held history and scroll. Pending work never follows a
+pane or machine switch.
+
+A Chat showing the scrollback stand-in (no native transcript yet, or none recognized) has no
+file for the monitor to watch. While it is visible, the pane's own `pty-data` (a mirror's screen
+frames on Windows) invalidates it through the same coordinator, so continuous output rereads
+at most every 2 s and a quiet pane is not read. A Chat showing a native transcript ignores
+terminal output.
+
+Conversation responses are gzipped like every other text answer (`server/compress.ts`), with
+weak ETags so conditional reads hold across encodings.
+Prompt polling remains separate at 2 s: approval cards and suggestions can change on the
+terminal screen without a transcript write or agent-status transition.
+
+### Initial push + gzip measurement
+
+On macOS, headed Chrome read an owned native omp fixture with 22 prompt/answer pairs
+(initial JSON about 580.7 KB). Five assistant appends ran in a 30 s interval with the agent
+status held constant. Initial loading was excluded. The same loopback fixture was measured
+before and after; this is not a bandwidth estimate for arbitrary conversations.
+
+These measurements predate explicit visible-Chat subscriptions and the 2 s push-read bound.
+They are evidence for the initial push/gzip implementation, not a remeasurement of the current
+refresh policy.
+
+| Metric | Before: 2 s polling | After: push + gzip |
+| --- | ---: | ---: |
+| Write-to-visible latency (ms) | 1659, 666, 684, 697, 710 | 233, 292, 55, 102, 137 |
+| Mean latency | 883.2 ms | 163.8 ms |
+| Conversation requests / 30 s | 15 (5 × 200, 10 × 304) | 5 (200) |
+| Encoded HTTP body bytes | 2,903,810 | 324,544 |
+| New conversation WS payload bytes | 0 | 430 |
+| Body + invalidation payload bytes | 2,903,810 | 324,974 |
+
+Mean latency fell 81.5% and the measured payload fell 88.8%. HTTP/TLS headers, terminal
+traffic and prompt requests are excluded. The deliberately repetitive fixture compressed
+to about 11.2% of its identity response; real tool output and conversations will differ.
+
+### Visible-Chat subscription and bounded-refresh resource measurement
+
+The current policy was compared with upstream 2 s polling on macOS in headed Chrome,
+using owned native Codex fixtures initially about 60 KB each. Each row is a paired
+20 s sample, excluding initial loading, with fresh bridge processes and the same
+16 owned workspaces present for both versions. Both versions retain the existing
+WebSocket connections; "push" below means WS invalidation followed by REST reads,
+not conversation bodies delivered over WS.
+
+CPU is cumulative CPU time of the Bun bridge during the sample; RSS is its sampled
+mean. Chrome, herdr, PTY and resolver subprocess CPU is excluded. Hidden visibility
+was simulated; these are not physical-phone or long-running leak measurements.
+Quota requests were blocked equally in both versions.
+
+| Scenario | Conversation REST reads: polling → push | Bun CPU ms: polling → push | Mean Bun RSS MiB: polling → push |
+| --- | ---: | ---: | ---: |
+| One idle Chat | 9 → 2 | 119 → 135 | 54.4 → 60.6 |
+| Eight idle Chats, same pane | 78 → 15 | 381 → 275 | 58.2 → 68.4 |
+| Eight idle Chats, distinct panes | 78 → 16 | 351 → 343 | 70.4 → 71.4 |
+| Eight distinct Chats, writes every 4 s | 78 → 39 | 370 → 333 | 70.4 → 73.2 |
+| Eight distinct Terminal views | 0 → 0 | 108 → 112 | 58.7 → 58.3 |
+| Eight hidden Chats | 0 → 0 | 82 → 100 | 67.6 → 67.8 |
+| Eight distinct Chats, writes about every 100 ms | 78 → 80 | 416 → 485 | 73.3 → 72.7 |
+| Eight ordinary-shell Terminal views | 0 → 0 | 143 → 150 | 57.2 → 57.1 |
+
+The high-frequency run wrote 197 updates per pane: 656 WS invalidations produced
+80 REST reads across eight views, and every view eventually rendered its final
+update. Its bridge CPU remained about 16.5% above polling; bounded reads do not
+eliminate server monitor work. Resolver subprocess launches were 78 → 110 in that
+sample, so bridge CPU alone must not be presented as total system CPU.
+
+Terminal-only, hidden and ordinary-shell Terminal samples had zero conversation
+monitors, file-stat checks, transcript resolutions, invalidations and REST reads.
+Eight views kept eight live sockets in both versions; same-pane Chats shared one
+monitor. Leaving Chat released interest, reconnect restored it, and returning from
+hidden rendered an appended marker in under 2 s. Closing seven same-pane views
+retained the monitor; closing the last view removed all monitors, the monitor timer
+and owned PTY children. No browser errors occurred in these samples.
+
+These resource results do not remeasure the latency or compressed payload figures
+in the historical table above.
 
 ## README media
 
@@ -282,20 +415,35 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
   (checksum-pinned actionlint), generated type freshness, application and critical-tools typechecks
   (`tsconfig.tools.json`), build, and
   `bun run test:unit`. This suite does not start herdr.
-- **Integration and browser**: checksum-pinned herdr 0.9.3, Node 22, then
-  `bun run check integration browser`: a build, `bun run test:integration`, and the browser
-  scripts of `scripts/ci-browser.sh` with the lockfile's Chromium, on a herdr of the run's own
-  ([Checks](#checks)). The two lanes run at the same time (`scripts/ci-lanes.ts`). The
-  integration files can run a few at a time, each worker on a herdr session of its own
-  (`scripts/ci-tests.ts`); they run one by one (`HERDR_TEST_SHARDS`, default 1 in
-  `scripts/check.ts`) until the timing-bound contract tests hold under load.
-  Missing herdr fails the run. Its herdr servers are stopped even on failure.
-  Integration tests have a 15-second default timeout so their bounded process-startup
-  probes can finish; individual tests can still specify a longer timeout.
+- **Integration and browser**: a summary job that fails when any of three jobs fails, each with
+  checksum-pinned herdr 0.9.3, Node 22 and the lockfile's Chromium:
+  - **Integration tests** runs `bun run check integration`: a build and
+    `bun run test:integration` on a herdr of the run's own ([Checks](#checks)). The
+    integration files can run a few at a time, each worker on a herdr session of its own
+    (`scripts/ci-tests.ts`); they run one by one (`HERDR_TEST_SHARDS`, default 1 in
+    `scripts/check.ts`) until the timing-bound contract tests hold under load.
+    Missing herdr fails the run. Its herdr servers are stopped even on failure.
+    Integration tests have a 15-second default timeout so their bounded process-startup
+    probes can finish; individual tests can still specify a longer timeout.
+  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts` alone.
+  - **Browser regression (other scripts)** runs every other browser script, four at a time.
 
-The browser lane prints each script's wall seconds and exit code, including the shared demo
-build, then a summary on success or failure. The first failing script stops the lane.
-Under `CI` or with `CHECK_DIR` set, it creates `UI_EVIDENCE_DIR` at
+  Both browser jobs run `scripts/ci-browser-parallel.ts`, which takes its script list from
+  `scripts/ci-browser.sh` (`BROWSER_SCRIPTS` picks from it, `BROWSER_EXCLUDE` leaves scripts out,
+  and a name the list does not hold is an error). `scripts/pages-gate.test.ts` fails if the two
+  jobs together do not run that list exactly once. A new browser script therefore only needs its
+  `run_script` line in `scripts/ci-browser.sh`.
+
+`bun run check browser` and `bun run check full` still run the serial lane, `scripts/ci-browser.sh`
+(`BROWSER_PARALLEL=1` hands it to the parallel runner).
+The serial lane prints each script's wall seconds and exit code, including the shared demo
+build, then a summary on success or failure. The first failing script stops it.
+The parallel runner builds the demo once, prints a line when each script starts and ends (and
+every minute a script is still running), and keeps running the other scripts after one fails.
+Each script's full output goes to `${CHECK_DIR:-.ci}/browser-logs/<script>.log`, with
+`summary.json` beside it; a failure prints the last 400 lines of its log and the log's path, and
+the job then fails. CI uploads `browser-logs` with the evidence on success or failure.
+Under `CI` or with `CHECK_DIR` set, both runners create `UI_EVIDENCE_DIR` at
 `${CHECK_DIR:-.ci}/browser-evidence`. Only the existing sticky-modifier and file-viewer captures
 are enabled automatically: the UI suite and key-bar demo have evidence branches that add
 assertions, viewport changes or font waits, so those remain disabled in the lane. Outside

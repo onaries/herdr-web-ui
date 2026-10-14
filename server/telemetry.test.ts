@@ -156,6 +156,38 @@ describe("telemetry events", () => {
     expect(telemetry.status().enabled).toBe(true);
   });
 
+  test("an event names the appearance settings a browser said it changed, and nothing a browser did not say", async () => {
+    const { telemetry, sent, stateDir } = setup();
+    expect(telemetry.status().next).toMatchObject({ changed_settings: null });
+    // telling the settings sends nothing by itself: the notice still comes first
+    telemetry.change({ changed_settings: ["agentCards", "theme"] });
+    await telemetry.report();
+    expect(sent).toEqual([]);
+    telemetry.change({ notice_seen: true });
+    await telemetry.report();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.changed_settings).toEqual(["theme", "agentCards"]);
+    // the next version's event carries the last answer, also across a restart
+    const next = setup({ stateDir, version: "0.4.2" });
+    next.telemetry.change({ changed_settings: [] });
+    await next.telemetry.report();
+    expect(next.sent).toEqual([expect.objectContaining({ event: "update", changed_settings: [] })]);
+  });
+
+  test("an install that saw the notice before it named the settings sends nothing until it sees it again", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "telemetry-"));
+    dirs.push(stateDir);
+    writeFileSync(join(stateDir, "telemetry.json"), JSON.stringify({ install_id: "0b5f3c2e-8a51-4c47-9d0e-3f6a2b1c9e84", enabled: true, notice_seen_at: "2026-10-01T00:00:00.000Z", reported_version: "0.4.0" }));
+    const { telemetry, sent } = setup({ stateDir });
+    expect(telemetry.status()).toMatchObject({ notice_seen: false, next: { event: "update", previous_version: "0.4.0" } });
+    telemetry.change({ changed_settings: ["agentCards"] });
+    await telemetry.report();
+    expect(sent).toEqual([]);
+    telemetry.change({ notice_seen: true });
+    await telemetry.report();
+    expect(sent).toEqual([expect.objectContaining({ event: "update", install_id: "0b5f3c2e-8a51-4c47-9d0e-3f6a2b1c9e84", changed_settings: ["agentCards"] })]);
+  });
+
   test("the install method follows how the app was started", () => {
     expect(installMethod({ HERDR_PLUGIN_ROOT: "/x", HERDR_WEB_MANAGED: "1" })).toBe("plugin");
     expect(installMethod({ HERDR_WEB_MANAGED: "1" })).toBe("managed");
@@ -185,6 +217,14 @@ describe("/api/telemetry", () => {
     expect((await handleTelemetryRequest(post({ enabled: false }, {}), telemetry)).status).toBe(403);
     expect((await handleTelemetryRequest(post({ enabled: "no" }), telemetry)).status).toBe(400);
     expect((await handleTelemetryRequest(post({ notice_seen: false }), telemetry)).status).toBe(400);
+    // only names from the fixed list: a value, a typed setting or anything else is refused whole
+    for (const changed_settings of ["theme", ["terminalFontFamily"], ["theme", "D2Coding"], [{ theme: "light" }]]) {
+      expect((await handleTelemetryRequest(post({ changed_settings }), telemetry)).status).toBe(400);
+    }
+    expect(telemetry.status().next).toMatchObject({ changed_settings: null });
+    expect(await (await handleTelemetryRequest(post({ changed_settings: ["agentPins", "theme", "theme"] }), telemetry)).json()).toMatchObject({ next: { changed_settings: ["theme", "agentPins"] } });
+    // a setting that was removed, named by a page loaded before the update: kept out, not refused
+    expect(await (await handleTelemetryRequest(post({ changed_settings: ["planFlow", "theme"] }), telemetry)).json()).toMatchObject({ next: { changed_settings: ["theme"] } });
     const response = await handleTelemetryRequest(post({ enabled: false, notice_seen: true }), telemetry);
     expect(await response.json()).toMatchObject({ enabled: false, notice_seen: true });
   });

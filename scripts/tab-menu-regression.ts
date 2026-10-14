@@ -6,6 +6,8 @@ import { join } from "node:path";
 import type { Browser, Locator, Page } from "playwright-core";
 import type { PaneLayoutSnapshot, PaneSplit } from "../shared/protocol.ts";
 import { paneFocus, paneRead, paneRename, paneSplit, sessionSnapshot, tabClose, tabCreate, tabMove, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { sheetsSettled } from "./sheets-settled.ts";
+import { routeDrained } from "./drained-route.ts";
 
 const TAB = "Tab 1";
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -129,9 +131,14 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     const narrowMenu = page.getByRole("button", { name: `Actions for ${TAB}`, exact: true });
     await narrowMenu.waitFor();
     assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 1);
+    await until(async () => await page.locator(".pane-frame:visible").count() === 1, "a narrow window shows the split tab's open pane alone");
     await narrowMenu.click();
     await tabMenu.waitFor();
-    assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab", "Rename tab", "Close tab"]);
+    const narrowItems = await tabMenu.getByRole("menuitem").allTextContents();
+    assert.deepEqual(narrowItems.slice(0, 2).sort(), ["canvas-first", "canvas-second"], "a narrow window's tab menu lists the tab's panes first");
+    assert.deepEqual(narrowItems.slice(-3), ["New tab", "Rename tab", "Close tab"]);
+    assert.deepEqual(narrowItems.slice(2, -3).filter((item) => item !== "Clear pane name"),
+      ["Rename pane", "Split right", "Split down", "Zoom pane", "Send right-clicks to pane", "Close pane"], "the touch menu carries the open pane's actions, in order, between its panes and the tab's");
     await page.setViewportSize({ width: 1280, height: 800 });
     await tabMenu.waitFor({ state: "detached" });
     await narrowMenu.waitFor({ state: "hidden" });
@@ -411,14 +418,11 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     let releaseSelection!: () => void;
     const selectionGate = new Promise<void>((resolve) => { releaseSelection = resolve; });
     let selectionReads = 0;
-    let selectionReadsFinished = 0;
-    await page.route("**/api/session", async (route) => {
+    const unrouteSelection = await routeDrained(page, "**/api/session", async (route) => {
       selectionReads += 1;
-      try {
-        const response = await route.fetch();
-        await selectionGate;
-        await route.fulfill({ response });
-      } finally { selectionReadsFinished += 1; }
+      const response = await route.fetch();
+      await selectionGate;
+      await route.fulfill({ response });
     });
     const survivingAttaches = () => attaches.filter((id) => id === first || id === second).length;
     const survivingDetaches = () => detaches.filter((id) => id === first || id === second).length;
@@ -447,8 +451,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
       assert.equal(survivingDetaches(), beforeCloseDetaches);
     } finally {
       releaseSelection();
-      await page.unroute("**/api/session");
-      await until(() => selectionReadsFinished === selectionReads, "held selection reads finish");
+      await unrouteSelection();
       await firstTerm?.dispose();
       await secondTerm?.dispose();
     }
@@ -468,8 +471,11 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await openApp(page, origin, first);
-    await screen(page, second).waitFor();
-    assert.equal(await page.locator(".pane-frame:visible").count(), 2, "the phone retains the same split layout");
+    await screen(page, second).waitFor({ state: "attached" });
+    assert.equal(await page.locator(".pane-frame:visible").count(), 1, "a phone shows the split tab's open pane alone");
+    assert.equal(await frame(page, first).isVisible(), true, "the open pane is the one shown");
+    assert.equal(await page.locator(".pane-frame").count(), 2, "its sibling stays mounted");
+    assert.equal(await page.locator(".pane-divider").count(), 0, "a phone draws no split boundary");
     assert.equal(await page.locator(".tab-strip-close, .tab-strip-panes").count(), 0, "the phone renders no close button or chevron");
     assert.equal(await page.locator(".tab-strip-menu:visible").count(), 1, "the active tab retains an explicit touch menu");
     const touchMenu = page.getByRole("button", { name: `Actions for ${TAB}`, exact: true });
@@ -478,7 +484,27 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     await touchMenu.tap();
     const tabSheet = page.getByRole("dialog", { name: TAB, exact: true });
     await tabSheet.waitFor();
-    assert.deepEqual(await tabSheet.locator(".row-sheet-item").allTextContents(), ["New tab", "Rename tab", "Close tab"]);
+    // herdr's own pane order stands (the desktop check above swapped the two)
+    const phoneItems = await tabSheet.locator(".row-sheet-item").allTextContents();
+    assert.deepEqual(phoneItems.slice(0, 2).sort(), ["canvas-first", "canvas-second"], "the split tab's panes lead its menu on a phone");
+    assert.deepEqual(phoneItems.slice(-3), ["New tab", "Rename tab", "Close tab"]);
+    assert.deepEqual(phoneItems.slice(2, -3).filter((item) => item !== "Clear pane name"),
+      ["Rename pane", "Split right", "Split down", "Zoom pane", "Send right-clicks to pane", "Close pane"], "the open pane's actions sit between its panes and the tab's");
+    assert.equal(await tabSheet.getByRole("button", { name: "canvas-first", exact: true }).getAttribute("aria-current"), "true", "the open pane is marked");
+    // The menu is a phone's way to the other pane, and picking one leaves herdr's layout alone.
+    await sheetsSettled(page);
+    await tabSheet.getByRole("button", { name: "canvas-second", exact: true }).tap();
+    await currentPane(page, second);
+    await until(async () => await frame(page, second).isVisible() && !(await frame(page, first).isVisible()), "the picked pane replaces the open one");
+    assert.equal((await sessionSnapshot()).layouts.find((entry) => entry.panes.some((pane) => pane.pane_id === first))?.zoomed, false, "showing one pane on a phone does not zoom herdr's layout");
+    await touchMenu.tap();
+    await tabSheet.waitFor();
+    await sheetsSettled(page);
+    await tabSheet.getByRole("button", { name: "canvas-first", exact: true }).tap();
+    await currentPane(page, first);
+    await touchMenu.tap();
+    await tabSheet.waitFor();
+    await sheetsSettled(page);
     const sheetBox = await rect(tabSheet, "the phone tab menu");
     assert.ok(sheetBox.top >= 0 && sheetBox.bottom <= viewport.height + 1);
     await tabSheet.getByRole("button", { name: "Rename tab", exact: true }).tap();
@@ -501,17 +527,18 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
       await until(async () => await page.locator(".tab-strip").getAttribute("aria-busy") === "false", "restored touch order acknowledged");
     } finally { await tabClose(sibling.tab.tab_id); }
     await page.getByRole("tab", { name: "touch-reorder", exact: true }).waitFor({ state: "detached" });
-    await frame(page, second).locator(".pane-frame-menu").tap();
-    const paneSheet = page.getByRole("dialog", { name: /^Pane actions for / });
-    await paneSheet.waitFor();
-    const cancel = paneSheet.getByRole("button", { name: "Cancel", exact: true });
+    assert.equal(await frame(page, first).locator(".pane-frame-menu").isVisible(), false, "the lone pane draws no ellipsis beside the tab's");
+    await touchMenu.tap();
+    await tabSheet.waitFor();
+    await sheetsSettled(page);
+    const cancel = tabSheet.getByRole("button", { name: "Cancel", exact: true });
     assert.ok((await rect(cancel, "Cancel")).bottom <= viewport.height + 1, "Cancel remains reachable");
-    await paneSheet.locator(".row-sheet-items").evaluate((node) => { node.scrollTop = node.scrollHeight; });
-    const close = paneSheet.getByRole("button", { name: "Close pane", exact: true });
-    assert.ok((await rect(close, "Close pane")).bottom <= (await rect(cancel, "Cancel")).top + 1, "the pane menu's last action is reachable after scrolling");
+    await tabSheet.locator(".row-sheet-items").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+    const close = tabSheet.getByRole("button", { name: "Close tab", exact: true });
+    assert.ok((await rect(close, "Close tab")).bottom <= (await rect(cancel, "Cancel")).top + 1, "the menu's last action is reachable after scrolling");
     await screenshot(page, `canvas-phone-${viewport.width}`);
     await cancel.tap();
-    await paneSheet.waitFor({ state: "detached" });
+    await tabSheet.waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "the canvas never overflows the phone sideways");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -531,7 +558,10 @@ async function checkTouchTablet(browser: Browser, origin: string, first: string)
     await button.tap();
     const menu = page.getByRole("menu", { name: TAB, exact: true });
     await menu.waitFor();
-    assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["New tab", "Rename tab", "Close tab"]);
+    const tabletItems = await menu.getByRole("menuitem").allTextContents();
+    // a wide touch screen shows both panes, so the menu has no pane list: the open pane's actions lead it
+    assert.deepEqual(tabletItems.filter((item) => item !== "Clear pane name"),
+      ["Rename pane", "Split right", "Split down", "Zoom pane", "Send right-clicks to pane", "Close pane", "New tab", "Rename tab", "Close tab"], "the touch menu carries the open pane's actions, in order, before the tab's");
     await page.keyboard.press("Escape");
     await menu.waitFor({ state: "detached" });
   } finally { await context.close(); }

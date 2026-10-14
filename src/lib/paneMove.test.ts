@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { SessionSnapshot } from "../../shared/protocol.ts";
 import { ComposerDraftStore } from "./composerDraft.ts";
-import { carryPaneRecords, moveRefusal, paneMoveTargets } from "./paneMove.ts";
+import { carryPaneRecords, moveRefusal, paneMovedTo, paneMoveTargets, recordPaneMove } from "./paneMove.ts";
 import { readTerminalDraft, setTerminalDraftSending, writeTerminalDraft } from "./terminalDraft.ts";
 
 const t = (key: string, vars?: Record<string, string | number>): string => key.replace(/\{(\w+)\}/g, (_, name: string) => String(vars?.[name] ?? ""));
@@ -140,5 +140,26 @@ describe("moveRefusal", () => {
     expect(moveRefusal("locked_layout", t)).toBe("locked_layout");
     expect(moveRefusal(null, t)).toBe("herdr left the pane where it was");
     expect(moveRefusal(undefined, t)).toBe("herdr left the pane where it was");
+  });
+});
+
+describe("paneMovedTo", () => {
+  it("follows a pane through every move this tab saw, on its own PC only", () => {
+    expect(paneMovedTo("pc-moves", "p1")).toBeNull();
+    recordPaneMove("pc-moves", "p1", "p2");
+    recordPaneMove("pc-moves", "p2", "p3");
+    expect(paneMovedTo("pc-moves", "p1")).toBe("p3");
+    expect(paneMovedTo("pc-moves", "p2")).toBe("p3");
+    expect(paneMovedTo("pc-moves", "p3")).toBeNull();
+    expect(paneMovedTo("pc-other", "p1")).toBeNull();
+    expect(paneMovedTo("pc-moves", null)).toBeNull();
+  });
+
+  it("ignores a move that kept the id, and stops on a cycle", () => {
+    recordPaneMove("pc-same", "p1", "p1");
+    expect(paneMovedTo("pc-same", "p1")).toBeNull();
+    recordPaneMove("pc-cycle", "a", "b");
+    recordPaneMove("pc-cycle", "b", "a");
+    expect(["a", "b", null]).toContain(paneMovedTo("pc-cycle", "a"));
   });
 });

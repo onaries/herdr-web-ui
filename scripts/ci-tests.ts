@@ -1,6 +1,10 @@
 /**
  * Every test belongs to one suite; newly added unit tests are picked up automatically.
  *
+ * The unit suite runs its files in parallel processes: UNIT_TEST_WORKERS sets the count
+ * (default: min(cores/2, 8) locally, 2-4 in CI). Files run independently with no shared
+ * state; each process gets a subset balanced by file size.
+ *
  * The integration suite runs its files side by side: a few workers take files off one
  * queue, each worker on a herdr session of its own (`<session>-<n>`), so no two files
  * ever share a herdr, and none shares the plain `<session>` with the browser scripts.
@@ -25,11 +29,51 @@ if (suite === "integration" && process.env["HERDR_TEST_LIVE"] === "1") {
 console.log(`${suite}: ${selected.length} test files`);
 
 if (suite === "unit") {
-  const child = Bun.spawn([process.execPath, "test", ...selected.map((file) => `./${file}`)], {
-    env: { ...process.env, HERDR_TEST_MODE: suite },
-    windowsHide: true, stdin: "inherit", stdout: "inherit", stderr: "inherit",
-  });
-  process.exit(await child.exited);
+  const requestedWorkers = Number(process.env["UNIT_TEST_WORKERS"]);
+  const isCI = !!process.env["CI"];
+  const defaultWorkers = isCI ? 4 : Math.min(Math.floor(availableParallelism() / 2), 8);
+  const workers = requestedWorkers >= 1 ? Math.floor(requestedWorkers) : defaultWorkers;
+  // Each parallel worker merges a file's stdout and stderr through `sh`; without one (native
+  // Windows), the files run serially in one bun process instead.
+  const effectiveWorkers = Bun.which("sh") ? Math.min(workers, selected.length) : 1;
+
+  if (effectiveWorkers <= 1) {
+    const child = Bun.spawn([process.execPath, "test", ...selected.map((file) => `./${file}`)], {
+      env: { ...process.env, HERDR_TEST_MODE: suite },
+      windowsHide: true, stdin: "inherit", stdout: "inherit", stderr: "inherit",
+    });
+    process.exit(await child.exited);
+  }
+
+  console.log(`Running with ${effectiveWorkers} parallel workers`);
+  const queue = [...selected].sort((a, b) => Bun.file(b).size - Bun.file(a).size);
+  const totals = { pass: 0, fail: 0, skip: 0 };
+  const failed: string[] = [];
+  const unread: string[] = [];
+  const startedAt = Date.now();
+
+  async function unitWork(workerId: number): Promise<void> {
+    for (let file = queue.shift(); file; file = queue.shift()) {
+      const fileStartedAt = Date.now();
+      const child = Bun.spawn(["sh", "-c", 'exec "$@" 2>&1', "sh", process.execPath, "test", "--timeout", "60000", `./${file}`], {
+        env: { ...process.env, HERDR_TEST_MODE: suite! },
+        stdin: "ignore", stdout: "pipe", stderr: "inherit",
+      });
+      const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+      const plain = output.replace(/\x1b\[[0-9;]*m/g, "");
+      const count = (word: keyof typeof totals) => Number(new RegExp(`^\\s*(\\d+) ${word}$`, "m").exec(plain)?.[1] ?? 0);
+      for (const word of ["pass", "fail", "skip"] as const) totals[word] += count(word);
+      if (!/^\s*\d+ pass$/m.test(plain) && !/^\s*\d+ fail$/m.test(plain)) unread.push(file);
+      if (code !== 0) failed.push(file);
+      console.log(`\n--- ${file} (worker-${workerId}, ${((Date.now() - fileStartedAt) / 1000).toFixed(1)}s, exit ${code})\n${output.trimEnd()}`);
+    }
+  }
+
+  await Promise.all(Array.from({ length: effectiveWorkers }, (_, i) => unitWork(i)));
+  console.log(`\nunit: ${totals.pass} pass, ${totals.fail} fail, ${totals.skip} skip in ${selected.length} files, ${effectiveWorkers} at a time, ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+  for (const file of failed) console.log(`FAILED ${file}`);
+  for (const file of unread) console.log(`NO RESULT ${file}`);
+  process.exit(failed.length || unread.length ? 1 : 0);
 }
 
 const requested = Number(process.env["HERDR_TEST_SHARDS"]);

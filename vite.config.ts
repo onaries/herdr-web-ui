@@ -1,4 +1,5 @@
 import { buildXtermSource } from "./scripts/build-xterm.ts";
+import { compressedAssets } from "./scripts/compressed-assets.ts";
 import { defineConfig, normalizePath, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,7 @@ const thirdPartyNotices: Plugin = {
 };
 
 export default defineConfig({
-  plugins: [react(), thirdPartyNotices],
+  plugins: [react(), thirdPartyNotices, compressedAssets()],
   define: {
     __APP_REVISION__: JSON.stringify(revision),
     __APP_VERSION__: JSON.stringify((JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version),

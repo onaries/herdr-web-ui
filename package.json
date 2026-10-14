@@ -1,7 +1,7 @@
 {
   "name": "herdr-web-ui",
   "private": true,
-  "version": "0.4.6",
+  "version": "0.4.8",
   "type": "module",
   "description": "Browser version of the herdr terminal - live herdr workspaces, panes and agents in a web UI",
   "license": "MIT",
@@ -34,6 +34,7 @@
     "@xterm/xterm": "5.5.0",
     "katex": "^0.18.9",
     "lucide-react": "^1.47.0",
+    "mermaid": "^12.1.0",
     "qrcode-generator": "^2.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

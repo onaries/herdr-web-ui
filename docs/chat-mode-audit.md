@@ -34,8 +34,8 @@ changes, and Claude assistant-message models. Missing effort stays `null`; it is
 never inferred from reasoning text. Model and effort are cached with the turns.
 
 The composer status line displays the model and `Reasoning <level>` on desktop
-and mobile, or `Reasoning —` when unavailable. Existing conversation polling
-refreshes these labels even without a new message. Metadata is tagged with its
+and mobile, or `Reasoning —` when unavailable. A conversation read after each native
+transcript change refreshes these labels even without a new message. Metadata is tagged with its
 pane so a pane switch cannot display another conversation's settings; scrollback
 fallback clears it. The live Codex API returned the configured model and `xhigh`
 effort after the change. Refresh the page to load the rebuilt client.

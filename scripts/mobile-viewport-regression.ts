@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Browser } from "playwright-core";
 import { moreItem } from "./header-more.ts";
+import { sheetsSettled } from "./sheets-settled.ts";
 
 type ViewportQA = Window & { viewportQA: { resize: (height: number) => void; pointer: (touch: boolean) => void } };
 
@@ -147,10 +148,14 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await search.focus();
     await height(500);
     await shell(true, "500px", 500);
-    const sheet = () => page.evaluate(() => {
-      const edges = (selector: string) => { const r = document.querySelector(selector)!.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom) }; };
-      return { scrim: edges(".modal-scrim"), palette: edges(".command-palette"), search: edges(".palette-search input") };
-    });
+    const sheet = async () => {
+      // where the palette comes to rest, not where it is while it rises
+      await sheetsSettled(page);
+      return page.evaluate(() => {
+        const edges = (selector: string) => { const r = document.querySelector(selector)!.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom) }; };
+        return { scrim: edges(".modal-scrim"), palette: edges(".command-palette"), search: edges(".palette-search input") };
+      });
+    };
     for (const query of ["", "no pane or action is named like this"]) {
       await search.fill(query);
       const at = await sheet();

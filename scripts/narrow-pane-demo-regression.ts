@@ -1,0 +1,133 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, type Page } from "playwright-core";
+import panes from "../site/demo/fixtures/panes.json";
+import { buildDemoApp } from "./demo-build.ts";
+
+// A split pane under 80 columns draws in a smaller font to reach them (src/lib/narrowPaneFont.ts),
+// on the unmodified app over the demo's fixture transport: no herdr session is opened. The font
+// is read from the drawn rows and the columns from the resize frames the pane sends for its pty.
+const app = mkdtempSync(join(tmpdir(), "herdr-narrow-pane-demo-"));
+const BASE_PX = 13;
+const MIN_PX = 10;
+const COLS = 80;
+
+interface Drawn { id: string; px: number; cols: number | null }
+interface Want { panes: number; font: "base" | "shrunk"; cols: "fits" | "narrow" }
+
+/** Waits until every visible pane draws and reports what `want` says, and returns what they drew. */
+async function settled(page: Page, want: Want, label: string): Promise<Drawn[]> {
+  const read = (): Promise<Drawn[]> => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".pane-frame:not(.is-hidden)")].map((frame) => {
+    const id = frame.dataset["layoutPane"] ?? "";
+    const rows = frame.querySelector(".xterm-rows");
+    return { id, px: rows ? parseFloat(getComputedStyle(rows).fontSize) : 0, cols: (window as unknown as { sentCols: Record<string, number> }).sentCols[id] ?? null };
+  }));
+  const matches = (drawn: Drawn[]): boolean => drawn.length === want.panes && drawn.every((pane) =>
+    (want.font === "base" ? pane.px === BASE_PX : pane.px < BASE_PX && pane.px >= MIN_PX)
+    && pane.cols !== null && (want.cols === "fits" ? pane.cols >= COLS : pane.cols < COLS));
+  const deadline = Date.now() + 10_000;
+  let drawn = await read();
+  while (!matches(drawn)) {
+    assert(Date.now() < deadline, `${label}: wanted ${JSON.stringify(want)}, drew ${JSON.stringify(drawn)}`);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    drawn = await read();
+  }
+  return drawn;
+}
+
+const layout = async (page: Page, path: string, body: Record<string, unknown>): Promise<void> => {
+  const status = await page.evaluate(async ([url, payload]) => (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: payload })).status,
+    [path, JSON.stringify(body)] as const);
+  assert.equal(status, 200, `${path} answered ${status}`);
+};
+
+const setNarrowFit = async (page: Page, on: boolean): Promise<void> => {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+  await dialog.getByText("Terminal", { exact: true }).first().click();
+  const toggle = dialog.getByRole("switch", { name: "Fit 80 columns in a split pane", exact: true });
+  assert.equal(await toggle.getAttribute("aria-checked"), String(!on), "the switch starts on the other side");
+  await toggle.click();
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
+  await dialog.waitFor({ state: "detached" });
+};
+
+try {
+  await buildDemoApp(app);
+  const index = join(app, "index.html");
+  // the demo's socket is a class of its own that no browser event reports: note each pane's last grid as it is sent
+  const record = `<script>(() => {
+    const Demo = window.WebSocket;
+    window.sentCols = {};
+    const Recorded = function (url, protocols) {
+      const socket = new Demo(url, protocols);
+      const send = socket.send.bind(socket);
+      socket.send = (data) => {
+        if (typeof data === "string") { const frame = JSON.parse(data); if (frame.type === "resize" || frame.type === "attach") window.sentCols[frame.pane_id] = frame.cols; }
+        send(data);
+      };
+      return socket;
+    };
+    for (const name of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]) Object.defineProperty(Recorded, name, { value: Demo[name] });
+    window.WebSocket = Recorded;
+  })();</script>`;
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    ${record}\n    <script type="module"`));
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (!path.startsWith("/herdr-web-ui/demo/app/")) return new Response("not found", { status: 404 });
+    let file = decodeURIComponent(path.slice("/herdr-web-ui/demo/app/".length));
+    if (!file || file.endsWith("/")) file += "index.html";
+    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
+    const body = Bun.file(join(app, file));
+    return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
+  } });
+  try {
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1700, height: 900 }, locale: "en-US" });
+      await context.addInitScript(() => {
+        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.shell)}`);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      const saved = (): Promise<number | undefined> => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").terminalFontSize as number | undefined);
+
+      await settled(page, { panes: 1, font: "base", cols: "fits" }, "a pane alone");
+      await layout(page, "/api/pane/split", { pane_id: panes.shell, direction: "right", focus: true });
+      await settled(page, { panes: 2, font: "base", cols: "fits" }, "a split wide enough");
+
+      await page.setViewportSize({ width: 1450, height: 900 });
+      const shrunk = await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "a split under 80 columns");
+
+      await setNarrowFit(page, false);
+      await settled(page, { panes: 2, font: "base", cols: "narrow" }, "the setting off");
+      await setNarrowFit(page, true);
+      assert.deepEqual(await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "the setting back on"), shrunk);
+
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await settled(page, { panes: 2, font: "base", cols: "narrow" }, "a split no font can bring to 80 columns");
+      await page.setViewportSize({ width: 1450, height: 900 });
+      await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "the split reachable again");
+
+      await layout(page, "/api/pane/zoom", { pane_id: panes.shell, mode: "on" });
+      await settled(page, { panes: 1, font: "base", cols: "fits" }, "the pane zoomed");
+      await layout(page, "/api/pane/zoom", { pane_id: panes.shell, mode: "off" });
+      await settled(page, { panes: 2, font: "shrunk", cols: "fits" }, "the pane unzoomed");
+
+      await page.setViewportSize({ width: 1700, height: 900 });
+      await settled(page, { panes: 2, font: "base", cols: "fits" }, "the split widened");
+
+      const size = await saved();
+      assert(size === undefined || size === BASE_PX, `the smaller font was never the saved one (saved ${size})`);
+      assert.deepEqual(errors, []);
+      console.log(`narrow pane: ${shrunk.map((pane) => `${pane.px}px for ${pane.cols} columns`).join(", ")} at 1450px; the user's ${BASE_PX}px elsewhere`);
+    } finally { await browser.close(); }
+  } finally { await server.stop(true); }
+} finally {
+  rmSync(app, { recursive: true, force: true });
+}

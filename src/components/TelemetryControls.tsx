@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 import type { TelemetryStatus } from "../../shared/telemetry.ts";
-import { changeTelemetry, fetchTelemetry } from "../lib/api.ts";
+import { ApiError, changeTelemetry, fetchTelemetry } from "../lib/api.ts";
+import { changedSettings, useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
 import { SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
 
@@ -17,6 +18,17 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
   const [closed, setClosed] = useState(false);
   const [turningOff, setTurningOff] = useState(false);
   const [offFailed, setOffFailed] = useState(false);
+  // The server keeps which appearance settings this browser changed, for its next count. It is
+  // told on opening and on a change; telling it sends nothing, and a server without counts says 404.
+  const { settings } = useSettings();
+  const changed = changedSettings(settings).join(",");
+  useEffect(() => {
+    if (!enabled) return;
+    changeTelemetry({ changed_settings: changedSettings(settings) }).catch((error: unknown) => {
+      if (!(error instanceof ApiError && error.status === 404)) console.error("telemetry settings", error);
+    });
+    // `changed` stands for the list: the settings object changes with every other setting too
+  }, [enabled, changed]);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
@@ -37,7 +49,8 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
     const record = () => {
       if (recorded || document.visibilityState !== "visible") return;
       recorded = true;
-      changeTelemetry({ notice_seen: true }).catch((error: unknown) => console.error("telemetry notice", error));
+      // with the list, so the count this starts cannot leave before the server has it
+      changeTelemetry({ notice_seen: true, changed_settings: changedSettings(settings) }).catch((error: unknown) => console.error("telemetry notice", error));
     };
     const onVisibility = () => { if (document.visibilityState === "visible") afterPaint(); };
     afterPaint();
@@ -55,7 +68,7 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
     }).finally(() => setTurningOff(false));
   };
   return <div className="update-notice" role="status">
-    <span>{t("herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. The receiver also notes the country it came from, never the address.")}</span>
+    <span>{t("herdr web ui sends an anonymous count when it is installed and updated: the version, the OS, a random ID and which appearance settings are changed from their defaults. The receiver also notes the country it came from, never the address.")}</span>
     {offFailed && <span role="alert">{t("Could not turn it off. Try again.")}</span>}
     <button type="button" className="btn btn-ghost" onClick={() => { setClosed(true); onOpen(); }}>{t("What is sent")}</button>
     <button type="button" className="btn btn-ghost" onClick={turnOff} disabled={turningOff}>{t("Turn off")}</button>
@@ -83,10 +96,10 @@ export function TelemetryControls() {
     changeTelemetry({ enabled }).then(setStatus, (failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure))).finally(() => setSaving(false));
   };
   return (
-    <SettingsGroup title={t("Anonymous usage counts")} className="settings-telemetry">
+    <SettingsGroup title={t("Anonymous usage counts")} className="settings-telemetry" section="telemetry">
       {status.blocked_by_env
         ? <p className="settings-item settings-hint">{t("Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.")}</p>
-        : <SettingsRow label={t("Send install and update counts")} description={t("Once when the app is installed and once per update. The receiver notes the country a message came from but stores no IP address, and nothing about your terminals, agents or files is sent.")}>
+        : <SettingsRow label={t("Send install and update counts")} description={t("Once when the app is installed and once per update, with the names of the appearance settings changed from their defaults. The receiver notes the country a message came from but stores no IP address, and nothing about your terminals, agents or files is sent.")}>
           <Toggle label={t("Send install and update counts")} checked={status.enabled} onChange={toggle} disabled={saving} />
         </SettingsRow>}
       {error && <p className="settings-item settings-hint" role="alert">{error}</p>}

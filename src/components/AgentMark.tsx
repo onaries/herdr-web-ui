@@ -1,5 +1,6 @@
 import { useId } from "react";
 
+import { fallbackInitial } from "../lib/agentMark.ts";
 import { AGENT_SVG_MARKS } from "./agentSvgMarks.ts";
 
 /**
@@ -156,7 +157,7 @@ function SvgMark({ agent, size }: { agent: string; size: number }) {
 }
 
 function FallbackMark({ agent, size }: { agent: string; size: number }) {
-  const initial = agent.trim().charAt(0).toUpperCase() || "?";
+  const initial = fallbackInitial(agent);
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} role="img" aria-label={agent}>
       <circle cx="12" cy="12" r="11" fill="var(--bg-elevated)" stroke="var(--border)" strokeWidth="1" />
@@ -165,6 +166,13 @@ function FallbackMark({ agent, size }: { agent: string; size: number }) {
       </text>
     </svg>
   );
+}
+
+const DRAWN_MARKS = new Set(["claude", "omp", "codex", "cursor", "opencode", "gjc", "omo"]);
+
+/** Whether `agent` has a mark of its own rather than the fallback's initial. */
+export function hasAgentMark(agent: string): boolean {
+  return DRAWN_MARKS.has(agent) || Object.hasOwn(AGENT_SVG_MARKS, agent);
 }
 
 export function AgentMark({ agent, size = 16, className }: AgentMarkProps) {

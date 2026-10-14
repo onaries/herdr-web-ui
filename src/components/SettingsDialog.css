@@ -339,3 +339,11 @@
     transition: none;
   }
 }
+
+/* a finger presses a page's row as an iPhone list row is pressed: it fills, it does not dim (styles.css) */
+@media (hover: none) and (pointer: coarse) {
+  .settings-tab:active {
+    opacity: 1;
+    background: var(--bg-elevated);
+  }
+}

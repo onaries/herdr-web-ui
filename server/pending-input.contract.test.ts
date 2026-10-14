@@ -1,16 +1,40 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
+import * as herdrClient from "./herdr/client.ts";
 import { herdrRpc, paneRead, paneScrollInfo, sessionSnapshot } from "./herdr/client.ts";
-import { parseInteractivePrompt } from "./prompt.ts";
+import { noteSubmitted, parseInteractivePrompt } from "./prompt.ts";
 import type { PendingMessage } from "../shared/protocol.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pending-"));
 const active: Array<{ stop: () => void; sockets: Socket[]; workspace: string }> = [];
 let next = 0;
 const paste = (text: string) => `\u001b[200~${text}\u001b[201~`;
+// The bridge's paste and its committing key, held as a slow herdr connect would hold them (#666).
+// Without a hold they go straight to herdr; this file runs in a process of its own (ci-tests.ts).
+const sendText = herdrClient.paneSendText;
+const sendKeys = herdrClient.paneSendKeys;
+let connectHold: { rpc: "text" | "keys"; reached: () => void; release: Promise<void> } | null = null;
+const holding = async (rpc: "text" | "keys"): Promise<void> => {
+  const hold = connectHold;
+  if (hold?.rpc !== rpc) return;
+  connectHold = null; hold.reached(); await hold.release;
+};
+mock.module("./herdr/client.ts", () => ({
+  ...herdrClient,
+  paneSendText: async (...args: Parameters<typeof sendText>) => { if (args[1].startsWith("\u001b[200~")) await holding("text"); return sendText(...args); },
+  paneSendKeys: async (...args: Parameters<typeof sendKeys>) => { await holding("keys"); return sendKeys(...args); },
+}));
+/** Holds the next paste (`text`) or key (`keys`) RPC before it connects; `reached` resolves there. */
+function holdConnect(rpc: "text" | "keys"): { reached: Promise<void>; release: () => void } {
+  let release!: () => void; let reached!: () => void;
+  const done = new Promise<void>((resolve) => { release = resolve; });
+  const at = new Promise<void>((resolve) => { reached = resolve; });
+  connectHold = { rpc, reached, release: done };
+  return { reached: at, release };
+}
 const approval = "Would you like to run the following command?\n\n$ rm -rf junk\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel\n";
 
 class Socket {
@@ -42,7 +66,9 @@ class Socket {
 }
 
 beforeAll(() => {
-  writeFileSync(join(root, "record.cjs"), `const fs=require("node:fs");const out=process.argv[2];process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write("\\x1b[?2004h"+(process.argv[3]||""),()=>fs.writeFileSync(out,""));process.stdin.on("data",c=>fs.appendFileSync(out,JSON.stringify(c.toString("utf8"))+"\\n"));const watch=fs.watch(process.argv[4],()=>process.stdout.write("\\x1b[2J\\x1b[H"+fs.readFileSync(process.argv[4],"utf8")));process.on("exit",()=>watch.close());`);
+  // The recorder polls its screen file: fs.watch can drop the change that follows writeFileSync's
+  // truncation, leaving the cleared screen it read in between up for good.
+  writeFileSync(join(root, "record.cjs"), `const fs=require("node:fs");const out=process.argv[2];process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write("\\x1b[?2004h"+(process.argv[3]||"").replace(/\\\\x1b/g,"\\x1b"),()=>fs.writeFileSync(out,""));process.stdin.on("data",c=>fs.appendFileSync(out,JSON.stringify(c.toString("utf8"))+"\\n"));let shown="";setInterval(()=>{const next=fs.readFileSync(process.argv[4],"utf8");if(next!==shown){shown=next;process.stdout.write("\\x1b[2J\\x1b[H"+next);}},20);`);
   for (const name of ["claude", "codex", "plain"]) { copyFileSync(process.execPath, join(root, name)); chmodSync(join(root, name), 0o755); }
 });
 afterEach(async () => {
@@ -79,10 +105,13 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
     await reader.wait((frame) => frame.type === "pane-status" && frame.pane_id === pane && (value === "idle" || value === "unknown" ? ["idle", "done"].includes(frame.agent_status) : frame.agent_status === value), from);
   };
   // `ending`: what the screen ends with once drawn, for a text taller than the pane
+  // and a new screen that ends as the last one did is told apart by its colors and spacing
   const showScreen = async (text: string, ending = text) => {
+    const drawn = async () => (await paneRead({ paneId: pane, source: "visible", format: "ansi" })).text;
+    const before = await drawn();
     writeFileSync(screenFile, text);
     const deadline = Date.now() + 5_000;
-    while (!(await paneRead({ paneId: pane, source: "visible", format: "text" })).text.trimEnd().endsWith(ending.trimEnd())) {
+    while (await drawn() === before || !(await paneRead({ paneId: pane, source: "visible", format: "text" })).text.trimEnd().endsWith(ending.trimEnd())) {
       if (Date.now() >= deadline) throw new Error("recorder screen did not update");
       await Bun.sleep(25);
     }
@@ -93,7 +122,7 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
   };
   const removed = (id: string, outcome = "sent", reader = socket) => reader.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane && frame.removed?.some((entry: any) => entry.id === id && entry.outcome === outcome));
   const another = async (attach = true) => { const reader = new Socket(server.port); entry.sockets.push(reader); if (attach) await reader.attach(pane); else await reader.wait((frame) => frame.type === "snapshot"); return reader; };
-  return { pane, socket, bytes, waitBytes, state, showScreen, queue, removed, another };
+  return { pane, port: server.port, socket, bytes, waitBytes, state, showScreen, queue, removed, another };
 }
 
 describe("connection-owned pending input", () => {
@@ -107,6 +136,38 @@ describe("connection-owned pending input", () => {
     expect(receipt.messages.find((message: PendingMessage) => message.id === second.id)?.state).toBe("queued");
     await f.state("working"); await f.state("idle"); await f.removed(second.id); await f.waitBytes(`${paste("second")}\r`);
     expect(f.bytes()).toBe(`${paste(first.text)}\r${paste("second")}\r`);
+  }, 30_000);
+
+  it("keeps a held message through the turn's end and sends it only on Send now", async () => {
+    const f = await setup("hold");
+    expect(f.socket.seen.find((frame) => frame.type === "snapshot")?.features).toContain("pending-hold");
+    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "hold me", payload: "unused\r", delivery: "hold" });
+    const answer = await f.socket.result(1);
+    expect(answer).toMatchObject({ ok: true, pending: { request_id: 1, state: "held" } });
+    expect(answer.pending.error).toBeUndefined();
+    await f.state("idle");
+    // the turn's end sent nothing: a message typed after it is the first thing the pane gets
+    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
+    expect(await f.socket.result(2)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
+    expect(f.bytes()).toBe("barrier\r");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: answer.pending.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(answer.pending.id);
+    await f.waitBytes(`${paste("hold me")}\r`);
+    expect(f.bytes()).toBe(`barrier\r${paste("hold me")}\r`);
+  }, 30_000);
+
+  it("keeps a held message that arrives after the turn ended, typing nothing until Send now", async () => {
+    const f = await setup("hold-ready"); await f.state("idle");
+    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "late hold", payload: "unused\r", delivery: "hold" });
+    const answer = await f.socket.result(1);
+    expect(answer).toMatchObject({ ok: true, pending: { request_id: 1, state: "held" } });
+    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
+    expect(await f.socket.result(2)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
+    expect(f.bytes()).toBe("barrier\r");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: answer.pending.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(answer.pending.id);
+    await f.waitBytes(`${paste("late hold")}\r`);
+    expect(f.bytes()).toBe(`barrier\r${paste("late hold")}\r`);
   }, 30_000);
 
   it("closes a trailing @file mention with a space before its Enter", async () => {
@@ -345,6 +406,25 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe("");
   }, 30_000);
 
+  it("answers `restored` from the live box only: an older box in a scrolled viewport is no restored copy", async () => {
+    const f = await setup("restored-scrolled");
+    const rule = "\u2500".repeat(60);
+    const filler = Array.from({ length: 40 }, (_, index) => `  output line ${index + 1}`).join("\n");
+    const restored = async () => (await (await fetch(`http://localhost:${f.port}/api/pane/prompt?pane_id=${encodeURIComponent(f.pane)}`)).json() as { restored: string | null }).restored;
+    noteSubmitted(f.pane, "run the tests");
+    await f.state("idle");
+    // the older box, in the history, holds the chat's message typed; the live box at the bottom is empty
+    await f.showScreen(`${rule}\n\u276f run the tests\n${rule}\n  [Haiku 4.5] older\n${filler}\n${rule}\n\u276f\u00a0\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    const top = (await paneScrollInfo(f.pane))!.max_offset_from_bottom;
+    await herdrRpc("pane.scroll", { pane_id: f.pane, offset_from_bottom: top });
+    expect((await paneRead({ paneId: f.pane, source: "visible", format: "text" })).text).toContain("[Haiku 4.5] older");
+    expect(await restored()).toBeNull();
+    // at the bottom, with the copy in the live box, it is the restored message
+    await herdrRpc("pane.scroll", { pane_id: f.pane, offset_from_bottom: 0 });
+    await f.showScreen(`${rule}\n\u276f run the tests\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    expect(await restored()).toBe("run the tests");
+  }, 30_000);
+
   it("reads the pane's live screen: a menu drawn below a scrolled viewport still stops Send now", async () => {
     const f = await setup("scrolled", "codex"); const message = await f.queue(1, "after the menu");
     const history = Array.from({ length: 150 }, (_, index) => `line ${index + 1}`).join("\n");
@@ -516,5 +596,59 @@ describe("connection-owned pending input", () => {
     await f.showScreen("Enter passphrase:");
     expect(await f.socket.result(1)).toMatchObject({ ok: false, code: "submit_changed" });
     expect(f.bytes()).toBe(paste("ordinary text"));
+  }, 30_000);
+
+  // Claude Code queues what Enter commits during a turn; its Ctrl+Enter sends it at once (#737).
+  // The stand-in asks for modifyOtherKeys as Claude Code does, so herdr types Ctrl+Enter as xterm does.
+  it("steers a working Claude turn with Ctrl+Enter, and commits every other delivery with Enter", async () => {
+    const ctrlEnter = "\u001b[27;5;13~";
+    const f = await setup("steer-claude", "claude", "\\x1b[>4;2m› Message\n");
+    const steer = await f.queue(1, "steer now"); const next = await f.queue(2, "next turn");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: steer.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.waitBytes(ctrlEnter);
+    expect(f.bytes()).toBe(`${paste("steer now")}${ctrlEnter}`);
+    await f.state("idle"); await f.removed(next.id); await f.waitBytes(`${paste("next turn")}\r`);
+    expect(f.bytes()).toBe(`${paste("steer now")}${ctrlEnter}${paste("next turn")}\r`);
+
+    const codex = await setup("steer-codex", "codex", "\\x1b[>4;2m› Message\n");
+    const other = await codex.queue(1, "codex steer");
+    codex.socket.send({ type: "pending-action", id: 10, pane_id: codex.pane, pending_id: other.id, action: "steer" });
+    expect(await codex.socket.action(10)).toMatchObject({ ok: true }); await codex.waitBytes("\r");
+    expect(codex.bytes()).toBe(`${paste("codex steer")}\r`);
+  }, 45_000);
+
+  // The paste and its key are written only once herdr's connect resolves; the sender's right is asked
+  // again there (#666). Refused before the paste nothing was typed; refused before the key, the paste was.
+  it("types nothing when the sender's lease lapses while the paste's connect is awaited", async () => {
+    const f = await setup("guard-paste", "claude", "› Message\n");
+    const message = await f.queue(1, "never pasted");
+    const hold = holdConnect("text");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await hold.reached;
+    f.socket.send({ type: "role", mode: "observe" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
+    f.socket.send({ type: "role", mode: "interact" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact");
+    hold.release();
+    const answer = await f.socket.action(10);
+    expect(answer.ok).toBe(false); expect(answer.code).not.toBe("submit_changed");
+    f.socket.send({ type: "submit", id: 20, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
+    expect(await f.socket.result(20)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
+    expect(f.bytes()).toBe("barrier\r");
+    expect(f.socket.seen.filter((frame) => frame.type === "pending-messages").at(-1)?.messages).toContainEqual(expect.objectContaining({ id: message.id, state: "held" }));
+  }, 30_000);
+
+  it("withholds the committing key when the sender's lease lapses while its connect is awaited", async () => {
+    const f = await setup("guard-enter", "claude", "› Message\n");
+    const message = await f.queue(1, "pasted only");
+    const hold = holdConnect("keys");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await hold.reached; await f.waitBytes("\u001b[201~");
+    f.socket.send({ type: "role", mode: "observe" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
+    f.socket.send({ type: "role", mode: "interact" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact");
+    hold.release();
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    f.socket.send({ type: "submit", id: 20, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
+    expect(await f.socket.result(20)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
+    expect(f.bytes()).toBe(`${paste("pasted only")}barrier\r`);
+    expect(f.socket.seen.filter((frame) => frame.type === "pending-messages").at(-1)?.messages).toContainEqual(expect.objectContaining({ id: message.id, state: "uncertain" }));
   }, 30_000);
 });

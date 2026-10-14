@@ -18,6 +18,8 @@ import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { suggestWorktreeBranch, worktreeLabel } from "../lib/worktreeName.ts";
+import { useSheetSwipe } from "../lib/sheets.ts";
+import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 
 export type WorktreeDialogMode = "create" | "open";
 
@@ -49,6 +51,8 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
   const [error, setError] = useState<string | null>(null);
   const first = useRef<HTMLInputElement>(null);
   const surface = useRef<HTMLFormElement>(null);
+  useSheetSwipe(surface, pending ? null : onClose);
+  usePhoneSheetBack(() => { if (pending) return false; onClose(); });
   const opener = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {

@@ -1,0 +1,224 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium, type CDPSession, type Locator, type Page } from "playwright-core";
+import type { KeyBarItem } from "../src/lib/keyBar.ts";
+import { KEY_REPEAT_DELAY_MS, KEY_REPEAT_INTERVAL_MS } from "../src/lib/keyRepeat.ts";
+import panes from "../site/demo/fixtures/panes.json";
+import { buildDemoApp } from "./demo-build.ts";
+
+// Production client over the demo's synthetic transport. The disposable app only listens on
+// loopback; no herdr session, user terminal or real input transport is opened.
+const app = mkdtempSync(join(tmpdir(), "herdr-key-bar-hold-repeat-"));
+const evidence = process.env.UI_EVIDENCE_DIR;
+const HOLD_MS = KEY_REPEAT_DELAY_MS + 10 * KEY_REPEAT_INTERVAL_MS;
+// These waits measure a gesture or give unwanted sends time to appear, not app readiness.
+const NO_SEND_WAIT_MS = 4 * KEY_REPEAT_INTERVAL_MS;
+const keyBarItems: KeyBarItem[] = [
+  { type: "key", key: "Escape" },
+  { type: "modifier", modifier: "ctrl" },
+  { type: "key", key: "ArrowLeft" },
+  ...["ArrowUp", "ArrowDown", "ArrowRight", "Tab", "Enter", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown", "F1", "F2", "F3", "F4"].map((key): KeyBarItem => ({ type: "key", key })),
+];
+
+type InputFrame =
+  | { type: "keys"; pane_id: string; keys: string[] }
+  | { type: "input"; pane_id: string; text: string };
+interface Recorder {
+  keyBarFrames: InputFrame[];
+  keyBarReleaseFrameCount: number | null;
+}
+interface Point { x: number; y: number }
+
+const framesOf = (page: Page): Promise<InputFrame[]> => page.evaluate(() => (window as unknown as Recorder).keyBarFrames);
+const framesSince = async (page: Page, before: number): Promise<InputFrame[]> => (await framesOf(page)).slice(before).filter((frame) => frame.pane_id === panes.api);
+const sentKeys = (frames: InputFrame[]): string[] => frames.flatMap((frame) => frame.type === "keys" ? frame.keys : []);
+const leftKeys = (frames: InputFrame[]): string[] => sentKeys(frames).filter((key) => key === "left" || key.endsWith("+left"));
+const settled = (page: Page): Promise<void> => page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+const touch = (cdp: CDPSession, type: "touchStart" | "touchMove" | "touchEnd", point?: Point): Promise<unknown> =>
+  cdp.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [{ x: point.x, y: point.y }] : [] });
+
+async function centerOf(key: Locator): Promise<Point> {
+  await key.scrollIntoViewIfNeeded();
+  const box = await key.boundingBox();
+  assert.ok(box, "the key is visible for the touch gesture");
+  return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+}
+
+/** Returns the frame boundary captured on pointerup, before React handles the release click. */
+async function hold(page: Page, cdp: CDPSession, key: Locator, duration: number, during?: () => Promise<void>): Promise<number> {
+  const point = await centerOf(key);
+  await page.evaluate(() => { (window as unknown as Recorder).keyBarReleaseFrameCount = null; });
+  await touch(cdp, "touchStart", point);
+  await Bun.sleep(duration);
+  await during?.();
+  await touch(cdp, "touchEnd");
+  await settled(page);
+  const boundary = await page.evaluate(() => (window as unknown as Recorder).keyBarReleaseFrameCount);
+  assert.notEqual(boundary, null, "a stationary held finger ends with pointerup");
+  return boundary!;
+}
+
+try {
+  await buildDemoApp(app);
+  const index = join(app, "index.html");
+  const html = readFileSync(index, "utf8");
+  assert.match(html, /<script type="module"/);
+  // The demo replaces WebSocket itself. Install this synchronous send recorder after the
+  // transport and before the app, so release checks cannot race delayed WS frame reporting.
+  const record = `<script>(() => {
+    const Demo = window.WebSocket;
+    window.keyBarFrames = [];
+    window.keyBarReleaseFrameCount = null;
+    document.addEventListener("pointerup", (event) => {
+      if (event.pointerType === "touch") window.keyBarReleaseFrameCount = window.keyBarFrames.length;
+    }, true);
+    window.WebSocket = function (url, protocols) {
+      const socket = new Demo(url, protocols);
+      const send = socket.send.bind(socket);
+      socket.send = (raw) => {
+        const frame = JSON.parse(String(raw));
+        if (frame.type === "input" || frame.type === "keys") window.keyBarFrames.push(frame);
+        send(raw);
+      };
+      return socket;
+    };
+    for (const name of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]) Object.defineProperty(window.WebSocket, name, { value: Demo[name] });
+  })();</script>`;
+  writeFileSync(index, html.replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    ${record}\n    <script type="module"`));
+
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const path = new URL(request.url).pathname;
+    const prefix = "/herdr-web-ui/demo/app/";
+    if (!path.startsWith(prefix)) return new Response("not found", { status: 404 });
+    let file: string;
+    try { file = decodeURIComponent(path.slice(prefix.length)); }
+    catch { return new Response("bad path", { status: 400 }); }
+    if (!file || file.endsWith("/")) file += "index.html";
+    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
+    const body = Bun.file(join(app, file));
+    return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
+  } });
+  try {
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
+    try {
+      const context = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, locale: "en-US" });
+      try {
+        await context.addInitScript(({ pane, items }) => {
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct", keyBarItems: items }));
+          localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+        }, { pane: panes.api, items: keyBarItems });
+        const page = await context.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.api)}`);
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.key-bar .key[data-key="ArrowLeft"]')?.disabled === false, undefined, { timeout: 5_000 });
+        await page.locator(".xterm-helper-textarea").focus();
+        const bar = page.locator(".key-bar");
+        const left = bar.locator('.key[data-key="ArrowLeft"]');
+        const escape = bar.locator('.key[data-key="Escape"]');
+        const ctrl = bar.locator('.key[data-key="Control"]');
+        const cdp = await context.newCDPSession(page);
+
+        // 1. Playwright's touch tap drives pointerdown, pointerup and the normal click path.
+        let before = (await framesOf(page)).length;
+        await left.tap();
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        assert.deepEqual(sentKeys(await framesSince(page, before)), ["left"], "a touch tap sends one Left, never two");
+        console.log("PASS touch tap Left sends exactly one key");
+
+        // 2. Count individual keys, not frames: a future transport may batch several keys.
+        before = (await framesOf(page)).length;
+        const release = await hold(page, cdp, left, HOLD_MS);
+        const repeats = leftKeys(await framesSince(page, before));
+        assert.ok(repeats.length >= 5, `a held Left repeats before release (got ${repeats.length})`);
+        assert.ok(repeats.every((key) => key === "left"), "unmodified Left repeats stay unmodified");
+        assert.equal((await framesOf(page)).length, release, "the release click sends nothing after repeat starts");
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        assert.equal(leftKeys(await framesSince(page, before)).length, repeats.length, "no repeat arrives after release");
+        assert.equal((await framesOf(page)).length, release, "release stops all input sends");
+        console.log(`PASS holding Left repeats (${repeats.length} keys) and release sends no extra click or later key`);
+
+        // 3. The pending delay sends nothing: only the release click sends the short hold's key.
+        before = (await framesOf(page)).length;
+        await hold(page, cdp, left, Math.floor(KEY_REPEAT_DELAY_MS / 2), async () => {
+          assert.deepEqual(await framesSince(page, before), [], "a short hold sends no key while the finger is down");
+        });
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        assert.deepEqual(sentKeys(await framesSince(page, before)), ["left"], "a short hold remains exactly one click");
+        console.log("PASS a hold shorter than the repeat delay sends exactly one key on release");
+
+        // 4. The seeded layout really overflows. Keep native CDP panning enabled: synthetically
+        // dispatching pointermove would test cancellation but could not prove the row scrolls.
+        await bar.evaluate((row) => { row.scrollLeft = 0; });
+        await settled(page);
+        const scroll = await bar.evaluate((row) => ({ left: row.scrollLeft, width: row.clientWidth, content: row.scrollWidth }));
+        assert.ok(scroll.content > scroll.width, "the swipe fixture has a horizontally scrollable key row");
+        const start = await centerOf(left);
+        const distance = Math.min(120, start.x - 12);
+        assert.ok(distance >= 80, "the arrow leaves room for an 80px horizontal swipe");
+        before = (await framesOf(page)).length;
+        await touch(cdp, "touchStart", start);
+        for (let step = 1; step <= 8; step += 1) {
+          await touch(cdp, "touchMove", { x: Math.round(start.x - distance * step / 8), y: start.y });
+          await Bun.sleep(16);
+        }
+        await touch(cdp, "touchEnd");
+        await page.waitForFunction((initial) => (document.querySelector(".key-bar")?.scrollLeft ?? initial) > initial, scroll.left, { timeout: 2_000 });
+        await Bun.sleep(KEY_REPEAT_DELAY_MS + NO_SEND_WAIT_MS);
+        assert.equal(leftKeys(await framesSince(page, before)).length, 0, "a swipe sends no arrow");
+        assert.deepEqual(await framesSince(page, before), [], "a swipe sends no other input either");
+        assert.ok(await bar.evaluate((row) => row.scrollLeft) > scroll.left, "the native swipe scrolls the overflowing row");
+        console.log("PASS horizontal swipe from Left scrolls the overflowing row and sends zero keys");
+
+        // 5. A non-repeatable key does not repeat when held beyond the repeat threshold.
+        await bar.evaluate((row) => { row.scrollLeft = 0; });
+        before = (await framesOf(page)).length;
+        await hold(page, cdp, escape, HOLD_MS, async () => {
+          assert.deepEqual(await framesSince(page, before), [], "Escape does not send or repeat while held");
+        });
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        // Chrome's touch long-press can suppress the release click, so zero keys is also valid.
+        const escapeKeys = sentKeys(await framesSince(page, before));
+        assert.ok(escapeKeys.length <= 1 && escapeKeys.every((key) => key === "esc"), `held Escape does not repeat: ${JSON.stringify(escapeKeys)}`);
+        console.log("PASS held Escape does not repeat");
+
+        // 6. Repeats must use the same sticky-modifier path as the existing touch click.
+        await ctrl.tap();
+        assert.equal(await ctrl.getAttribute("aria-pressed"), "true", "Ctrl is armed");
+        before = (await framesOf(page)).length;
+        const modifiedRelease = await hold(page, cdp, left, HOLD_MS);
+        const modifiedFrames = await framesSince(page, before);
+        const modifiedKeys = sentKeys(modifiedFrames);
+        assert.ok(leftKeys(modifiedFrames).length >= 5, "Ctrl+Left repeats while held");
+        assert.ok(modifiedFrames.every((frame) => frame.type === "keys"), "every repeat stays on the logical keys path");
+        assert.ok(modifiedKeys.every((key) => key === "ctrl+left"), `every repeat carries Ctrl: ${JSON.stringify(modifiedKeys)}`);
+        assert.equal((await framesOf(page)).length, modifiedRelease, "Ctrl+Left has no extra release click");
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        assert.equal((await framesOf(page)).length, modifiedRelease, "Ctrl+Left stops after release");
+        assert.equal(await ctrl.getAttribute("aria-pressed"), "true", "repeat does not consume sticky Ctrl");
+        await ctrl.tap();
+        console.log(`PASS sticky Ctrl applies to every held Left repeat (${modifiedKeys.length} Ctrl+Left keys)`);
+
+        // 7. Probe the cancelable contextmenu while the arrow is physically held, not after it.
+        await hold(page, cdp, left, KEY_REPEAT_DELAY_MS + KEY_REPEAT_INTERVAL_MS, async () => {
+          const prevented = await left.evaluate((key) => {
+            const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+            const allowed = key.dispatchEvent(event);
+            return { defaultPrevented: event.defaultPrevented, allowed };
+          });
+          assert.deepEqual(prevented, { defaultPrevented: true, allowed: false }, "held keys prevent the contextmenu default");
+        });
+        console.log("PASS a held arrow prevents the contextmenu default");
+
+        if (evidence) {
+          mkdirSync(evidence, { recursive: true });
+          await page.screenshot({ path: join(evidence, "key-bar-hold-repeat-phone.png") });
+        }
+        assert.deepEqual(errors, [], "the phone demo has no page errors");
+      } finally { await context.close(); }
+    } finally { await browser.close(); }
+  } finally { server.stop(true); }
+} finally { rmSync(app, { recursive: true, force: true }); }

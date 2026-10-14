@@ -1,19 +1,23 @@
-import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
+import type { AgentStatus, HerdrPane, PlanSummary, SessionSnapshot } from "../../shared/protocol.ts";
+
+const samePlan = (a: PlanSummary | undefined, b: PlanSummary | undefined): boolean =>
+  a === b || (a !== undefined && b !== undefined && a.done === b.done && a.total === b.total && a.current === b.current);
 
 /**
  * Merges a pushed `pane-status` into the last snapshot so the sidebar badge updates
  * instantly; the debounced /api/session refetch that follows brings the derived
  * workspace/tab rollups back in line. Pure: returns the same object when nothing changed.
  */
-export function applyPaneStatus(snapshot: SessionSnapshot, paneId: string, status: AgentStatus, background?: number, waiting = false): SessionSnapshot {
+export function applyPaneStatus(snapshot: SessionSnapshot, paneId: string, status: AgentStatus, background?: number, waiting = false, plan?: PlanSummary | null): SessionSnapshot {
   let paneChanged = false;
   const panes = snapshot.panes.map((pane: HerdrPane) => {
-    // a frame that says nothing of background tasks leaves it as it was; every frame says whether the pane waits
+    // a frame that says nothing of background tasks or the plan leaves them as they were; every frame says whether the pane waits
     const tasks = background === undefined ? pane.background_tasks : background > 0 ? background : undefined;
-    if (pane.pane_id !== paneId || (pane.agent_status === status && pane.background_tasks === tasks && (pane.background_wait === true) === waiting)) return pane;
+    const progress = plan === undefined ? pane.plan : plan ?? undefined;
+    if (pane.pane_id !== paneId || (pane.agent_status === status && pane.background_tasks === tasks && (pane.background_wait === true) === waiting && samePlan(pane.plan, progress))) return pane;
     paneChanged = true;
-    const { background_tasks: _before, background_wait: _waited, ...rest } = pane;
-    return { ...rest, agent_status: status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(waiting ? { background_wait: true as const } : {}) };
+    const { background_tasks: _before, background_wait: _waited, plan: _plan, ...rest } = pane;
+    return { ...rest, agent_status: status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(waiting ? { background_wait: true as const } : {}), ...(progress === undefined ? {} : { plan: progress }) };
   });
   if (!paneChanged) return snapshot;
   const agents = snapshot.agents.map((agent) =>

@@ -468,6 +468,44 @@ it("never follows a redirect: an https endpoint cannot send the alert on to a lo
   } finally { redirector.stop(true); }
 });
 
+describe("a window of the app in use (#751)", () => {
+  it("sends no device an alert while some window is in use, and sends again once none is", async () => {
+    let inUse = true;
+    const push = subscribed({ inUse: () => inUse });
+    push.seed([pane("w1:p1", "working", "claude: fix the build")]);
+    await push.onStatus("w1:p1", "blocked");
+    await push.onEnded("w1:p1");
+    expect(fake.received).toHaveLength(0);
+    // the confirmation a device asked for is not an alert: it still goes out
+    expect(await push.sendTest(fake.subscription.endpoint)).toEqual({ ok: true });
+    expect(fake.received.map((r) => r.payload.tag)).toEqual(["herdr-test"]);
+    inUse = false;
+    await push.onStatus("w1:p1", "working");
+    await push.onStatus("w1:p1", "blocked");
+    expect(fake.received.map((r) => r.payload.body)).toEqual(["Alerts are on for this device", "waiting for your input"]);
+  });
+
+  it("asks when the alert would go out, not when the status changed", async () => {
+    let inUse = false;
+    const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 }, inUse: () => inUse });
+    push.subscribe(fake.subscription);
+    push.seed([pane("w1:p1", "working", "claude")]);
+    await push.onStatus("w1:p1", "blocked");
+    // the window came forward while the alert waited for its timer
+    inUse = true;
+    await push.settled();
+    expect(fake.received).toHaveLength(0);
+  });
+
+  it("holds an alert when a window comes into use while its title is looked up", async () => {
+    let inUse = false;
+    const push = subscribed({ inUse: () => inUse, lookupTitle: async () => { inUse = true; return "claude"; } });
+    push.seed([pane("w1:p1", "working", "claude")]);
+    await push.onStatus("w1:p1", "blocked");
+    expect(fake.received).toHaveLength(0);
+  });
+});
+
 describe("push resync after lost status events", () => {
   it("calls off the waiting alert of a pane that closed while events were lost", async () => {
     const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 50, long: 50, longTurn: 0 } });

@@ -91,6 +91,55 @@ export function formatResetIn(resetsAt: string | null, now: number): string | nu
   return t("{d}d {h}h", { d: Math.floor(hours / 24), h: hours % 24 });
 }
 
+/** before this share of a window has gone by, a rate says more about one burst than about the window */
+const MIN_ELAPSED = 0.05;
+
+/** How fast a limit is being used up, from what was used of the time gone by when it was read. */
+export interface Pace {
+  /** 0 to 1: the share of the window gone by when it was read, where an even pace would have used as much */
+  elapsed: number;
+  /** percent of the limit used per hour so far */
+  perHour: number;
+  /** ISO 8601 time the limit runs out at this rate when that comes before the reset; null when it lasts */
+  runsOutAt: string | null;
+}
+
+/**
+ * The pace of a window whose start and reset are known, once enough of it had gone by; null
+ * otherwise, and once the window has reset. It is measured at `checkedAt`, when the share used was
+ * read: numbers kept while a provider asks to slow down would otherwise look slower by the hour.
+ */
+export function windowPace(window: UsageWindow, checkedAt: string | null, now: number): Pace | null {
+  if (window.starts_at === null || window.resets_at === null) return null;
+  const start = Date.parse(window.starts_at);
+  const end = Date.parse(window.resets_at);
+  const read = checkedAt === null ? now : Date.parse(checkedAt);
+  const elapsed = (read - start) / (end - start);
+  if (!(end > start) || !(elapsed >= MIN_ELAPSED) || elapsed >= 1 || now >= end) return null;
+  const used = window.used_percent;
+  const runsOutAt = used > 0 && used < 100 ? start + (read - start) * 100 / used : null;
+  return { elapsed, perHour: used / ((read - start) / 3_600_000), runsOutAt: runsOutAt !== null && runsOutAt < end ? new Date(runsOutAt).toISOString() : null };
+}
+
+/** A pace as text: "4.2%/h" for a session or a day, "8%/day" for a week or a month. */
+export function formatRate(window: UsageWindow, pace: Pace): string {
+  const daily = window.kind === "week" || window.kind === "month";
+  const value = daily ? pace.perHour * 24 : pace.perHour;
+  const rate = value < 0.1 ? "<0.1%" : `${value < 10 ? value.toFixed(1) : Math.round(value)}%`;
+  return daily ? t("{rate}/day", { rate }) : t("{rate}/h", { rate });
+}
+
+/**
+ * "Runs out in 2d 4h" when the limit runs out before it resets at the pace so far; null when it
+ * lasts. Once that time has gone by the warning stays until the reset, as "Runs out before reset".
+ */
+export function formatRunsOut(window: UsageWindow, checkedAt: string | null, now: number): string | null {
+  const runsOutAt = windowPace(window, checkedAt, now)?.runsOutAt ?? null;
+  if (runsOutAt === null) return null;
+  const time = formatResetIn(runsOutAt, now);
+  return time ? t("Runs out in {time}", { time }) : t("Runs out before reset");
+}
+
 /** Percent as the meters print it: whole numbers, except the tenth that keeps a sliver above 0 visible. */
 export function formatPercent(value: number): string {
   return value > 0 && value < 1 ? `${value.toFixed(1)}%` : `${Math.round(value)}%`;

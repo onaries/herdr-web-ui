@@ -1,251 +1,212 @@
-/** Antigravity CLI 1.3 stores gemini_coder.Step protobufs in a per-conversation SQLite database. */
+/** Agy's append-only step ledger, reduced in physical order before shared paging. */
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
-import { closeSync, openSync, readlinkSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import { trimOutput } from "./tool-output.ts";
+import { toolSummary } from "./transcript-records.ts";
 
-import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+const MAX_ENTRIES = 100_000;
+const MAX_LINE = 16 * 1024 * 1024;
+const SCAN_BYTES = 32 * 1024 * 1024;
+const hash = (value: string): string => createHash("sha256").update(value).digest("base64url");
+const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+export class AgyUnavailable extends Error { constructor() { super("Agy history is unavailable"); } }
+interface Step { index: number; start: number; end: number; type: string; status: string; digest: string; activity?: "working" | "idle" }
+interface Index { identity: string; size: number; changed: string; scanned: number; revision: string; steps: Step[]; visible: Step[]; retired: Set<number> }
+const indexes = new Map<string, Index>();
+export function forgetAgyState(path?: string): void { if (path === undefined) indexes.clear(); else indexes.delete(path); }
 
-const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_BYTES = 64 * 1024 * 1024;
-const PAGE_PROMPTS = 20;
+/** The catalog beside this resolved native ledger; also watched for saved rewinds. */
+export function agyDatabasePath(path: string): string {
+  const sessionDir = dirname(dirname(dirname(path)));
+  return join(dirname(dirname(sessionDir)), "conversations", `${basename(sessionDir)}.db`);
+}
 
-function agyAccountStores(): string[] {
-  const accountsRoot = join(homedir(), ".local", "share", "agy-accounts");
+/** The database supplies only the active indices, never payloads or guessed numeric statuses. */
+export function agyCatalog(path: string): Set<number> {
+  const dbPath = agyDatabasePath(path);
+  let db: Database | undefined;
   try {
-    return readdirSync(accountsRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(accountsRoot, entry.name, ".gemini", "antigravity-cli", "conversations"));
-  } catch { return []; }
+    if (realpathSync(dbPath) !== dbPath) throw new AgyUnavailable();
+    db = new Database(dbPath, { readonly: true });
+    db.exec("PRAGMA busy_timeout = 100");
+    const rows = db.query<{ idx: number }, []>(`SELECT idx FROM steps ORDER BY idx LIMIT ${MAX_ENTRIES + 1}`).all();
+    if (rows.length > MAX_ENTRIES || rows.some((row) => !Number.isSafeInteger(row.idx) || row.idx < 0)) throw new AgyUnavailable();
+    return new Set(rows.map((row) => row.idx));
+  } catch { throw new AgyUnavailable(); }
+  finally { db?.close(); }
 }
 
-export function agyTranscriptPath(id: string, store?: string): string | null {
-  if (!SESSION_ID.test(id)) return null;
-  const storeCandidates = store !== undefined
-    ? [store]
-    : [join(homedir(), ".gemini", "antigravity-cli", "conversations"), ...agyAccountStores()];
-  for (const candidate of storeCandidates) {
-    try {
-      const root = realpathSync(candidate);
-      const path = realpathSync(join(root, `${id}.db`));
-      if (dirname(path) === root && statSync(path).isFile()) return path;
-    } catch { continue; }
+function entry(line: string): Record<string, unknown> {
+  let value: Record<string, unknown>;
+  try { value = record(JSON.parse(line)); } catch { throw new AgyUnavailable(); }
+  if (!Number.isSafeInteger(value.step_index) || (value.step_index as number) < 0 || typeof value.type !== "string") throw new AgyUnavailable();
+  return value;
+}
+
+export interface AgyProjection { segments: { start: number; end: number }[]; promptStarts: number[]; revision: string; indices: number[]; activity: "working" | "idle" }
+export function agyProjection(path: string, fd: number): AgyProjection {
+  const stat = fstatSync(fd);
+  const identity = `${stat.dev}:${stat.ino}`;
+  const changed = `${stat.mtimeMs}:${stat.ctimeMs}`;
+  let index = indexes.get(path);
+  if (!index || index.identity !== identity || stat.size < index.size || (stat.size === index.size && changed !== index.changed)) {
+    index = { identity, size: stat.size, changed, scanned: 0, revision: randomUUID(), steps: [], visible: [], retired: new Set() };
   }
-  return null;
-}
-
-/** Resumed agy sessions may omit the terminal session report; its own open log names them. */
-export function agySessionFromPids(pids: readonly number[], procRoot = "/proc"): string | null {
-  for (const pid of pids) {
-    if (!Number.isInteger(pid) || pid <= 0) continue;
-    let fds: string[];
-    try { fds = readdirSync(join(procRoot, String(pid), "fd")); } catch { continue; }
-    for (const fd of fds) {
-      let file: number | undefined;
-      try {
-        const log = readlinkSync(join(procRoot, String(pid), "fd", fd));
-        if (!/\/antigravity-cli\/log\/cli-[^/]+\.log$/.test(log)) continue;
-        file = openSync(log, "r");
-        const size = statSync(log).size;
-        const bytes = Buffer.alloc(Math.min(size, 64 * 1024));
-        const length = readSync(file, bytes, 0, bytes.length, size - bytes.length);
-        const lines = bytes.subarray(0, length).toString("utf8").split("\n");
-        for (const line of lines.reverse()) {
-          const id = /(?:Streaming conversation|Starting conversation update stream for) ([0-9a-f-]{36})(?:\s|$)/i.exec(line)?.[1];
-          if (id) return agyTranscriptPath(id, join(dirname(dirname(log)), "conversations"));
-        }
-      } catch { continue; }
-      finally { if (file !== undefined) closeSync(file); }
+  index.size = stat.size; index.changed = changed;
+  indexes.delete(path); indexes.set(path, index);
+  if (indexes.size > 16) indexes.delete(indexes.keys().next().value!);
+  let position = index.scanned;
+  let carry: Buffer[] = [];
+  let carried = 0;
+  const end = Math.min(stat.size, position + SCAN_BYTES);
+  while (position < end) {
+    const chunk = Buffer.alloc(Math.min(64 * 1024, end - position));
+    const read = readSync(fd, chunk, 0, chunk.length, position);
+    if (!read) throw new AgyUnavailable();
+    const bytes = chunk.subarray(0, read);
+    let start = 0;
+    for (let newline = bytes.indexOf(10); newline !== -1; newline = bytes.indexOf(10, start)) {
+      if (carried + newline - start > MAX_LINE) throw new AgyUnavailable();
+      const line = (carried ? Buffer.concat([...carry, bytes.subarray(start, newline)]) : bytes.subarray(start, newline)).toString("utf8");
+      const lineStart = position + start - carried;
+      const lineEnd = position + newline + 1;
+      carry = []; carried = 0;
+      const value = entry(line);
+      const number = value.step_index as number;
+      if (index.steps.length && number <= index.steps.at(-1)!.index) {
+        while (index.steps.length && index.steps.at(-1)!.index >= number) index.steps.pop();
+      }
+      // DONE completes one exported step, not the turn. In the native 1.3.3 trace,
+      // a planner response with tools continues work; its tool-free answer ends it.
+      // Reasoning is exported after the planner finishes, so it cannot prove Thinking.
+      const activity = value.status !== "DONE" ? undefined
+        : value.type === "USER_INPUT" ? "working"
+        : value.type === "PLANNER_RESPONSE"
+          ? (Array.isArray(value.tool_calls) && value.tool_calls.length > 0) || typeof value.content !== "string" || !value.content.trim() ? "working" : "idle"
+          : undefined;
+      index.steps.push({ index: number, start: lineStart, end: lineEnd, type: value.type as string, status: String(value.status ?? ""), digest: hash(line), activity });
+      if (index.steps.length > MAX_ENTRIES) throw new AgyUnavailable();
+      index.scanned = lineEnd;
+      start = newline + 1;
     }
+    if (start < bytes.length) { carry.push(bytes.subarray(start)); carried += bytes.length - start; }
+    if (carried > MAX_LINE) throw new AgyUnavailable();
+    position += read;
   }
-  return null;
-}
-
-interface Field { number: number; value: number | Uint8Array }
-
-/** Only the wire types Step uses. Unknown fields are skipped, never interpreted as text. */
-function fields(bytes: Uint8Array): Field[] {
-  let offset = 0;
-  const varint = (): number => {
-    let value = 0;
-    for (let shift = 0; shift < 70; shift += 7) {
-      if (offset >= bytes.length) throw new Error("truncated agy protobuf");
-      const byte = bytes[offset++]!;
-      value += (byte & 127) * 2 ** shift;
-      if (!(byte & 128)) return value;
-    }
-    throw new Error("invalid agy protobuf varint");
-  };
-  const result: Field[] = [];
-  while (offset < bytes.length) {
-    const tag = varint();
-    const number = Math.floor(tag / 8);
-    const wire = tag % 8;
-    if (number === 0) throw new Error("invalid agy protobuf tag");
-    if (wire === 0) result.push({ number, value: varint() });
-    else if (wire === 2 || wire === 1 || wire === 5) {
-      const size = wire === 2 ? varint() : wire === 1 ? 8 : 4;
-      if (!Number.isSafeInteger(size) || size < 0 || offset + size > bytes.length) throw new Error("truncated agy protobuf field");
-      if (wire === 2) result.push({ number, value: bytes.subarray(offset, offset + size) });
-      offset += size;
-    } else throw new Error("unsupported agy protobuf wire type");
+  if (position < stat.size) throw new AgyUnavailable();
+  const catalog = agyCatalog(path);
+  // Native idle rewind updates the DB before any replacement ledger lines arrive.
+  // DB-only steps are normal; equality or a strict prefix would reject healthy logs.
+  const physicalStarts = new Set(index.steps.map((step) => step.start));
+  for (const start of index.retired) if (!physicalStarts.has(start)) index.retired.delete(start);
+  // Once the active DB removed a displayed step, its old bytes cannot return merely
+  // because the replacement DB row precedes the replacement export. Never-published
+  // lagging steps remain eligible. The set is bounded by the active physical index.
+  for (const step of index.visible) if (!catalog.has(step.index) && physicalStarts.has(step.start)) index.retired.add(step.start);
+  const retained = index.steps.filter((step) => catalog.has(step.index) && !index.retired.has(step.start));
+  const visible = retained.at(-1)?.status !== "DONE" ? retained.slice(0, -1) : retained;
+  // A DB snapshot can lag an exported append. Keep the physical index intact so the
+  // next poll can admit it. Only changes to already published spans invalidate paging.
+  if (index.visible.some((step, at) => visible[at]?.start !== step.start || visible[at]?.end !== step.end)) index.revision = randomUUID();
+  index.visible = visible;
+  const segments: AgyProjection["segments"] = [];
+  const promptStarts: number[] = [], indices: number[] = [];
+  let length = 0;
+  let activity: AgyProjection["activity"] = "idle";
+  for (const step of visible) {
+    if (step.activity !== undefined) activity = step.activity;
+    indices.push(step.index);
+    if (step.type === "USER_INPUT" && step.status === "DONE") promptStarts.push(length);
+    const previous = segments.at(-1);
+    if (previous?.end === step.start) previous.end = step.end;
+    else segments.push({ start: step.start, end: step.end });
+    length += step.end - step.start;
   }
-  return result;
+  return { segments, promptStarts, revision: index.revision, indices, activity };
 }
 
-const block = (message: Field[], number: number): Uint8Array => {
-  const value = message.find((field) => field.number === number)?.value;
-  return value instanceof Uint8Array ? value : new Uint8Array();
-};
-const text = (message: Field[], number: number): string => Buffer.from(block(message, number)).toString("utf8");
-const nested = (message: Field[], number: number): Field[] => fields(block(message, number));
-
-function timestamp(metadata: Field[], number: number): string | null {
-  const stamp = nested(metadata, number);
-  const seconds = stamp.find((field) => field.number === 1)?.value;
-  const nanos = stamp.find((field) => field.number === 2)?.value;
-  if (typeof seconds !== "number") return null;
-  const date = new Date(seconds * 1000 + (typeof nanos === "number" ? nanos / 1_000_000 : 0));
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+/** Keep one fd through projection and page reads, and reject a cut during the read. */
+export function withAgyHistory<T>(path: string, read: (projection: AgyProjection, fd: number) => T): T {
+  const fd = openSync(path, "r");
+  try {
+    if (realpathSync(path) !== path) throw new AgyUnavailable();
+    const before = fstatSync(fd);
+    const projection = agyProjection(path, fd);
+    const result = read(projection, fd);
+    const after = statSync(path), pinned = fstatSync(fd);
+    const current = agyCatalog(path);
+    if (before.dev !== after.dev || before.ino !== after.ino || pinned.size < before.size
+      || (pinned.size === before.size && (pinned.mtimeMs !== before.mtimeMs || pinned.ctimeMs !== before.ctimeMs))
+      || projection.indices.some((index) => !current.has(index))) throw new AgyUnavailable();
+    return result;
+  } finally { closeSync(fd); }
 }
 
-export interface AgyStep { idx: number; step_type: number; status: number; step_format: number; step_payload: Uint8Array }
-type ToolPart = Extract<ConversationPart, { kind: "tool" }>;
-
-function toolResult(message: Field[]): { output: string; error: boolean } {
-  const result = nested(nested(message, 140), 2);
-  const payload = nested(result, 6);
-  if (text(payload, 1) !== "type.googleapis.com/gemini_coder.Step") return { output: text(result, 1), error: false };
-  const step = nested(payload, 2);
-  const command = nested(step, 28);
-  if (command.length) {
-    const combined = nested(command, 21);
-    const snapshot = nested(command, 26);
-    const stdout = nested(command, 19);
-    const stderr = nested(command, 20);
-    const exit = command.find((field) => field.number === 6)?.value;
-    const output = text(combined, 1) || text(snapshot, 1) || text(combined, 2) || text(snapshot, 2)
-      || [text(stdout, 1) || text(stdout, 2), text(stderr, 1) || text(stderr, 2)].filter(Boolean).join("\n") || text(result, 1);
-    return { output, error: typeof exit === "number" && exit !== 0 };
-  }
-  const file = nested(step, 14);
-  return { output: text(file, 9) || text(file, 4) || text(result, 1), error: false };
+function userText(text: string): string {
+  if (!text.startsWith("<USER_REQUEST>")) return text;
+  const end = text.lastIndexOf("</USER_REQUEST>");
+  if (end < 0) return text;
+  const suffix = text.slice(end + "</USER_REQUEST>".length);
+  if (!/^\s*<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>/.test(suffix)) return text;
+  return text.slice("<USER_REQUEST>".length, end).replace(/^\n|\n$/g, "");
 }
-
-/** UserResponse appears again in items; read it once, and never promote system context to user input. */
-export function parseAgySteps(steps: AgyStep[]): ConversationTurn[] {
+function outputRef(path: string, step: Step): string {
+  const index = indexes.get(path)!;
+  return `agy:${hash(JSON.stringify([path, index.identity, index.revision, step.start, step.digest]))}`;
+}
+export function parseAgyTranscript(text: string, path?: string): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
-  const tools = new Map<string, ToolPart>();
-  for (const step of steps) {
-    if (step.step_format !== 0) throw new Error("unsupported agy step format");
-    const message = fields(step.step_payload);
-    const metadata = nested(message, 5);
-    const ts = timestamp(metadata, 1);
-    if (step.step_type === 14) {
-      const user = nested(message, 19);
-      const response = text(user, 2) || user.filter((field) => field.number === 3 && field.value instanceof Uint8Array)
-        .map((field) => text(fields(field.value as Uint8Array), 1)).join("\n") || text(user, 1);
-      if (response) turns.push({ role: "user", ts, parts: [{ kind: "text", text: response }] });
-      continue;
-    }
-    if (step.step_type !== 15 && step.step_type !== 132) continue;
-    let turn = turns.at(-1);
-    if (turn?.role !== "assistant") {
-      turn = { role: "assistant", ts, parts: [] };
-      turns.push(turn);
-    }
-    const end = timestamp(metadata, 8);
-    if (end) turn.end_ts = end;
-    if (step.step_type === 15) {
-      const answer = nested(message, 20);
-      const thinking = text(answer, 16) || text(answer, 3);
-      if (thinking) turn.parts.push({ kind: "thinking", text: thinking });
-      const response = text(answer, 8) || text(answer, 1);
-      if (response) turn.parts.push({ kind: "text", text: response });
-      for (const field of answer) {
-        if (field.number !== 7 || !(field.value instanceof Uint8Array)) continue;
-        const call = fields(field.value);
-        const id = text(call, 1);
-        const name = text(call, 2);
-        const input = text(call, 3);
-        const tool: ToolPart = { kind: "tool", name, summary: input.slice(0, 160), input, output: "" };
-        turn.parts.push(tool);
-        if (id) tools.set(id, tool);
-      }
+  const steps = path ? new Map(indexes.get(path)?.visible.map((step) => [step.index, step])) : undefined;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const value = entry(line);
+    if (value.status !== "DONE") continue;
+    const content = typeof value.content === "string" ? value.content : "";
+    const ts = typeof value.created_at === "string" ? value.created_at : null;
+    if (value.type === "USER_INPUT") { turns.push({ role: "user", ts, parts: [{ kind: "text", text: userText(content) }] }); continue; }
+    if (value.type !== "PLANNER_RESPONSE" && value.type !== "GENERIC") continue;
+    const parts: ConversationPart[] = [];
+    if (value.type === "GENERIC") {
+      if (!content) continue;
+      // Native exports provide no call ID. Keep this result independent of planner calls.
+      const part: Extract<ConversationPart, { kind: "tool" }> = { kind: "tool", name: "Tool output", summary: `Step ${value.step_index}`, input: "", output: "" };
+      const step = steps?.get(value.step_index as number);
+      trimOutput(part, content, path && step ? outputRef(path, step) : `agy:${hash(line)}`);
+      parts.push(part);
     } else {
-      const call = nested(metadata, 4);
-      const id = text(call, 1);
-      let tool = tools.get(id);
-      if (!tool) {
-        const input = text(call, 3);
-        tool = { kind: "tool", name: text(call, 2), summary: input.slice(0, 160), input, output: "" };
-        turn.parts.push(tool);
-        if (id) tools.set(id, tool);
+      if (content) parts.push({ kind: "text", text: content });
+      for (const call of Array.isArray(value.tool_calls) ? value.tool_calls : []) {
+        const tool = record(call), input = record(tool.args);
+        if (typeof tool.name !== "string") continue;
+        const mapped = { ...input, command: input.CommandLine, file_path: input.AbsolutePath ?? input.TargetFile };
+        parts.push({ kind: "tool", name: tool.name, summary: toolSummary(tool.name, mapped), input: JSON.stringify(input), output: "" });
       }
-      const { output, error } = toolResult(message);
-      tool.output = output.slice(0, 24_000);
-      if (output.length > 24_000 && id) { tool.output_ref = id; tool.output_size = output.length; }
-      if (error) tool.error = true;
     }
+    if (!parts.length) continue;
+    const previous = turns.at(-1);
+    if (previous?.role === "assistant") { previous.parts.push(...parts); previous.end_ts = ts ?? undefined; }
+    else turns.push({ role: "assistant", ts, end_ts: ts ?? undefined, parts });
   }
-  return turns.filter((turn) => turn.parts.length > 0);
+  return turns;
 }
 
-export class AgyHistoryChanged extends Error {}
-
-export function agyToolOutput(path: string, id: string): string | null {
-  const db = new Database(path, { readonly: true });
+export function agyToolOutput(path: string, ref: string): string | null {
+  if (!/^agy:[A-Za-z0-9_-]{43}$/.test(ref)) return null;
   try {
-    const rows = db.query<AgyStep, []>("SELECT idx,step_type,status,step_format,step_payload FROM steps WHERE step_type=132 ORDER BY idx DESC").iterate();
-    for (const row of rows) {
-      if (row.step_format !== 0 || row.step_payload.length > MAX_BYTES) continue;
-      const message = fields(row.step_payload);
-      if (text(nested(nested(message, 5), 4), 1) === id) return toolResult(message).output.slice(0, 2_000_000);
-    }
-    return null;
-  } finally { db.close(); }
-}
-
-/** SQLite snapshots include the WAL; a main-file stat alone would permanently cache live appends. */
-export function agyConversation(path: string, page: { before?: string; since?: string; from?: string } = {}) {
-  const db = new Database(path, { readonly: true });
-  try {
-    return db.transaction(() => {
-      const stat = statSync(path);
-      const meta = db.query<{ trajectory_id: string; cascade_id: string }, []>("SELECT trajectory_id, cascade_id FROM trajectory_meta LIMIT 1").get();
-      if (!meta) throw new Error("missing agy trajectory");
-      const history_id = `agy:${meta.trajectory_id}:${meta.cascade_id}:${stat.dev}:${stat.ino}`;
-      const cursor = (index: number): string => `${history_id}:${index}`;
-      const indexOf = (value: string | undefined): number | undefined => {
-        if (value === undefined) return undefined;
-        const suffix = value.slice(history_id.length + 1);
-        if (!value.startsWith(`${history_id}:`) || !/^\d+$/.test(suffix)) throw new AgyHistoryChanged();
-        const index = Number(suffix);
-        if (!Number.isSafeInteger(index)) throw new AgyHistoryChanged();
-        return index;
-      };
-      const before = indexOf(page.before);
-      const since = indexOf(page.since);
-      const from = indexOf(page.from);
-      const prompts = db.query<{ idx: number }, []>("SELECT idx FROM steps WHERE step_type=14 ORDER BY idx").all().map((row) => row.idx);
-      for (const index of [before, since, from]) {
-        if (index !== undefined && !prompts.includes(index)) throw new AgyHistoryChanged();
+    return withAgyHistory(path, (projection, fd) => {
+      const visible = new Set(projection.indices);
+      for (const step of indexes.get(path)!.visible) {
+        if (step.type !== "GENERIC" || !visible.has(step.index) || outputRef(path, step) !== ref) continue;
+        const bytes = Buffer.alloc(step.end - step.start);
+        if (readSync(fd, bytes, 0, bytes.length, step.start) !== bytes.length) return null;
+        const value = entry(bytes.toString("utf8"));
+        const text = typeof value.content === "string" ? value.content : "";
+        return text.length > 2_000_000 ? `${text.slice(0, 2_000_000)}\n… trimmed` : text;
       }
-      const eligible = prompts.filter((index) => (before === undefined || index < before) && (since === undefined || index >= since));
-      const start = before !== undefined ? eligible[Math.max(0, eligible.length - PAGE_PROMPTS)]
-        : from ?? (since !== undefined ? eligible[0] : prompts[Math.max(0, prompts.length - PAGE_PROMPTS)]);
-      const lo = start ?? 0;
-      const hi = before ?? Number.MAX_SAFE_INTEGER;
-      const total = db.query<{ bytes: number }, [number, number]>("SELECT coalesce(sum(length(step_payload)),0) AS bytes FROM steps WHERE idx>=? AND idx<?").get(lo, hi)!;
-      if (total.bytes > MAX_BYTES) throw new Error("agy conversation page too large");
-      const steps = db.query<AgyStep, [number, number]>("SELECT idx,step_type,status,step_format,step_payload FROM steps WHERE idx>=? AND idx<? ORDER BY idx").all(lo, hi);
-      const model = db.query<{ data: Uint8Array }, []>("SELECT data FROM gen_metadata ORDER BY idx DESC LIMIT 1").get();
-      const metadata: ConversationMetadata = { model: model ? text(nested(fields(model.data), 1), 19) || null : null, reasoning_effort: null };
-      const hash = createHash("sha256").update(history_id).update(JSON.stringify(metadata));
-      for (const step of steps) hash.update(`${step.idx}:${step.status}:${step.step_format}:`).update(step.step_payload);
-      return { source: "agy-transcript" as const, turns: parseAgySteps(steps), metadata,
-        cursor: lo > (prompts[0] ?? 0) ? cursor(lo) : null, history_id, version: `"${hash.digest("hex")}"` };
-    })();
-  } finally { db.close(); }
+      return null;
+    });
+  } catch { return null; }
 }

@@ -191,7 +191,12 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     await page.keyboard.press("Escape");
     await uploadClosedGeometry;
 
+    // Let the narrow viewport's own resize land first: a phone's More sheet rises (styles.css) for
+    // longer than the terminal waits for a size to settle (PaneTerminal.tsx), so phoneGeometry would
+    // otherwise answer to that resize, and the search below would race the find bar's.
+    const phoneViewport = resized();
     await page.setViewportSize({ width: 320, height: 844 });
+    await phoneViewport;
     await page.getByRole("button", { name: "More", exact: true }).click();
     const phoneGeometry = resized();
     await page.getByRole("button", { name: "Find in terminal", exact: true }).click();

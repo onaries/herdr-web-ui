@@ -7,7 +7,7 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, isMacPlatform, shortcutDisplayKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, TERMINAL_CURSOR_STYLES, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type TerminalCursorStyle, type VoiceButton } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
@@ -32,11 +32,18 @@ import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
+import { useSheetSwipe } from "../lib/sheets.ts";
 
 export interface SettingsDialogProps {
   open: boolean;
   /** the section to open on, for a button that points at it; the top otherwise */
   section?: "updates" | null;
+  /** the page a link to Settings names (`?settings=`, lib/deepLink.ts), for this opening alone */
+  linkPage?: string | null;
+  /** the group on that page a link names (`&section=`): it is scrolled to and focused, as Updates is */
+  linkSection?: string | null;
+  /** the page shown, for the address; null while a phone shows its list of pages */
+  onPage?: (page: string | null) => void;
   onClose: () => void;
   actions: AppActions;
   updates: UpdatesModel;
@@ -150,6 +157,7 @@ function AppearancePage() {
           <option value="charcoal">{t("Charcoal")}</option>
           <option value="catppuccin">{t("Catppuccin")}</option>
           <option value="lilac">{t("Lilac")}</option>
+          <option value="forest">{t("Forest")}</option>
         </select>
       </SettingsRow>
       <SettingsRow label={t("Density")}>
@@ -165,6 +173,12 @@ function AppearancePage() {
       </SettingsRow>
       <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed")} wide>
         <Segmented label={t("Agents order")} value={settings.agentOrder} onChange={(agentOrder) => update({ agentOrder })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }]} />
+      </SettingsRow>
+      <SettingsRow label={t("Workspace cards")} description={t("In the Workspaces order, put each workspace's agents in a card under the workspace's name")}>
+        <Toggle label={t("Workspace cards")} checked={settings.agentCards} onChange={(agentCards) => update({ agentCards })} />
+      </SettingsRow>
+      <SettingsRow label={t("Pin agents")} description={t("Show a star beside each agent that keeps it at the top of the Agents list")}>
+        <Toggle label={t("Pin agents")} checked={settings.agentPins} onChange={(agentPins) => update({ agentPins })} />
       </SettingsRow>
       <SettingsRow label={t("Quiet opened finishes")} description={t("A finished agent you have opened here loses its dot, as herdr's own view would clear it; remembered per PC on this browser")}>
         <Toggle label={t("Quiet opened finishes")} checked={settings.quietOpenedDone} onChange={(quietOpenedDone) => update({ quietOpenedDone })} />
@@ -204,16 +218,19 @@ function ChatPage() {
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title={t("Composer")}>
+      <SettingsGroup title={t("Composer")} section="composer">
         <SettingsRow label={t("Enter sends")} description={t("When off, Mod+Enter sends")}>
           <Toggle label={t("Enter sends")} checked={settings.enterSends} onChange={(enterSends) => update({ enterSends })} />
+        </SettingsRow>
+        <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
+          <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
         </SettingsRow>
         <SettingsRow label={t("Suggestion chip")} description={t("On a touch screen, a chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.")}>
           <Toggle label={t("Suggestion chip")} checked={settings.showSuggestionChip} onChange={(showSuggestionChip) => update({ showSuggestionChip })} />
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title={t("Quick replies")}>
+      <SettingsGroup title={t("Quick replies")} section="quick-replies">
         <SettingsRow label={t("Show above the message box")} description={t("One-tap messages above the message box, on this device. Each is sent as if typed: queued while the agent works, an answer when a question is open.")}>
           <Toggle label={t("Show above the message box")} checked={settings.showQuickReplies} onChange={(showQuickReplies) => update({ showQuickReplies })} />
         </SettingsRow>
@@ -255,8 +272,18 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
       <SettingsRow label={t("Terminal font size")} description={t("Applied to every terminal pane")}>
         <Stepper label={t("Terminal font size")} value={settings.terminalFontSize} text={`${settings.terminalFontSize}px`} min={TERMINAL_FONT_MIN} max={TERMINAL_FONT_MAX} decreaseLabel={t("Decrease terminal font size")} increaseLabel={t("Increase terminal font size")} onChange={(terminalFontSize) => update({ terminalFontSize })} />
       </SettingsRow>
+      <SettingsRow label={t("Fit 80 columns in a split pane")} description={t("A split pane narrower than 80 columns draws in a smaller font, down to 10px, so a program that needs 80 columns still fits. Turn it off to keep your font size in every pane.")}>
+        <Toggle label={t("Fit 80 columns in a split pane")} checked={settings.narrowPaneFont} onChange={(narrowPaneFont) => update({ narrowPaneFont })} />
+      </SettingsRow>
       <SettingsRow label={t("Terminal font")} description={t("Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
         <FontFamilyInput value={settings.terminalFontFamily} label={t("Terminal font")} onCommit={(terminalFontFamily) => update({ terminalFontFamily })} />
+      </SettingsRow>
+      <SettingsRow label={t("Cursor shape")} description={t("A program in the pane can still change this with its own cursor control sequence")} wide>
+        <Segmented label={t("Cursor shape")} value={settings.terminalCursorStyle} onChange={(terminalCursorStyle: TerminalCursorStyle) => update({ terminalCursorStyle })}
+          options={TERMINAL_CURSOR_STYLES.map((style) => ({ value: style, label: t(style === "block" ? "Block" : style === "bar" ? "Bar" : "Underline") }))} />
+      </SettingsRow>
+      <SettingsRow label={t("Blinking cursor")}>
+        <Toggle label={t("Blinking cursor")} checked={settings.terminalCursorBlink} onChange={(terminalCursorBlink) => update({ terminalCursorBlink })} />
       </SettingsRow>
       <SettingsRow label={t("Wheel scroll speed")} description={t("How far one turn of the wheel scrolls the terminal")}>
         <Stepper label={t("Wheel scroll speed")} value={settings.terminalWheelSpeed} text={`${settings.terminalWheelSpeed}×`} min={TERMINAL_WHEEL_SPEED_MIN} max={TERMINAL_WHEEL_SPEED_MAX} decreaseLabel={t("Slower wheel scrolling")} increaseLabel={t("Faster wheel scrolling")} onChange={(terminalWheelSpeed) => update({ terminalWheelSpeed })} />
@@ -374,7 +401,7 @@ function VoicePage() {
       </SettingsGroup>
 
       {settings.voiceInput !== "off" && (
-        <SettingsGroup title={t("Tidy dictated text")}>
+        <SettingsGroup title={t("Tidy dictated text")} section="tidy-dictation">
           <SettingsRow label={t("In chat")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken")}>
             <Toggle label={t("Tidy dictated text in chat")} checked={settings.voicePolishChat} onChange={(voicePolishChat) => update({ voicePolishChat })} />
           </SettingsRow>
@@ -384,7 +411,7 @@ function VoicePage() {
         </SettingsGroup>
       )}
 
-      <SettingsGroup title={t("OpenAI API key")}>
+      <SettingsGroup title={t("OpenAI API key")} section="openai-key">
         <div className="settings-item">
           {voice && (
             <p className="settings-label voice-status">
@@ -432,7 +459,7 @@ function UsageAccounts({ providers }: { providers: readonly ProviderUsage[] }) {
   const keys = ordered.map((usage) => usage.key);
   const move = (key: string, by: -1 | 1) => update({ usageOrder: moveInOrder(keys, settings.usageOrder, key, by) });
   return (
-    <SettingsGroup title={t("Accounts")} className="usage-accounts">
+    <SettingsGroup title={t("Accounts")} className="usage-accounts" section="accounts">
       <ol aria-label={t("Accounts")}>
         {ordered.map((usage, index) => {
           const name = usageName(usage);
@@ -482,6 +509,9 @@ function UsagePage() {
           </SettingsRow>
           <SettingsRow label={t("Limit shown")} description={t("The limit each chip shows. Session is the short one, 5 hours on Claude and Codex. A plan without the chosen limit shows the one closest to running out.")} wide>
             <Segmented label={t("Limit shown")} value={settings.usageGlance} onChange={(usageGlance) => update({ usageGlance })} options={[{ value: "week", label: t("Weekly") }, { value: "session", label: t("Session") }]} />
+          </SettingsRow>
+          <SettingsRow label={t("Show pace")} description={t("On each limit, a mark where an even pace would be by now, the rate so far, and a warning when it runs out before its reset. Claude, Codex and Grok only.")}>
+            <Toggle label={t("Show pace")} checked={settings.usagePace} onChange={(usagePace) => update({ usagePace })} />
           </SettingsRow>
         </>}
       </SettingsGroup>
@@ -565,7 +595,7 @@ function ShortcutsPage() {
   const platformIsMac = isMacPlatform();
   return (
     <>
-      <SettingsGroup className="settings-shortcuts" note={<>{t("Bindings apply to this browser and device; Mod+Shift is fixed.")} {t("Text selection in focused fields stays native; Tab/list keys are UI-local, not global shortcuts.")} {t("The mobile key bar sends terminal keys, not app actions.")}</>}>
+      <SettingsGroup className="settings-shortcuts" section="shortcuts" note={<>{t("Bindings apply to this browser and device; Mod+Shift is fixed.")} {t("Text selection in focused fields stays native; Tab/list keys are UI-local, not global shortcuts.")} {t("The mobile key bar sends terminal keys, not app actions.")}</>}>
         {SHORTCUTS.map((shortcut) => {
           const displayedKeys = shortcutDisplayKeys(shortcut.id, settings.shortcutOverrides);
           const selectedKey = displayedKeys[displayedKeys.length - 1];
@@ -618,7 +648,7 @@ function DevicesPage({ auth }: { auth: HealthAuth | null }) {
   const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(window.location.hostname) ? null : window.location.origin;
   return (
     <>
-      <SettingsGroup title={t("Phone")}>
+      <SettingsGroup title={t("Phone")} section="phone">
         <div className="settings-item"><PhonePanel plan={plan} loading={access === undefined} onRefresh={loadAccess} /></div>
         <SettingsRow label={t("Keep screen on")} description={t("While a terminal or chat pane is open. Requires HTTPS or localhost and a supported browser.")}>
           <Toggle label={t("Keep screen on")} checked={settings.keepScreenOn} onChange={(keepScreenOn) => update({ keepScreenOn })} />
@@ -628,7 +658,7 @@ function DevicesPage({ auth }: { auth: HealthAuth | null }) {
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title={t("Devices")}>
+      <SettingsGroup title={t("Devices")} section="devices">
         <div className="settings-item"><DevicesPanel pairUrl={pairUrl} auth={auth} /></div>
       </SettingsGroup>
     </>
@@ -686,7 +716,7 @@ function AboutPage({ updates, herdrVersion, bridgesFollow }: { updates: UpdatesM
       <HerdrUpdateControls enabled herdrVersion={herdrVersion} />
       <PluginsGroup />
       <TelemetryControls />
-      <SettingsGroup title={t("About")} className="settings-about">
+      <SettingsGroup title={t("About")} className="settings-about" section="about">
         <div className="settings-row">
           <div className="settings-row-text">
             <span className="settings-label">herdr web ui</span>
@@ -704,19 +734,21 @@ export function SettingsDialog(props: SettingsDialogProps) {
   return props.open ? <OpenSettingsDialog {...props} /> : null;
 }
 
-function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, herdrVersion, onEnableNotifications, overPreview = false }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, actions, updates, auth, herdrVersion, onEnableNotifications, overPreview = false }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   // opened by Forward, the dialog shows what that entry of the history showed
   const [restored] = useState(() => shownBy(settingsEntry(window.history.state)));
   // a phone opens on the list of pages; a wider dialog shows the list beside the first page. A
   // button that points at Updates opens on About whatever an entry still landing would restore
-  const [chosen, setChosen] = useState<SettingsPage | null>(section === "updates" ? "about" : restored ? restored.page : null);
+  const linked = PAGES.find((candidate) => candidate.id === linkPage)?.id ?? null;
+  const [chosen, setChosen] = useState<SettingsPage | null>(section === "updates" ? "about" : restored ? restored.page : linked);
   const page = chosen ?? (narrow ? null : PAGES[0]!.id);
   const [keyBarOpen, setKeyBarOpen] = useState(section === "updates" ? false : restored?.keyBar ?? false);
   // every step in is an entry of the history, so the system Back button takes one step out
   // (lib/settingsHistory.ts); the Back control, the X and Escape take the same entries off
   useEffect(() => { recordSettings(settingsLevels(narrow, page, keyBarOpen)); }, [narrow, page, keyBarOpen]);
+  useEffect(() => { onPage?.(page); }, [onPage, page]);
   useEffect(() => onSettingsHistory((entry, own) => {
     const view = own ? null : shownBy(entry);
     if (view === null) return;
@@ -730,6 +762,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
   const settingsScrollRef = useRef(0);
   // Tab stays inside the dialog, and the focus returns to whatever opened it
   const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
+  useSheetSwipe(surface, onClose);
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
     : id === "usage" ? "Subscription usage" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : id === "integrations" ? "Agent integrations" : "About");
@@ -751,8 +784,9 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
       if (settingsBodyRef.current) settingsBodyRef.current.scrollTop = settingsScrollRef.current;
       keyBarButtonRef.current?.focus({ preventScroll: true });
     } else if (before === null) {
-      // a button that points at Updates opens on it, and the focus goes there too
-      const pointed = section === "updates" ? settingsBodyRef.current?.querySelector<HTMLElement>(".settings-updates") : null;
+      // a button that points at Updates opens on it, and the focus goes there too; so does a link to a group
+      const named = section === "updates" ? "updates" : linked && linkSection ? linkSection : null;
+      const pointed = named ? settingsBodyRef.current?.querySelector<HTMLElement>(`[data-section="${CSS.escape(named)}"]`) : null;
       if (pointed) { pointed.focus({ preventScroll: true }); pointed.scrollIntoView(); }
       else tab(page)?.focus();
     } else if (before.page !== page && narrow) {

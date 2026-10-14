@@ -327,6 +327,10 @@ try {
         assert.equal(await page.getByRole("textbox", { name: "Message", exact: true }).inputValue(), "hold this");
         assert.equal(await page.locator(".pending-message-bubble").count(), 0);
         assert.match(await page.locator(".composer-note").textContent() ?? "", /Update this PC/);
+        // the reason sits on the box's top edge, the box's width, not under it
+        const [noteBox, surfaceBox] = await Promise.all([page.locator(".composer-note").boundingBox(), page.locator(".composer-surface").boundingBox()]);
+        assert.ok(noteBox && surfaceBox && noteBox.y + noteBox.height <= surfaceBox.y + 1, "the note is above the message box");
+        assert.ok(noteBox && surfaceBox && Math.abs(noteBox.width - surfaceBox.width) <= 1 && Math.abs(noteBox.x - surfaceBox.x) <= 1, "and as wide as it");
       });
       console.log("PASS connection loss suspends pending items, confirmed holds need Send now, and old bridges keep the draft");
 

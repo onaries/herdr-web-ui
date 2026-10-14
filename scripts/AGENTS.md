@@ -1,11 +1,11 @@
 # scripts/
 
-Build, code generation, CI orchestration and the browser QA harness. `tsconfig.tools.json` typechecks the critical check, build, CI and release entrypoints and their imports; `build-xterm.ts` is also included through `vite.config.ts`. Only the `*.test.ts` files are discovered by a test runner, so the rules that decide whether a check actually runs live in this directory.
+Build, code generation, CI orchestration and the browser QA harness. `tsconfig.tools.json` typechecks the critical check, build, CI, release and chat-fallback browser entrypoints and their imports; `build-xterm.ts` and `compressed-assets.ts` are also included through `vite.config.ts`. Only the `*.test.ts` files are discovered by a test runner, so the rules that decide whether a check actually runs live in this directory.
 
 ## SUITES AND DISCOVERY
 - `ci-tests.ts` globs `{src,shared,server,scripts,telemetry}/**/*.test.ts` and splits the result into exactly two suites with one predicate: a file needs herdr when it ends in `.contract.test.ts`, or it is `server/updater.test.ts`, or it sits under `server/herdr/` or `server/pty/`. Those last three run in the integration suite despite their plain names. A new test that needs a live herdr must take the `.contract.test.ts` name or be added to that predicate; otherwise it lands in the unit suite, where the socket does not exist.
 - A `*-regression.ts`, `*-demo-regression.ts` or `*-browser-qa.ts` script is not a test file and nothing discovers it: it runs only from `ci-browser.sh`, from `ui-regression.ts`, or by name. A new one that is not added to one of those never runs in CI.
-- Each integration worker gets the herdr session `<session>-<n>`, also when there is only one worker: the plain `<session>` belongs to the browser scripts that run beside the suite in CI.
+- Unit tests run in parallel processes; `UNIT_TEST_WORKERS` sets the count (default: min(cores/2, 8) locally, 4 in CI). Each file runs independently with no shared state; the queue is ordered largest file first. Integration workers each get a herdr session `<session>-<n>`, also when there is only one worker: the plain `<session>` belongs to the browser scripts that run beside the suite in CI.
 - The queue is ordered largest file (in bytes) first, so a long file is unlikely to start last and run on alone. Per-file test timeout is raised above Bun's 5 s default because live process and pane probes poll for up to 10 s, and a run that never printed its counts is treated as a failure rather than as an empty pass.
 
 ## ISOLATION

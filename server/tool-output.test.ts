@@ -15,3 +15,12 @@ test("a goal call's answer stays whole up to 16000 characters: its JSON, status 
   expect(other.output.endsWith("… trimmed")).toBe(true);
   expect(other.output_ref).toBe("ref");
 });
+
+test("reports true stored output size when a tool result was cut before reaching trimOutput", () => {
+  const tool: Extract<ConversationPart, { kind: "tool" }> = { kind: "tool", name: "bash", summary: "", input: "{}", output: "" };
+  const preview = "a".repeat(TOOL_OUTPUT_CHARS);
+  trimOutput(tool, preview, "ref", 50_000);
+  expect(tool.output).toBe(`${preview}\n… trimmed`);
+  expect(tool.output_ref).toBe("ref");
+  expect(tool.output_size).toBe(50_000);
+});

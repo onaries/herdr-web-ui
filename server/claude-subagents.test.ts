@@ -865,6 +865,12 @@ describe("claudeSubagents, an agent's own turn", () => {
     entry(file, { type: "user", timestamp: at(1), message: { role: "user", content: "map it" } });
     return file;
   };
+  /** a lead's shutdown request at 5, the teammate's SendMessage answer at 6 and that call's result at 7 */
+  const shutdown = (file: string, result: { success: boolean; message: string; request_id: string }) => {
+    entry(file, { type: "user", timestamp: at(5), message: { role: "user", content: `<teammate-message teammate_id="team-lead">${JSON.stringify({ type: "shutdown_request", request_id: result.request_id })}</teammate-message>` } });
+    assistant(file, 6, "tool_use", "tool_use");
+    entry(file, { type: "user", timestamp: at(7), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_shutdown", content: [{ type: "text", text: JSON.stringify(result) }] }] }, toolUseResult: result });
+  };
 
   it("reads a teammate whose last turn ended as completed, at that entry's time, and titles it by its name", () => {
     const s = session();
@@ -889,6 +895,31 @@ describe("claudeSubagents, an agent's own turn", () => {
     expect(ids(s.path).sort()).toEqual(["calling:running", "streaming:running", "woken:running"]);
     assistant(woken, 6, "end_turn");
     expect(claudeSubagents(s.path, true, NOW).find((task) => task.id === "woken")).toMatchObject({ status: "completed", ended_at: at(6) });
+  });
+
+  it("reads a teammate that approved its lead's shutdown request as completed, at that answer's time", () => {
+    const s = session();
+    const file = teammate(s, "draft-t1");
+    assistant(file, 3, "end_turn");
+    shutdown(file, { success: true, message: "Shutdown approved. Sent confirmation to team-lead. Agent draft-t1 is now exiting.", request_id: "shutdown-1791642615398@draft-t1" });
+    expect(claudeSubagents(s.path, true, NOW)).toMatchObject([{ id: "draft-t1", status: "completed", ended_at: at(7) }]);
+  });
+
+  it("reads a teammate whose shutdown answer is no approval as still running", () => {
+    const s = session();
+    const file = teammate(s, "draft-t2");
+    assistant(file, 3, "end_turn");
+    shutdown(file, { success: false, message: "Shutdown rejected", request_id: "shutdown-2@x" });
+    expect(ids(s.path)).toEqual(["draft-t2:running"]);
+  });
+
+  it("reads a teammate sent a message after its approved shutdown as running again", () => {
+    const s = session();
+    const file = teammate(s, "draft-t3");
+    assistant(file, 3, "end_turn");
+    shutdown(file, { success: true, message: "Shutdown approved. Sent confirmation to team-lead. Agent draft-t3 is now exiting.", request_id: "shutdown-3@draft-t3" });
+    entry(file, { type: "user", timestamp: at(9), message: { role: "user", content: "one more thing" } });
+    expect(ids(s.path)).toEqual(["draft-t3:running"]);
   });
 
   it("takes a background agent that ended its turn as done before its notification is written, and the newest word among them", () => {

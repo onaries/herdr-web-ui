@@ -14,12 +14,19 @@
 .chat-view {
   position: absolute;
   inset: 0;
+  /* up under a phone's glass header (styles.css), into the room the stack keeps for it */
+  top: calc(-1 * var(--header-over, 0px));
   z-index: 1;
   overflow-y: auto;
   /* at its top, a drag down for older messages is still the transcript's: handed on to the
      page, Android Chrome takes it for pull-to-refresh and reloads the app */
   overscroll-behavior: contain;
   padding: var(--space-4) var(--space-4) var(--space-5);
+  /* a phone's glass header lies over the transcript's top, and the input card over its end
+     (styles.css, Composer.css): the first and last lines start clear of both */
+  padding-top: calc(var(--space-4) + var(--header-over, 0px));
+  padding-bottom: calc(var(--space-5) + var(--composer-over, 0px));
+  scroll-padding-top: var(--header-over, 0px);
   background: var(--bg);
   --chat-fs-2xs: calc(var(--fs-2xs) * var(--chat-scale, 1));
   --chat-fs-xs: calc(var(--fs-xs) * var(--chat-scale, 1));
@@ -261,6 +268,40 @@
   margin-bottom: var(--space-3);
 }
 
+.markdown-image {
+  max-width: 100%;
+  height: auto;
+}
+
+/* a README's centered logo and badges (lib/markdownHtml.ts) */
+.markdown .markdown-center {
+  text-align: center;
+}
+
+.markdown-mermaid-frame {
+  position: relative;
+  margin-bottom: var(--space-3);
+}
+
+.markdown-mermaid {
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.markdown-mermaid svg {
+  max-width: 100%;
+  max-height: 24rem;
+  height: auto;
+}
+
+.markdown-mermaid-zoom {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+}
+
 .markdown p,
 .markdown-h1,
 .markdown-h2,
@@ -271,6 +312,10 @@
 .markdown blockquote,
 .markdown-list {
   margin: 0 0 var(--space-3);
+}
+
+[data-conversation-source="hermes-transcript"] .markdown p {
+  white-space: pre-line;
 }
 
 /* Every agent heading is an h3 (Markdown.tsx: an agent's markdown must not shadow the app's own
@@ -781,6 +826,17 @@
 
 .chat-inline-error { color: var(--status-blocked); }
 
+.chat-activity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--status-working);
+  font-size: var(--fs-sm);
+}
+
+.chat-activity svg { width: 1em; height: 1em; flex: none; }
+
 .chat-endcap {
   width: 100%;
   display: flex;
@@ -811,7 +867,7 @@
 .chat-new-messages {
   position: sticky;
   z-index: var(--z-popover);
-  bottom: var(--space-2);
+  bottom: calc(var(--space-2) + var(--composer-over, 0px));
   left: 50%;
   min-height: var(--control-h);
   transform: translateX(-50%);
@@ -823,6 +879,8 @@
 /* chat mode is ONE surface: the stack, the transcript and the composer region all sit on
    --bg; the only card is the composer's input box, on the same column as the transcript */
 .terminal-stack.is-chat {
+  /* a phone's glass header lies over the stack's top: what the stack holds starts below it */
+  padding-top: var(--header-over, 0px);
   background: var(--bg);
 }
 

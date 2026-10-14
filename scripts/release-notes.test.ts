@@ -3,7 +3,7 @@ import { releaseNotes } from "./release-notes.ts";
 
 const manifest = 'name = "herdr-web-ui"\nversion = "1.2.3"\n';
 const changelog = '# Changelog\n\n## [Unreleased]\nFuture\n\n## [1.2.3] — today\n\n- Fixed input.\n\n## [1.2.2]\nOld\n\n[1.2.3]: https://example.com\n';
-const told = { en: { fixed: ["Input."] }, ko: { fixed: ["입력."] }, ja: { fixed: ["入力。"] }, zh: { fixed: ["输入。"] } };
+const told = { en: { fixed: ["Input."] }, ko: { fixed: ["입력."] }, ja: { fixed: ["入力。"] }, zh: { fixed: ["输入。"] }, tr: { fixed: ["Girdi."] } };
 const summaries = JSON.stringify({ "1.2.3": told, "1.2.2": { en: { fixed: ["Old."] } } });
 test("release notes belong only to the exact requested version", () => {
   expect(releaseNotes("1.2.3", "1.2.3", manifest, changelog, summaries)).toBe(

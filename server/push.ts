@@ -20,6 +20,11 @@
  * prompt and ~60 s after a reply before it notifies). A question waits `short`; a finish
  * waits `long`, and only one after a turn that worked `longTurn` or more is worth it,
  * unless the device asked for every finish (which then waits `short`).
+ *
+ * No device gets an alert while a window of the app is in use somewhere (`inUse`: a
+ * connected page that is visible and has focus, which says so over its WebSocket): the
+ * person is at a screen that already shows the change (#751). It is asked when an alert
+ * would go out, so a window brought forward while the alert waits still holds it back.
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -103,6 +108,8 @@ export interface PushServiceOptions {
   timing?: Partial<AlertTiming>;
   now?: () => number;
   canDeliver?: (deviceId: string | null | undefined) => boolean;
+  /** whether a window of the app is in use right now: then no alert goes to any device (the test push still does) */
+  inUse?: () => boolean;
   /** accept plain-http loopback endpoints: only for the tests' fake push service (push.fake.ts) */
   loopbackHttp?: boolean;
 }
@@ -407,7 +414,10 @@ export function createPushService(options: PushServiceOptions): PushService {
       }
       if (groups.size === 0) return;
       schedule(key, groups, async (to) => {
+        if (options.inUse?.()) return;
         const title = machineId === "local" ? await titleOf(paneId) : titles.get(key) ?? paneId;
+        // the title can wait for herdr: a window that came into use meanwhile still holds the alert
+        if (options.inUse?.()) return;
         // a device that dropped out meanwhile is not written to
         const live = to.flatMap((subscription) => {
           const current = store().get(subscription.endpoint);
@@ -423,7 +433,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       turnStart.delete(key);
       // an ended terminal is a finish of its own: a device that wants none hears none
       const to = [...store().values()].filter((subscription) => (subscription.alerts ?? DEFAULT_ALERTS).done !== "off");
-      if (to.length === 0) return;
+      if (to.length === 0 || options.inUse?.()) return;
       // the pane may already be gone from herdr: the seeded title is what is left
       await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...(machineId === "local" ? {} : { machine_id: machineId }), tag: paneNotificationTag(paneId, machineId) }, "normal", to);
     },

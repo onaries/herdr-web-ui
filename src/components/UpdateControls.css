@@ -28,6 +28,27 @@
   overflow-wrap: anywhere;
 }
 
+/* a release's line never wraps: its sentence is cut with an ellipsis, its buttons keep their width */
+.update-notice.is-line {
+  flex-wrap: nowrap;
+}
+
+.update-notice.is-line > span {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.update-notice.is-line > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* the reload warning is read in full on a phone: its sentence wraps instead of being cut */
+.update-notice.is-line.is-warning { flex-wrap: wrap; }
+.update-notice.is-line.is-warning > span { white-space: normal; overflow: visible; text-overflow: clip; }
+
 .update-notice-dismiss {
   margin-inline-end: calc(var(--space-2) * -1);
 }
@@ -36,8 +57,30 @@
   max-width: 32rem;
 }
 
+/* on the line: the step and its count, then the bar in the rest of the row */
 .update-notice .update-progress {
   max-width: none;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.update-notice .update-progress .bridge-progress-step {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.update-notice .update-progress .bridge-progress-step > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-notice .update-progress .bridge-progress-bar {
+  flex: 1 1 3rem;
+  min-width: 3rem;
 }
 
 .update-output {

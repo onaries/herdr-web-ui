@@ -44,7 +44,7 @@ describe("statusEdgeRead", () => {
     expect(statusEdgeRead(undefined, "working")).toBe(true);
   });
 
-  it("leaves an unchanged status and changes that neither start nor end a turn to the poll", () => {
+  it("leaves an unchanged status and changes that neither start nor end a turn to the regular reads", () => {
     expect(statusEdgeRead("working", "working")).toBe(false);
     expect(statusEdgeRead("idle", "idle")).toBe(false);
     expect(statusEdgeRead("idle", "done")).toBe(false);

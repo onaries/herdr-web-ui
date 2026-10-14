@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { MAX_TURNS, parseOmpTranscript } from "./transcript-records.ts";
 import { toolVerb } from "../src/lib/toolVerbs.ts";
 import type { ConversationTurn } from "../shared/protocol.ts";
+import { parseAgyTranscript } from "./agy.ts";
+import { agyStoreFromLocks } from "./agy-store.ts";
+import * as agyStore from "./agy-store.ts";
 import * as herdr from "./herdr/client.ts";
 import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
-import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 
 let mockedPanes: HerdrPane[] = [];
 let mockedProcesses: { argv?: unknown }[] = [];
@@ -485,6 +488,97 @@ describe("parseClaudeTranscript", () => {
       ["user", "2026-10-02T04:00:05.000Z", [{ kind: "text", text: "also fix the tests" }]],
       ["assistant", "2026-10-02T04:00:10.000Z", [{ kind: "text", text: "on it" }]],
     ]);
+  });
+
+  it("drops a prompt cancelled before any reply when Claude Code re-sends it from the same parent", () => {
+    // Claude Code 2.1.296 on send, Esc before any reply, then a re-send: the cancelled record
+    // and the re-send are siblings under one parent, only bookkeeping lines between, and the
+    // TUI shows only the re-send
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "a35be47b", parentUuid: "07055903", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "apple 2-87" } }),
+      JSON.stringify({ type: "attachment", attachment: { type: "file-history-snapshot" } }),
+      JSON.stringify({ type: "last-prompt" }),
+      JSON.stringify({ type: "user", uuid: "7477aa61", parentUuid: "07055903", timestamp: "2026-10-10T08:00:04.000Z", message: { role: "user", content: "cherry 2" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:00:06.000Z", message: { role: "assistant", content: [{ type: "text", text: "Cherry." }] } }),
+    ].join("\n"));
+    expect(turns).toEqual([
+      { role: "user", ts: "2026-10-10T08:00:04.000Z", parts: [{ kind: "text", text: "cherry 2" }] },
+      { role: "assistant", ts: "2026-10-10T08:00:06.000Z", end_ts: "2026-10-10T08:00:06.000Z", parts: [{ kind: "text", text: "Cherry." }] },
+    ]);
+  });
+
+  it("keeps a prompt re-sent from the same parent when the first one was answered", () => {
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "u1", parentUuid: "p", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "first" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "one answer" }] } }),
+      JSON.stringify({ type: "user", uuid: "u2", parentUuid: "p", timestamp: "2026-10-10T08:00:05.000Z", message: { role: "user", content: "second" } }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts[0]])).toEqual([
+      ["user", { kind: "text", text: "first" }],
+      ["assistant", { kind: "text", text: "one answer" }],
+      ["user", { kind: "text", text: "second" }],
+    ]);
+  });
+
+  it("keeps an unanswered prompt when the next one hangs from another parent", () => {
+    // an ordinary next prompt's parent is the answer before it, not the earlier prompt's
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "u1", parentUuid: "p", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "first" } }),
+      JSON.stringify({ type: "user", uuid: "u2", parentUuid: "q", timestamp: "2026-10-10T08:00:05.000Z", message: { role: "user", content: "second" } }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts[0]])).toEqual([
+      ["user", { kind: "text", text: "first" }],
+      ["user", { kind: "text", text: "second" }],
+    ]);
+  });
+
+  it("sees the cancelled prompt whether it was written as a string or as blocks", () => {
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "u1", parentUuid: "p", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "string draft" } }),
+      JSON.stringify({ type: "user", uuid: "u2", parentUuid: "p", timestamp: "2026-10-10T08:00:03.000Z", message: { role: "user", content: [{ type: "text", text: "block resend" }] } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "answer" }] } }),
+      JSON.stringify({ type: "user", uuid: "u3", parentUuid: "a", timestamp: "2026-10-10T08:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "block draft" }] } }),
+      JSON.stringify({ type: "user", uuid: "u4", parentUuid: "a", timestamp: "2026-10-10T08:01:03.000Z", message: { role: "user", content: "string resend" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:01:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "another" }] } }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts[0]])).toEqual([
+      ["user", { kind: "text", text: "block resend" }],
+      ["assistant", { kind: "text", text: "answer" }],
+      ["user", { kind: "text", text: "string resend" }],
+      ["assistant", { kind: "text", text: "another" }],
+    ]);
+  });
+
+  it("hides the cancelled prompt on the live page too once its re-send arrives", () => {
+    // Live records: user a35be47b parented on 07055903, cancelled before any reply (only
+    // attachment/last-prompt bookkeeping after it), then re-send 7477aa61 on the same
+    // parent and the answer. The re-send opens no new turn, so the cancelled record stays
+    // inside the live tail the sibling rule reparses instead of settling visible.
+    const root = mkdtempSync(join(tmpdir(), "herdr-resend-page-"));
+    try {
+      const path = join(root, "session.jsonl");
+      const write = (...entries: unknown[]) => appendFileSync(path, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+      const prompt = (uuid: string, parentUuid: string, text: string, timestamp: string) =>
+        ({ type: "user", uuid, parentUuid, timestamp, message: { role: "user", content: text } });
+      const answer = (text: string, timestamp: string) =>
+        ({ type: "assistant", timestamp, message: { role: "assistant", content: [{ type: "text", text }] } });
+      const texts = (turns: ConversationTurn[]) => turns.flatMap((turn) => turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []));
+      write(prompt("u0", "p0", "first ask", "2026-10-10T08:00:00.000Z"), answer("first answer", "2026-10-10T08:00:02.000Z"),
+        prompt("a35be47b", "p1", "apple 2-87", "2026-10-10T08:01:00.000Z"),
+        { type: "attachment", attachment: { type: "file-history-snapshot" } }, { type: "last-prompt" });
+      expect(texts(transcriptPage("claude-transcript", path).turns)).toEqual(["first ask", "first answer", "apple 2-87"]);
+      write(prompt("7477aa61", "p1", "cherry 2", "2026-10-10T08:01:04.000Z"), answer("Cherry.", "2026-10-10T08:01:06.000Z"));
+      const warm = transcriptPage("claude-transcript", path);
+      expect(texts(warm.turns)).toEqual(["first ask", "first answer", "cherry 2", "Cherry."]);
+      forgetTranscriptState();
+      expect(transcriptPage("claude-transcript", path).turns).toEqual(warm.turns);
+      // an ordinary next prompt hangs from another parent and still opens a turn of its own
+      write(prompt("u9", "p9", "next ask", "2026-10-10T08:02:00.000Z"));
+      expect(texts(transcriptPage("claude-transcript", path).turns)).toEqual(["first ask", "first answer", "cherry 2", "Cherry.", "next ask"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      forgetTranscriptState();
+    }
   });
 
   describe("subagent notifications", () => {
@@ -1388,4 +1482,226 @@ it("expands inherited Codex tool output without exposing output discarded by a b
     mkdirSync(parent);
     expect(transcriptToolOutput("codex-transcript", leaf, "current", home)).toBe("current output");
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+describe("Agy native ledger through shared paging", () => {
+  let root: string, path: string, db: Database;
+  const row = (step_index: number, type: string, content = "", extra = {}) => JSON.stringify({ step_index, type, status: "DONE", created_at: "2026-01-01T00:00:00Z", content, ...extra }) + "\n";
+  const add = (index: number, type: string, content = "", extra = {}) => {
+    db.query("INSERT OR REPLACE INTO steps VALUES (?)").run(index);
+    appendFileSync(path, row(index, type, content, extra));
+  };
+  const page = () => transcriptPage("agy-transcript", path);
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "herdr-agy-unit-"));
+    const session = "00000000-0000-4000-8000-000000000001";
+    path = join(root, "brain", session, ".system_generated", "logs", "transcript_full.jsonl");
+    mkdirSync(join(path, ".."), { recursive: true });
+    mkdirSync(join(root, "conversations"));
+    db = new Database(join(root, "conversations", `${session}.db`));
+    db.exec("CREATE TABLE steps(idx INTEGER PRIMARY KEY)");
+    writeFileSync(path, "");
+    forgetTranscriptState();
+  });
+  afterEach(() => { db.close(); forgetTranscriptState(); rmSync(root, { recursive: true, force: true }); });
+  it("tracks native turn boundaries without treating each DONE tool step as completion", () => {
+    expect(page().activity).toBe("idle");
+    // Agy 1.3.3's captured native sequence: user, context, planner call, result,
+    // context, another call/result, then the tool-free final planner answer.
+    add(0, "USER_INPUT", "fictional request");
+    add(1, "EPHEMERAL_MESSAGE", "hidden context");
+    expect(page().activity).toBe("working");
+    add(2, "PLANNER_RESPONSE", "", { thinking: "saved reasoning", tool_calls: [{ name: "run_command", args: { CommandLine: "echo fiction" } }] });
+    add(3, "GENERIC", "fictional output");
+    add(4, "EPHEMERAL_MESSAGE", "hidden context");
+    expect(page().activity).toBe("working");
+    expect(JSON.stringify(page().turns)).not.toContain("saved reasoning");
+    add(5, "PLANNER_RESPONSE", "More work", { tool_calls: [{ name: "view_file", args: { AbsolutePath: "/fiction.txt" } }] });
+    add(6, "GENERIC", "another output");
+    expect(page().activity).toBe("working");
+    add(7, "PLANNER_RESPONSE", "Finished", { tool_calls: [] });
+    expect(page().activity).toBe("idle");
+    add(8, "GENERIC", "late result");
+    add(9, "EPHEMERAL_MESSAGE", "late context");
+    expect(page().activity).toBe("idle");
+    add(10, "USER_INPUT", "next turn");
+    expect(page().activity).toBe("working");
+    // Rewind the new prompt; completion of the retained turn still clears activity.
+    db.exec("DELETE FROM steps WHERE idx >= 10");
+    expect(page().activity).toBe("idle");
+    forgetTranscriptState();
+    expect(page().activity).toBe("idle");
+  });
+  it("does not complete activity from a partial, unadmitted or unfinished planner answer", () => {
+    add(0, "USER_INPUT", "one");
+    add(1, "PLANNER_RESPONSE", "", { thinking: "saved reasoning" });
+    expect(page().activity).toBe("working");
+    add(2, "PLANNER_RESPONSE", "unfinished", { status: "RUNNING" });
+    expect(page().activity).toBe("working");
+    db.exec("INSERT INTO steps VALUES (3)");
+    const final = row(3, "PLANNER_RESPONSE", "complete");
+    appendFileSync(path, final.slice(0, -2));
+    expect(page().activity).toBe("working");
+    appendFileSync(path, final.slice(-2));
+    expect(page().activity).toBe("idle");
+    appendFileSync(path, row(4, "USER_INPUT", "export ahead of DB"));
+    expect(page().activity).toBe("idle");
+    db.exec("INSERT INTO steps VALUES (4)");
+    expect(page().activity).toBe("working");
+    forgetTranscriptState();
+    expect(page().activity).toBe("working");
+  });
+  it("renders native messages, multiple planner calls and independent results without guessed pairing", () => {
+    add(0, "USER_INPUT", "<USER_REQUEST>Keep <USER_REQUEST>literal</USER_REQUEST> tags</USER_REQUEST>\n<ADDITIONAL_METADATA>hidden</ADDITIONAL_METADATA>");
+    add(1, "EPHEMERAL_MESSAGE", "hidden context");
+    add(2, "PLANNER_RESPONSE", "Checking", { tool_calls: [{ name: "run_command", args: { CommandLine: "echo fiction" } }, { name: "view_file", args: { AbsolutePath: "/fiction.txt" } }] });
+    add(3, "GENERIC", "independent output");
+    add(4, "CHECKPOINT", "not a result");
+    add(5, "USER_INPUT", "next");
+    const turns = page().turns;
+    expect(turns[0]!.parts).toEqual([{ kind: "text", text: "Keep <USER_REQUEST>literal</USER_REQUEST> tags" }]);
+    expect(turns[1]!.parts.map((p) => p.kind === "tool" ? [p.name, p.summary, p.output] : p.kind === "text" ? p.text : p.kind)).toEqual([
+      "Checking", ["run_command", "echo fiction", ""], ["view_file", "/fiction.txt", ""], ["Tool output", "Step 3", "independent output"],
+    ]);
+    expect(turns[2]!.role).toBe("user");
+  });
+  it("keeps paging and refs stable on append, then rejects them on a DB-only idle rewind", () => {
+    for (let i = 0; i < 80; i++) { add(i * 2, "USER_INPUT", `prompt ${i}`); add(i * 2 + 1, "GENERIC", "x".repeat(5000)); }
+    const first = page();
+    expect(first.cursor).not.toBeNull();
+    const older = transcriptPage("agy-transcript", path, { before: first.cursor! });
+    const tool = first.turns.flatMap((t) => t.parts).find((p) => p.kind === "tool")!;
+    if (tool.kind !== "tool") throw new Error("missing result");
+    expect(transcriptToolOutput("agy-transcript", path, tool.output_ref!)).toBe("x".repeat(5000));
+    add(160, "USER_INPUT", "append");
+    expect(page().history_id).toBe(first.history_id);
+    expect(transcriptPage("agy-transcript", path, { before: first.cursor! })).toEqual(older);
+    db.exec("DELETE FROM steps WHERE idx >= 4");
+    const rewound = page();
+    expect(rewound.turns).toHaveLength(4);
+    expect(rewound.history_id).not.toBe(first.history_id);
+    expect(() => transcriptPage("agy-transcript", path, { before: first.cursor! })).toThrow(HistoryChanged);
+    expect(transcriptToolOutput("agy-transcript", path, tool.output_ref!)).toBeNull();
+    forgetTranscriptState();
+    expect(page().turns).toEqual(rewound.turns.map((turn) => ({ ...turn, parts: turn.parts.map((part) => part.kind === "tool" ? { ...part, output_ref: expect.any(String) } : part) })));
+  });
+  it("replays repeated/backward indices and allows database-only rows", () => {
+    add(0, "USER_INPUT", "one"); add(1, "PLANNER_RESPONSE", "old");
+    db.query("INSERT INTO steps VALUES (?)").run(2);
+    add(3, "USER_INPUT", "two"); add(4, "PLANNER_RESPONSE", "discard");
+    const before = page();
+    add(3, "USER_INPUT", "replacement");
+    expect(page().turns.map((t) => t.parts[0])).toEqual([{ kind: "text", text: "one" }, { kind: "text", text: "old" }, { kind: "text", text: "replacement" }]);
+    const revision = page().history_id;
+    expect(revision).not.toBe(before.history_id);
+    add(4, "PLANNER_RESPONSE", "new");
+    expect(page().history_id).toBe(revision);
+    add(3, "USER_INPUT", "equal repeat");
+    expect(page().history_id).not.toBe(revision);
+    const warm = page().turns;
+    forgetTranscriptState();
+    expect(page().turns).toEqual(warm);
+  });
+  it("ignores an incomplete tail and does not settle a running row", () => {
+    add(0, "USER_INPUT", "one");
+    db.query("INSERT INTO steps VALUES (1)").run();
+    const text = row(1, "PLANNER_RESPONSE", "complete");
+    appendFileSync(path, text.slice(0, -3));
+    expect(page().turns).toHaveLength(1);
+    appendFileSync(path, text.slice(-3));
+    expect(page().turns).toHaveLength(2);
+    add(2, "PLANNER_RESPONSE", "unfinished", { status: "RUNNING" });
+    expect(JSON.stringify(page().turns)).not.toContain("unfinished");
+    add(2, "PLANNER_RESPONSE", "finished");
+    expect(JSON.stringify(page().turns)).toContain("finished");
+  });
+  it("admits a ledger tail when the DB catches up without changing older cursors", () => {
+    add(0, "USER_INPUT", "first");
+    const initial = page();
+    appendFileSync(path, row(1, "PLANNER_RESPONSE", "lagged"));
+    expect(page().turns).toHaveLength(1);
+    db.exec("INSERT INTO steps VALUES (1)");
+    const caughtUp = page();
+    expect(caughtUp.history_id).toBe(initial.history_id);
+    expect(caughtUp.turns).toHaveLength(2);
+    add(2, "PLANNER_RESPONSE", "partial", { status: "RUNNING" });
+    const running = page();
+    add(2, "PLANNER_RESPONSE", "complete");
+    expect(page().history_id).toBe(running.history_id);
+    expect(transcriptPage("agy-transcript", path, { from: `${initial.history_id}:0` }).turns).toHaveLength(2);
+  });
+  it("never resurrects an observed rewind when replacement DB indices precede their ledger rows", () => {
+    add(0, "USER_INPUT", "kept"); add(1, "GENERIC", "removed".repeat(1000));
+    const before = page();
+    db.exec("DELETE FROM steps WHERE idx=1");
+    const cut = page();
+    db.exec("INSERT INTO steps VALUES (1)");
+    expect(page().turns).toEqual(cut.turns);
+    expect(page().history_id).toBe(cut.history_id);
+    add(1, "GENERIC", "replacement");
+    expect(JSON.stringify(page().turns)).toContain("replacement");
+    expect(JSON.stringify(page().turns)).not.toContain("removed");
+    const part = before.turns[1]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("missing tool");
+    expect(transcriptToolOutput("agy-transcript", path, part.output_ref!)).toBeNull();
+  });
+  it("does not hide later turns behind an unfinished or unknown-status historical row", () => {
+    add(0, "USER_INPUT", "first");
+    add(1, "GENERIC", "unfinished", { status: "UNKNOWN" });
+    expect(page().turns).toHaveLength(1);
+    add(2, "USER_INPUT", "later"); add(3, "PLANNER_RESPONSE", "answer");
+    expect(page().turns.map(t => t.parts[0])).toEqual([
+      { kind: "text", text: "first" }, { kind: "text", text: "later" }, { kind: "text", text: "answer" },
+    ]);
+  });
+  it("uses the same assistant boundaries in full and paged replay around a skipped user row", () => {
+    add(0, "USER_INPUT", "first"); add(1, "PLANNER_RESPONSE", "before");
+    add(2, "USER_INPUT", "hidden", { status: "UNKNOWN" });
+    add(3, "PLANNER_RESPONSE", "after");
+    const full = parseAgyTranscript(row(0, "USER_INPUT", "first") + row(1, "PLANNER_RESPONSE", "before")
+      + row(2, "USER_INPUT", "hidden", { status: "UNKNOWN" }) + row(3, "PLANNER_RESPONSE", "after"));
+    expect(page().turns).toEqual(full);
+    expect(full).toHaveLength(2);
+  });
+  it("continues a bounded cold scan on the next poll", () => {
+    add(0, "USER_INPUT", "start");
+    for (let i=1; i<=34; i++) add(i, "EPHEMERAL_MESSAGE", "x".repeat(1024 * 1024));
+    add(35, "USER_INPUT", "end");
+    expect(page).toThrow(ConversationUnavailable);
+    expect(page().turns.at(-1)!.parts[0]).toEqual({ kind: "text", text: "end" });
+  });
+  it("preserves standalone literal user wrapper text", () => {
+    add(0, "USER_INPUT", "<USER_REQUEST>literal</USER_REQUEST>");
+    expect(page().turns[0]!.parts[0]).toEqual({ kind: "text", text: "<USER_REQUEST>literal</USER_REQUEST>" });
+  });
+  it.skipIf(process.platform === "win32")("canonicalizes held locks and never chooses among sessions or unheld files", () => {
+    const presence = join(root, "presence"); mkdirSync(presence);
+    const one = join(presence, "00000000-0000-4000-8000-000000000001.lock");
+    const two = join(presence, "00000000-0000-4000-8000-000000000002.lock");
+    writeFileSync(one, ""); writeFileSync(two, "");
+    expect(agyStoreFromLocks([])).toBeNull();
+    expect(agyStoreFromLocks([one, two])).toBeNull();
+    expect(agyStoreFromLocks([one])?.path).toBe(path);
+    const alias = join(root, "alias"); symlinkSync(presence, alias);
+    // Alias a parent of presence, preserving the native held-path shape.
+    const link = join(root, "linked-root"); symlinkSync(root, link);
+    expect(agyStoreFromLocks([join(link, "presence", one.split("/").at(-1)!)])?.path).toBe(path);
+  });
+  it("distinguishes unreadable database from verified empty history", () => {
+    add(0, "USER_INPUT", "one");
+    page();
+    db.exec("DROP TABLE steps");
+    expect(page).toThrow(ConversationUnavailable);
+  });
+  it("falls back when the transcript path cannot be inspected", async () => {
+    const loop = join(root, "loop"); symlinkSync(loop, loop);
+    const pane = { pane_id: "agy-pane", cwd: root, agent: "agy" } as HerdrPane;
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session: "test", path: loop, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } } as never);
+    try {
+      await expect(paneTranscript(pane.pane_id, undefined, { panes: [pane] } as SessionSnapshot)).rejects.toMatchObject({
+        name: "ConversationUnavailable", message: "transcript_missing",
+      });
+    } finally { store.mockRestore(); rpc.mockRestore(); }
+  });
 });

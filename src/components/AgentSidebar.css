@@ -12,6 +12,11 @@
 .agents-sidebar.is-collapsed,
 .agents-sidebar.is-empty { flex: 0 0 auto; }
 
+/* A visible Agents list fills the space released by folded PC groups, up to its existing cap. */
+.sidebar-shell:not(:has(.machine-list .machine-workspaces)):has(.agents-sidebar:not(.is-collapsed):not(.is-empty)) .agents-sidebar {
+  flex: 1 1 auto;
+}
+
 /* positioned: a row's visually hidden label is absolute, and must not size the page instead */
 .agent-list-contents {
   position: relative;
@@ -74,7 +79,57 @@
   list-style: none;
 }
 
-/* The entire agent row selects its pane; it has no secondary controls. */
+/* In herdr's order a workspace's agents on one PC sit in a card under its name. An edge, not a
+   fill, so a row's hover and selection read inside it as they do anywhere else. */
+.agent-group {
+  padding: var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.agent-group + .agent-group { margin-top: var(--space-2); }
+
+/* the card's name: a step under the Agents head, its folder in the rows' leading cell */
+.agent-group-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--space-6);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+}
+
+.agent-group-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--side-box);
+  width: var(--side-box);
+}
+
+.agent-group-mark svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.agent-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-group-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* its rows dim themselves; the head dims with them */
+.agent-group.is-offline > .agent-group-head { opacity: 0.5; }
+
+/* The agent row selects its pane; the star beside it is its only other control. */
 .agent-item {
   display: flex;
   align-items: center;
@@ -105,6 +160,33 @@
 }
 
 .agent-item.is-selected > .agent-row { background: var(--side-selected); }
+
+.agent-pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--side-box);
+  width: var(--side-box);
+  height: var(--side-row-2);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.agent-pin-toggle svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.agent-pin-toggle.is-pinned { color: var(--accent); }
+.agent-pin-toggle:focus-visible { outline-offset: calc(var(--ring-offset) * -1); }
+
+@media (hover: hover) {
+  .agent-pin-toggle:hover { color: var(--text-strong); }
+}
 
 .agent-copy {
   display: flex;
@@ -163,4 +245,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .agent-row { transition: none; }
+}
+
+/* a finger presses a row as an iPhone list row is pressed: it fills, it does not dim (styles.css) */
+@media (hover: none) and (pointer: coarse) {
+  .agent-row:enabled:active {
+    opacity: 1;
+    background: var(--side-hover);
+  }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { SUMMARY_GROUPS, type SummaryGroup, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import { useHerdrUpdate } from "../lib/herdrUpdate.ts";
 import { runningAppVersion, runningHerdrVersion, staleClientVersion, versionLabel } from "../lib/runningVersion.ts";
@@ -81,7 +82,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
   const tabVersion = staleClientVersion(status, __APP_VERSION__);
   // focusable from code only: a button that points here (the header line's) lands on it
-  return <section className="settings-section settings-updates" tabIndex={-1} aria-labelledby="settings-updates-title">
+  return <section className="settings-section settings-updates" data-section="updates" tabIndex={-1} aria-labelledby="settings-updates-title">
     <h3 id="settings-updates-title">{t("Updates")}</h3>
     <div className="settings-card"><div className="settings-item">
     {/* always a version: the sidebar no longer carries one */}
@@ -142,8 +143,8 @@ export function HerdrUpdateControls({ enabled, herdrVersion }: { enabled: boolea
 
 /**
  * The app-wide line for a release: one button installs it from here, and the line follows the
- * install to the reload, then tells of the update once the new version runs. Settings is
- * where its notes and a failure are read in full.
+ * install to the reload, then tells of the update once the new version runs. It stays one line
+ * on any width; Settings is where its notes and a failure are read in full.
  */
 export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpen: () => void }) {
   const t = useT();
@@ -168,27 +169,31 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
     if (!installed?.version || !announcesUpdate(status, installed, announced, Date.now())) return null;
     const version = installed.version;
     const close = () => { writeAnnounced(version); setAnnounced(version); };
-    return <div className="update-notice" role="status">
-      <span>{t("herdr web ui was updated to v{version}.", { version })}</span>
+    const text = t("herdr web ui was updated to v{version}.", { version });
+    return <div className="update-notice is-line" role="status">
+      <span title={text}>{text}</span>
       {installed.releases.length > 0 && <button type="button" className="btn btn-ghost" onClick={() => { close(); onOpen(); }}>{t("What's new")}</button>}
-      <button type="button" className="btn btn-ghost" onClick={close}>{t("Dismiss")}</button>
+      <button type="button" className="icon-button update-notice-dismiss" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={close}><X /></button>
     </div>;
   }
   if (installing || started || looking) {
-    return <div className="update-notice is-progress" role="status">
+    return <div className="update-notice is-line is-progress" role="status">
       <UpdateProgress status={status} fallback={t(installing ? status?.phase === "building" ? "Installing dependencies and building…" : "Restarting the bridge…" : started ? "Starting the update…" : "Checking for updates…")} />
     </div>;
   }
   if (needsReload) {
-    return <div className="update-notice" role="status">
-      <span>{t("App updated. Save unsent drafts before reloading.")}</span>
+    // a warning before a step that loses unsent drafts: read in full, so this line alone may wrap
+    const text = t("App updated. Save unsent drafts before reloading.");
+    return <div className="update-notice is-line is-warning" role="status">
+      <span>{text}</span>
       <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button>
     </div>;
   }
   // without a release in reach the server refuses an install: ask it to look again first
   const retry = status?.available ? "install" : "check";
-  return <div className="update-notice" role="status">
-    <span>{failed ? t("The update could not be installed.") : status?.latest_version ? t("herdr web ui v{version} is available.", { version: status.latest_version }) : t("A herdr web ui update is available.")}</span>
+  const text = failed ? t("The update could not be installed.") : status?.latest_version ? t("herdr web ui v{version} is available.", { version: status.latest_version }) : t("A herdr web ui update is available.");
+  return <div className="update-notice is-line" role="status">
+    <span title={text}>{text}</span>
     {failed ? <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("Details")}</button>
       : notes && <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("What's new")}</button>}
     <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setAttempted(true); setStarted(retry === "install"); void request(retry); }}>{t(failed ? "Try again" : "Update")}</button>

@@ -3,7 +3,8 @@
  * A Cloudflare Worker over one D1 table. It never reads the visitor's address or any header
  * beyond the content type; of where a request came from it keeps the country Cloudflare names
  * and nothing finer. It keeps the day rather than the time, and stores each
- * (install, event, version) once, so a replayed event counts once. Deploy: telemetry/README.md.
+ * (install, event, version) once, so a replayed event counts once. Of the app's settings it keeps
+ * the names of the appearance settings changed from their defaults. Deploy: telemetry/README.md.
  */
 
 /** the part of Cloudflare's D1 binding this Worker uses */
@@ -19,6 +20,8 @@ export interface StoredEvent {
   os: string;
   arch: string;
   install_method: "plugin" | "managed" | "source";
+  /** names of the appearance settings changed from their defaults, sorted and comma-joined ("" for none); null when the sender told none */
+  changed_settings: string | null;
 }
 
 const MAX_BODY_BYTES = 2048;
@@ -28,6 +31,8 @@ const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9a-z.]{1,24})?$/;
 const WORD = /^[a-z0-9_]{1,16}$/;
 const EVENTS = new Set(["install", "update"]);
 const METHODS = new Set(["plugin", "managed", "source"]);
+/** shared/telemetry.ts REPORTED_SETTINGS and RETIRED_SETTINGS (worker.test.ts holds them together); a name this Worker does not know is dropped, not refused */
+export const SETTINGS = new Set(["theme", "density", "palette", "sidebarRows", "agentOrder", "agentCards", "agentPins", "planFlow", "planButton"]);
 /** ISO 3166-1 alpha-2 */
 const COUNTRY = /^[A-Z]{2}$/;
 
@@ -38,6 +43,12 @@ const COUNTRY = /^[A-Z]{2}$/;
 export function requestCountry(request: Request): string | null {
   const country = (request as { cf?: { country?: unknown } }).cf?.country;
   return typeof country === "string" && COUNTRY.test(country) && country !== "XX" ? country : null;
+}
+
+/** The known setting names of a list, or null when the sender sent none (an older app, or a browser that has not told yet). */
+function changedSettings(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  return [...new Set(value.filter((name): name is string => typeof name === "string" && SETTINGS.has(name)))].sort().join(",");
 }
 
 /** the event as it is stored, or null when the body is not one */
@@ -56,6 +67,7 @@ export function readEvent(body: unknown, now: Date): StoredEvent | null {
     day: now.toISOString().slice(0, 10),
     event: event as StoredEvent["event"], install_id, version, previous_version, os, arch,
     install_method: install_method as StoredEvent["install_method"],
+    changed_settings: changedSettings(value["changed_settings"]),
   };
 }
 
@@ -90,8 +102,8 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
   const stored = readEvent(body, now);
   if (!stored) return new Response(null, { status: 400 });
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO events (day, event, install_id, version, previous_version, os, arch, install_method, country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(stored.day, stored.event, stored.install_id, stored.version, stored.previous_version, stored.os, stored.arch, stored.install_method, requestCountry(request)).run();
+    "INSERT OR IGNORE INTO events (day, event, install_id, version, previous_version, os, arch, install_method, country, changed_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(stored.day, stored.event, stored.install_id, stored.version, stored.previous_version, stored.os, stored.arch, stored.install_method, requestCountry(request), stored.changed_settings).run();
   return new Response(null, { status: 204 });
 }
 

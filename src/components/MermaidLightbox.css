@@ -1,0 +1,63 @@
+/* above the file viewer (modal + 1), which opens diagrams of its own markdown */
+.mermaid-lightbox-scrim {
+  z-index: calc(var(--z-modal) + 2);
+  padding: 0;
+  background: var(--bg);
+}
+
+.mermaid-lightbox {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.mermaid-lightbox-bar {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.mermaid-lightbox-zoom {
+  min-width: 4ch;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* the stage never scrolls: the diagram moves inside it, and the page behind stays put */
+.mermaid-lightbox-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.mermaid-lightbox-stage.is-dragging { cursor: grabbing; }
+
+/* the svg fills the canvas and keeps its aspect ratio, which is the fit */
+.mermaid-lightbox-canvas {
+  position: absolute;
+  inset: var(--space-8) var(--space-4) var(--space-4);
+  transform-origin: 0 0;
+}
+
+.mermaid-lightbox-canvas svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

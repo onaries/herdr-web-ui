@@ -20,6 +20,7 @@ export function useMachineApi() {
     fetchPaneScroll: (pane: string) => api.fetchPaneScroll(pane, id),
     scrollPane: (pane: string, offset: number) => api.scrollPane(pane, offset, id),
     fetchPaneOmoActivity: (pane: string) => api.fetchPaneOmoActivity(pane, id),
+    fetchPanePlan: (pane: string) => api.fetchPanePlan(pane, id),
     closePane: (pane: string) => api.closePane(pane, id),
     focusPane: (pane: string) => api.focusPane(pane, id),
     closeWorkspace: (workspace: string, closeGroup = false) => api.closeWorkspace(workspace, id, closeGroup),

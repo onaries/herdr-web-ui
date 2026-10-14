@@ -46,6 +46,8 @@
 /* Single-pane chrome must not cover the search controls or the history scrollbar. */
 .pane-frame.is-single:has(.pane-terminal.has-viewport-tools) > .pane-frame-head { right: var(--space-3); }
 .pane-frame.is-single:has(.find-bar) > .pane-frame-head { display: none; }
+/* the tab strip's touch menu carries the open pane's actions: a lone pane draws no second ellipsis */
+.pane-column:has(.tab-strip-menu) .pane-frame.is-single > .pane-frame-head { display: none; }
 .pane-divider {
   position: absolute;
   z-index: var(--z-banner);

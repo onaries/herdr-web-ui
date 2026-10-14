@@ -23,6 +23,7 @@ import type {
   PaneMoved,
   PaneDirection,
   PaneInfo,
+  PanePlan,
   PaneReadResult,
   PaneResized,
   PaneSplit,
@@ -30,6 +31,7 @@ import type {
   PaneZoomed,
   PaneFindRequest,
   PaneFindResponse,
+  PlanStep,
   PromptAnswer,
   PushKey,
   RemoteAccess,
@@ -56,10 +58,11 @@ import type {
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
-import type { TelemetryStatus } from "../../shared/telemetry.ts";
+import type { ReportedSetting, TelemetryStatus } from "../../shared/telemetry.ts";
 import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
+import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
@@ -108,7 +111,7 @@ export async function fetchTelemetry(): Promise<TelemetryStatus | null> {
   catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
 }
 
-export async function changeTelemetry(change: { enabled?: boolean; notice_seen?: true }): Promise<TelemetryStatus> {
+export async function changeTelemetry(change: { enabled?: boolean; notice_seen?: true; changed_settings?: ReportedSetting[] }): Promise<TelemetryStatus> {
   const url = "/api/telemetry";
   const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify(change) });
   if (!response.ok) throw await errorFrom(url, response);
@@ -155,8 +158,8 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
 }
@@ -170,7 +173,7 @@ export async function fetchSession(machineId = "local"): Promise<SessionSnapshot
 const wrappedOnly = new Set<string>();
 
 /**
- * GET /api/pane/read as the chat view polls it: herdr's own scrollback (up to
+ * GET /api/pane/read as the chat view reads it: herdr's own scrollback (up to
  * `lines`), ANSI-stripped text. herdr owns scrollback — the attach stream cannot
  * serve history, so the transcript reads it back instead. `recent_unwrapped`
  * rejoins the rows the terminal soft-wrapped, so a line reflows to the chat's
@@ -179,7 +182,7 @@ const wrappedOnly = new Set<string>();
 export async function fetchPaneTranscript(paneId: string, lines: number, machineId = "local"): Promise<PaneReadResult> {
   const read = async (source: "recent" | "recent_unwrapped"): Promise<PaneReadResult> => {
     const query = new URLSearchParams({ pane_id: paneId, source, format: "text", lines: String(lines) });
-    return (await getJson<{ read: PaneReadResult }>(machinePath(machineId, `pane/read?${query.toString()}`))).read;
+    return (await withChatReadDeadline((signal) => getJson<{ read: PaneReadResult }>(machinePath(machineId, `pane/read?${query.toString()}`), { signal }), chatReadDeadlineMs(machineId))).read;
   };
   if (wrappedOnly.has(machineId)) return read("recent");
   try {
@@ -192,10 +195,12 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
 }
 
 /** Which turns (ConversationResponse.cursor): the page `before` a cursor, not past `since`; the newest ones `from` a held start. */
-export type ConversationPageQuery = { before?: string; since?: string; from?: string };
+export type ConversationPageQuery = { before?: string; since?: string; from?: string; limit?: number };
 
 /**
- * The last answer per polled conversation URL and its ETag. The chat polls every 2s
+ * The last answer per newest-page conversation URL and its ETag. The chat reads it again on
+ * every transcript push (at most every 2s), every send and status edge, and a 10s backstop
+ * (2s without pushes),
  * and a newest page can be megabytes: an unchanged one comes back as a bodyless 304,
  * and the chat gets the very same object back, which tells it nothing changed. An
  * older page (`before`) is asked for once, so it keeps no ETag and takes no slot.
@@ -245,18 +250,22 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   if (page.before !== undefined) query.set("before", page.before);
   if (page.since !== undefined) query.set("since", page.since);
   if (page.from !== undefined) query.set("from", page.from);
+  if (page.limit !== undefined) query.set("limit", String(page.limit));
   const url = machinePath(machineId, `pane/conversation?${query.toString()}`);
   const polled = page.before === undefined;
   const known = polled ? conversationAnswers.get(url) : undefined;
-  const response = await fetch(url, { cache: "no-store", ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
+  const { response, body } = await withChatReadDeadline(async (signal) => {
+    const response = await fetch(url, { cache: "no-store", signal, ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
+    if (response.status === 304 && known) return { response, body: known.body };
+    if (!response.ok) throw await errorFrom(url, response);
+    return { response, body: (await response.json()) as ConversationResponse };
+  }, chatReadDeadlineMs(machineId));
+  // Cache changes occur after the bounded read: a late, aborted answer cannot replace it.
   if (response.status === 304 && known) {
-    // the pane being polled stays among the kept answers
     conversationAnswers.delete(url);
     conversationAnswers.set(url, known);
-    return known.body;
+    return body;
   }
-  if (!response.ok) throw await errorFrom(url, response);
-  const body = (await response.json()) as ConversationResponse;
   const etag = response.headers.get("etag");
   if (!polled) return body;
   conversationAnswers.delete(url);
@@ -626,6 +635,12 @@ export async function fetchPaneOmoActivity(paneId: string, machineId = "local"):
   return { tasks: activity.tasks ?? [], runs: activity.runs ?? [], serverTime: activity.server_time ?? null };
 }
 
+/** GET /api/pane/plan: the plan the pane's Claude Code or Codex session keeps, and that PC's clock. */
+export async function fetchPanePlan(paneId: string, machineId = "local"): Promise<{ steps: PlanStep[] | null; serverTime: string | null }> {
+  const answer = await getJson<Partial<PanePlan>>(machinePath(machineId, `pane/plan?pane_id=${encodeURIComponent(paneId)}`));
+  return { steps: answer.plan?.steps ?? null, serverTime: answer.server_time ?? null };
+}
+
 /** GET /api/pane/files: paths under the pane's cwd matching `query`, for @-mentions. */
 export async function fetchPaneFiles(paneId: string, query: string, limit = 20, machineId = "local"): Promise<string[]> {
   const params = new URLSearchParams({ pane_id: paneId, q: query, limit: String(limit) });
@@ -637,10 +652,15 @@ export async function fetchPanePrompt(paneId: string, machineId = "local"): Prom
   return (await fetchPanePromptState(paneId, machineId)).prompt;
 }
 
-/** The waiting prompt, and with none, the next prompt the agent suggests (older servers send no suggestion). */
-export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; compacting: boolean }> {
-  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null; compacting?: boolean }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
-  return { prompt: body.prompt, suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null, compacting: body.compacting === true };
+/** The waiting prompt, and with none, the next prompt the agent suggests; restored is a send the agent put back in its input box when it was cancelled (older servers send neither). */
+export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; restored: string | null; compacting: boolean }> {
+  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null; restored?: string | null; compacting?: boolean }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
+  return {
+    prompt: body.prompt,
+    compacting: body.compacting === true,
+    suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null,
+    restored: typeof body.restored === "string" && body.restored !== "" ? body.restored : null,
+  };
 }
 
 /** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */

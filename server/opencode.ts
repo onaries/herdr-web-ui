@@ -8,8 +8,9 @@
  * The service is started with the user's environment, so this server's environment finds it; the
  * pane's process environment would not. A session is a `session_v2` row and its conversation the
  * `session_message` rows of its id, ordered by `seq`, each a `type` and a JSON `data`. OpenCode 1.x
- * wrote `session`/`message`/`part` instead (2.0 copies them into `session_v2` when it migrates);
- * a store without `session_v2` keeps the terminal.
+ * wrote `session`/`message`/`part` instead (2.0 copies them into `session_v2` when it migrates); a
+ * store without `session_v2` is read by the 1.x reader at the foot of this file, which folds the same
+ * turns, and keeps the terminal only when neither table set is there.
  *
  * herdr's OpenCode integration reports the session the TUI shows (`herdr:opencode`, kind `id`),
  * so a pane is bound by that id, never by a guess from its cwd.
@@ -461,6 +462,14 @@ export function opencodeConversation(path: string, sessionId: string, page: Open
   const cacheKey = `${key}\0${page.before ?? ""}\0${page.since ?? ""}\0${page.from ?? ""}`;
   try {
     const answer = withStore(path, (db): OpencodeAnswer => {
+      // A broken or changing 1.x store leaves the terminal as the source of the conversation.
+      if (storeFlavor(db) === "v1") {
+        try { return conversation1(db, cacheKey, sessionId, page); }
+        catch (error) {
+          if (busy(error)) return answers.get(`${cacheKey}\0v1`)?.answer ?? { kind: "unavailable", reason: "store_busy" };
+          return { kind: "unavailable", reason: "transcript_missing" };
+        }
+      }
       const view = sessionView(db, sessionId);
       if (view === null) return { kind: "unavailable", reason: "session_not_found" };
       const cached = answers.get(cacheKey);
@@ -550,7 +559,7 @@ function readRow<T>(path: string, sessionId: string, id: string, read: (row: { t
   if (!SESSION_ID.test(sessionId) || !MESSAGE_ID.test(id)) return null;
   try {
     return withStore(path, (db) => {
-      const row = sessionRow(db, sessionId, id);
+      const row = storeFlavor(db) === "v1" ? sessionRow1(db, sessionId, id) : sessionRow(db, sessionId, id);
       return row === null ? null : read(row);
     });
   } catch (error) {
@@ -579,4 +588,234 @@ export function opencodeImage(path: string, sessionId: string, ref: string): { m
     const image = rowImages(row.type, row.data)[Number(match[2])];
     return image === undefined ? null : { mediaType: image.media_type, bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
   });
+}
+
+/* -------------------------------------------------------------------------------------------------
+ * OpenCode 1.x: session / message / part
+ *
+ * Before the 2.x store (2.0.24), OpenCode kept the same conversation in three tables: `session`, and
+ * one `message` and several `part` rows per step. 2.0 copies them into `session_v2`/`session_message`
+ * when it migrates; a store with no `session_v2` is still 1.x, which the 2.x reader refused (its
+ * `session_v2` queries throw `no such table` and the chat fell back to the terminal). This reader
+ * reads the same turns from those tables, adapting each message to the row shape `opencodeRecord`
+ * already understands so the folding, tool trimming and image refs are the 2.x ones.
+ *
+ * `message.data.role` is `user` or `assistant`; an assistant step keeps the model (`modelID`) and its
+ * usage (`tokens`) on the message and its `text`/`reasoning`/`tool` blocks in `part` rows. There is no
+ * `seq`: a message is ordered by `(time_created, id)`, and a page cursor names a message by its place
+ * in that order. A `/undo` is `session.revert` (a `{ messageID }`), hiding the rows from it on; the
+ * revert commit deletes that suffix, leaving the earlier places unchanged. Read-only, per `session_id`.
+ * ----------------------------------------------------------------------------------------------- */
+
+type StoreFlavor = "v2" | "v1" | "unknown";
+// The 1.x adapter eagerly joins messages and parts; leave larger stores to the terminal view.
+const MAX_V1_ROWS = 10_000;
+const MAX_V1_BYTES = 4 * OPENCODE_WINDOW_BYTES;
+
+/** 2.x (`session_v2`), 1.x (`session`/`message`/`part`), or a file this reader cannot page. */
+function storeFlavor(db: Database): StoreFlavor {
+  const table = (name: string) => db.query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== null;
+  if (table("session_v2")) return "v2";
+  if (table("session") && table("message") && table("part")) return "v1";
+  return "unknown";
+}
+
+/** One 1.x message with its parts, in the order the page reads them. */
+interface Message1 {
+  id: string;
+  data: Row;
+  parts: Row[];
+  updated: number;
+  size: number;
+}
+
+/** Every message of a 1.x session with its parts, ordered by `(time_created, id)`: one query per table. */
+function loadSession1(db: Database, sessionId: string): Message1[] {
+  const parts = new Map<string, Row[]>();
+  // the stored bytes are what a page counts, as the 2.x reader counts `octet_length(data)`: parsing
+  // each part only to re-serialize it back to JSON for its length is the same number, for nothing
+  const partBytes = new Map<string, number>();
+  for (const row of db.query<{ message_id: string; data: string }, [string]>(
+    "SELECT message_id, data FROM part WHERE session_id = ? ORDER BY time_created, id",
+  ).iterate(sessionId)) {
+    const list = parts.get(row.message_id) ?? [];
+    list.push(parseData(row.data));
+    parts.set(row.message_id, list);
+    partBytes.set(row.message_id, (partBytes.get(row.message_id) ?? 0) + Buffer.byteLength(row.data, "utf8"));
+  }
+  const messages: Message1[] = [];
+  for (const row of db.query<{ id: string; updated: number; data: string }, [string]>(
+    "SELECT id, time_updated AS updated, data FROM message WHERE session_id = ? ORDER BY time_created, id",
+  ).iterate(sessionId)) {
+    const own = parts.get(row.id) ?? [];
+    const size = Buffer.byteLength(row.data, "utf8") + (partBytes.get(row.id) ?? 0);
+    messages.push({ id: row.id, data: parseData(row.data), parts: own, updated: row.updated, size });
+  }
+  return messages;
+}
+
+/** A 1.x message's error (a name plus a `data.message`) as the `type`/`message` the 2.x reader shows. */
+function adaptMessageError1(value: unknown): Row | undefined {
+  const error = record(value);
+  if (Object.keys(error).length === 0) return undefined;
+  const name = typeof error.name === "string" ? error.name : "";
+  const message = text(record(error.data).message) ?? text(error.message);
+  return { type: /abort/i.test(name) ? "aborted" : name || "error", message: message ?? "" };
+}
+
+/** A 1.x tool error (a plain string) as the `{ message }` the 2.x writer carries. */
+const adaptToolError1 = (value: unknown): unknown => typeof value === "string" && value.length > 0 ? { message: value } : value;
+
+/** A 1.x message and its parts as the 2.x row shape `opencodeRecord` reads, or null for one it shows nothing of. */
+function adaptMessage1(message: Message1): { type: string; data: Row } | null {
+  const role = message.data.role;
+  if (role === "user") {
+    const prompt = message.parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text as string).join("\n");
+    // a picture pasted in the prompt is a `file` part: its 1.x `url` is the 2.x `uri` `rowImages` reads
+    const files = message.parts.filter((part) => part.type === "file" && typeof part.url === "string")
+      .map((part) => ({ type: "file", uri: part.url, mime: part.mime }));
+    return { type: "user", data: { time: message.data.time, text: prompt, files, skills: [] } };
+  }
+  if (role !== "assistant") return null;
+  const content: Row[] = [];
+  for (const part of message.parts) {
+    if (part.type === "text" && typeof part.text === "string") content.push({ type: "text", text: part.text });
+    else if (part.type === "reasoning" && typeof part.text === "string") content.push({ type: "reasoning", text: part.text });
+    else if (part.type === "tool" && typeof part.tool === "string") {
+      const state = record(part.state);
+      const metadata = record(state.metadata);
+      const printed = typeof state.output === "string" && state.output.length > 0 ? state.output : typeof metadata.output === "string" ? metadata.output : "";
+      const result: Row[] = printed.length === 0 ? [] : [{ type: "text", text: printed }];
+      for (const value of (Array.isArray(state.attachments) ? state.attachments : []).map(record)) {
+        if (value.type === "file") result.push({ type: "file", uri: value.url, mime: value.mime });
+      }
+      content.push({ type: "tool", name: part.tool, state: { status: state.status, input: state.input, content: result, error: adaptToolError1(state.error), metadata: state.metadata } });
+    }
+  }
+  return { type: "assistant", data: { time: message.data.time, content, finish: message.data.finish, error: adaptMessageError1(message.data.error), tokens: message.data.tokens } };
+}
+
+/** The 1.x session's own view: what a `/undo` hides, and what any change to the store changes. */
+function sessionView1(db: Database, sessionId: string): (SessionView & { rows: number }) | null {
+  const session = db.query<{ revert: string | null }, [string]>("SELECT revert FROM session WHERE id = ?").get(sessionId);
+  if (session === null) return null;
+  const stats = db.query<{ count: number; updated: number | null; parts: number; partUpdated: number | null }, [string, string, string, string]>(
+    "SELECT (SELECT count(*) FROM message WHERE session_id = ?) AS count, (SELECT max(time_updated) FROM message WHERE session_id = ?) AS updated, (SELECT count(*) FROM part WHERE session_id = ?) AS parts, (SELECT max(time_updated) FROM part WHERE session_id = ?) AS partUpdated",
+  ).get(sessionId, sessionId, sessionId, sessionId)!;
+  let end = stats.count;
+  let revert: unknown = null;
+  try { revert = session.revert === null ? null : JSON.parse(session.revert); } catch { /* not JSON: nothing staged */ }
+  const boundary = record(revert).messageID;
+  if (typeof boundary === "string") {
+    const row = db.query<{ time_created: number }, [string, string]>("SELECT time_created FROM message WHERE id = ? AND session_id = ?").get(boundary, sessionId);
+    if (row !== null) {
+      end = db.query<{ count: number }, [string, number, number, string]>(
+        "SELECT count(*) AS count FROM message WHERE session_id = ? AND (time_created < ? OR (time_created = ? AND id < ?))",
+      ).get(sessionId, row.time_created, row.time_created, boundary)!.count;
+    }
+  }
+  const historyId = `opencode-${sessionId}${end === stats.count ? "" : `-r${end.toString(36)}`}`;
+  return { end, historyId, signature: `${historyId}:${stats.count}:${stats.updated}:${stats.parts}:${stats.partUpdated}`, rows: stats.count + stats.parts };
+}
+
+/** The settings OpenCode's footer shows for a 1.x session: the latest step's model and usage at `end`. */
+function sessionMetadata1(messages: readonly Message1[], end: number): ConversationMetadata {
+  let model: string | null = null;
+  let usage: Row | null = null;
+  for (let index = end - 1; index >= 0; index--) {
+    const data = messages[index]!.data;
+    if (data.role !== "assistant") continue;
+    if (model === null) model = text(data.modelID);
+    if (usage === null && data.tokens !== undefined) usage = record(data.tokens);
+    if (model !== null && usage !== null) break;
+  }
+  const metadata: ConversationMetadata = { model, reasoning_effort: null };
+  if (usage !== null) {
+    const cache = record(usage.cache);
+    const used = count(usage.input) + count(usage.output) + count(usage.reasoning) + count(cache.read) + count(cache.write);
+    if (used > 0) metadata.context = { used, window: null };
+  }
+  return metadata;
+}
+
+/** One page of a 1.x session, keyed by the message's place in `(time_created, id)` order. */
+function conversation1(db: Database, cacheKey: string, sessionId: string, page: OpencodePage): OpencodeAnswer {
+  const view = sessionView1(db, sessionId);
+  if (view === null) return { kind: "unavailable", reason: "session_not_found" };
+  if (view.rows > MAX_V1_ROWS) return { kind: "unavailable", reason: "transcript_missing" };
+  const key = `${cacheKey}\0v1`;
+  const cached = answers.get(key);
+  if (cached?.signature === view.signature) return cached.answer;
+
+  const bytes = db.query<{ messages: number | null; parts: number | null }, [string, string]>(
+    "SELECT (SELECT sum(length(CAST(data AS BLOB))) FROM message WHERE session_id = ?) AS messages, (SELECT sum(length(CAST(data AS BLOB))) FROM part WHERE session_id = ?) AS parts",
+  ).get(sessionId, sessionId)!;
+  if ((bytes.messages ?? 0) + (bytes.parts ?? 0) > MAX_V1_BYTES) return { kind: "unavailable", reason: "transcript_missing" };
+
+  const messages = loadSession1(db, sessionId);
+  // a revert commit between the view and the load deletes a suffix: never page past what was read
+  const end = Math.min(view.end, messages.length);
+  const cursorOf = (cursor: string): number | null => {
+    const separator = cursor.lastIndexOf(":");
+    const offset = Number(cursor.slice(separator + 1));
+    if (separator <= 0 || cursor.slice(0, separator) !== view.historyId || !Number.isSafeInteger(offset) || offset < 0 || offset > end) return null;
+    if (offset === 0) return 0;
+    return offset < end ? offset : null;
+  };
+  const descending = (from: number, to: number): RowMeta[] => {
+    const rows: RowMeta[] = [];
+    for (let index = to - 1; index >= from; index--) {
+      const message = messages[index]!;
+      rows.push({ id: message.id, seq: index, type: typeof message.data.role === "string" ? message.data.role : "", updated: message.updated, size: message.size });
+    }
+    return rows;
+  };
+
+  let start: number;
+  let to = end;
+  if (page.before !== undefined) {
+    const before = cursorOf(page.before);
+    const floor = page.since === undefined ? 0 : cursorOf(page.since);
+    if (before === null || floor === null || floor > before) return { kind: "history_changed" };
+    start = before === floor ? floor : pageStart(descending(floor, before), floor, true);
+    to = before;
+  } else {
+    const held = page.from === undefined ? null : cursorOf(page.from);
+    if (page.from !== undefined && held === null) return { kind: "history_changed" };
+    const newest = pageStart(descending(0, end), 0, false);
+    start = held !== null && held >= newest ? held : newest;
+  }
+
+  const records: (OpencodeRecord | null)[] = [];
+  for (let index = start; index < to; index++) {
+    const adapted = adaptMessage1(messages[index]!);
+    records.push(adapted === null ? null : opencodeRecord(messages[index]!.id, adapted.type, adapted.data));
+  }
+  const result = {
+    kind: "page" as const,
+    turns: opencodeTurns(records),
+    metadata: sessionMetadata1(messages, to),
+    cursor: start > 0 ? `${view.historyId}:${start}` : null,
+    history_id: view.historyId,
+    signature: view.signature,
+  };
+  remember(answers, key, { signature: view.signature, answer: result }, 32);
+  return result;
+}
+
+/** A visible 1.x message by id, as the 2.x `(type, data)` shape the tool-output and image readers use. */
+function sessionRow1(db: Database, sessionId: string, id: string): { type: string; data: Row } | null {
+  const view = db.query<{ revert: string | null }, [string]>("SELECT revert FROM session WHERE id = ?").get(sessionId);
+  if (view === null) return null;
+  const row = db.query<{ time_created: number; data: string }, [string, string]>("SELECT time_created, data FROM message WHERE id = ? AND session_id = ?").get(id, sessionId);
+  if (row === null) return null;
+  let revert: unknown = null;
+  try { revert = view.revert === null ? null : JSON.parse(view.revert); } catch { /* nothing staged */ }
+  const boundary = record(revert).messageID;
+  if (typeof boundary === "string") {
+    const hidden = db.query<{ time_created: number }, [string, string]>("SELECT time_created FROM message WHERE id = ? AND session_id = ?").get(boundary, sessionId);
+    if (hidden !== null && (row.time_created > hidden.time_created || (row.time_created === hidden.time_created && id >= boundary))) return null;
+  }
+  const parts = db.query<{ data: string }, [string]>("SELECT data FROM part WHERE message_id = ? ORDER BY time_created, id").all(id).map((part) => parseData(part.data));
+  return adaptMessage1({ id, data: parseData(row.data), parts, updated: 0, size: 0 });
 }

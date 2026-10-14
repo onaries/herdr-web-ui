@@ -47,6 +47,17 @@ describe("bridge pending input", () => {
     expect(f.queue.outcome("b", "p1", item.message.id)).toBeUndefined();
   });
 
+  it("never offers a held message to automatic delivery, only to an explicit send", () => {
+    const f = fixture();
+    const held = f.queue.enqueue("a", "p1", 1, "later", "lease", { agent: "claude", terminalId: "t1", session: null }, true);
+    const queued = f.enqueue(2);
+    expect(held.message.state).toBe("held");
+    f.queue.status("p1", "idle");
+    expect(f.queue.next("p1")).toBe(queued);
+    expect(f.queue.claim(held, true)).toBe(false);
+    expect(f.queue.claim(held, false)).toBe(true);
+  });
+
   it("does not flush a second message from a lagging ready snapshot", () => {
     const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
     f.queue.status("p1", "done");

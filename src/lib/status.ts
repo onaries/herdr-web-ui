@@ -47,9 +47,10 @@ export function rollupStatus(statuses: ReadonlyArray<AgentStatus | undefined>): 
 }
 
 /**
- * Whether a pushed status change should read the conversation now instead of at the next poll:
- * a turn starts or ends when the pane enters or leaves `working`, and the chat's last block
- * follows the status while the transcript it holds is up to POLL_MS old.
+ * Whether a pushed status change should read the conversation now instead of waiting for a
+ * transcript push or the backstop: a turn starts or ends when the pane enters or leaves
+ * `working`, and the chat's last block follows the status while the transcript it holds is
+ * older than that status (a chat without pushes reads only every 2 s).
  */
 export function statusEdgeRead(previous: AgentStatus | undefined, next: AgentStatus | undefined): boolean {
   return previous !== next && (previous === "working" || next === "working");

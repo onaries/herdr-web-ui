@@ -74,7 +74,7 @@ try {
   // any of those silently target the user's current socket.
   assert.notEqual(process.env.HERDR_TEST_LIVE, "1", "Live-session mode is forbidden");
   assert.notEqual(process.env.HERDR_TEST_MODE, "unit", "This regression requires isolated herdr");
-  process.env.HERDR_TEST_SESSION = "herdr-web-ui-test";
+  process.env.HERDR_TEST_SESSION ||= "herdr-web-ui-test";
   const { testSocketPath } = await import("./test-herdr.ts");
   assert.equal(process.env.HERDR_SOCKET, testSocketPath(), "test-herdr must select its isolated socket");
 

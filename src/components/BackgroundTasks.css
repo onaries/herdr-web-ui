@@ -29,6 +29,28 @@
   display: none;
 }
 
+/* the plan's progress is the chip's number: always drawn, the words beside it give way first */
+.bg-tasks-plan {
+  font-variant-numeric: tabular-nums;
+}
+
+/* a plan and running tasks share the chip: a hairline between them, the tasks as icon and number */
+.bg-tasks-sep {
+  align-self: stretch;
+  width: var(--hairline);
+  margin: var(--space-1) var(--space-1);
+  background: currentColor;
+  opacity: 0.4;
+}
+
+.bg-tasks-label.is-secondary {
+  display: none;
+}
+
+.bg-tasks-label.is-secondary + .bg-tasks-count {
+  display: inline;
+}
+
 /* a narrow card (a phone, or a lane beside the sidebar): the chip gives up its words before the
    model gives up its letters. The icon and the number say it, the button's name has the words.
    The composer marks the card from its own width (composerStatusCompact) */
@@ -146,7 +168,30 @@
   color: var(--text-dim);
 }
 
-.bg-task.is-running .bg-task-icon { color: var(--status-working); }
+.bg-task.is-running .bg-task-icon,
+.bg-step.is-in_progress .bg-task-icon { color: var(--status-working); }
+.bg-step.is-completed .bg-task-icon { color: var(--status-done); }
+.bg-step.is-pending .bg-task-title { color: var(--text-dim); }
+
+/* what the running step does now, in the agent's own words */
+.bg-step-active {
+  color: var(--text);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+/* the plan heading says how far it got; the tasks heading sets the tasks apart below it */
+.bg-plan-progress {
+  margin-left: var(--space-2);
+  font-weight: normal;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.bg-tasks-heading {
+  margin-top: var(--space-1);
+  border-top: var(--hairline) solid var(--border);
+}
 .bg-task.is-completed .bg-task-icon { color: var(--status-done); }
 .bg-task.is-failed .bg-task-icon,
 .bg-task.is-lost .bg-task-icon { color: var(--status-blocked); }

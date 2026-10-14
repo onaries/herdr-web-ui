@@ -4,7 +4,10 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 type Handler = (message: ServerMessage) => void;
 
 /** A submit was delivered, accepted into the bridge's pending queue, or refused. */
-export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string };
+/** `draft`: an input_draft refusal's one-row Claude draft, which a send with clearDraft may clear */
+/** immediate: typed now; queue: waits for the next turn; hold: waits for the user's Send now */
+export type SubmitDelivery = "immediate" | "queue" | "hold";
+export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string; draft?: string };
 
 /** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
 const SNAPSHOT_WAIT_MS = 2000;
@@ -53,10 +56,22 @@ export class HerdrSocket {
   private readonly attached = new Map<string, AttachState>();
   /** panes this tab views read-only while out of use (feature "watch"), at the grid it asked for; replayed after each snapshot */
   private readonly watched = new Map<string, { cols: number; rows: number }>();
+  /** Panes whose mounted, visible chat asks for transcript invalidations. The server drops interest
+   * with the attachment, so each attach of a pane listed here (a reconnect's, or a tab back in use
+   * after letting go of it) asks again; only the chat taking its interest back removes it. */
+  private readonly conversationWanted = new Set<string>();
   private retries = 0;
   private reconnectTimer: number | null = null;
   private disposed = false;
+  private wakeListening = false;
+  /** a page shown again or a network back: a reconnect waiting out its backoff runs now */
+  private readonly onWake = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    this.wake();
+  };
   private mode: ClientRole = "interact";
+  /** whether the page is in use (`presence`), as last told; null until the page says */
+  private presence: boolean | null = null;
   private outputStopped = false;
   /** what the connected server listed in its snapshot: empty until it arrives, and on older bridges */
   private features = new Set<ServerFeature>();
@@ -79,6 +94,7 @@ export class HerdrSocket {
 
   connect(): void {
     if (this.disposed) return;
+    this.listenForWake();
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -97,6 +113,8 @@ export class HerdrSocket {
       // the reconnect would leave the server on the stale role and no ack would ever
       // arrive - the UI would stay stuck in the old role while the header pill lies
       this.rawSend({ type: "role", mode: this.mode });
+      // a new connection is a new client to the server: it has to hear again whether the page is in use
+      if (this.presence !== null) this.rawSend({ type: "presence", active: this.presence });
       for (const [paneId, state] of this.attached) {
         this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows, flow_control: "ack", ...(state.keepSize ? { keep_size: true } : {}) });
       }
@@ -120,6 +138,13 @@ export class HerdrSocket {
         this.features = new Set(message.features ?? []);
         this.snapshotKnown = true;
         if (!this.features.has("input-ready")) for (const pane of this.outputSeen) if (this.attached.has(pane)) this.inputReady.add(pane);
+        // Capabilities arrive after open's role/attach replay. Restore only current interest,
+        // never send an unknown frame to an older bridge or replay a hidden/detached chat.
+        if (this.features.has("conversation-watch")) {
+          for (const paneId of this.attached.keys()) {
+            if (this.conversationWanted.has(paneId)) this.rawSend({ type: "conversation-watch", pane_id: paneId, enabled: true });
+          }
+        }
         if (this.features.has("watch")) {
           for (const [paneId, grid] of this.watched) this.rawSend({ type: "watch", pane_id: paneId, cols: grid.cols, rows: grid.rows });
         } else {
@@ -135,7 +160,8 @@ export class HerdrSocket {
       }
       if ((message.type === "input-ready" && message.ready === false) || message.type === "pty-exit" || (message.type === "error" && message.pane_id && ["attach_held", "input_not_ready"].includes(message.code))) this.inputReady.delete(message.pane_id!);
       if (message.type === "submit-result" && this.matchesRequest(message.id, "submit", message.pane_id)) {
-        this.resolveRequest(message.id, message.ok ? { ok: true, ...(message.pending ? { pending: message.pending } : {}) } : { ok: false, code: message.code ?? "submit_failed", message: message.message ?? "the pane did not take the message" });
+        this.resolveRequest(message.id, message.ok ? { ok: true, ...(message.pending ? { pending: message.pending } : {}) }
+          : { ok: false, code: message.code ?? "submit_failed", message: message.message ?? "the pane did not take the message", ...(message.draft ? { draft: message.draft } : {}) });
       }
       if (message.type === "pending-messages") {
         // The owner-only live queue is also an acceptance receipt if its submit ACK
@@ -174,6 +200,27 @@ export class HerdrSocket {
     socket.addEventListener("error", () => {
       socket.close();
     });
+  }
+
+  private listenForWake(): void {
+    if (this.wakeListening || typeof window.addEventListener !== "function") return;
+    this.wakeListening = true;
+    window.addEventListener("online", this.onWake);
+    window.addEventListener("pageshow", this.onWake);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onWake);
+  }
+
+  /**
+   * A phone that slept or went to the background comes back with its socket closed and a
+   * reconnect timer that may have backed off to its 5s cap. Waking skips that wait and starts
+   * again from the shortest delay. A stopped output stays stopped: only an attach resumes it.
+   */
+  wake(): void {
+    if (this.disposed || this.outputStopped || this.reconnectTimer === null) return;
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.retries = 0;
+    this.connect();
   }
 
   private scheduleReconnect(): void {
@@ -217,10 +264,29 @@ export class HerdrSocket {
     this.inputReady.delete(paneId);
     this.attached.set(paneId, { cols, rows, keepSize });
     this.send({ type: "attach", pane_id: paneId, cols, rows, flow_control: "ack", ...(keepSize ? { keep_size: true } : {}) });
+    if (this.conversationWanted.has(paneId) && this.features.has("conversation-watch")) {
+      this.send({ type: "conversation-watch", pane_id: paneId, enabled: true });
+    }
     if (this.outputStopped) {
       this.outputStopped = false;
       this.connect();
     }
+  }
+
+  /** Retained control state, not queued input: kept across detach, asked again by the next attach. */
+  watchConversation(paneId: string, enabled: boolean): void {
+    if (this.conversationWanted.has(paneId) === enabled) return;
+    if (enabled) this.conversationWanted.add(paneId);
+    else this.conversationWanted.delete(paneId);
+    // a detached pane has no interest on the server: its next attach asks
+    if (this.attached.has(paneId) && this.features.has("conversation-watch")) {
+      this.send({ type: "conversation-watch", pane_id: paneId, enabled });
+    }
+  }
+
+  /** Whether this connection's bridge pushes transcript changes to a watching chat. */
+  conversationPushes(): boolean {
+    return this.connected && this.features.has("conversation-watch");
   }
 
   /** Capture connection AND subscription before xterm's asynchronous write. Never queue ACKs. */
@@ -291,6 +357,13 @@ export class HerdrSocket {
     if (state) state.keepSize = true;
   }
 
+  /** Whether the page is in use (visible and focused): the server holds web push while one is. Replays on reconnect. */
+  setPresence(active: boolean): void {
+    if (this.presence === active) return;
+    this.presence = active;
+    if (this.connected) this.rawSend({ type: "presence", active });
+  }
+
   /** Sets the connection's role. Not queued: the role replays before the attaches on reconnect. */
   setMode(mode: ClientRole): void {
     this.mode = mode;
@@ -304,6 +377,11 @@ export class HerdrSocket {
   /** Whether this connection can accept and manage pending messages on the bridge. */
   canQueueMessages(): boolean {
     return this.connected && this.mode === "interact" && this.features.has("submit") && this.features.has("pending-input");
+  }
+
+  /** Whether the bridge can keep a pending message for Send now alone (`delivery: "hold"`). */
+  canHoldMessages(): boolean {
+    return this.canQueueMessages() && this.features.has("pending-hold");
   }
 
   sendInput(paneId: string, text: string): boolean {
@@ -320,21 +398,26 @@ export class HerdrSocket {
    * as written, `payload` the same shaped for the pane's paste mode. null, sending
    * nothing, when offline.
    */
-  /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage) */
-  submit(paneId: string, text: string, payload: string, typed = false, delivery: "immediate" | "queue" = "immediate"): Promise<SubmitResult> | null {
+  /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage).
+   * `clearDraft`: an immediate send over the draft an input_draft refusal named (ClientMessage `clear_draft`) */
+  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     return (async (): Promise<SubmitResult> => {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
       if (!this.connected || this.socket !== socket) return DISCONNECTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages." };
+      // hold is decided once the snapshot said what the bridge supports: one too old to hold queues it as before
+      if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
       if (!this.features.has("submit")) {
+        if (clearDraft !== undefined) return { ok: false, code: "unsupported", message: "Update this PC to clear a terminal draft before sending. Nothing was sent." };
         this.rawSend({ type: "input", pane_id: paneId, text: `${payload}\r` });
         return { ok: true };
       }
       const id = this.nextSubmit++;
-      return this.submitRequest({ type: "submit", id, pane_id: paneId, text, payload, ...(typed ? { typed: true } : {}), ...(delivery === "queue" ? { delivery: "queue" as const } : {}) });
+      return this.submitRequest({ type: "submit", id, pane_id: paneId, text, payload, ...(typed ? { typed: true } : {}), ...(delivery !== "immediate" ? { delivery } : {}),
+        ...(clearDraft !== undefined ? { clear_draft: clearDraft } : {}) });
     })();
   }
 
@@ -354,7 +437,7 @@ export class HerdrSocket {
   /** Only an acknowledgement callback is retained, never a frame to resend. */
   private submitRequest(message: Extract<ClientMessage, { type: "submit" | "pending-action" }>): Promise<SubmitResult> {
     const id = message.id;
-    this.requests.set(id, { type: message.type, paneId: message.pane_id, ...(message.type === "submit" ? { queued: message.delivery === "queue" } : { pendingId: message.pending_id }) });
+    this.requests.set(id, { type: message.type, paneId: message.pane_id, ...(message.type === "submit" ? { queued: message.delivery === "queue" || message.delivery === "hold" } : { pendingId: message.pending_id }) });
     const result = new Promise<SubmitResult>((resolve) => {
       this.submits.set(id, resolve);
       window.setTimeout(() => {
@@ -427,6 +510,12 @@ export class HerdrSocket {
     this.disposed = true;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.wakeListening) {
+      window.removeEventListener("online", this.onWake);
+      window.removeEventListener("pageshow", this.onWake);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onWake);
+      this.wakeListening = false;
+    }
     this.socket?.close();
     this.socket = null;
     this.settleSubmits(DISCONNECTED);

@@ -69,6 +69,27 @@ export function beginPaneMove(machineId: string, paneId: string): void { pending
 export function endPaneMove(machineId: string, paneId: string): void { pendingMoves.delete(paneStorageId(machineId, paneId)); movesChanged(); }
 export function paneMovePending(machineId: string, paneId: string | null): boolean { return paneId !== null && pendingMoves.has(paneStorageId(machineId, paneId)); }
 
+/*
+ * The ids this tab has seen moves give panes, old to new. An entry of the history written before
+ * a move names the old id: followed through every move since, it is the same pane again.
+ */
+const movedPanes = new Map<string, string>();
+export function recordPaneMove(machineId: string, previousPaneId: string, paneId: string): void {
+  if (previousPaneId !== paneId) movedPanes.set(paneStorageId(machineId, previousPaneId), paneId);
+}
+/** the id a pane has now, after the moves this tab saw; null when none moved it */
+export function paneMovedTo(machineId: string, paneId: string | null): string | null {
+  if (paneId === null) return null;
+  let current = paneId;
+  // bounded: herdr does not hand an id out twice, but a cycle here would hang the tab
+  for (let step = 0; step <= movedPanes.size; step += 1) {
+    const next = movedPanes.get(paneStorageId(machineId, current));
+    if (next === undefined) break;
+    current = next;
+  }
+  return current === paneId ? null : current;
+}
+
 type CarriedStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 /** the phone's terminal line (lib/terminalDraft.ts): a store of its own, in memory where storage is blocked */
 interface TerminalLines { read: (owner: string) => string; write: (owner: string, text: string) => void; sending: (owner: string) => boolean }

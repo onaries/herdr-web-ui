@@ -148,7 +148,8 @@ try {
         box.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: text }));
         box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: text }));
       }, text);
-      await until(() => read().length > imeBefore.length, "IME commit received");
+      // a commit can reach the program in more than one read: wait for all of its bytes, two hex digits each
+      await until(() => read().length - imeBefore.length >= Buffer.byteLength(text) * 2, "IME commit received");
       assert.equal(frames.slice(imeFrames).some((frame) => frame.type === "keys"), false, "IME commit bypasses held modifiers");
       assert.equal(Buffer.from(read().slice(imeBefore.length), "hex").toString(), text);
     }

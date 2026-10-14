@@ -62,6 +62,11 @@ menus, not this terminal-input row.
 Ctrl, Alt and Shift stay held until tapped again and can be combined. Removing a modifier button
 clears its held state immediately. Ordinary key buttons use the held modifiers, while saved
 combinations send exactly their configured modifiers without changing the held state.
+Holding one of the four arrows (↑ ↓ ← →) starts repeating after about 400 ms, then sends a
+key about every 50 ms until release. A tap still sends exactly one key. Every repeat uses the
+same held modifiers or saved combination as a tap. Only arrows repeat, including saved arrow
+combinations; other key-bar buttons do not. A sideways swipe scrolls the row without sending
+a key. Long presses on key buttons do not open a callout or context menu.
 Direct typing and arrow buttons send logical key chords; Herdr encodes them for the
 PTY's keyboard protocol. Home/End, Page and Delete/Insert keys use CSI navigation through the attach
 stream because Herdr's RPC key parser lacks those names. Paste, IME commits and terminal reports pass through unchanged.

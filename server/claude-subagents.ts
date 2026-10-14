@@ -10,9 +10,9 @@ import type { HerdrPane, OmoTask } from "../shared/protocol.ts";
  * `agent-<id>.jsonl`, its own transcript. Whether it ended is told only by the parent
  * transcript: a background subagent by the `<task-notification>` Claude queues when it stops (a
  * teammate of an agent team gets none, and one's notice may not be written yet: its own file
- * ending in an `end_turn` answer, with no message to it after, says it stopped), a synchronous
- * one by the tool_result of its call (the "Async agent launched" acknowledgement of a
- * background call is no answer).
+ * ending in an `end_turn` answer or in the answer approving its lead's shutdown request, with
+ * no message to it after, says it stopped), a synchronous one by the tool_result of its call
+ * (the "Async agent launched" acknowledgement of a background call is no answer).
  *
  * A notification is carried up to three times (a user entry, a queue-operation, a queued_command
  * attachment) and the same agent notifies again each time it is resumed, so notices are kept per
@@ -409,8 +409,17 @@ function isDispatch(entry: Row): boolean {
       && !content.some((block) => row(block)?.["type"] === "tool_result");
 }
 
+/** a teammate that approves its lead's shutdown request exits right after this answer, with no end_turn after the request */
+function approvedShutdown(entry: Row): boolean {
+  const result = row(entry["toolUseResult"]);
+  const requestId = result?.["request_id"];
+  const message = result?.["message"];
+  return result?.["success"] === true && typeof requestId === "string" && requestId.startsWith("shutdown-") && typeof message === "string" && message.startsWith("Shutdown approved");
+}
+
 /** A message to an agent or a result for it starts its turn again; its own answer ends it, unless it goes on (streamed blocks, a tool call). */
 function turnAfter(entry: Row, at: number | null, turnEndedAt: number | null): number | null {
+  if (entry["type"] === "user" && approvedShutdown(entry)) return at;
   if (entry["type"] === "user") return null;
   if (entry["type"] !== "assistant") return turnEndedAt;
   return row(row(entry["message"]))?.["stop_reason"] === "end_turn" ? at : null;

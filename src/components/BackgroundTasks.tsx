@@ -1,25 +1,32 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType } from "react";
-import { ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Layers, Workflow, type LucideProps } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, CircleX, Layers, ListChecks, Workflow, type LucideProps } from "lucide-react";
 
 import "./BackgroundTasks.css";
 
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { clockOffsetMs, endedSummary, formatElapsed, runGoing, spanMs, taskElapsedMs } from "../lib/omoTasks.ts";
 import { formatTokens } from "../lib/compose.ts";
+import { planWaves } from "../lib/plan.ts";
 import { useT } from "../lib/i18n.ts";
-import type { OmoRun, OmoRunNode, OmoTask } from "../../shared/protocol.ts";
+import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
+import type { OmoRun, OmoRunNode, OmoTask, PlanStep, PlanSummary } from "../../shared/protocol.ts";
 
 const POLL_MS = 3000;
 
 const ICONS: Record<OmoTask["status"], ComponentType<LucideProps>> = {
   running: CircleDot, completed: CircleCheck, failed: CircleX, cancelled: CircleSlash, lost: CircleAlert,
 };
+const STEP_ICONS: Record<PlanStep["status"], ComponentType<LucideProps>> = { pending: Circle, in_progress: CircleDot, completed: CircleCheck };
 const NODE_ICONS: Record<OmoRunNode["state"], ComponentType<LucideProps>> = {
   pending: Circle, scheduled: Circle, running: CircleDot, blocked: CircleAlert, completed: CircleCheck, failed: CircleX, skipped: CircleSlash, cancelled: CircleSlash,
 };
 
 /**
- * The status line's "N background tasks": opens what OmO's background tasks are and how far they got.
+ * The status line's one chip for what the agent works through besides its answer: the plan it
+ * keeps (Claude Code's task list, Codex's checklist: `plan`, read again while open) and its
+ * background tasks. Shown while there is a plan, or as below for the tasks; one list holds both.
+ *
+ * The background tasks: opens what OmO's background tasks are and how far they got.
  * Shown on every OmO pane (quiet while nothing runs: what ended in the last day can still be read,
  * after a reload too), and on any pane while a task runs. The list is for what runs now: what
  * ended is one line that says how many ended and how many went wrong, and opens on request.
@@ -28,10 +35,12 @@ const NODE_ICONS: Record<OmoRunNode["state"], ComponentType<LucideProps>> = {
  * A Claude pane's tasks are its subagents. Most Claude panes have none, so it asks when
  * the pane is shown (and when its count changes), and appears only when there are or were some.
  */
-export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId: string; count: number; omo: boolean; claude?: boolean }) {
+export function BackgroundTasks({ paneId, count, omo, claude = false, plan = null }: { paneId: string; count: number; omo: boolean; claude?: boolean; plan?: PlanSummary | null }) {
   const t = useT();
-  const { fetchPaneOmoActivity } = useMachineApi();
+  const { fetchPaneOmoActivity, fetchPanePlan } = useMachineApi();
   const [open, setOpen] = useState(false);
+  // a phone's Back closes the list, as it closes the other dialogs there (the plan used to be a sheet)
+  usePhoneSheetBack(() => setOpen(false), open);
   const [seen, setSeen] = useState(count > 0);
   useEffect(() => { if (count > 0) setSeen(true); }, [count]);
   useEffect(() => {
@@ -64,8 +73,10 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
   // closed, the list forgets what was opened: it opens on what runs now every time
   useEffect(() => { if (!open) setShowEnded(false); }, [open]);
 
+  // the tasks part shows once a task ran or runs here, or on any OmO pane
+  const tasksShown = count > 0 || seen || omo;
   useEffect(() => {
-    if (!open) return;
+    if (!open || !tasksShown) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async (): Promise<void> => {
@@ -83,7 +94,31 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
     };
     void load();
     return () => { alive = false; clearTimeout(timer); };
-  }, [open, paneId, fetchPaneOmoActivity]);
+  }, [open, tasksShown, paneId, fetchPaneOmoActivity]);
+
+  // the plan's steps, read while the list is open: undefined not read yet, null none kept now
+  const [steps, setSteps] = useState<PlanStep[] | null | undefined>(undefined);
+  const [planFailed, setPlanFailed] = useState(false);
+  const planShown = plan !== null;
+  useEffect(() => {
+    if (!open || !planShown) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setSteps(undefined);
+    const load = async (): Promise<void> => {
+      try {
+        const next = await fetchPanePlan(paneId);
+        if (!alive) return;
+        const received = Date.now();
+        setSteps(next.steps); setPlanFailed(false); setOffset(clockOffsetMs(next.serverTime, received)); setNow(received);
+      } catch {
+        if (alive) setPlanFailed(true);
+      }
+      if (alive) timer = setTimeout(() => void load(), POLL_MS);
+    };
+    void load();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [open, planShown, paneId, fetchPanePlan]);
 
   useEffect(() => {
     if (!open) return;
@@ -184,14 +219,45 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
   const endedRuns = runs.filter((run) => !runGoing(run));
   const summary = endedSummary(tasks ?? [], runs);
 
-  if (count === 0 && !open && !seen && !omo) return null;
-  const label = count === 0 ? t("Background tasks") : t(count === 1 ? "{n} background task" : "{n} background tasks", { n: count });
-  // a phone's status line has one row: there the words give way to the icon and the number
+  // a plan cleared or a PC gone while the list is open: nothing is left to list, so the control goes
+  useEffect(() => { if (open && !planShown && !tasksShown) setOpen(false); }, [open, planShown, tasksShown]);
+  if (!planShown && !tasksShown) return null;
+  const tasksLabel = count === 0 ? t("Background tasks") : t(count === 1 ? "{n} background task" : "{n} background tasks", { n: count });
+  const planLabel = plan ? t("Plan: {done} of {total} done", { done: plan.done, total: plan.total }) : null;
+  const label = [planLabel, tasksShown ? tasksLabel : null].filter((part) => part !== null).join(" · ");
+  const title = plan?.current ? `${label} · ${plan.current}` : label;
+  const busy = count > 0 || (plan !== null && plan.done < plan.total);
+  const stepWords: Record<PlanStep["status"], string> = { pending: t("waiting"), in_progress: t("running"), completed: t("done") };
+  const stepRow = (step: PlanStep) => {
+    const Icon = STEP_ICONS[step.status];
+    const elapsed = spanMs(step.started_at, step.ended_at, step.status === "in_progress", now + offset);
+    const meta = [stepWords[step.status], elapsed === null ? null : formatElapsed(elapsed), step.owner].filter((part) => part !== null).join(" · ");
+    return <li key={step.id} className={`bg-task bg-step is-${step.status}`}>
+      <Icon className="bg-task-icon" aria-hidden="true" />
+      <span className="bg-task-main">
+        <span className="bg-task-title">{step.label}</span>
+        {step.status === "in_progress" && step.active && step.active !== step.label && <span className="bg-step-active">{step.active}</span>}
+        <span className="bg-task-meta">{meta}</span>
+      </span>
+    </li>;
+  };
+  // a phone's status line has one row: there the words give way to the icons and the numbers
   return <span className="bg-tasks" ref={root}>
-    <button type="button" ref={toggle} className={`bg-tasks-toggle${count === 0 ? " is-idle" : ""}`} aria-label={label} title={label} aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
-      <Layers aria-hidden="true" /><span className="bg-tasks-label">{label}</span>{count > 0 && <span className="bg-tasks-count" aria-hidden="true">{count}</span>}
+    <button type="button" ref={toggle} className={`bg-tasks-toggle${busy ? "" : " is-idle"}`} aria-label={label} title={title} aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+      {plan && <><ListChecks aria-hidden="true" /><span className="bg-tasks-label">{t("Plan")}</span><span className="bg-tasks-plan" aria-hidden="true">{plan.done}/{plan.total}</span></>}
+      {plan && tasksShown && count > 0 && <span className="bg-tasks-sep" aria-hidden="true" />}
+      {(!plan || count > 0) && tasksShown && <><Layers aria-hidden="true" /><span className={`bg-tasks-label${plan ? " is-secondary" : ""}`}>{tasksLabel}</span>{count > 0 && <span className="bg-tasks-count" aria-hidden="true">{count}</span>}</>}
     </button>
-    {open && <div id={id} ref={menu} className="menu bg-tasks-menu" role="dialog" aria-live="off" aria-label={t("Background tasks")}>
+    {open && <div id={id} ref={menu} className="menu bg-tasks-menu" role="dialog" aria-live="off" aria-label={planShown && tasksShown ? t("Plan and background tasks") : planShown ? t("Plan") : t("Background tasks")}>
+      {planShown && <>
+        <div className="menu-heading">{t("Plan")}{plan && <span className="bg-plan-progress">{t("{done} of {total} done", { done: plan.done, total: plan.total })}</span>}</div>
+        {steps === undefined && !planFailed && <p className="bg-tasks-note">{t("Reading the plan…")}</p>}
+        {steps === null && <p className="bg-tasks-note">{t("This session keeps no plan right now")}</p>}
+        {planFailed && <p className="bg-tasks-note" role="status">{t("Couldn't read the plan. Trying again…")}</p>}
+        {steps && steps.length > 0 && <ol className="bg-task-list">{planWaves(steps).flat().map(stepRow)}</ol>}
+      </>}
+      {planShown && tasksShown && <div className="menu-heading bg-tasks-heading">{t("Background tasks")}</div>}
+      {tasksShown && <>
       {tasks === null && !failed && <p className="bg-tasks-note">{t("Loading…")}</p>}
       {failed && tasks === null && <p className="bg-tasks-note">{t("Couldn't load the background tasks")}</p>}
       {failed && tasks !== null && <p className="bg-tasks-note" role="status">{t("Couldn't refresh: this is the list as it last read")}</p>}
@@ -207,6 +273,7 @@ export function BackgroundTasks({ paneId, count, omo, claude = false }: { paneId
           {summary.failed > 0 && <span className="bg-ended-failed">{t("{n} failed", { n: summary.failed })}</span>}
         </button>
         <ul id={endedId} className="bg-task-list" hidden={!showEnded}>{endedRuns.map(runView)}{ended.map(row)}</ul>
+      </>}
       </>}
     </div>}
   </span>;

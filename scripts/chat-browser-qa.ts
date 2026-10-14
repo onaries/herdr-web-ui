@@ -3,12 +3,12 @@
 import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { createServer } from "../server/index.ts";
-import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-chat-browser-"));
 const codexHome = join(root, "codex");
@@ -41,19 +41,34 @@ try {
   add({ type: "function_call_output", call_id: "c2", output: "Process exited with code 1\n1 fail" }, 5);
   add(message("assistant", answer, "final_answer"), 8);
   persist();
+  // A detected fixture process keeps native descriptor evidence for the rollout;
+  // the ignored path field of a manual lifecycle report is not a session binding.
+  mkdirSync(join(root, "bin"));
+  const executable = join(root, "bin", "codex");
+  writeFileSync(executable, `#!/bin/sh\nexec 3<"$1"\nprintf '%s\\n' '${answer}'\nwhile IFS= read -r line; do :; done\n`);
+  chmodSync(executable, 0o755);
   const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-chat-browser" });
   workspaceId = created.workspace.workspace_id;
   const paneId = created.root_pane.pane_id;
-  await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "idle", agent_session_path: rollout });
-  await herdrRpc("pane.send_text", { pane_id: paneId, text: `printf '%s\\n' '${answer}'\n` });
+  await herdrRpc("pane.send_text", { pane_id: paneId, text: `${executable} ${rollout}\n` });
+  // Real herdr process detection runs outside this browser check's clock.
+  const deadline = Date.now() + 10_000;
+  while ((await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent !== "codex") {
+    if (Date.now() >= deadline) throw new Error("owned Codex fixture process was not detected");
+    await Bun.sleep(50);
+  }
+  await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "idle" });
   // tailscaleOwner null: the plain-HTTP page below reaches the server under a name that is not
   // loopback, which a PC running Tailscale would otherwise send to pairing
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome, tailscaleOwner: null });
-  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--host-resolver-rules=MAP clipboard.test 127.0.0.1", "--no-proxy-server"] });
+  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: process.env["HEADED"] !== "1", args: ["--no-sandbox", "--host-resolver-rules=MAP clipboard.test 127.0.0.1", "--no-proxy-server"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   const page = await context.newPage();
   // a pane opens its terminal the first time; this QA is about the chat lens
-  await page.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
+  await page.addInitScript((id) => {
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+    localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+  }, paneId);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
@@ -85,7 +100,7 @@ try {
     return hidden.every((item) => item !== null && item.textContent !== "" && item.getBoundingClientRect().width <= 1);
   }), true, "the agent's name, every pane status word and the reasoning sentence are read, not drawn");
   const work = log.locator(".work-block-head");
-  const report = (state: "working" | "idle") => herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state, agent_session_path: rollout });
+  const report = (state: "working" | "idle") => herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state });
   const head = (expanded: boolean, title: string) => log.locator(`.work-block-head[aria-expanded="${expanded}"]`).filter({ hasText: title });
   await head(false, "Worked for 7s").waitFor();
   await report("working");
@@ -160,19 +175,26 @@ try {
   assert.equal(await nativeImage.count(), 1);
   console.log("PASS native Codex image-only turn loads its pane-scoped thumbnail");
 
-  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const { promise: gate, resolve } = Promise.withResolvers<void>();
+  release = resolve;
   let requests = 0;
   await page.route("**/api/pane/conversation?*", async (route) => { requests += 1; await gate; await route.continue(); });
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("true");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await page.waitForTimeout(250);
+  // Observe the real browser's send and timer path; this bounded negative window
+  // catches the old overlapping 2-second refresh without faking herdr/Chromium clocks.
+  const readDeadline = Date.now() + 10_000;
+  while (requests === 0) {
+    if (Date.now() >= readDeadline) throw new Error("send refresh did not begin");
+    await Bun.sleep(25);
+  }
   assert.equal(await log.getByText(answer, { exact: true }).count(), 1, "send refresh must not blank existing history");
   const beforeWait = requests;
   await page.waitForTimeout(2500);
-  assert.equal(requests, beforeWait, "slow polls must not overlap");
+  assert.equal(requests, beforeWait, "slow refreshes must not overlap");
   release();
   await page.unrouteAll({ behavior: "wait" });
-  console.log("PASS send refresh preserves history and slow polling does not overlap");
+  console.log("PASS send refresh preserves history and slow refreshes do not overlap");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator("#workspace-drawer").waitFor({ state: "hidden" });
