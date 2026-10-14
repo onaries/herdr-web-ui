@@ -159,6 +159,12 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** Polls `check` for up to 10 s, then asserts it: the server answers what it knows now, and knows more later. */
+async function until(check: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100 && !(await check()); attempt++) await Bun.sleep(100);
+  expect(await check()).toBe(true);
+}
+
 async function read(paneId: string): Promise<ConversationResponse> {
   const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`);
   expect(response.status).toBe(200);
@@ -185,7 +191,6 @@ it.skipIf(!NATIVE)("lists a Claude pane's subagents, counts the running ones and
     return snapshot.panes.find((entry) => entry.pane_id === paneId)?.background_tasks;
   };
   const frames = await Frames.connect(server.port);
-  const countedFrame = frames.wait((frame) => frame.type === "pane-status" && frame.pane_id === second.pane && frame.background_tasks === 1);
   const folder = join(project, SECOND, "subagents");
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, "agent-a1.meta.json"), JSON.stringify({ agentType: "reviewer", description: "Review the parser", toolUseId: "toolu_a1", requestShape: "background" }));
@@ -196,9 +201,13 @@ it.skipIf(!NATIVE)("lists a Claude pane's subagents, counts the running ones and
   try {
     const subscribed = await fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: device.subscription, alerts: { input: true, done: "always" } }) });
     expect(subscribed.status).toBe(204);
-    // asked first, before the server has had a snapshot to look for the pane's transcript with: it finds it itself
+    // asked: the server finds the pane's transcript itself. Its background lookup may already have come up empty
+    // (herdr busy or late under load), which it does not repeat for a few seconds: the list follows once it looks again,
+    // as the client's own retries see it
+    await until(async () => (await tasks(second.pane)).tasks.some((task) => task.id === "a1" && task.status === "running"));
     expect((await tasks(second.pane)).tasks).toMatchObject([{ id: "a1", status: "running" }]);
-    await countedFrame;
+    // from the first frame: the count may have been pushed while the list was polled
+    await frames.wait((frame) => frame.type === "pane-status" && frame.pane_id === second.pane && frame.background_tasks === 1, 0);
     expect(await counted(second.pane)).toBe(1);
     expect(await tasks(second.pane)).toMatchObject({ tasks: [{ id: "a1", title: "Review the parser", category: "reviewer", status: "running" }], runs: [] });
     // a pane with no subagents has no count and no list
@@ -229,7 +238,7 @@ it.skipIf(!NATIVE)("lists a Claude pane's subagents, counts the running ones and
     await herdrRpc("pane.report_agent", { pane_id: first.pane, source: "manual", agent: "claude", state: "idle" });
     device.stop();
   }
-}, 15_000);
+}, 25_000);
 
 /** Each hold owns its pane, transcript and bridge, so running one test never needs an earlier one. */
 async function backgroundTurn(taskId: string) {
@@ -339,10 +348,6 @@ it.skipIf(!NATIVE)("reads a Claude pane's task list as its plan, and pushes its 
   const summary = async (paneId: string): Promise<unknown> => {
     const { snapshot } = await (await fetch(`${base}/api/session`)).json() as { snapshot: { panes: { pane_id: string; plan?: unknown }[] } };
     return snapshot.panes.find((entry) => entry.pane_id === paneId)?.plan;
-  };
-  const until = async (check: () => Promise<boolean>): Promise<void> => {
-    for (let attempt = 0; attempt < 100 && !(await check()); attempt++) await Bun.sleep(100);
-    expect(await check()).toBe(true);
   };
   const path = join(project, `${FIRST}.jsonl`);
   const call = (id: string, name: string, input: unknown, answer: unknown, content: string): string => [

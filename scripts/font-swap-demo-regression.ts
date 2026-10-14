@@ -6,6 +6,7 @@ import { chromium, type Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // The late arrival of the app's faces (src/fonts/fonts.css, font-display: swap), on the unmodified
 // app over the demo's fixture transport: the font files are held back here as a slow link holds
@@ -29,6 +30,8 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
+  // An installed Pretendard fallback can have identical metrics to the held web
+  // face. Use a visibly different fallback so this fixture must exercise reflow.
   writeFileSync(index, html.replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    <script type="module"`));
   // fonts.css takes an installed JetBrains Mono before the file; a request this script holds must
   // be the only way to the face, on a developer's desktop that has the font as on CI that has not
@@ -53,12 +56,12 @@ try {
   } });
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.web)}`;
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       /** A phone on a slow link: every font file is held until `release`. `stall` names files that never come at all. */
       const open = async (stall: RegExp | null, height = 844): Promise<{ page: Page; errors: string[]; held: () => number; release: () => void; close: () => Promise<void> }> => {
         const context = await browser.newContext({ viewport: { width: 390, height }, locale: "en-US", hasTouch: true, isMobile: true });
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", uiFontFamily: '"Pretendard Variable", monospace' })));
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -75,7 +78,23 @@ try {
         await page.locator(".conn-live").waitFor({ state: "attached" });
         await page.locator(".terminal-stack.is-chat").waitFor();
         await page.locator(".chat-turn").first().waitFor();
-        await frames(page);
+        assert.deepEqual(await page.locator(".chat-view").evaluate((node) => {
+          const style = getComputedStyle(node);
+          return [style.paddingTop, style.paddingBottom, getComputedStyle(node.querySelector(".chat-transcript")!).display];
+        }), ["0px", "0px", "block"], "production CSS keeps spacing inside measured virtual rows");
+        await page.waitForFunction(() => {
+          const node = document.querySelector(".chat-view");
+          return node !== null && node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
+        }, undefined, { timeout: 10_000 }).catch(async (error: unknown) => {
+          console.error("CHAT_GEOMETRY", await page.locator(".chat-view").evaluate((node) => ({
+            top: node.scrollTop, height: node.scrollHeight, viewport: node.clientHeight,
+            nodes: [node, ...node.querySelectorAll("div")].map((item) => {
+              const style = getComputedStyle(item), rect = item.getBoundingClientRect();
+              return { class: item.className, inline: item.getAttribute("style"), top: rect.top, height: rect.height, padding: style.padding, margin: style.margin, position: style.position };
+            }),
+          })));
+          throw error;
+        });
         return { page, errors, held: () => asked, release, close: () => { release(); return context.close(); } };
       };
 
@@ -91,6 +110,15 @@ try {
           assert.ok(before.gap <= 1, `an opened conversation is at its end (gap ${before.gap})`);
           release();
           await appFaces(page);
+          await page.waitForFunction((height) => document.querySelector(".chat-view")?.scrollHeight !== height, before.height, { timeout: 10_000 }).catch(async (error: unknown) => {
+            console.error("FONT_GEOMETRY", await page.locator(".chat-view").evaluate((node) => ({
+              height: node.scrollHeight, top: node.scrollTop, viewport: node.clientHeight,
+              rows: [...node.querySelectorAll("[data-chat-row]")].map((row) => ({ height: row.getBoundingClientRect().height, text: row.textContent, font: getComputedStyle(row).fontFamily })),
+              paragraphs: [...node.querySelectorAll("p")].map((p) => ({ height: p.getBoundingClientRect().height, width: p.getBoundingClientRect().width, font: getComputedStyle(p).fontFamily, size: getComputedStyle(p).fontSize })),
+              fonts: [...document.fonts].filter((face) => face.status === "loaded").map((face) => face.family),
+            })));
+            throw error;
+          });
           const after = await viewOf(page);
           assert.notEqual(after.height, before.height, `the faces redrew the conversation at another height (${before.height} -> ${after.height})`);
           assert.ok(after.gap <= 1, `a reader at the end is still there after the faces came (gap ${after.gap}, height ${before.height} -> ${after.height})`);
@@ -112,6 +140,7 @@ try {
           await frames(page);
           assert.equal(await page.evaluate(() => document.fonts.status), "loading", "another face is still on its way");
           assert.equal(await loadedFaces(page, "JetBrains Mono Web"), 0);
+          await page.waitForFunction((height) => document.querySelector(".chat-view")?.scrollHeight !== height, before.height, { timeout: 10_000 });
           const after = await viewOf(page);
           assert.notEqual(after.height, before.height, `the face redrew the conversation at another height (${before.height} -> ${after.height})`);
           assert.ok(after.gap <= 1, `a face that came is followed while another is still on its way (gap ${after.gap}, height ${before.height} -> ${after.height})`);

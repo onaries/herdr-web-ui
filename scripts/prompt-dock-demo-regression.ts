@@ -8,6 +8,7 @@ import type { BrowserEvidenceSession } from "./browser-evidence.ts";
 import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // The prompt card's place, on the unmodified app over the demo's fixture transport: the demo's
 // "web" pane has an approval open. A second, tall form (steps, reference text, descriptions, a
@@ -218,7 +219,7 @@ try {
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.web)}`;
   if (shots !== null) mkdirSync(shots, { recursive: true });
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       interface Opened { page: Page; errors: string[]; shot: (name: string) => Promise<void>; close: () => Promise<void> }
       const evidenceByPage = new WeakMap<Page, BrowserEvidenceSession>();
@@ -721,7 +722,9 @@ try {
           assert.deepEqual(await answersOf(page), [{ pane_id: panes.web, prompt_id: "demo-plan", option_index: 0 }], "only the first asking was answered");
           await page.evaluate(() => { (window as unknown as { formDelay: number }).formDelay = 0; });
           await page.locator(".prompt-card-confirm").getByRole("button", { name: "Confirm" }).click();
-          await page.locator(".prompt-card").waitFor({ state: "detached" });
+          // this asking's card, by its question: the demo's own approval is read as soon as this one
+          // is answered, and a poll that lands before the answer returns puts its card here at once
+          await page.locator(".prompt-card").getByText(PLAN.question).waitFor({ state: "detached" });
           assert.deepEqual((await answersOf(page)).at(-1), { pane_id: panes.web, prompt_id: "demo-plan-asked-again", option_index: 2 }, "Confirm answers the second asking under its own id");
           assert.deepEqual(errors, []);
         } catch (error) { await preserveFailure(page, error); } finally { await close(); }

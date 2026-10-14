@@ -7,6 +7,7 @@ import { chromium } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
 import { UsageService } from "../server/usage.ts";
+import { chromePath } from "./chrome-path.ts";
 
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -23,13 +24,17 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     // Keep the size saved by the gesture when this same page reloads.
     if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
     localStorage.setItem(`herdr-web-ui:view:${paneId}`, "terminal");
-    const touchWindow = window as Window & { wheels_: number; remaining_: number[] };
+    const touchWindow = window as Window & { wheels_: number; wheelModes_: number[]; remaining_: number[] };
     touchWindow.wheels_ = 0;
+    touchWindow.wheelModes_ = [];
     touchWindow.remaining_ = [];
     document.addEventListener("touchend", (event) => {
       touchWindow.remaining_ = Array.from(event.touches, (touch) => touch.identifier);
     }, { capture: true });
-    document.addEventListener("wheel", () => touchWindow.wheels_++, { capture: true });
+    document.addEventListener("wheel", (event) => {
+      touchWindow.wheels_++;
+      touchWindow.wheelModes_.push(event.deltaMode);
+    }, { capture: true });
   }, { paneId });
   try {
     const page = await context.newPage();
@@ -59,6 +64,9 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
       transform: (document.querySelector(".pane-terminal .xterm") as HTMLElement).style.transform,
       computedTransform: getComputedStyle(document.querySelector(".pane-terminal .xterm")!).transform,
       wheels: (window as Window & { wheels_: number }).wheels_,
+      wheelModes: (window as Window & { wheelModes_: number[] }).wheelModes_.slice(),
+      cell: document.querySelector(".pane-terminal .xterm-screen")!.getBoundingClientRect().height
+        / document.querySelectorAll(".pane-terminal .xterm-rows > div").length,
       remaining: (window as Window & { remaining_: number[] }).remaining_,
       scale: visualViewport!.scale,
       focused: document.hasFocus(),
@@ -83,18 +91,44 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
       }
     };
     const release = () => cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    // a wheel report per three rows of travel: 150 px is more than that even at the largest cell the 22 px font makes;
+    // the drag ends at cy, where a following pinch puts this finger, so that jump is no vertical travel
     const dragOne = async (): Promise<void> => {
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy - 60, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy - 150, id: 1 }] });
       for (let step = 1; step <= 5; step++) {
-        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - 60 + 60 * step / 5, id: 1 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - 150 + 150 * step / 5, id: 1 }] });
       }
+    };
+
+    /** one finger drags `distance` px down in `moves` touchmoves; resolves to the wheels it sent, each line mode (1) */
+    const swipe = async (distance: number, moves: number): Promise<number> => {
+      const before = await probe();
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy - distance / 2, id: 1 }] });
+      for (let step = 1; step <= moves; step++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - distance / 2 + distance * step / moves, id: 1 }] });
+      }
+      await release();
+      const after = await probe();
+      assert(after.wheelModes.slice(before.wheelModes.length).every((mode) => mode === 1),
+        `a ${moves}-move swipe sends line-mode wheels only`);
+      return after.wheels - before.wheels;
     };
 
     const baseline = await probe();
     assert.equal(baseline.fontPx, 13, "baseline font is 13 px");
     assert(!(await badge.isVisible()), "badge is hidden before pinching");
+    // a quick swipe scrolls as far as a slow drag over the same travel: one wheel report per three rows
+    const fast = await swipe(300, 2);
+    const slow = await swipe(300, 30);
+    const expected = 300 / (3 * baseline.cell);
+    assert(fast >= Math.floor(expected) - 1 && fast <= Math.ceil(expected), `a 300 px swipe sends about ${expected.toFixed(1)} wheels (sent ${fast})`);
+    assert.equal(fast, slow, "a 2-move swipe and a 30-move drag over 300 px send the same wheel count");
+    // a flick shorter than one step still scrolls once it reaches half a step when the finger lifts
+    const step = 3 * baseline.cell;
+    assert.equal(await swipe(Math.round(step * 0.7), 4), 1, `a flick of 0.7 step (${Math.round(step * 0.7)} px) sends one wheel`);
+    assert.equal(await swipe(Math.round(step * 0.3), 4), 0, `a flick of 0.3 step (${Math.round(step * 0.3)} px) sends none`);
     const r0 = resizes;
-    const w0 = baseline.wheels;
+    const w0 = (await probe()).wheels;
     await spreadTo(100, 154);
     await until(async () => (await probe()).fontPx === 20, "pinch out renders 20 px before release");
     await until(async () => (await probe()).rows < baseline.rows, "pinch out refits fewer local rows before release");
@@ -170,8 +204,10 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     assert.equal((await probe()).fontPx, 20, "partial release keeps the live 20 px font");
     assert.equal((await probe()).saved, 20, "partial release saves 20 px");
     assert(!(await badge.isVisible()), "the first lifted finger hides the size badge");
+    // three wheel steps of travel at the 20 px cell: a broken pinch-stroke guard would send wheels here
+    const leftover = 3 * 3 * (await probe()).cell;
     for (let step = 1; step <= 5; step++) {
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx - 77, y: cy + 60 * step / 5, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx - 77, y: cy + leftover * step / 5, id: 1 }] });
     }
     assert.equal((await probe()).wheels, w1, "the finger remaining after a pinch does not scroll");
     await release();
@@ -199,7 +235,7 @@ if (import.meta.main) {
   try {
     const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-terminal-pinch", focus: false });
     workspace = made.workspace.workspace_id;
-    browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     await checkTerminalPinch(browser, `http://127.0.0.1:${server.port}`, made.root_pane.pane_id);
   } finally {
     await browser?.close(); server.stop();

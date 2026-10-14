@@ -69,8 +69,12 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     await fits("available");
     await oneLine("available");
     await shot("1-available");
+    // the line says it started as the button is pressed, before the request it sends is counted here
+    const installAnswered = () => page.waitForResponse((response) => new URL(response.url()).pathname === "/api/updates/install");
+    const firstInstall = installAnswered();
     await page.getByRole("button", { name: "Update", exact: true }).click();
     await page.getByText("Starting the update…", { exact: true }).waitFor();
+    await firstInstall;
     assert.equal(installs, 1, "one tap asks for the install");
     assert.equal(await page.getByRole("dialog", { name: "Settings" }).count(), 0, "Settings stays closed");
 
@@ -93,8 +97,10 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     await page.getByRole("button", { name: "Details", exact: true }).click();
     await page.getByRole("dialog", { name: "Settings" }).getByText("bun run build failed: fixture").waitFor();
     await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    const secondInstall = installAnswered();
     await page.getByRole("button", { name: "Try again", exact: true }).click();
     await page.getByText("Starting the update…", { exact: true }).waitFor();
+    await secondInstall;
     assert.equal(installs, 2, "Try again asks for the install again");
     // the check an install starts with fails: nothing is available any more, and the line still says so
     status = { ...status, phase: "error", available: false, error: "git fetch failed: fixture" };

@@ -88,3 +88,21 @@ test("the production gzip wrapper preserves the representation already negotiate
   const gzip = await compressResponse(gzipRequest, await serve("/assets/large.js", "gzip"));
   expect(gzip?.headers.get("content-encoding")).toBe("gzip");
 }));
+
+test("answers a file the build does not have with a 404, and any other path with the shell", () => fixture(async serve => {
+  // a tab of the build before an update asks for its own chunk: the shell under a script's URL
+  // fails as a module anyway, and a service worker would keep it there
+  for (const path of ["/assets/katex-old.js", "/assets/nested/", "/assets/", "/icons/icon-512-old.png"]) {
+    const missing = await serve(path, "gzip");
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("content-type")).toBeNull();
+    expect(missing.headers.get("cache-control")).toBe("no-cache");
+    expect(await missing.text()).toBe("");
+  }
+  for (const path of ["/", "/settings", "/assetsx/thing.js"]) {
+    const shell = await serve(path);
+    expect(shell.status).toBe(200);
+    expect(shell.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await shell.text()).toBe("<html>fixture shell</html>");
+  }
+}));

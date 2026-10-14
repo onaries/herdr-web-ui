@@ -1,5 +1,5 @@
 /** xterm's source uses const enums in .d.ts files; TypeScript must inline them before Vite. */
-import ts from "typescript";
+import ts from "typescript-api";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -13,8 +13,8 @@ export function buildXtermSource(root: string): string {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
-    rootDir: source, outDir: output, baseUrl: source,
-    paths: { "browser/*": ["browser/*"], "common/*": ["common/*"] },
+    rootDir: source, outDir: output,
+    paths: { "browser/*": [join(source, "browser/*")], "common/*": [join(source, "common/*")] },
     experimentalDecorators: true, useDefineForClassFields: false,
     skipLibCheck: true, types: [], noEmitOnError: true,
   });

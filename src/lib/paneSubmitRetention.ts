@@ -1,4 +1,4 @@
-/** One PC canvas keeps only panes with an already-sent submit awaiting its receipt. This owns
+/** One PC canvas keeps panes with an already-sent submit or accepted queue awaiting delivery. This owns
  * no socket, input or retry; releasing the final claim lets ordinary mount cleanup take over. */
 export class PaneSubmitRetention {
   private claims = new Map<string, Set<object>>();

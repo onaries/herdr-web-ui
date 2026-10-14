@@ -8,6 +8,7 @@ evidence/
 .herdr-web-ui/
 # a check run's herdr config and state, when CHECK_DIR keeps it in the checkout (scripts/check.ts)
 .ci/
+.ci-cache/
 
 remote-bundles/
 

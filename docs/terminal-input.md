@@ -28,7 +28,12 @@ current response ends. The same server ID is claimed by automatic delivery or a 
 explicit send-now action. The bridge checks its original connection, attachment, agent and
 visible prompt before input and Enter; each automatic next message also waits for evidence that
 the preceding turn started and finished, and an explicit send refused in between does not end that wait. It never sends native Tab and then resends that text.
-Pending acceptance is distinct from a committing-key receipt. Connection loss, pane separation
+Tab/workspace navigation on the same PC retains the original pane attachment while its automatic
+queue waits.
+A page left for another address ends its connection at `pagehide`, also when the browser keeps the
+page for Back (the back/forward cache): its queue is then lost like any closed connection's, and the
+page connects again when it is shown.
+Pending acceptance is distinct from a committing-key receipt. Connection loss, actual pane detachment
 and observe mode pause the pending list; reconnect or reload cannot rearm it. Losing a pane
 lease permanently cancels its in-flight send, even if that connection rejoins the same attachment
 or returns to interact before Enter. A queue request that arrives after the agent finishes uses
@@ -47,8 +52,19 @@ Control sequences are left out, never saved for later execution, and not counted
 answers to a program (cursor position, focus, mouse) arrive the same way. Send transmits the held
 text alone, without an Enter typed meanwhile. The draft holds 1,024 characters; text past that is
 left out whole and the notice says some input was left out, also when nothing else is held. No
-draft is replayed on reconnect. The input-line and chat Send buttons preserve an active composition, and the key bar
-waits for composition to finish. Leaving the input clears its composition guard.
+draft is replayed on reconnect. The chat Send button preserves an active composition. The input-line
+Send tapped during composition finishes the word itself (a blur and refocus inside the tap, which
+ends the composition in Chrome and keeps the keyboard up) and sends the committed line, read from
+the draft; "Finishing the word…" shows only while the word is still open after the tap. A keyboard
+that still does not commit within 300 ms of the tap (a fixed deadline, which a chain of new
+compositions does not extend) gets the tap withdrawn with "Finish the word, then send.", and a later
+commit sends nothing. A terminal that drops meanwhile withdraws the tap at once with "Not sent: the
+terminal is disconnected.", even if it reconnects within the wait. A word that commits empty (the
+preedit deleted or cancelled) sends nothing, not a bare Enter.
+The key bar waits only for a direct-typing (xterm) composition, so a key cannot overtake xterm's
+pending commit. A composition in the input line leaves the key bar live: Esc, ^C and the arrows
+go to the pane at once, Ctrl, Alt and Shift arm, and the line's unfinished text stays where it is.
+Only the switch to direct typing waits for it, so the line is not removed mid-word.
 
 The key bar defaults to Esc, Tab, ^C, Ctrl, Alt, Shift, Enter and the arrows. Esc, Tab and ^C
 come first so they stay reachable without scrolling on narrow phones.
@@ -62,11 +78,11 @@ menus, not this terminal-input row.
 Ctrl, Alt and Shift stay held until tapped again and can be combined. Removing a modifier button
 clears its held state immediately. Ordinary key buttons use the held modifiers, while saved
 combinations send exactly their configured modifiers without changing the held state.
-Holding one of the four arrows (↑ ↓ ← →) starts repeating after about 400 ms, then sends a
-key about every 50 ms until release. A tap still sends exactly one key. Every repeat uses the
-same held modifiers or saved combination as a tap. Only arrows repeat, including saved arrow
-combinations; other key-bar buttons do not. A sideways swipe scrolls the row without sending
-a key. Long presses on key buttons do not open a callout or context menu.
+Holding an arrow (↑ ↓ ← →), ⌫, Del, Home, End, PgUp or PgDn starts repeating after about
+400 ms, then sends a key about every 50 ms until release. A tap still sends exactly one key.
+Every repeat uses the same held modifiers or saved combination as a tap, and saved
+combinations of these keys repeat too. Esc, Tab, Enter, ^C, F-keys and modifier buttons send
+once. A sideways swipe scrolls the row without sending a key. Long presses on key buttons do not open a callout or context menu.
 Direct typing and arrow buttons send logical key chords; Herdr encodes them for the
 PTY's keyboard protocol. Home/End, Page and Delete/Insert keys use CSI navigation through the attach
 stream because Herdr's RPC key parser lacks those names. Paste, IME commits and terminal reports pass through unchanged.
@@ -102,6 +118,7 @@ The new readiness frame is also implemented in the website demo transport.
   client rejection, attach refusal/resume, mirror ordering, disconnect and sidecar lifecycle.
 - `bun run build && bun scripts/terminal-input-regression.ts`: focused browser checks for desktop
   mode switching, pane and reload persistence, an unfinished composition, unmount during composition,
+  phone key-bar Esc and ^C (and a held direct-typing toggle) while the input line composes,
   pending-send remounts, replacement text, shortcut customization, first held-input persistence,
   readiness delay, an xterm composition commit, batched commits before punctuation, and Korean
   final-consonant movement. Submit/input interception isolates UI assertions;

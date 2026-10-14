@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readInstalledNotes, readUpdateNotes, RELEASES_LIMIT, SUMMARY_LANGUAGES, type InstalledNotes, type UpdateNotes } from "../../shared/update.ts";
 import { ApiError } from "./api.ts";
 import { LANGUAGE_SETTINGS } from "./i18n.ts";
-import { ANNOUNCED_FOR_MS, announcesUpdate, installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, SKEW_ALLOWANCE_MS, summaryFor } from "./updateNotes.ts";
+import { ANNOUNCED_FOR_MS, announcesUpdate, installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, reloadReason, SKEW_ALLOWANCE_MS, summaryFor } from "./updateNotes.ts";
 
 describe("the bounds of a read answer", () => {
   it("reads at most RELEASES_LIMIT releases of an answer, whatever sent it", () => {
@@ -207,5 +207,26 @@ describe("what the last update brought", () => {
     for (const value of [bound, { ...installed, version: 4 }, { ...installed, previous_version: null }]) {
       expect(readInstalledNotes(value)).toEqual(bound);
     }
+  });
+});
+
+describe("the reload a tab is offered", () => {
+  const app = "a".repeat(40);
+  it("names the update when the server runs another commit", () => {
+    expect(reloadReason(app, { current_revision: "b".repeat(40) }, false, false)).toBe("updated");
+    expect(reloadReason(app, { current_revision: "b".repeat(40) }, false, true)).toBe("updated");
+    expect(reloadReason(app, { current_revision: app }, false, false)).toBeNull();
+  });
+
+  it("is offered for a part of the app that failed to load, where no commit can be compared", () => {
+    // an unmanaged server, a server older than the status, a build outside Git, a rebuild of the same commit
+    expect(reloadReason(app, { current_revision: null }, false, true)).toBe("incomplete");
+    expect(reloadReason(app, null, false, true)).toBe("incomplete");
+    expect(reloadReason(null, { current_revision: "b".repeat(40) }, false, true)).toBe("incomplete");
+    expect(reloadReason(app, { current_revision: app }, false, true)).toBe("incomplete");
+  });
+
+  it("waits while an update is underway", () => {
+    expect(reloadReason(app, { current_revision: "b".repeat(40) }, true, true)).toBeNull();
   });
 });

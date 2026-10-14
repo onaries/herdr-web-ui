@@ -72,7 +72,7 @@ function Plan({ plan, loading, onRefresh }: PhonePanelProps) {
   }
 }
 
-function Address({ url, title }: { url: string; title: string }) {
+export function Address({ url, title }: { url: string; title: string }) {
   return (
     <div className="phone-address">
       <QrCode value={url} label={`QR code: ${url}`} />

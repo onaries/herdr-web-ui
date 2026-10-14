@@ -2,7 +2,7 @@ import { constants, closeSync, fstatSync, lstatSync, openSync, realpathSync, sta
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
-import { herdrRpc } from "./herdr/client.ts";
+import { agentGet } from "./herdr/client.ts";
 import { piAgentDir } from "./pi-models.ts";
 
 /**
@@ -77,11 +77,8 @@ export function unwrittenSession(path: string, sessionDir: string): { id: string
  * `/clone` need no inference here: the next read names the file that replaced the old one.
  */
 export async function piTranscriptPath(paneId: string, sessionDir = defaultPiSessionDir()): Promise<{ path: string } | { unwritten: { id: string; path: string } } | null> {
-  const info = await herdrRpc<{ agent: { agent_session?: { agent?: unknown; kind?: unknown; value?: unknown } } }>(
-    "agent.get",
-    { target: paneId },
-  ).catch(() => null);
-  const session = info?.agent?.agent_session;
+  const agent = await agentGet(paneId).catch(() => null);
+  const session = agent?.agent_session;
   // pi reports an absolute path; the id-only form belongs to agents with no store of ours.
   if (session?.kind !== "path" || typeof session.value !== "string") return null;
   const storeCandidates = Array.from(new Set([sessionDir, join(homedir(), ".omo", "agent", "sessions"), join(homedir(), ".omp", "agent", "sessions")]));

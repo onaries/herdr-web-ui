@@ -179,6 +179,9 @@ export function createPushService(options: PushServiceOptions): PushService {
   let subscriptions: Map<string, PushSubscriptionRecord> | null = null;
   const lastStatus = new Map<string, AgentStatus>();
   const titles = new Map<string, string>();
+  // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
+  // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
+  const workspaces = new Map<string, string>();
 
   /** Created on first need: a server nobody subscribes to never writes a key. */
   function keys(): { publicKey: string; privateKey: string } {
@@ -262,6 +265,12 @@ export function createPushService(options: PushServiceOptions): PushService {
         }),
       ),
     );
+  }
+
+  /** Where an alert's pane is: its PC (absent for this one) and the workspace it was last seen in. */
+  function where(key: string, machineId: string): Pick<PushPayload, "machine_id" | "workspace_id"> {
+    const workspace = workspaces.get(key);
+    return { ...(machineId === "local" ? {} : { machine_id: machineId }), ...(workspace ? { workspace_id: workspace } : {}) };
   }
 
   async function titleOf(paneId: string): Promise<string> {
@@ -356,6 +365,7 @@ export function createPushService(options: PushServiceOptions): PushService {
         // only fill gaps: an event already seen is newer than any snapshot
         const key = paneStorageId(machineId, pane.pane_id);
         titles.set(key, `${machineName ? machineName + " · " : ""}${paneTitle(pane)}`);
+        workspaces.set(key, pane.workspace_id);
         if (!lastStatus.has(key)) lastStatus.set(key, pane.agent_status);
       }
     },
@@ -423,7 +433,7 @@ export function createPushService(options: PushServiceOptions): PushService {
           const current = store().get(subscription.endpoint);
           return current && current.device_id === subscription.device_id ? [current] : [];
         });
-        await broadcast({ ...statusMessage(paneId, title, status), ...(machineId === "local" ? {} : { machine_id: machineId }), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live);
+        await broadcast({ ...statusMessage(paneId, title, status), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live);
       });
     },
 
@@ -435,7 +445,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       const to = [...store().values()].filter((subscription) => (subscription.alerts ?? DEFAULT_ALERTS).done !== "off");
       if (to.length === 0 || options.inUse?.()) return;
       // the pane may already be gone from herdr: the seeded title is what is left
-      await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...(machineId === "local" ? {} : { machine_id: machineId }), tag: paneNotificationTag(paneId, machineId) }, "normal", to);
+      await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, "normal", to);
     },
 
     async settled() {

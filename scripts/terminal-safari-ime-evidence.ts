@@ -8,6 +8,7 @@ import { chromium } from "playwright-core";
 import { preview } from "vite";
 import { createServer } from "../server/index.ts";
 import { paneRead, paneSendText, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 assert(process.env.HERDR_TEST_LIVE !== "1" && process.env.HERDR_TEST_MODE !== "unit");
 process.env.HERDR_TEST_SESSION ||= "herdr-web-ui-test-ime-evidence";
@@ -27,7 +28,7 @@ const until = async (check: () => boolean | Promise<boolean>, message: string) =
   const deadline = Date.now() + 15_000;
   while (!(await check())) { assert(Date.now() < deadline, message); await Bun.sleep(25); }
 };
-const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || "/opt/google/chrome/chrome", headless: true });
+const browser = await chromium.launch({ executablePath: chromePath(), headless: true });
 try {
   for (const [label, dist] of [["before", before], ["after", after]]) {
     const root = mkdtempSync(join(tmpdir(), "herdr-ime-evidence-"));

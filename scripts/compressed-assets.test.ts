@@ -25,6 +25,8 @@ test("a production build produces exact compressed JS/CSS sidecars and leaves th
     expect(existsSync(join(output, "index.html.br"))).toBe(false);
     expect(existsSync(join(output, "index.html.gz"))).toBe(false);
     expect(existsSync(join(output, "sw.js.gz"))).toBe(false);
+    // the worker names its cache after this build (scripts/service-worker-build.ts)
+    expect(readFileSync(join(output, "sw.js"), "utf8")).toMatch(/^const BUILD = "[0-9a-f]{12}";$/m);
   } finally {
     rmSync(output, { recursive: true, force: true });
   }

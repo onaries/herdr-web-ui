@@ -9,12 +9,36 @@
 // comes as 92 chunks split by unicode-range and the browser asks only for those whose characters
 // a page draws, so each is cached as it is first fetched and a phone that has shown Korean once
 // draws it offline. Never list them for install: that would download all 3 MB on every device.
-// A new CACHE_NAME starts empty for the same reason, so the cache of the name before it is kept
-// until this one holds a shell: the page that brought this worker was loaded through the old
-// one, and its shell, bundles and font chunks are all there. Deleted at activation, the first
-// reload without a network would find no shell at all. Nothing is copied across, so no hashed
-// file of an old build outlives the first navigation that reaches the server.
+// A new cache starts empty for the same reason, so the cache of the name before it is kept
+// until this one holds a shell and the files it starts with: the page that brought this worker
+// was loaded through the old one, and its shell, bundles and font chunks are all there. Deleted
+// at activation, the first reload without a network would find no shell at all. Only the new
+// build's files (BUILD_FILES), the retired shell's entry files, typefaces and icons are copied
+// across, so no other bundle of an old build outlives the first navigation that reaches the server.
+// Every build is a worker of its own: the build stamps BUILD into dist/sw.js
+// (scripts/service-worker-build.ts), so its cache is named after it and the last build's
+// bundles go with the last build's cache. CACHE_NAME is the part a person moves.
+// The typefaces and icons are not a build's: a font chunk's name changes only with its contents,
+// and most are the same file release after release. They live in FILES, which no build retires,
+// so an update does not cost a phone the glyphs it had drawn offline.
+// BUILD_FILES, stamped beside BUILD, names the build's own /assets/ files (names only, no typefaces).
+// A file of this build that the worker before kept (the reload after an update is still answered
+// by it, KaTeX or Mermaid fetched early among them) is moved into this cache when that one is
+// retired, and a file of another build is not copied forward. A worker no build stamped has no
+// list: any file is copied forward, as before.
+// A retired cache's own shell keeps its entry script and stylesheet here too: a page that started
+// from that shell offline and has not asked for them yet still boots, then offers a reload.
 const CACHE_NAME = "herdr-web-ui-v4-ram";
+const BUILD = "";
+const BUILD_FILES = null;
+const CACHE = BUILD ? `${CACHE_NAME}-${BUILD}` : CACHE_NAME;
+const FILES = "herdr-web-ui-files-v1";
+const buildFiles = BUILD_FILES ? new Set(BUILD_FILES) : null;
+
+/** Whether `pathname` is a file this build uses; any file, for a worker no build stamped. */
+function ofThisBuild(pathname) {
+  return !buildFiles || buildFiles.has(pathname);
+}
 
 const CACHE_FIRST_PATHS = new Set([
   "/favicon.png",
@@ -27,26 +51,84 @@ function isCacheFirst(pathname) {
   return CACHE_FIRST_PATHS.has(pathname);
 }
 
+/** A typeface or an icon: kept in FILES across builds. */
+function isLongLived(pathname) {
+  if (pathname.startsWith("/icons/") || CACHE_FIRST_PATHS.has(pathname)) return true;
+  return pathname.startsWith("/assets/") && /\.(woff2?|ttf)$/.test(pathname);
+}
+
+/** A page where a file was asked for: a server that had no such file answered with its shell. */
+function isPage(response) {
+  return (response.headers.get("content-type") || "").startsWith("text/html");
+}
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  // no cache is deleted here: see CACHE_NAME
+  // no cache is deleted here: see CACHE_NAME, BUILD and keepShell
   event.waitUntil(self.clients.claim());
 });
 
-/** The shell just fetched is this cache's "/", and only then do the caches of other names go. */
+/** The files a shell cannot start without: its entry script and its stylesheet. */
+function shellFiles(html) {
+  const files = new Set();
+  for (const [, path] of html.matchAll(/<(?:script|link)\b[^>]*?\s(?:src|href)="(\/assets\/[^"?#]+\.(?:js|css))"/g)) files.add(path);
+  return [...files];
+}
+
+/** A file from a cache of another name, else from the network; null when neither has it. */
+async function fileFor(path) {
+  const older = await caches.match(path);
+  if (older && !isPage(older)) return older;
+  try {
+    const response = await fetch(path);
+    return response.ok && response.type === "basic" && !isPage(response) ? response : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * The shell just fetched becomes this cache's "/" once the cache holds every file that shell
+ * starts with: the worker before may have answered them, and a network that drops before the
+ * page asks again must not leave a shell without them. Until then the old caches and their
+ * shell stay, a complete start offline. Then the caches of other names go, their typefaces and
+ * icons moved to FILES first.
+ */
 async function keepShell(response) {
-  const cache = await caches.open(CACHE_NAME);
+  const html = await response.clone().text();
+  const cache = await caches.open(CACHE);
+  for (const path of shellFiles(html)) {
+    if (await cache.match(path)) continue;
+    const file = await fileFor(path);
+    if (!file) return;
+    await cache.put(path, file);
+  }
   await cache.put("/", response);
-  const names = await caches.keys();
-  await Promise.all(names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name)));
+  const files = await caches.open(FILES);
+  const names = (await caches.keys()).filter((name) => name !== CACHE && name !== FILES);
+  for (const name of names) {
+    const old = await caches.open(name);
+    // the files the retired cache's shell starts with: a page given that shell may not have asked yet
+    const oldShell = await old.match("/");
+    const starts = new Set(oldShell ? shellFiles(await oldShell.text()) : []);
+    for (const request of await old.keys()) {
+      const path = new URL(request.url).pathname;
+      const into = isLongLived(path) ? files
+        : starts.has(path) || (buildFiles && buildFiles.has(path)) ? cache : null;
+      if (!into || (await into.match(request))) continue;
+      const file = await old.match(request);
+      if (file && !isPage(file)) await into.put(request, file);
+    }
+  }
+  await Promise.all(names.map((name) => caches.delete(name)));
 }
 
 /** The shell to start from offline: this cache's, else the one a cache not yet deleted holds. */
 async function cachedShell() {
-  const cache = await caches.open(CACHE_NAME);
+  const cache = await caches.open(CACHE);
   return (await cache.match("/")) || (await caches.match("/"));
 }
 
@@ -84,20 +166,22 @@ self.addEventListener("fetch", (event) => {
   if (isCacheFirst(url.pathname)) {
     event.respondWith(
       (async () => {
-        const cache = await caches.open(CACHE_NAME);
+        const cache = await caches.open(isLongLived(url.pathname) ? FILES : CACHE);
         const own = await cache.match(request);
         if (own) return own;
         const older = await caches.match(request);
-        if (older) {
+        // a shell an older worker kept under a file's URL is no copy of that file
+        if (older && !isPage(older)) {
           // a file only the cache of the name before still holds, asked for while the new shell's
           // copy is being kept: it is kept here too, so keepShell's retirement of that cache does
-          // not take the only copy of a file the new shell uses
-          event.waitUntil(cache.put(request, older.clone()).catch(() => undefined));
+          // not take the only copy of a file the new shell uses. Another build's file is only answered.
+          if (ofThisBuild(url.pathname)) event.waitUntil(cache.put(request, older.clone()).catch(() => undefined));
           return older;
         }
         const response = await fetch(request);
-        if (response.ok && response.type === "basic") {
-          const cache = await caches.open(CACHE_NAME);
+        // a file the server no longer has is not kept: an old page asking for its own build's
+        // bundle after an update gets a 404, or the shell from a server older than that answer
+        if (response.ok && response.type === "basic" && !isPage(response)) {
           cache.put(request, response.clone());
         }
         return response;
@@ -126,7 +210,7 @@ self.addEventListener("push", (event) => {
         tag: payload.tag || "herdr",
         renotify: !watching,
         silent: watching,
-        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local" },
+        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null },
         icon: "/icons/icon-192.png?v=ram1",
         // Android's status bar and small icon: white on transparent, or Chrome's bell
         badge: "/icons/badge-96.png?v=ram1",
@@ -134,6 +218,23 @@ self.addEventListener("push", (event) => {
     })(),
   );
 });
+
+/**
+ * A window that runs the app and so takes a "select-pane": the shell's own paths only. Not a
+ * markdown reader tab (`?read=`, src/lib/fileReader.ts renders FileReader there instead of App),
+ * nor a raw file or HTML page the file viewer opened in a tab of its own (those are /api/
+ * responses), nor any shipped file (an icon, /social-preview.png, a notice): a path whose last
+ * part has an extension is a file, except the shell's own index.html.
+ */
+function isAppWindow(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return false; }
+  const path = parsed.pathname;
+  if (path.startsWith("/api/") || path === "/ws") return false;
+  const last = path.slice(path.lastIndexOf("/") + 1);
+  if (last.includes(".") && last !== "index.html") return false;
+  return (parsed.searchParams.get("read") ?? "").trim() === "";
+}
 
 // Tap: bring the app forward on that pane - an open window is told which pane
 // (App listens), a closed app opens on /?pane=<id>.
@@ -144,14 +245,19 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const paneId = event.notification.data ? event.notification.data.pane_id : null;
   const machineId = event.notification.data?.machine_id || "local";
+  // the workspace the pane was last seen in: an ended pane's tap opens it (src/lib/deepLink.ts)
+  const workspaceId = event.notification.data?.workspace_id || null;
+  const selection = paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat", ...(workspaceId ? { workspace_id: workspaceId } : {}) } : null;
   // Remember the intent before any lookup: an older focus can finish while this one
   // is still finding its window.
-  latestNotificationSelection = paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat" } : null;
+  latestNotificationSelection = selection;
   event.waitUntil(
     (async () => {
-      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      // only an app window handles the selection: focusing a reader tab would swallow the tap
+      const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+        .filter((client) => isAppWindow(client.url));
       if (click !== latestNotificationClick) return;
-      const url = paneId ? `/?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}&view=chat` : "/";
+      const url = paneId ? `/?machine=${encodeURIComponent(machineId)}${workspaceId ? `&ws=${encodeURIComponent(workspaceId)}` : ""}&pane=${encodeURIComponent(paneId)}&view=chat` : "/";
       const selectLatest = (client) => { if (client && latestNotificationSelection) client.postMessage(latestNotificationSelection); };
       const open = async () => {
         // An opening can also finish after a newer tap. Repair that returned
@@ -160,7 +266,7 @@ self.addEventListener("notificationclick", (event) => {
       };
       const target = windows.find((client) => client.focused) || windows[0];
       if (target) {
-        const select = () => { if (paneId) target.postMessage({ type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat" }); };
+        const select = () => { if (selection) target.postMessage(selection); };
         // Name the pane before focus(): a focus() that iOS refuses or resolves late must not
         // swallow it. A page frozen in the background may need the selection again
         // once its focus completes.

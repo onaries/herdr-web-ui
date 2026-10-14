@@ -62,17 +62,17 @@ export function webLikeHref(target: string): string | null {
 /**
  * The file a link names, when its target is a path rather than an address: agents link
  * files they wrote (`[report](/repo/out/REPORT.md)`, `[x](src/x.ts#L12)`, `[x](x.ts:12)`).
- * A line anchor (`#L12`, `:12`) is dropped; the viewer opens the file. A line after a bare
+ * A line anchor (`#L12`, `:12`) stays for the viewer; other anchors are dropped. A line after a bare
  * word is a scheme's (`tel:123`), not a file's.
  */
 export function markdownFileTarget(href: string): string | null {
   const value = href.trim();
   if (/^file:\/\/\//i.test(value)) return fileUriPath(value);
   if (value === "" || value.startsWith("#")) return null;
-  const withoutAnchor = value.replace(/#.*$/, "");
-  const path = withoutAnchor.replace(/(?::\d+){1,2}$/, "");
-  if (path === "" || /^[a-z][a-z0-9+.-]*:/i.test(path) || (path !== withoutAnchor && !/[./]/.test(path))) return null;
-  return path;
+  const target = value.replace(/#(?!L\d+(?:-L?\d+)?$).*$/, "");
+  const path = target.replace(/(?::\d+){1,2}$|#L\d+(?:-L?\d+)?$/, "");
+  if (path === "" || /^[a-z][a-z0-9+.-]*:/i.test(path) || (path !== target && !/[./]/.test(path))) return null;
+  return target;
 }
 
 /** A bare URL without the punctuation that closes the sentence around it (GFM's autolink rule). */

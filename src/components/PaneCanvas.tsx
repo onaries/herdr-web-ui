@@ -216,7 +216,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   for (const cell of cells) lastCells.current.set(cell.paneId, cell);
   const shownIds = new Set(cells.map((cell) => cell.paneId));
   // Every frame stays under the same keyed array, including a frame returning before its ACK.
-  // Retention ends at the receipt, disconnect timeout, native close, or PC canvas teardown.
+  // Retention ends when the submit/queue settles, on disconnect, native close, or PC canvas teardown.
   const mountedCells = [...cells.map((cell) => ({ ...cell, retained: false })), ...retainedIds.flatMap((id) => {
     const cell = lastCells.current.get(id);
     return !shownIds.has(id) && cell ? [{ ...cell, retained: true }] : [];

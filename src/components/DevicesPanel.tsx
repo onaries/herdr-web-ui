@@ -50,9 +50,11 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
   const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [justPaired, setJustPaired] = useState<string | null>(null);
+  const [pairingSelf, setPairingSelf] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const linkRef = useRef<HTMLAnchorElement>(null);
   const known = useRef(new Set<string>());
+  const pairingSelfLock = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -91,12 +93,28 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
   };
   /** an "open" browser pairs itself: a code, used at once, so the gate closes to everyone else */
   const pairSelf = async () => {
+    if (pairingSelfLock.current) return;
+    pairingSelfLock.current = true;
+    setPairingSelf(true);
+    setError(null);
     try {
       const fresh = await startPairing();
       await pairDevice(fresh.code, deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0));
-      await load();
+      const list = await fetchDevices();
+      const current = list.find((device) => device.current);
+      setDevices(list);
+      known.current = new Set(list.map((device) => device.id));
+      if (!current) {
+        setError(t("Could not confirm this browser is paired. Check that cookies are enabled, then try again."));
+        return;
+      }
+      setJustPaired(current.label);
       onPaired?.();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally {
+      pairingSelfLock.current = false;
+      setPairingSelf(false);
+    }
   };
   const rename = async () => {
     if (!renaming) return;
@@ -114,7 +132,10 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
   return (
     <div className="devices-panel">
       {auth?.via !== undefined && <p className={auth.via === "open" ? "settings-hint devices-open" : "settings-description"}>{t(VIA[auth.via])}</p>}
-      {auth?.via === "open" && <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()}>{t("Pair this device now")}</button></div>}
+      {auth?.via === "open" && <>
+        <p className="settings-hint devices-open">{t("Pairing the first device enables app-level access restrictions, even behind proxy authentication. Other browsers need a paired device or an access token.")}</p>
+        <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()} disabled={pairingSelf}>{t("Pair this device now")}</button></div>
+      </>}
       <p className="settings-description">{t("A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.")}</p>
       {devices === null ? <p className="settings-hint" role="status">{t("Loading…")}</p> : devices.length === 0 ? (
         <p className="settings-hint">{t("No devices paired yet.")}</p>

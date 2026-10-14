@@ -13,19 +13,20 @@ import { useT } from "../lib/i18n.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 16;
-const STEP = 1.25;
-const PAN_STEP = 80;
+// the view model is shared with ImageLightbox, which zooms a chat picture the same way
+export const MIN_ZOOM = 0.5;
+export const MAX_ZOOM = 16;
+export const STEP = 1.25;
+export const PAN_STEP = 80;
 
 /** `scale` 1 is the diagram fitted to the stage; `x`/`y` move it in stage pixels. */
-interface View { scale: number; x: number; y: number }
-const FIT: View = { scale: 1, x: 0, y: 0 };
+export interface View { scale: number; x: number; y: number }
+export const FIT: View = { scale: 1, x: 0, y: 0 };
 
 const clamp = (value: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
 
 /** Zooms by `factor` keeping the stage point (px, py) still. */
-function zoomAt(view: View, factor: number, px: number, py: number): View {
+export function zoomAt(view: View, factor: number, px: number, py: number): View {
   const scale = clamp(view.scale * factor);
   const k = scale / view.scale;
   return { scale, x: px - (px - view.x) * k, y: py - (py - view.y) * k };

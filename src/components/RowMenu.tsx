@@ -10,7 +10,7 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { LucideIcon } from "lucide-react";
+import { Check, type LucideIcon } from "lucide-react";
 
 import "./RowMenu.css";
 
@@ -197,6 +197,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
                 {item.glyph ?? <item.icon aria-hidden="true" />}
                 <span className="row-sheet-label">{item.label}</span>
                 {item.hint && <span className="row-sheet-hint">{item.hint}</span>}
+                {item.checked && <Check className="row-sheet-check" aria-hidden="true" />}
               </button>
             ))}
           </div>
@@ -217,6 +218,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
             {item.glyph ?? <item.icon aria-hidden="true" />}
             <span className="menu-item-main">{item.label}</span>
             {item.hint && <span className="menu-item-hint">{item.hint}</span>}
+            {item.checked && <Check className="menu-item-check" aria-hidden="true" />}
           </button>
         </Fragment>
       ))}

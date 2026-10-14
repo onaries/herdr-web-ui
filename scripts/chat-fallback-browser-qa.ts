@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { CONTENT_SECURITY_POLICY } from "../server/static.ts";
+import { chromePath } from "./chrome-path.ts";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-chat-fallback-")));
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -22,6 +23,8 @@ try {
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const url = new URL(request.url), pane = url.searchParams.get("pane_id");
     if (url.pathname === "/api/pane/prompt") return Response.json({ prompt: null });
+    // the chat's skill matcher asks for the pane's commands
+    if (url.pathname === "/api/pane/commands") return Response.json({ commands: [] });
     if (url.pathname === "/api/pane/conversation") return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? "codex-transcript" : "scrollback", cursor: null, turns: structured && pane === "agent" ? [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Structured conversation arrived" }] }] : [] });
     if (url.pathname === "/api/pane/read") {
       terminalReads.push(pane ?? "");
@@ -33,7 +36,7 @@ try {
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
     return new Response(Bun.file(join(output, url.pathname === "/" ? "index.html" : url.pathname.slice(1))), { headers: { "content-security-policy": CONTENT_SECURITY_POLICY } });
   } });
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage(); page.setDefaultTimeout(10_000);
   await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
   const errors: string[] = [];

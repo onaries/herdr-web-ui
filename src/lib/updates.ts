@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { InstalledNotes, UpdateCommand, UpdateNotes, UpdateStatus } from "../../shared/update.ts";
 import { fetchInstalledNotes, fetchUpdateNotes, fetchUpdateStatus, requestUpdate } from "./api.ts";
-import { installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes } from "./updateNotes.ts";
+import { installedUpdate, notesOffer, notesRetryDelay, notesUnboundDelay, offeredNotes, reloadReason } from "./updateNotes.ts";
 import { usePageVisible } from "./visibility.ts";
+import { lazyChunkFailed, onLazyChunkFailure } from "./lazyChunk.ts";
 
 declare const __APP_REVISION__: string | null;
 
@@ -19,6 +20,22 @@ export function useUpdates(enabled: boolean) {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+  // a part of the app that failed to load stays failed until a reload (lib/lazyChunk.ts), which
+  // is offered whatever the server answers. It may be one this tab's build has and the server's
+  // no longer does: the status is asked now, so the line names the update without the next poll
+  const [chunkFailed, setChunkFailed] = useState(lazyChunkFailed);
+  useEffect(() => {
+    let asked = 0;
+    const stop = onLazyChunkFailure(() => {
+      setChunkFailed(true);
+      if (!enabled || Date.now() - asked < 5000) return;
+      asked = Date.now();
+      setRefresh(value => value + 1);
+    });
+    // a failure between the first render and this subscription
+    setChunkFailed(lazyChunkFailed());
+    return stop;
+  }, [enabled]);
   // a hidden page keeps the last status and polls again once it is back
   const visible = usePageVisible();
   useEffect(() => {
@@ -121,9 +138,9 @@ export function useUpdates(enabled: boolean) {
     } finally { if (mounted.current) setPending(false); }
   }, []);
   const busy = pending || status?.phase === "checking" || status?.phase === "building" || status?.phase === "restarting";
-  const needsReload = typeof __APP_REVISION__ === "string" && !!status?.current_revision &&
-    __APP_REVISION__ !== status.current_revision && !busy;
-  return { status, error, busy, needsReload, notes, installed, request };
+  const reload = reloadReason(typeof __APP_REVISION__ === "string" ? __APP_REVISION__ : null, status, busy, chunkFailed);
+  const needsReload = reload !== null;
+  return { status, error, busy, needsReload, reload, notes, installed, request };
 }
 
 export type UpdatesModel = ReturnType<typeof useUpdates>;

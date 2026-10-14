@@ -9,6 +9,8 @@ export const SHORTCUTS = [
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
   { id: "find", label: "Find in terminal", keys: ["Mod", "Shift", "F"] },
   { id: "toggle-view", label: "Switch chat / terminal", keys: ["Mod", "Shift", "J"] },
+  { id: "scroll-up", label: "Scroll pane up", keys: ["Mod", "Shift", "PageUp"] },
+  { id: "scroll-down", label: "Scroll pane down", keys: ["Mod", "Shift", "PageDown"] },
   { id: "toggle-sidebar", label: "Toggle sidebar", keys: ["Mod", "Shift", "B"] },
   // Mod+Shift+N keeps working where the browser lets it through (the installed app), but Chrome
   // keeps Ctrl+Shift+N for a new incognito window in a tab: O is the one shown, and works in both
@@ -37,6 +39,8 @@ const KEY_TO_ID: Readonly<Record<string, ShortcutId>> = {
   k: "palette",
   f: "find",
   j: "toggle-view",
+  PageUp: "scroll-up",
+  PageDown: "scroll-down",
   b: "toggle-sidebar",
   n: "new-session",
   o: "new-session",
@@ -62,10 +66,8 @@ export function shortcutConflict(id: ShortcutId, keys: string[], overrides: Shor
   return SHORTCUTS.some((other) => other.id !== id && shortcutKeys(other.id, overrides).some((key) => keys.includes(key)));
 }
 
-export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, overrides: ShortcutOverrides = {}): ShortcutId | null {
-  if (event.isComposing || event.keyCode === 229) return null;
-  const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-  if (!hasMod || !event.shiftKey || event.altKey) return null;
+/** The key a Mod+Shift chord names, as overrides and KEY_TO_ID store it (letters lowercase). */
+export function shortcutEventKey(event: ShortcutEventLike): string {
   // Shift+Comma produces "<" on common keyboard layouts.
   const code = event.code ?? "";
   // Share the terminal's letter-position convention, but never turn a typed symbol into an app action.
@@ -73,11 +75,18 @@ export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, 
   // Turkish F's Ç on KeyB, and neither is that binding.
   const nonLatinLetter = /^\p{L}$/u.test(event.key) && !/^\p{Script=Latin}$/u.test(event.key);
   const letter = nonLatinLetter ? physicalKey(event.key, code) : event.key;
-  const key = code === "Comma"
+  return code === "Comma"
     ? ","
     : /^Digit[0-9]$/.test(code)
       ? code.slice(-1)
       : letter.length === 1 ? letter.toLowerCase() : letter;
+}
+
+export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, overrides: ShortcutOverrides = {}): ShortcutId | null {
+  if (event.isComposing || event.keyCode === 229) return null;
+  const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!hasMod || !event.shiftKey || event.altKey) return null;
+  const key = shortcutEventKey(event);
   for (const shortcut of SHORTCUTS) {
     if (shortcut.id === "voice") continue;
     if (Object.hasOwn(overrides, shortcut.id) && overrides[shortcut.id] === key) return shortcut.id;
@@ -140,12 +149,19 @@ export function formatKeys(keys: readonly string[]): string[] {
   return keys.map((key) => (key === "Mod" ? mod : key));
 }
 
+/** True while Settings records a chord: the dispatcher below stands down so the pressed chord is not run. */
+let recordingShortcut = false;
+export function setShortcutRecording(recording: boolean): void {
+  recordingShortcut = recording;
+}
+
 export function useShortcuts(actions: AppActions, enabled: boolean): void {
   const { settings } = useSettings();
   useEffect(() => {
     if (!enabled) return;
     const platformIsMac = isMacPlatform();
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (recordingShortcut) return;
       const shortcut = matchShortcut(event, platformIsMac, settings.shortcutOverrides);
       if (shortcut === null) return;
       if (event.key.startsWith("Arrow") && keepsArrowsForText(event.target)) return;
@@ -159,6 +175,12 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
           break;
         case "toggle-view":
           actions.toggleView();
+          break;
+        case "scroll-up":
+          actions.scrollPage(-1);
+          break;
+        case "scroll-down":
+          actions.scrollPage(1);
           break;
         case "toggle-sidebar":
           actions.toggleSidebar();

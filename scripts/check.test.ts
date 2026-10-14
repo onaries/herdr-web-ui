@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,7 +9,10 @@ import { acquire, describeHolders, isolate, lock, maxRuns, needsLock, plan, sani
 
 const made: string[] = [];
 afterEach(() => { for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true }); });
-const scratch = (): string => { const dir = mkdtempSync(join(tmpdir(), "hwc-test-")); made.push(dir); return dir; };
+// /tmp where there is one, as `isolate` itself prefers: macOS keeps its temp dir under a path so long
+// that a socket inside a directory made there is past the limit `isolate` enforces
+const scratchBase = existsSync("/tmp") ? realpathSync("/tmp") : tmpdir();
+const scratch = (): string => { const dir = mkdtempSync(join(scratchBase, "hwc-")); made.push(dir); return dir; };
 const git = (cwd: string, ...args: string[]): void => {
   const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || `git ${args.join(" ")} failed`);

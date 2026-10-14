@@ -9,15 +9,15 @@
  * - omp: herdr's agent.get hands us the session jsonl path outright under
  *   ~/.omp/agent/sessions/<cwd-slug>/, or ~/.omp/profiles/<name>/agent/sessions/<cwd-slug>/
  *   for `omp --profile <name>` — same shape of truth, one less hop. When herdr names none, the
- *   pane's omp process does, as gjc's does (omp.ts).
+ *   pane's omp process does (omp.ts).
  * - omo: herdr knows nothing about its store and its label for the pane flips
  *   between `pi` and `claude` as omo spawns model CLIs, so the pane's process
  *   tree routes it and process/session evidence selects a unique transcript
  *   under <its agent dir>/sessions/<cwd-slug>/ (~/.omo/agent unless the process
  *   moved it with OMO_CODING_AGENT_DIR). It writes omp's session shape, so
  *   parseOmpTranscript (transcript-records.ts) reads it.
- * - gjc: an open session file or fresh native terminal breadcrumb belonging to
- *   its process (gjc-runtime.ts). It writes omp's session shape too.
+ * - gjc: the public SDK broker binds its live pane process to the exact saved
+ *   session transcript (gjc-sdk.ts, gjc-runtime.ts). It writes omp's session shape too.
  * - pi: herdr's agent.get names the session jsonl outright under
  *   ~/.pi/agent/sessions/<cwd-slug>/ (pi.ts). Its records are the session shape
  *   parseOmpTranscript reads, but its file is an entry tree, not a log: /tree
@@ -40,11 +40,11 @@ import nodePath, { type PlatformPath } from "node:path";
 import { dshConversation, DshHistoryChanged, dshSessionFromPids, dshToolOutput } from "./dsh.ts";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
-import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
+import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
-import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
+import { forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoSessionForPane } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
@@ -61,8 +61,10 @@ import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { invokedSkill } from "./skill-activity.ts";
-import { agentTaskResult, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
+import { agentTaskResult, claudePeerId, claudePeerNotice, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
 import { forgetSubagents, lineNotifications, subagentDetails, taskNotification, type SubagentDetail } from "./claude-subagents.ts";
+import { launchedAgents } from "./launched-agents.ts";
+import { readsStartScreen, startScreenMetadata } from "./start-screen.ts";
 
 export { isOmoProcess } from "./omo.ts";
 
@@ -299,6 +301,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
   const markPromptAnswered = (): void => {
     if (lastPrompt !== null) lastPrompt.answered = true;
   };
+  // another session's deliveries seen in this text, by sender and message id: an echo is no second notice
+  const peersSeen = new Set<string>();
 
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
@@ -308,7 +312,16 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     } catch {
       continue; // a torn tail line while Claude is mid-append
     }
-    if (entry === null || typeof entry !== "object" || entry.isMeta) continue;
+    if (entry === null || typeof entry !== "object") continue;
+    // another session's message: its own turn, so the work it started is not appended to the answer before it
+    const peer = claudePeerNotice(entry);
+    if (peer !== null) {
+      const id = claudePeerId(entry);
+      if (id !== null) { if (peersSeen.has(id)) continue; peersSeen.add(id); }
+      turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [peer] });
+      continue;
+    }
+    if (entry.isMeta) continue;
     if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); lastPrompt = null; continue; }
     const content = entry.message?.content;
     // a compaction's summary marks where the conversation was folded, readable on request
@@ -647,6 +660,8 @@ function applyHistoryBoundary(path: string, stream: TranscriptStream, source: Re
 }
 
 /** Bytes that every line opening a turn contains: a cheap filter before JSON.parse. */
+/** the mark of another session's message in a Claude record, in either of its forms (claudePeerNotice) */
+const PEER_MARK = Buffer.from('"kind":"peer"');
 const TURN_MARK: Record<StreamSource, Buffer> = {
   "grok-transcript": Buffer.from('"user_message_chunk"'),
   "agy-transcript": Buffer.from('"USER_INPUT"'),
@@ -673,6 +688,8 @@ function opensTurn(source: StreamSource, line: string): boolean {
     const message = piMessage(entry);
     return message?.role === "user" && (message.content as Record<string, unknown>[]).some((part) => part.type === "text" && typeof part.text === "string" && part.text.length > 0);
   }
+  // another session's message opens a turn in either of its forms, the meta entry and the queued attachment
+  if (claudePeerNotice(entry) !== null) return true;
   if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary) return false;
   const content = entry.message?.content;
   if (typeof content === "string") return !isCommandEntry(content);
@@ -696,13 +713,21 @@ function turnStarts(bytes: Buffer, source: StreamSource, chain: PromptChain = { 
     const end = newline === -1 ? bytes.length : newline;
     const line = bytes.subarray(offset, end);
     if (source === "claude-transcript" && line.includes('"type":"assistant"')) chain.answered = true;
-    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) {
+    // a queued attachment carrying another session's message has no "user" in it: its own mark
+    const candidate = line.includes(TURN_MARK[source]) || (source === "claude-transcript" && line.includes(PEER_MARK));
+    if (candidate && opensTurn(source, line.toString("utf8"))) {
       if (source === "claude-transcript") {
         let parent: string | null = null;
+        let peer = false;
         try {
-          const uuid: unknown = (JSON.parse(line.toString("utf8")) as TranscriptEntry | null)?.parentUuid;
+          const entry = JSON.parse(line.toString("utf8")) as TranscriptEntry | null;
+          const uuid: unknown = entry?.parentUuid;
           parent = typeof uuid === "string" ? uuid : null;
+          peer = claudePeerNotice(entry) !== null;
         } catch { /* opensTurn already read the line as JSON */ }
+        // another session's message is never a re-send of this session's prompt: it opens a turn and
+        // leaves the prompt chain as it was, so the human re-send rule below still sees its own prompts
+        if (peer) { starts.push(offset); offset = end + 1; continue; }
         // a re-send of an unanswered prompt opens no turn of its own
         if (chain.answered || parent === null || parent !== chain.parent) starts.push(offset);
         chain.parent = parent;
@@ -984,6 +1009,7 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
 
 /** Forget every scan and parse kept between polls (tests compare against a cold read). */
 export function forgetTranscriptState(): void {
+  launchedAgents.clear();
   cache.clear();
   writtenSessions.clear();
   forgetClaudeSessions();
@@ -1014,7 +1040,7 @@ export function forgetTranscriptState(): void {
 export function forgetPaneTranscriptState(paneId: string): void {
   const reads = paneReads.get(paneId);
   paneReads.delete(paneId);
-  forgetGjcPane(paneId);
+  launchedAgents.forget(paneId);
   if (reads === undefined) return;
   // two panes can read one transcript (a resumed session, a shared store): what another pane
   // still reads stays
@@ -1396,7 +1422,15 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   const snapshot = await sessionSnapshot();
   let resolved: NativeTranscript;
 
-  const onNotStarted = (error: ConversationNotStarted): RecognizedConversation => {
+  // no transcript states the model yet: the agent's own screen does (start-screen.ts). A screen
+  // that cannot be read leaves it unknown, as it was
+  const notBegun = async (source: RecognizedConversation["source"], id: string): Promise<RecognizedConversation> => {
+    const screen = readsStartScreen(source) ? await paneRead({ paneId, source: "visible", format: "text", timeoutMs: 2_000 }).then((read) => read.text, () => "") : "";
+    const metadata = startScreenMetadata(source, screen);
+    return { source, turns: [], metadata, cursor: null, history_id: id, version: answerVersion(id, `${metadata.model}\0${metadata.reasoning_effort}`) };
+  };
+
+  const onNotStarted = (error: ConversationNotStarted): Promise<RecognizedConversation> => {
     // a file read before and gone since is no conversation not begun: the terminal stands in for it
     if (writtenSessions.has(`${error.source}\0${error.identity}`)) throw new ConversationUnavailable("transcript_missing");
     // nothing comes before a conversation not begun: a cursor into it is another one's
@@ -1406,15 +1440,22 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (status === "working" || status === "blocked") throw error;
     // the chat says there is nothing yet; the session's first prompt writes the file and
     // the next refresh's history_id differs, so the chat takes it whole
-    const id = `unwritten:${error.sessionId}`;
-    return { source: error.source, turns: [], metadata: { model: null, reasoning_effort: null }, cursor: null, history_id: id, version: answerVersion(id, "") };
+    return notBegun(error.source, `unwritten:${error.sessionId}`);
   };
 
   try {
     resolved = await paneTranscript(paneId, codexHome, snapshot, devinDbPath, opencodeDb, hermesHome, grokHome);
+    launchedAgents.forget(paneId);
   } catch (error) {
-    if (error instanceof ConversationNotStarted) return onNotStarted(error);
-    throw error;
+    if (error instanceof ConversationNotStarted) { launchedAgents.forget(paneId); return await onNotStarted(error); }
+    if (!(error instanceof ConversationUnavailable)) throw error;
+    const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
+    if (pane === undefined) { launchedAgents.forget(paneId); throw error; }
+    // an agent this server started writes no session before its first message (launched-agents.ts)
+    const launch = launchedAgents.notBegun(paneId, pane.agent_status);
+    if (launch === null) throw error;
+    if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
+    return await notBegun(launch.source, launch.historyId);
   }
   if (resolved.source === "devin-transcript") {
     try {
@@ -1444,7 +1485,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       rememberPaneSession(paneId, `${resolved.source}\0${resolved.sessionId}`);
       return answer;
     } catch (error) {
-      if (error instanceof ConversationNotStarted) return onNotStarted(error);
+      if (error instanceof ConversationNotStarted) return await onNotStarted(error);
       throw error;
     }
   }

@@ -1,7 +1,7 @@
 /** Connection-owned pending messages survive navigation, but never a lost connection. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type WebSocket as BrowserSocket, type WebSocketRoute } from "playwright-core";
@@ -9,6 +9,8 @@ import { createServer } from "../server/index.ts";
 import { UsageService } from "../server/usage.ts";
 import { herdrRpc, paneSplit, tabCreate, tabRename, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import type { ClientMessage, PendingMessage, ServerMessage } from "../shared/protocol.ts";
+import { openSettingsPage } from "./settings-page.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-pending-switch-")));
 const workspaces: string[] = [];
@@ -47,7 +49,7 @@ try {
   };
   await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), usage: new UsageService(undefined, []) });
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false })));
   const page = await context.newPage();
@@ -99,7 +101,7 @@ try {
     await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state });
     await until(() => state === "idle" ? ["idle", "done"].includes(statuses.get(pane) ?? "") : statuses.get(pane) === state, `the bridge reports ${state}`);
   };
-  const queue = async (text: string): Promise<PendingMessage> => {
+  const queue = async (text: string, state = "queued"): Promise<PendingMessage> => {
     await current(pane).locator('.composer-status[data-status="working"]').waitFor();
     await inputReady(pane);
     const after = received.length;
@@ -109,28 +111,64 @@ try {
     const result = received.slice(after).find(({ frame }) => frame.type === "submit-result" && frame.pane_id === pane && frame.pending?.text === text)!.frame;
     assert.ok(result.type === "submit-result" && result.pending);
     await rows().filter({ hasText: text }).waitFor();
-    assert.equal(await rows().filter({ hasText: text }).getAttribute("data-state"), "queued");
+    assert.equal(await rows().filter({ hasText: text }).getAttribute("data-state"), state);
     return result.pending;
   };
-  const heldReceipt = (pending: PendingMessage, after: number) => until(() => received.slice(after).some(({ frame }) => frame.type === "pending-messages" && frame.pane_id === pane
-    && frame.messages.some((item) => item.id === pending.id && item.state === "held")), "the original connection receives the held receipt while away");
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
   await current(pane).waitFor(); await inputReady(pane);
   const originalSocket = ready.get(pane)!;
   assert.equal(sockets.length, 1, "one PC uses one terminal connection");
+  const capture = async (name: string): Promise<void> => {
+    if (!process.env.UI_EVIDENCE_DIR) return;
+    mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+    await current(pane).screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${name}.png`) });
+  };
   let delivered = "";
+  const automatic = async (enabled: boolean): Promise<void> => {
+    await page.keyboard.press("ControlOrMeta+Shift+Comma");
+    await openSettingsPage(page, "Chat");
+    await page.getByRole("switch", { name: "Send queued messages automatically", exact: true }).setChecked(enabled);
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+  };
   for (const destination of ["tab", "workspace"] as const) {
     await report("working");
-    const pending = await queue(`pending across ${destination}`);
-    const leaveAt = received.length;
+    const pending = await queue(`automatic across ${destination}`);
+    await capture(`queued-before-${destination}`);
+    const sentAt = sent.length;
+    if (destination === "tab") {
+      await page.getByRole("tab", { name: "Other tab", exact: true }).click();
+      await current(tab.root_pane.pane_id).waitFor(); await inputReady(tab.root_pane.pane_id);
+    } else await selectWorkspace(away.workspace.workspace_id, away.root_pane.pane_id);
+    assert.equal(originalSocket.isClosed(), false, "navigation keeps the original connection");
+    assert.equal(sockets.length, 1, "navigation shares one PC connection");
+    await report("idle");
+    delivered += paste(pending.text);
+    await until(() => bytes() === delivered, "the original pane receives its queued message while another pane is selected");
+    assert.equal(sent.slice(sentAt).some(({ frame }) => frame.type === "pending-action" || frame.type === "submit"), false, "automatic delivery needs no browser replay or Send now");
+    await report("working"); await report("idle");
+    await noBytes(delivered, "a later turn never duplicates automatic delivery");
+    await until(() => !ready.has(pane), "the outgoing pane releases its input lease after its queue settles");
+    if (destination === "workspace") await selectWorkspace(owner.workspace.workspace_id, pane);
+    else {
+      await page.getByRole("tab", { name: "Pending owner", exact: true }).click();
+      await current(pane).waitFor(); await inputReady(pane);
+    }
+    assert.equal(await rows().filter({ hasText: pending.text }).count(), 0, "the sent message is removed on return");
+    await capture(`delivered-after-${destination}`);
+  }
+  console.log("PASS tab and workspace switches deliver queued messages once to the original pane without browser replay");
+
+  await automatic(false);
+  for (const destination of ["tab", "workspace"] as const) {
+    await report("working");
+    const pending = await queue(`pending across ${destination}`, "held");
     const sentAt = sent.length;
     if (destination === "tab") {
       await page.getByRole("tab", { name: "Other tab", exact: true }).click();
       await current(tab.root_pane.pane_id).waitFor();
       await inputReady(tab.root_pane.pane_id);
     } else await selectWorkspace(away.workspace.workspace_id, away.root_pane.pane_id);
-    await heldReceipt(pending, leaveAt);
     assert.ok(sent.slice(sentAt).some(({ socket, frame }) => socket === originalSocket && frame.type === "detach" && frame.pane_id === pane), "navigation gives up the old pane's input lease");
     assert.equal(originalSocket.isClosed(), false, "navigation keeps the receipt-owning connection alive");
     assert.equal(sockets.length, 1, "changing tabs and workspaces does not open another PC connection");
@@ -157,6 +195,53 @@ try {
     await noBytes(delivered, "a later ready turn never replays the completed pending ID");
   }
   console.log("PASS tab and workspace navigation retain pending ownership, release the old lease and permit one explicit Send now");
+  await automatic(true);
+
+  // A held terminal draft blocks Send now on a server-owned row: the server pastes the text and
+  // sends Enter, so keys left in the draft (or a partial line in the pty) would run with it.
+  {
+    await report("working");
+    const pending = await queue("never beside a held draft");
+    const toggle = (title: string) => page.getByTitle(title, { exact: true }).click();
+    // keys typed while the terminal is not ready for input are held as a draft
+    routed!.send(JSON.stringify({ type: "input-ready", pane_id: pane, ready: false }));
+    await toggle("Live terminal (⌘⇧J)");
+    const waiting = current(pane).locator(".terminal-banner", { hasText: "Waiting for terminal input…" });
+    await waiting.waitFor();
+    await current(pane).locator(".xterm-helper-textarea").pressSequentially("abc");
+    await until(async () => await current(pane).locator(".draft-text").textContent() === "abc", "the typing is held as a draft");
+    // ready again: the draft still waits for Send or Discard
+    routed!.send(JSON.stringify({ type: "input-ready", pane_id: pane, ready: true }));
+    await waiting.waitFor({ state: "hidden" });
+    await toggle("Chat transcript (⌘⇧J)");
+    const row = rows().filter({ hasText: pending.text });
+    const actionAt = sent.length;
+    await row.getByRole("button", { name: /^Send now:/ }).click();
+    await row.locator(".pending-message-note", { hasText: "Not sent: send or discard the held input first." }).waitFor();
+    assert.equal(sent.slice(actionAt).some(({ frame }) => frame.type === "pending-action"), false, "Send now beside a held draft sends no pending action");
+    await noBytes(delivered, "Send now beside a held draft types nothing");
+    // the message box is refused beside a held draft too: its Enter would run the pty's partial line
+    const heldNote = "Not sent: send or discard the held input first.";
+    const submitAt = sent.length;
+    await composer().fill("ls");
+    await current(pane).getByRole("button", { name: "Send message", exact: true }).click();
+    await until(async () => await current(pane).getByText(heldNote, { exact: true }).count() >= 2, "the message box says the held draft comes first");
+    assert.equal(sent.slice(submitAt).some(({ frame }) => frame.type === "submit"), false, "a message box send beside a held draft sends no submit");
+    assert.equal(await composer().inputValue(), "ls", "a refused message keeps its text");
+    await composer().fill("");
+    await noBytes(delivered, "a message box send beside a held draft types nothing");
+    // the row is not marked unconfirmed: once the draft is discarded, Send now delivers it
+    await toggle("Live terminal (⌘⇧J)");
+    await current(pane).locator(".draft-discard").click();
+    await current(pane).locator(".terminal-banner-draft").waitFor({ state: "detached" });
+    await toggle("Chat transcript (⌘⇧J)");
+    await row.getByRole("button", { name: /^Send now:/ }).click();
+    delivered += paste(pending.text);
+    await until(() => bytes() === delivered, "Send now after the draft is discarded delivers the message once");
+    await row.waitFor({ state: "detached" });
+    await report("idle");
+  }
+  console.log("PASS a held terminal draft refuses Send now on a server-owned row until it is settled");
 
   // Visible split siblings keep their leases. They still share the same PC connection;
   // neither the other pane's input-ready nor its output can advance this agent's queue.

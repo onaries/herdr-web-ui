@@ -7,8 +7,9 @@
  * the attribute); `[data-density="compact"]` overrides the type scale and row
  * heights. The base blocks are the amber palette, the default and the look before
  * settings load; `[data-palette]` blocks override them for the opt-in report,
- * charcoal, catppuccin, lilac and forest palettes. xterm cannot read CSS custom properties, so the --term-* group
- * is mirrored in settings.ts `terminalTheme()`.
+ * charcoal, catppuccin, lilac and forest palettes. `[data-contrast]` (after them) re-mixes the
+ * text and border tokens under <html> by the Contrast step. xterm cannot read CSS custom
+ * properties, so the --term-* group is mirrored in settings.ts `terminalTheme()`.
  * Component-scoped rules live beside their component (Sidebar.css,
  * PaneTerminal.css, ...); this file owns the app shell, the header and the
  * primitives (.icon-button, .btn, .pill, .badge, .segmented, .modal, .menu, .kbd)
@@ -52,6 +53,8 @@
   --status-done-tint: rgba(147, 195, 107, 0.14);
   --danger-tint: rgba(255, 123, 112, 0.12);
   --danger-text: #ffd9d4;
+  /* a note that the view is partial (a file cut short, code left plain): warning yellow */
+  --notice: #e8c55c;
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);
@@ -77,6 +80,8 @@
 
   /* syntax highlighting (components/HighlightedCode.css): the four derived roles follow the
      palette because they are resolved on <html>, where data-theme and data-palette sit */
+  /* the file viewer's line numbers: tertiary text, quieter than the code beside them */
+  --line-number: var(--text-dim);
   --syntax-comment: var(--text-dim);
   --syntax-function: var(--accent);
   --syntax-inserted: var(--status-done);
@@ -88,21 +93,41 @@
   --syntax-variable: #e0c08f;
   --syntax-meta: #b49dd6;
 
-  /* type (comfortable density; compact overrides below) */
+  /* contrast (Settings → Appearance → Contrast; the [data-contrast] layer after the palette
+     blocks): the pole the text tokens are mixed toward at a step up, white here and black in
+     light, and the palette's own values of the tokens the layer re-mixes under <html>. A token
+     cannot be mixed from itself on the element whose block sets it, so these copies, made here
+     on <html>, carry the palette's values down to where the mix is made */
+  --contrast-far: #ffffff;
+  --text-base: var(--text);
+  --text-dim-base: var(--text-dim);
+  --text-strong-base: var(--text-strong);
+  --border-base: var(--border);
+  --border-strong-base: var(--border-strong);
+  --line-number-base: var(--line-number);
+  --syntax-comment-base: var(--syntax-comment);
+
+  /* type (comfortable density; compact overrides below). Settings → Appearance → Interface font and
+     Code font write --font-ui and --font-mono on <html> with a chosen list in front of these stacks
+     (lib/typography.ts keeps them verbatim); unset, the two are what they say here */
   --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
   /* "JetBrains Mono Web" is the bundled face (fonts/fonts.css): after the icon font, which draws
      the private use area alone, and never in the terminal's own stack (lib/fontFamily.ts) */
   --font-mono: "Symbols Nerd Font Mono", "JetBrains Mono Web", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "D2Coding", monospace;
-  --fs-2xs: 11px;
-  --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-md: 14px;
-  --fs-chat: 15px; /* text that is read at length: chat prose, the user's bubble, the message box with a mouse */
-  --fs-lg: 16px;
-  --fs-xl: 18px;
-  --fs-display: 22px;
+  /* Settings → Appearance → Interface font size: the chosen body size over the density's (lib/settings.ts
+     writes it on <html>). Every size below is the scale at 1, except --fs-input: the floor under which
+     iOS Safari zooms a focused field stays a floor */
+  --ui-scale: 1;
+  --fs-2xs: calc(11px * var(--ui-scale));
+  --fs-xs: calc(12px * var(--ui-scale));
+  --fs-sm: calc(13px * var(--ui-scale));
+  --fs-md: calc(14px * var(--ui-scale));
+  --fs-chat: calc(15px * var(--ui-scale)); /* text that is read at length: chat prose, the user's bubble, the message box with a mouse */
+  --fs-lg: calc(16px * var(--ui-scale));
+  --fs-xl: calc(18px * var(--ui-scale));
+  --fs-display: calc(22px * var(--ui-scale));
   /* the pairing code: a size of its own, still on the density scale (compact overrides it) */
-  --fs-pairing: 32px;
+  --fs-pairing: calc(32px * var(--ui-scale));
   --fs-input: 16px; /* the one size iOS Safari does not zoom on focus */
   --lh-tight: 1.2;
   --lh-base: 1.5;
@@ -152,10 +177,14 @@
   --content-w: 820px;
   /* the chat lane: transcript, composer column, held list (Settings → Chat width, lib/settings.ts).
      At the Default step PaneTerminal writes the pane's own lane on .terminal-stack, as one
-     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem); this is that rule's floor, for a
+     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem), and a file viewer
+     writes the lane of the pane that opened it on itself; this is that rule's floor, for a
      pane not measured yet. Never a percentage here: each column would resolve it against its
      own box and the columns would differ by their gutters */
   --chat-w: var(--content-w);
+  /* a long user message folds to this many lines of its prose (ChatView.css caps the bubble's body
+     at the count; lib/userMessageFold.ts folds a message past it) */
+  --chat-fold-lines: 12;
   --pending-max-h: min(20dvh, 12rem);
   --palette-w: 640px;
   --palette-top: 12vh;
@@ -166,11 +195,15 @@
 
   /* motion: only real state changes move (drawer, dialogs, working/reconnecting pulse) */
   --dur-fast: 120ms;
-  --dur-base: 180ms;
+  /* Settings → Panel motion: 0 snaps, 1 is as drawn (lib/settings.ts writes it on <html>) */
+  --motion-scale: 1;
+  --dur-base: calc(180ms * var(--motion-scale));
   --dur-pulse: 1600ms;
-  /* one turn of the working arc: a stepped rotation draws its steps and nothing else, so the
-     step count in Sidebar.css is the frame rate and this only sets how fast it looks */
+  /* one turn of a stepped spinner: it draws its steps and nothing else, so the step count is
+     the frame rate and this only sets how fast it looks */
   --dur-spin: 1600ms;
+  /* one breath of the sidebar's working dot: held full, dimmed, held, back (Sidebar.css) */
+  --dur-breathe: 2000ms;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
   /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
@@ -178,8 +211,8 @@
      video playing beside the app; two steps draw about one frame a second */
   --ease-pulse: steps(2, jump-none);
   /* a phone's sheet rises on the spring and drops faster than it rose */
-  --dur-sheet: 360ms;
-  --dur-sheet-out: 240ms;
+  --dur-sheet: calc(360ms * var(--motion-scale));
+  --dur-sheet-out: calc(240ms * var(--motion-scale));
 
   /* layers */
   --z-header: 4;
@@ -215,6 +248,7 @@
   --text: #2a251f;
   --text-dim: #685e52;
   --text-strong: #16120d;
+  --contrast-far: #000000;
   --accent: #8c5000;
   --accent-tint: rgba(140, 80, 0, 0.1);
   --primary: #c57d12;
@@ -230,6 +264,7 @@
   --status-done-tint: rgba(47, 99, 23, 0.12);
   --danger-tint: rgba(168, 35, 35, 0.1);
   --danger-text: #8f1d1d;
+  --notice: #7a5a00;
   --scrim: rgba(40, 32, 22, 0.35);
   --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
   --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);
@@ -260,6 +295,7 @@
 }
 
 [data-theme="dark"][data-palette="report"] {
+  --notice: #f5b544;
   --bg: #0a0d12;
   --bg-panel: #0f1319;
   --bg-elevated: #141922;
@@ -303,6 +339,7 @@
 /* Report and charcoal share plain paper in light; charcoal's own light block below
    swaps the blue for ink */
 [data-theme="light"]:is([data-palette="report"], [data-palette="charcoal"]) {
+  --notice: #8a5300;
   --bg: #f2f2f0;
   --bg-panel: #fafaf9;
   --bg-elevated: #efefed;
@@ -339,6 +376,7 @@
    chrome hue - selection, focus, cursor and the user's action are near-white; agent
    states are muted as in the terminal palette. Light keeps the base paper with ink. */
 [data-theme="dark"][data-palette="charcoal"] {
+  --notice: #d9b26a;
   --bg: #0f0f0f;
   --bg-panel: #171717;
   --bg-elevated: #1f1f1f;
@@ -396,6 +434,9 @@
    surfaces, so the style guide's "legibility first" applies: each keeps its hue and is
    darkened until it passes AA (Mauve 17%, Red 18%, Blue 22%, Green 37%). */
 [data-theme="dark"][data-palette="catppuccin"] {
+  --notice: #f9e2af;
+  /* overlay2: --text-dim (subtext1) is nearly --text here */
+  --line-number: #9399b2;
   --bg: #1e1e2e;
   --bg-panel: #181825;
   --bg-elevated: #181825;
@@ -439,6 +480,9 @@
 }
 
 [data-theme="light"][data-palette="catppuccin"] {
+  --notice: #8a5710;
+  /* subtext0, darkened to 4.5:1 on --bg */
+  --line-number: #64677d;
   --bg: #eff1f5;
   --bg-panel: #e6e9ef;
   --bg-elevated: #e6e9ef;
@@ -639,6 +683,53 @@
   --syntax-meta: #68489c;
 }
 
+/* Contrast (Settings → Appearance → Contrast): text and hairlines stand out more or less than the
+   palette drew them. lib/settings.ts writes the step on <html> as data-contrast, and not at all at
+   the default, so the look before settings load is the palette's own. A step up mixes the text
+   tokens toward the pole (--contrast-far) and the hairlines toward the text; a step down mixes
+   --text and --text-strong toward --text-dim and fades the hairlines. --text-dim itself never
+   softens: it is the dimmest text, the one each palette keeps at 4.5:1 on every surface
+   (DESIGN.md), so a step down stays readable by construction. Line numbers and code comments are
+   dim text and follow it. The user bubble's edge, the popover ring in --shadow-pop and the agent
+   states keep the palette's values.
+   After the palette blocks on purpose: the mix is made on body and on a leaving sheet's copy of
+   the page (lib/sheets.ts, which carries <html>'s data- marks), never on <html> itself, where the
+   blocks set the tokens the mix reads through their *-base copies; the copy's own palette rule
+   matches at the same specificity, and the later rule wins. */
+[data-contrast="-2"] {
+  --contrast-soften: 50%;
+}
+
+[data-contrast="-1"] {
+  --contrast-soften: 25%;
+}
+
+[data-contrast="1"] {
+  --contrast-boost: 20%;
+  --contrast-border-boost: 10%;
+}
+
+[data-contrast="2"] {
+  --contrast-boost: 40%;
+  --contrast-border-boost: 20%;
+}
+
+[data-contrast="3"] {
+  --contrast-boost: 60%;
+  --contrast-border-boost: 30%;
+}
+
+[data-contrast] body,
+[data-contrast]:not(:root) {
+  --text-strong: color-mix(in oklab, color-mix(in oklab, var(--text-strong-base), var(--text-dim-base) var(--contrast-soften, 0%)), var(--contrast-far) var(--contrast-boost, 0%));
+  --text: color-mix(in oklab, color-mix(in oklab, var(--text-base), var(--text-dim-base) var(--contrast-soften, 0%)), var(--contrast-far) var(--contrast-boost, 0%));
+  --text-dim: color-mix(in oklab, var(--text-dim-base), var(--contrast-far) var(--contrast-boost, 0%));
+  --line-number: color-mix(in oklab, var(--line-number-base), var(--contrast-far) var(--contrast-boost, 0%));
+  --syntax-comment: color-mix(in oklab, var(--syntax-comment-base), var(--contrast-far) var(--contrast-boost, 0%));
+  --border: color-mix(in srgb, color-mix(in srgb, var(--border-base), transparent var(--contrast-soften, 0%)), var(--text-base) var(--contrast-border-boost, 0%));
+  --border-strong: color-mix(in srgb, color-mix(in srgb, var(--border-strong-base), transparent var(--contrast-soften, 0%)), var(--text-base) var(--contrast-border-boost, 0%));
+}
+
 [data-chat-width="narrow"] {
   --chat-w: var(--content-w);
 }
@@ -653,15 +744,15 @@
 }
 
 [data-density="compact"] {
-  --fs-2xs: 10px;
-  --fs-xs: 11px;
-  --fs-sm: 12px;
-  --fs-md: 13px;
-  --fs-chat: 14px;
-  --fs-lg: 15px;
-  --fs-xl: 17px;
-  --fs-display: 21px;
-  --fs-pairing: 26px;
+  --fs-2xs: calc(10px * var(--ui-scale));
+  --fs-xs: calc(11px * var(--ui-scale));
+  --fs-sm: calc(12px * var(--ui-scale));
+  --fs-md: calc(13px * var(--ui-scale));
+  --fs-chat: calc(14px * var(--ui-scale));
+  --fs-lg: calc(15px * var(--ui-scale));
+  --fs-xl: calc(17px * var(--ui-scale));
+  --fs-display: calc(21px * var(--ui-scale));
+  --fs-pairing: calc(26px * var(--ui-scale));
   --lh-base: 1.45;
   --header-h: 46px;
   --sidebar-w: 300px;
@@ -692,6 +783,14 @@ body,
   margin: 0;
 }
 
+/* No pull-to-refresh: a reload drops held drafts and the terminal client. Chrome before 144
+   ignores a container's overscroll-behavior when it has nothing to scroll (a short chat), so the
+   drag chains to the page; there it takes both html and body, html alone still reloads (#427). */
+html,
+body {
+  overscroll-behavior-y: contain;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -700,6 +799,11 @@ body {
   font-weight: var(--fw-regular);
   line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Settings → Text smoothing → System: the OS's own, as a browser draws without the rule above */
+[data-font-smoothing="system"] body {
+  -webkit-font-smoothing: auto;
 }
 
 button {
@@ -821,6 +925,82 @@ button {
      and the rows the grid leaves over must not show as a band of another colour */
   background: var(--term-bg);
   padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* the pane area: one pane, or two side by side (lib/split.ts). Each half is a pane slot with its
+   own tab strip and terminal; slot b exists only while split, and the halves keep their slots
+   when they trade sides, drawn by order */
+.pane-split {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-slot {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-slot[data-side="left"] {
+  order: 0;
+  border-right: var(--hairline) solid var(--border-strong);
+}
+
+.pane-slot[data-side="right"] {
+  order: 1;
+}
+
+/* a half's own bar: its pane's mark and title, its lens, and its close. The active half's bar
+   carries the accent, as the pane the header, the palette and the shortcuts act on */
+.pane-slot-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.pane-slot.is-active .pane-slot-bar {
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.pane-slot-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-slot-machine {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.pane-slot-bar .pane-slot-action {
+  width: 24px;
+  height: 24px;
+}
+
+.pane-slot-bar .pane-slot-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* the inactive half is a step quieter, so the one keys go to reads at a glance */
+.pane-slot.is-inactive .terminal-host {
+  opacity: 0.88;
 }
 
 /* the chat's composer takes the home-indicator inset itself (Composer.css): kept here as
@@ -1765,11 +1945,11 @@ button {
    only the transcript reaches up into it (ChatView.css), its first line still below it, and the
    banners start below it (PaneTerminal.css). The terminal lens keeps the bar in the flow as before. */
 @media (max-width: 768px) {
-  .app:has(> .app-body > .pane-column.is-chat > .terminal-host:first-child) {
+  .app:has(> .app-body > .pane-column.is-chat > .pane-split:first-child > .pane-slot > .terminal-host:first-child) {
     --header-over: calc(var(--header-h) + env(safe-area-inset-top, 0px));
   }
 
-  .app:has(> .app-body > .pane-column.is-chat > .terminal-host:first-child) > .app-header {
+  .app:has(> .app-body > .pane-column.is-chat > .pane-split:first-child > .pane-slot > .terminal-host:first-child) > .app-header {
     z-index: var(--z-header);
     margin-bottom: calc(-1 * var(--header-over));
     background: var(--bar-bg);

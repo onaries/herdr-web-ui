@@ -7,6 +7,7 @@ import { useSettings } from "../lib/settings.ts";
 import { announcesUpdate, readAnnounced, summaryFor, watchAnnounced, writeAnnounced } from "../lib/updateNotes.ts";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
+import { lazyChunkFailed, onLazyChunkFailure } from "../lib/lazyChunk.ts";
 import { Markdown } from "./Markdown.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import "./Machines.css";
@@ -77,7 +78,7 @@ function UpdateProgress({ status, fallback }: { status: UpdateStatus | null; fal
 
 export function UpdateControls({ updates, bridgesFollow = false }: { updates: UpdatesModel; bridgesFollow?: boolean }) {
   const t = useT();
-  const { status, error, busy, needsReload, notes, installed, request } = updates;
+  const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
   const locale = useLocale();
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
   const tabVersion = staleClientVersion(status, __APP_VERSION__);
@@ -103,7 +104,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
       </div>
     </>}
     {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(locale) })}</p>}
-    {needsReload && <p className="settings-hint">{t("The server was updated. Save any unsent drafts, then")} <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button></p>}
+    {needsReload && <p className="settings-hint">{reload === "updated" ? t("The server was updated. Save any unsent drafts, then") : t("Part of the app could not load. Save unsent drafts, then reload.")} <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button></p>}
     </div></div>
   </section>;
 }
@@ -148,7 +149,7 @@ export function HerdrUpdateControls({ enabled, herdrVersion }: { enabled: boolea
  */
 export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpen: () => void }) {
   const t = useT();
-  const { status, error, busy, needsReload, notes, installed, request } = updates;
+  const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
   // the version whose line this device closed: opening its notes closes it too, in every tab
   const [announced, setAnnounced] = useState(readAnnounced);
   // subscribed first, then read: a dismissal in another tab between this tab's first read and its subscription is not lost
@@ -183,7 +184,7 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
   }
   if (needsReload) {
     // a warning before a step that loses unsent drafts: read in full, so this line alone may wrap
-    const text = t("App updated. Save unsent drafts before reloading.");
+    const text = reload === "updated" ? t("App updated. Save unsent drafts before reloading.") : t("Part of the app could not load. Save unsent drafts, then reload.");
     return <div className="update-notice is-line is-warning" role="status">
       <span>{text}</span>
       <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button>
@@ -197,5 +198,22 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
     {failed ? <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("Details")}</button>
       : notes && <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("What's new")}</button>}
     <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setAttempted(true); setStarted(retry === "install"); void request(retry); }}>{t(failed ? "Try again" : "Update")}</button>
+  </div>;
+}
+
+/**
+ * The reload line alone, for a page without the update model: the markdown reader tab
+ * (FileReader). A part of the app that failed to load there (lib/lazyChunk.ts) leaves math as its
+ * source or a diagram as code until a reload, which this line offers. No status is polled.
+ */
+export function ChunkFailureNotice() {
+  const t = useT();
+  const [failed, setFailed] = useState(lazyChunkFailed);
+  // subscribed first, then read: a failure between the first render and the subscription is kept
+  useEffect(() => { const stop = onLazyChunkFailure(() => setFailed(true)); setFailed(lazyChunkFailed()); return stop; }, []);
+  if (!failed) return null;
+  return <div className="update-notice is-line is-warning" role="status">
+    <span>{t("Part of the app could not load. Save unsent drafts, then reload.")}</span>
+    <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button>
   </div>;
 }

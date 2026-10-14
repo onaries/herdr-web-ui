@@ -2,11 +2,14 @@
    transcript (PaneTerminal places it; the column and the space under it are Composer.css's).
    Its height is budgeted, and a phone's keyboard counts (--app-height): the larger of 60% of the
    app and six touch rows, so a three-option approval is never cut. Only the reference text gives
-   way (.prompt-card-body); when that is not enough the card scrolls as a whole. */
+   way (.prompt-card-body); when that is not enough the card scrolls as a whole. The composer's
+   folder strip under the input card comes out of that 60% (--prompt-card-strip), so the transcript
+   keeps what it had without one. */
 .prompt-card {
+  --prompt-card-strip: 0px;
   flex: 0 1 auto;
   min-height: 0;
-  max-height: max(calc(var(--app-height, 100dvh) * 0.6), calc(var(--touch-target) * 6));
+  max-height: max(calc(var(--app-height, 100dvh) * 0.6 - var(--prompt-card-strip)), calc(var(--touch-target) * 6));
   padding: var(--space-3) var(--space-3) 0;
   display: flex;
   flex-direction: column;
@@ -385,7 +388,13 @@
 /* a desktop always shows the tab strip (as herdr's TUI): the card's 60% is of what is under it,
    so the transcript keeps two lines at 800x600. A phone hides a lone tab and keeps the rule above */
 @media (min-width: 769px) {
-  .prompt-card { max-height: max(calc((var(--app-height, 100dvh) - var(--control-h)) * 0.6), calc(var(--touch-target) * 6)); }
+  .prompt-card { max-height: max(calc((var(--app-height, 100dvh) - var(--control-h)) * 0.6 - var(--prompt-card-strip)), calc(var(--touch-target) * 6)); }
+}
+
+/* the strip's height under the input card (Composer.css .composer-strip): its chip row, its padding
+   and bottom hairline, less the --space-4 it tucks under the card */
+.prompt-dock:has(~ .composer > .composer-strip) > .prompt-card {
+  --prompt-card-strip: calc(var(--chip-h) + var(--space-5) + var(--space-1) + var(--hairline) - var(--space-4));
 }
 
 @media (pointer: coarse) {

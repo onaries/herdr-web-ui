@@ -34,8 +34,12 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
-    assert.equal(await page.locator(".chat-view").evaluate((node) => getComputedStyle(node).overscrollBehaviorY), "contain",
+    // read in one step: the transcript's first node is replaced as the conversation loads, and a node
+    // found before that and read after it is out of the document, with no style at all
+    assert.equal(await page.evaluate(() => { const view = document.querySelector(".chat-view"); return view ? getComputedStyle(view).overscrollBehaviorY : "no .chat-view"; }), "contain",
       "a drag past the transcript's top stays in the transcript, or Android Chrome reloads the app");
+    assert.deepEqual(await page.evaluate(() => [document.documentElement, document.body].map((node) => getComputedStyle(node).overscrollBehaviorY)),
+      ["contain", "contain"], "a drag on a surface with nothing to scroll reaches the page, which Android Chrome before 144 reloads unless html and body contain it");
     const blur = () => page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); });
     const height = (value: number) => page.evaluate((value) => (window as ViewportQA).viewportQA.resize(value), value);
     const shell = async (keyboard: boolean, appHeight: string, pixels: number) => {

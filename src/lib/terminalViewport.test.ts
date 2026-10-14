@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { offsetAtThumb, scrollThumb, validScroll, visibleFindRects, type CellReader } from "./terminalViewport.ts";
+import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_IDLE_MAX_MS, idleScrollPollDelay, offsetAtThumb, scrollPollDelay, scrollThumb, validScroll, visibleFindRects, type CellReader } from "./terminalViewport.ts";
 const scroll = { max_offset_from_bottom: 100, offset_from_bottom: 20, viewport_rows: 2 };
 const cells = (lines: string[]): CellReader => (row, col) => ({ chars: lines[row]?.[col] ?? " ", width: 1 });
 
@@ -45,5 +45,27 @@ describe("shared history scrollbar", () => {
     expect(validScroll({ ...scroll, viewport_rows: 0 })).toBe(false);
     expect(validScroll({ ...scroll, offset_from_bottom: 101 })).toBe(false);
     expect(validScroll({ ...scroll, max_offset_from_bottom: Infinity })).toBe(false);
+  });
+});
+
+describe("scroll metrics poll", () => {
+  it("backs off an idle pane from 1 s to a 15 s cap instead of asking herdr every second", () => {
+    expect([0, 1, 2, 3, 4, 5, 20].map(idleScrollPollDelay)).toEqual([1000, 2000, 4000, 8000, 15_000, 15_000, 15_000]);
+    expect(idleScrollPollDelay(1e6)).toBe(SCROLL_POLL_IDLE_MAX_MS);
+  });
+  it("starts over at the first step for a reset or a nonsense count", () => {
+    for (const reads of [-1, Number.NaN, Number.POSITIVE_INFINITY]) expect(idleScrollPollDelay(reads)).toBe(1000);
+    expect(idleScrollPollDelay(1.7)).toBe(2000);
+  });
+  it("keeps a 1 s read while scrolled up into history, where growing history may send no output", () => {
+    const up = { max_offset_from_bottom: 100, offset_from_bottom: 20, viewport_rows: 24 };
+    for (const reads of [0, 3, 20]) expect(scrollPollDelay(false, reads, up)).toBe(1000);
+    expect(scrollPollDelay(true, 20, up)).toBe(SCROLL_POLL_BUSY_MS);
+    expect(scrollPollDelay(false, 20, { ...up, offset_from_bottom: 0 })).toBe(SCROLL_POLL_IDLE_MAX_MS);
+    expect(scrollPollDelay(false, 20, null)).toBe(SCROLL_POLL_IDLE_MAX_MS);
+    expect(scrollPollDelay(false, 20, { ...up, offset_from_bottom: 200 })).toBe(SCROLL_POLL_IDLE_MAX_MS);
+  });
+  it("keeps the busy cadence below the first idle step", () => {
+    expect(SCROLL_POLL_BUSY_MS).toBeLessThan(idleScrollPollDelay(0));
   });
 });

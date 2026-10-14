@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose, paneSendText, paneSendKeys, paneRead } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-arrows-clicks-"));
 const owned: string[] = [];
@@ -95,7 +96,7 @@ try {
   // a PC without Node for the PTY sidecar: the pane is mirrored, and xterm never learns a mouse mode
   const mirrored = createServer({ port: 0, hostname: "127.0.0.1", stateDir: join(root, "state-mirrored"), token: "", sidecar: false });
   servers.push(mirrored);
-  const browser = launched = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
+  const browser = launched = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
 
   // 1. Application cursor keys: less, git log and vim ask for them, and herdr's attach stream
   // never says so to the browser. The program must read SS3 (ESC O A), not CSI (ESC [ A).

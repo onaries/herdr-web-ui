@@ -1,0 +1,39 @@
+/*
+ * A repository diff (RepoDiff): the scroll root is the one scroll owner of the viewer's body, and
+ * the rows take the code tokens through the shadow CSS the component injects. The host's
+ * line-height is measured once as the virtualizer's row estimate, so it is set in pixels here.
+ */
+.repo-diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: calc(var(--fs-xs) * var(--lh-base));
+}
+
+.repo-diff-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+ * The column fills the scroll root, so the diff's host has a box before the virtualizer's first
+ * anchor pass (a host of no height is taken for a diff scrolled past, and the rows jump to their
+ * end), and a short diff stays panel-high.
+ */
+.repo-diff-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.repo-diff-file {
+  display: block;
+  flex: 1 0 auto;
+}

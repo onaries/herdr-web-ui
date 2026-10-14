@@ -1,23 +1,79 @@
 import { afterAll, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { herdrRpc, herdrSocketPath, sessionSnapshot, workspaceClose, workspaceCreate, paneRead } from "./herdr/client.ts";
-import { ConversationUnavailable, gjcTranscriptPath, paneConversation, transcriptPage } from "./conversation.ts";
-
-import { gjcTerminal, isGjcProcess } from "./gjc-runtime.ts";
+import { ConversationUnavailable, gjcTranscriptPath, paneConversation } from "./conversation.ts";
+import { isGjcProcess } from "./gjc-runtime.ts";
 import { startShellAgent } from "./shell-agent.ts";
 
-const home = mkdtempSync(join(tmpdir(), "herdr-gjc-binding-"));
-const dir = join(home, ".gjc", "agent", "sessions", "v2-shared");
+const home = realpathSync(mkdtempSync(join(tmpdir(), "herdr-gjc-binding-")));
+const agentDir = join(home, ".gjc", "agent");
+const dir = join(agentDir, "sessions", "v2-shared");
 mkdirSync(dir, { recursive: true });
 const workspaces: string[] = [];
 const script = join(home, "gjc");
-// The stand-in keeps actual descriptors open; all files and panes belong to this test.
-writeFileSync(script, "if (process.env.GJC_TEST_CWD) process.chdir(process.env.GJC_TEST_CWD);\nfor (const path of process.argv.slice(2)) require('node:fs').openSync(path, 'r');\nconsole.log('GJC descriptor ready'); console.log(process.env.GJC_TEST_SCREEN || ''); setInterval(() => {}, 1000);\n");
+const bin = join(home, "bin");
+const registry = join(home, "sdk-registry.json");
+const sdkCli = join(home, "gjc-sdk-fixture.js");
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+// The stand-in is a Bun script named gjc; it holds only the requested store directory and prints the pane's fixed screen.
+writeFileSync(script, "if (process.env.GJC_TEST_CWD) process.chdir(process.env.GJC_TEST_CWD);\nfor (const path of process.argv.slice(2)) require('node:fs').openSync(path, 'r');\nconsole.log('GJC fixture ready'); console.log(process.env.GJC_TEST_SCREEN || ''); setInterval(() => {}, 1000);\n");
+mkdirSync(bin);
+// The fixture accepts only the public raw global session.list operation. Its registry is test-owned JSON, never SDK state.
+writeFileSync(sdkCli, `
+const { readFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+const value = (flag) => { const i = args.indexOf(flag); return i < 0 ? undefined : args[i + 1]; };
+if (args[0] !== "sdk" || args[1] !== "session" || args[2] !== "raw" || args[3] !== "global"
+  || args[4] !== "--op" || args[5] !== "session.list"
+  || !args.includes("--attach-only") || !args.includes("--json")
+  || value("--agent-dir") !== process.env.GJC_TEST_AGENT_DIR
+  || !args.includes("--page") || value("--limit") !== "100") process.exit(64);
+let state;
+try { state = JSON.parse(readFileSync(process.env.GJC_TEST_REGISTRY, "utf8")); }
+catch { process.exit(1); }
+if (state.kind === "unavailable") {
+  process.stdout.write(JSON.stringify({ type: "broker_response", ok: false, error: { code: "broker_unavailable" } }));
+  process.exit(1);
+}
+if (state.kind === "malformed") { process.stdout.write("not-json"); process.exit(0); }
+let input;
+try { if (value("--json-input") !== undefined) input = JSON.parse(value("--json-input")); }
+catch { process.exit(64); }
+let sessions = state.rows;
+let savedSession;
+let savedSessionOmission;
+if (input && input.scope) {
+  const scope = input.scope;
+  if (scope.version !== 1 || scope.requested !== "pwd" || !scope.requestAnchor
+    || typeof scope.requestAnchor.cwd !== "string" || scope.requestAnchor.worktreeRoot !== null) process.exit(64);
+  sessions = sessions.filter((row) => row.locator.cwd === scope.requestAnchor.cwd);
+}
+if (input && typeof input.resolveSessionId === "string") {
+  sessions = sessions.filter((row) => row.sessionId === input.resolveSessionId && row.locator.cwd === input.cwd);
+  const path = state.paths && state.paths[input.resolveSessionId];
+  if (typeof path === "string") savedSession = { id: input.resolveSessionId, path };
+  else savedSessionOmission = { reason: "not_found", detailCode: "saved_session_omitted" };
+}
+const result = { indexSeq: 1, sessions, warnings: [] };
+if (savedSession !== undefined) result.savedSession = savedSession;
+if (savedSessionOmission !== undefined) result.savedSessionOmission = savedSessionOmission;
+process.stdout.write(JSON.stringify({ type: "broker_response", ok: true, result }));
+`);
+// Non-SDK invocations are the executable-path contract's pane stand-in, not another SDK response path.
+writeFileSync(join(bin, "gjc"), `#!/bin/sh\nif [ "$1" = "sdk" ]; then exec ${shellQuote(process.execPath)} ${shellQuote(sdkCli)} "$@"; fi\nexec ${shellQuote(process.execPath)} ${shellQuote(script)} "$@"\n`, { mode: 0o755 });
+
 afterAll(async () => {
-  for (const workspace of workspaces) await workspaceClose(workspace);
-  rmSync(home, { recursive: true, force: true });
+  const previousSocket = process.env["HERDR_SOCKET"];
+  process.env["HERDR_SOCKET"] = herdrSocketPath();
+  try {
+    for (const workspace of workspaces) await workspaceClose(workspace);
+  } finally {
+    if (previousSocket === undefined) delete process.env["HERDR_SOCKET"]; else process.env["HERDR_SOCKET"] = previousSocket;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 /** Paths a process holds open: /proc on Linux, lsof on macOS. */
@@ -33,195 +89,270 @@ async function pane(paths: string[], screen = "", cwd = home): Promise<string> {
   const created = await workspaceCreate({ cwd: home, label: "herdr-web-ui-test-gjc-binding" });
   workspaces.push(created.workspace.workspace_id);
   const id = created.root_pane.pane_id;
-  await herdrRpc("pane.send_text", { pane_id: id, text: `GJC_TEST_CWD='${cwd.replaceAll("'", "'\\''")}' GJC_TEST_SCREEN='${screen.replaceAll("'", "'\\''")}' ${process.execPath} ${script} ${paths.join(" ")}\n` });
+  const args = paths.map(shellQuote).join(" ");
+  const command = `GJC_TEST_CWD=${shellQuote(cwd)} GJC_TEST_SCREEN=${shellQuote(screen)} ${shellQuote(process.execPath)} ${shellQuote(script)} ${args}\n`;
+  await herdrRpc("pane.send_text", { pane_id: id, text: command });
   for (let attempt = 0; attempt < 100; attempt++) {
     const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: id });
-    const process = info.process_info?.foreground_processes?.find((p) => p.argv?.includes(script));
-    if (process) {
-      const held = heldPaths(process.pid);
-      if (paths.every((path) => held.includes(path))) return id;
-    }
+    const process = info.process_info?.foreground_processes?.find((candidate) => candidate.argv?.includes(script));
+    if (process && paths.every((path) => heldPaths(process.pid).includes(path))) return id;
     await Bun.sleep(50);
   }
-  throw new Error("GJC stand-in did not open its descriptors");
+  throw new Error("GJC stand-in did not open its store descriptor in the pane");
 }
 
-// the stand-in is found by the file it holds open (/proc): on macOS gjc leaves a terminal breadcrumb instead
-it.skipIf(process.platform !== "linux")("reads the foreground GJC session after its process changes directory, not another session in the pane cwd", async () => {
-  const cwd = join(home, "project");
-  mkdirSync(cwd);
-  const path = join(dir, "foreground.jsonl"), other = join(dir, "pane-cwd.jsonl");
-  for (const [file, directory, answer] of [[path, cwd, "foreground answer"], [other, home, "wrong pane cwd answer"]]) {
-    writeFileSync(file!, JSON.stringify({ type: "session", cwd: directory }) + "\n" + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: answer }] } }) + "\n");
-  }
-  const id = await pane([path], "", cwd);
-  await herdrRpc("pane.report_agent", { pane_id: id, source: "manual", agent: "gjc", state: "idle" });
+async function gjcProcess(id: string): Promise<{ pid: number; argv: string[] }> {
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: id });
+  const found = info.process_info?.foreground_processes?.find((candidate) => candidate.argv?.includes(script) && isGjcProcess(candidate.argv));
+  if (typeof found?.pid !== "number" || !found.argv) throw new Error("pane.process_info did not expose the Bun GJC stand-in");
+  return { pid: found.pid, argv: found.argv };
+}
+
+async function waitForScreen(id: string, text: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
-    if ((await sessionSnapshot()).panes.find((p) => p.pane_id === id)?.agent === "gjc") break;
+    if ((await paneRead({ paneId: id })).text.includes(text)) return;
     await Bun.sleep(50);
   }
-  const metadata = (await sessionSnapshot()).panes.find((p) => p.pane_id === id)!;
-  expect(metadata.agent).toBe("gjc");
-  expect(metadata.cwd).toBe(home);
-  expect(metadata.foreground_cwd).toBe(cwd);
-  const oldHome = process.env["HOME"], oldSocket = process.env["HERDR_SOCKET"];
-  process.env["HERDR_SOCKET"] = herdrSocketPath();
-  process.env["HOME"] = home;
-  try {
-    const conversation = await paneConversation(id);
-    expect(conversation.source).toBe("gjc-transcript");
-    expect(conversation.turns[0]!.parts[0]).toMatchObject({ kind: "text", text: "foreground answer" });
-  } finally {
-    if (oldHome === undefined) delete process.env["HOME"]; else process.env["HOME"] = oldHome;
-    if (oldSocket === undefined) delete process.env["HERDR_SOCKET"]; else process.env["HERDR_SOCKET"] = oldSocket;
-  }
-});
+  throw new Error("GJC stand-in screen text did not appear in the pane");
+}
 
-for (const stale of [false, true]) {
-  it.skipIf(process.platform !== "linux")(`reads a running GJC transcript when herdr names no agent for the pane${stale ? " and still holds an earlier Codex session report" : ""}`, async () => {
-    const path = join(dir, `routing-${stale ? "stale" : "unknown"}.jsonl`);
-    writeFileSync(path, JSON.stringify({ type: "session", cwd: home }) + "\n" + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "GJC owns this answer" }] } }) + "\n");
-    const id = await pane([path]);
-    if (stale) await herdrRpc("pane.report_agent_session", { pane_id: id, source: "herdr:codex", agent: "codex", seq: Date.now(), agent_session_id: "01a0f16d-c20a-7a02-a880-e89b68155802" });
-    const metadata = (await sessionSnapshot()).panes.find((p) => p.pane_id === id)!;
-    expect(metadata.agent ?? null).toBeNull();
-    if (stale) expect(metadata.agent_session?.agent).toBe("codex");
-    const oldHome = process.env["HOME"], oldSocket = process.env["HERDR_SOCKET"];
-    process.env["HERDR_SOCKET"] = herdrSocketPath();
-    process.env["HOME"] = home;
-    try {
-      const conversation = await paneConversation(id);
-      expect(conversation.source).toBe("gjc-transcript");
-      expect(conversation.turns[0]!.parts[0]).toMatchObject({ kind: "text", text: "GJC owns this answer" });
-    } finally {
-      if (oldHome === undefined) delete process.env["HOME"]; else process.env["HOME"] = oldHome;
-      if (oldSocket === undefined) delete process.env["HERDR_SOCKET"]; else process.env["HERDR_SOCKET"] = oldSocket;
+async function setAgent(id: string, agent: string): Promise<void> {
+  await herdrRpc("pane.report_agent", { pane_id: id, source: "manual", agent, state: "idle" });
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if ((await sessionSnapshot()).panes.find((item) => item.pane_id === id)?.agent === agent) return;
+    await Bun.sleep(50);
+  }
+  throw new Error(`herdr did not report ${agent} for the fixture pane`);
+}
+
+function sdkRow(pid: number, cwd: string, sessionId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sessionId,
+    locator: { cwd, worktreeRoot: null, stateRoot: join(cwd, ".gjc", "state") },
+    endpointGeneration: 1,
+    pid,
+    live: true,
+    terminal: false,
+    deleted: false,
+    ambiguous: false,
+    terminalUncertain: false,
+    identityProvenance: "composite",
+    hostIncarnation: "test-host-incarnation",
+    indexSeq: 1,
+    ...overrides,
+  };
+}
+
+function writeRegistry(rows: Record<string, unknown>[], paths: Record<string, string> = {}, kind?: string): void {
+  writeFileSync(registry, JSON.stringify({ rows, paths, ...(kind ? { kind } : {}) }));
+}
+
+async function withSdkFixture<T>(run: () => Promise<T>): Promise<T> {
+  const keys = ["HOME", "HERDR_SOCKET", "PATH", "GJC_TEST_REGISTRY", "GJC_TEST_AGENT_DIR"] as const;
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  process.env["HOME"] = home;
+  process.env["HERDR_SOCKET"] = herdrSocketPath();
+  process.env["PATH"] = `${bin}${process.env["PATH"] ? `:${process.env["PATH"]}` : ""}`;
+  process.env["GJC_TEST_REGISTRY"] = registry;
+  process.env["GJC_TEST_AGENT_DIR"] = agentDir;
+  try {
+    return await run();
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
+  }
+}
+
+function record(cwd: string, answer: string, id: string, title = "shared title"): string {
+  return JSON.stringify({ type: "session", cwd, id, title }) + "\n"
+    + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: answer }] } }) + "\n";
+}
+
+async function expectConversation(id: string, answer: string): Promise<void> {
+  const conversation = await paneConversation(id);
+  expect(conversation.source).toBe("gjc-transcript");
+  expect(conversation.turns[0]!.parts[0]).toMatchObject({ kind: "text", text: answer });
+}
+
+it("SDK identity ignores a copied neighboring answer on the pane screen", async () => withSdkFixture(async () => {
+  const a = join(dir, "sdk-answer-a.jsonl"), b = join(dir, "sdk-answer-b.jsonl");
+  const otherAnswer = "This long neighboring response is deliberately unique so visible screen matching would choose this wrong transcript instead of the short SDK-owned answer.";
+  writeFileSync(a, record(home, "OK", "sdk-answer-a"));
+  writeFileSync(b, record(home, otherAnswer, "sdk-answer-b"));
+  const id = await pane([dir], otherAnswer);
+  await waitForScreen(id, otherAnswer.slice(0, 40));
+  const { pid, argv } = await gjcProcess(id);
+  expect(argv).toContain(script);
+  expect(argv[0]).toBe(process.execPath);
+  writeRegistry([sdkRow(pid, home, "sdk-answer-a")], { "sdk-answer-a": a });
+
+  expect(heldPaths(pid)).not.toContain(a);
+  expect(await gjcTranscriptPath(id, home, home)).toBe(a);
+  await expectConversation(id, "OK");
+}));
+
+it("SDK maps same-cwd panes by exact GJC PID despite identical answers, titles, and mtimes", async () => withSdkFixture(async () => {
+  const a = join(dir, "same-answer-a.jsonl"), b = join(dir, "same-answer-b.jsonl");
+  writeFileSync(a, record(home, "same", "same-answer-a"));
+  writeFileSync(b, record(home, "same", "same-answer-b"));
+  const first = await pane([dir], "same"), second = await pane([dir], "same");
+  await waitForScreen(first, "same");
+  await waitForScreen(second, "same");
+  const firstProcess = await gjcProcess(first), secondProcess = await gjcProcess(second);
+  expect(firstProcess.pid).not.toBe(secondProcess.pid);
+  const sameTime = new Date(Date.now() - 60_000);
+  utimesSync(a, sameTime, sameTime);
+  utimesSync(b, sameTime, sameTime);
+  writeRegistry([
+    sdkRow(firstProcess.pid, home, "same-answer-a"),
+    sdkRow(secondProcess.pid, home, "same-answer-b"),
+  ], { "same-answer-a": a, "same-answer-b": b });
+
+  expect(await gjcTranscriptPath(first, home, home)).toBe(a);
+  expect(await gjcTranscriptPath(second, home, home)).toBe(b);
+  await expectConversation(first, "same");
+  await expectConversation(second, "same");
+}));
+
+it("SDK follows /new or resume when the same GJC PID changes from A to B without changing its one-word screen", async () => withSdkFixture(async () => {
+  const a = join(dir, "resume-a.jsonl"), b = join(dir, "resume-b.jsonl");
+  writeFileSync(a, record(home, "A", "resume-a"));
+  writeFileSync(b, record(home, "B", "resume-b"));
+  const id = await pane([dir], "A");
+  await waitForScreen(id, "A");
+  const { pid } = await gjcProcess(id);
+  await setAgent(id, "gjc");
+  writeRegistry([sdkRow(pid, home, "resume-a")], { "resume-a": a, "resume-b": b });
+  expect(await gjcTranscriptPath(id, home, home)).toBe(a);
+
+  // The fixture SDK registry now reflects /new or resume; neither the PID nor the pane screen changes.
+  writeRegistry([sdkRow(pid, home, "resume-b")], { "resume-a": a, "resume-b": b });
+  expect((await paneRead({ paneId: id })).text).toContain("A");
+  expect(await gjcTranscriptPath(id, home, home)).toBe(b);
+  await expectConversation(id, "B");
+}));
+
+it("SDK scopes discovery so unrelated retired history cannot exhaust the pane's page budget", async () => withSdkFixture(async () => {
+  const a = join(dir, "scoped-a.jsonl");
+  writeFileSync(a, record(home, "scoped answer", "scoped-a"));
+  const id = await pane([dir]);
+  const { pid } = await gjcProcess(id);
+  const otherCwd = join(home, "unrelated-project");
+  mkdirSync(otherCwd);
+  const retired = Array.from({ length: 801 }, (_, index) =>
+    sdkRow(900_000 + index, otherCwd, `old-${index}`, { live: false }));
+  writeRegistry([...retired, sdkRow(pid, home, "scoped-a")], { "scoped-a": a });
+  expect(await gjcTranscriptPath(id, home, home)).toBe(a);
+}));
+
+it("SDK GJC identity overrides stale Codex session metadata", async () => withSdkFixture(async () => {
+  const a = join(dir, "stale-codex-a.jsonl");
+  writeFileSync(a, record(home, "SDK GJC answer", "stale-codex-a"));
+  const id = await pane([dir], "SDK GJC answer");
+  const { pid } = await gjcProcess(id);
+  await herdrRpc("pane.report_agent_session", {
+    pane_id: id,
+    source: "herdr:codex",
+    agent: "codex",
+    seq: Date.now(),
+    agent_session_id: "01a0f16d-c20a-7a02-a880-e89b68155802",
+  });
+  const metadata = (await sessionSnapshot()).panes.find((item) => item.pane_id === id)!;
+  expect(metadata.agent ?? null).toBeNull();
+  expect(metadata.agent_session?.agent).toBe("codex");
+  writeRegistry([sdkRow(pid, home, "stale-codex-a")], { "stale-codex-a": a });
+
+  await expectConversation(id, "SDK GJC answer");
+}));
+
+async function expectSdkFailure(scenario: string): Promise<void> {
+  await withSdkFixture(async () => {
+    const a = join(dir, `failure-${scenario}-a.jsonl`), b = join(dir, `failure-${scenario}-b.jsonl`);
+    const guessedAnswer = "This long screen answer would identify the neighboring transcript if screen matching were still used as a fallback.";
+    writeFileSync(a, record(home, "SDK target", `failure-${scenario}-a`));
+    writeFileSync(b, record(home, guessedAnswer, `failure-${scenario}-b`));
+    const id = await pane([dir], guessedAnswer);
+    await waitForScreen(id, guessedAnswer.slice(0, 40));
+    const { pid } = await gjcProcess(id);
+    await setAgent(id, "gjc");
+    const target = sdkRow(pid, home, `failure-${scenario}-a`);
+    const paths = { [`failure-${scenario}-a`]: a, [`failure-${scenario}-b`]: b };
+
+    if (scenario === "unavailable") writeRegistry([target], paths, "unavailable");
+    else if (scenario === "malformed") writeRegistry([target], paths, "malformed");
+    else if (scenario === "ambiguous") writeRegistry([
+      target,
+      sdkRow(pid, home, `failure-${scenario}-b`),
+    ], paths);
+    else if (scenario === "stale") writeRegistry([sdkRow(pid, home, `failure-${scenario}-a`, { live: false })], paths);
+    else writeRegistry([target]);
+
+    await expect(paneConversation(id)).rejects.toBeInstanceOf(ConversationUnavailable);
   });
 }
 
-it("follows the agent herdr names for a pane: a gjc process in it does not take the chat", async () => {
-  const path = join(dir, "routing-labelled.jsonl");
-  writeFileSync(path, JSON.stringify({ type: "session", cwd: home }) + "\n" + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "GJC owns this answer" }] } }) + "\n");
-  const id = await pane([path]);
-  await herdrRpc("pane.report_agent", { pane_id: id, source: "manual", agent: "codex", state: "idle" });
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if ((await sessionSnapshot()).panes.find((p) => p.pane_id === id)?.agent === "codex") break;
+for (const scenario of ["unavailable", "malformed", "ambiguous", "stale", "omitted path"]) {
+  it(`SDK ${scenario} identity fails closed instead of guessing from the pane screen`, async () => expectSdkFailure(scenario));
+}
+
+it("pane routing honors an actual named non-GJC agent even when a GJC process is present", async () => withSdkFixture(async () => {
+  const a = join(dir, "named-non-gjc.jsonl");
+  writeFileSync(a, record(home, "GJC must not take this pane", "named-non-gjc"));
+  const id = await pane([dir], "GJC must not take this pane");
+  const { pid } = await gjcProcess(id);
+  await setAgent(id, "codex");
+  writeRegistry([sdkRow(pid, home, "named-non-gjc")], { "named-non-gjc": a });
+
+  expect((await sessionSnapshot()).panes.find((item) => item.pane_id === id)?.agent).toBe("codex");
+  await expect(paneConversation(id)).rejects.toBeInstanceOf(ConversationUnavailable);
+}));
+
+it("SDK GJC resolution respects the process foreground cwd", async () => withSdkFixture(async () => {
+  const cwd = join(home, "foreground-project");
+  mkdirSync(cwd);
+  const a = join(dir, "foreground-cwd.jsonl"), other = join(dir, "pane-shell-cwd.jsonl");
+  writeFileSync(a, record(cwd, "foreground cwd answer", "foreground-cwd"));
+  writeFileSync(other, record(home, "wrong pane cwd answer", "pane-shell-cwd"));
+  const id = await pane([dir], "foreground cwd answer", cwd);
+  const { pid } = await gjcProcess(id);
+  await setAgent(id, "gjc");
+  let metadata = (await sessionSnapshot()).panes.find((item) => item.pane_id === id)!;
+  for (let attempt = 0; attempt < 100 && metadata.foreground_cwd !== cwd; attempt++) {
     await Bun.sleep(50);
+    metadata = (await sessionSnapshot()).panes.find((item) => item.pane_id === id)!;
   }
-  expect((await sessionSnapshot()).panes.find((p) => p.pane_id === id)!.agent).toBe("codex");
-  const oldHome = process.env["HOME"], oldSocket = process.env["HERDR_SOCKET"];
-  process.env["HERDR_SOCKET"] = herdrSocketPath();
-  process.env["HOME"] = home;
-  try {
-    // the Codex route has no rollout for this pane and says so; it is not handed to gjc
-    await expect(paneConversation(id)).rejects.toBeInstanceOf(ConversationUnavailable);
-  } finally {
-    if (oldHome === undefined) delete process.env["HOME"]; else process.env["HOME"] = oldHome;
-    if (oldSocket === undefined) delete process.env["HERDR_SOCKET"]; else process.env["HERDR_SOCKET"] = oldSocket;
-  }
-});
+  expect(metadata.cwd).toBe(home);
+  expect(metadata.foreground_cwd).toBe(cwd);
+  writeRegistry([sdkRow(pid, cwd, "foreground-cwd")], { "foreground-cwd": a });
 
-// binding by open file reads /proc: on macOS gjc is found by its terminal breadcrumb instead
-it.skipIf(process.platform !== "linux")("binds same-cwd panes to their own files regardless of which transcript was modified last", async () => {
-  const a = join(dir, "a.jsonl"), b = join(dir, "b.jsonl");
-  for (const path of [a, b]) writeFileSync(path, JSON.stringify({ type: "session", cwd: home }) + "\n");
-  const first = await pane([a]), second = await pane([b]);
-  for (const newest of [a, b]) {
-    utimesSync(newest, new Date(), new Date(Date.now() + 60_000));
-    expect(await gjcTranscriptPath(first, home, home)).toBe(a);
-    expect(await gjcTranscriptPath(second, home, home)).toBe(b);
-  }
-  const directoryOnly = await pane([dir]);
-  await expect(gjcTranscriptPath(directoryOnly, home, home)).rejects.toThrow(ConversationUnavailable);
-  const ambiguous = await pane([a, b]);
-  await expect(gjcTranscriptPath(ambiguous, home, home)).rejects.toThrow(ConversationUnavailable);
-  await expect(gjcTranscriptPath(first, "/different-cwd", home)).rejects.toThrow(ConversationUnavailable);
-});
+  await expectConversation(id, "foreground cwd answer");
+}));
 
-it.skipIf(process.platform !== "linux")("binds a pane whose session holds a subagent's file open to the session, not the subagent", async () => {
-  const session = join(dir, "parent.jsonl"), subagent = join(dir, "parent", "0-Worker.jsonl");
-  mkdirSync(join(dir, "parent"));
-  for (const path of [session, subagent]) writeFileSync(path, JSON.stringify({ type: "session", cwd: home }) + "\n");
-  expect(await gjcTranscriptPath(await pane([subagent]), home, home)).toBe(session);
-  // the session and its subagent open at once are one session, not two candidates
-  expect(await gjcTranscriptPath(await pane([session, subagent]), home, home)).toBe(session);
-});
-
-
-it("restores a directory-only runtime using its fresh terminal breadcrumb, without cwd recency", async () => {
-  const a = join(dir, "breadcrumb-a.jsonl"), b = join(dir, "breadcrumb-b.jsonl");
-  for (const [path, answer] of [[a, "first answer"], [b, "second answer"]]) {
-    writeFileSync(path!, JSON.stringify({ type: "session", cwd: home }) + "\n" + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: answer }] } }) + "\n");
-  }
-  const first = await pane([dir]), second = await pane([dir]);
-  const marker = async (id: string, path: string) => {
-    const info = await herdrRpc<{ process_info: { foreground_processes: { pid: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: id });
-    const pid = info.process_info.foreground_processes.find(p => p.argv?.includes(script))!.pid;
-    const terminal = gjcTerminal(pid)!;
-    expect(terminal).not.toBeNull();
-    const folder = join(home, ".gjc", "agent", "terminal-sessions");
-    mkdirSync(folder, { recursive: true });
-    const file = join(folder, terminal.id);
-    writeFileSync(file, `${home}\n${path}\n`);
-    return { file, terminal };
-  };
-  const one = await marker(first, a);
-  await marker(second, b);
-  utimesSync(b, new Date(), new Date(Date.now() + 60_000));
-  expect(await gjcTranscriptPath(first, home, home)).toBe(a);
-  expect(await gjcTranscriptPath(second, home, home)).toBe(b);
-  const conversation = transcriptPage("gjc-transcript", await gjcTranscriptPath(first, home, home));
-  expect(conversation.turns[0]!.parts[0]).toMatchObject({ kind: "text", text: "first answer" });
-  // /new or /resume updates this terminal's pointer, even if its old file is newer.
-  writeFileSync(one.file, `${home}\n${b}\n`);
-  expect(await gjcTranscriptPath(first, home, home)).toBe(b);
-  utimesSync(one.file, new Date(0), new Date(one.terminal.startedAt - 60_000));
-  await expect(gjcTranscriptPath(first, home, home)).rejects.toThrow(ConversationUnavailable);
-});
-
-
-it("restores a directory-only runtime by unique visible assistant text, never newest-file order", async () => {
-  const answer = "This uniquely identifiable assistant answer belongs to the first pane and describes restoring its structured chat without borrowing a neighboring session.";
-  const other = "A completely different assistant response belongs to the neighboring pane and explains its own unrelated task with enough detail to distinguish the two sessions.";
-  const record = (value: string) => JSON.stringify({ type: "session", cwd: home }) + "\n" + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: value }] } }) + "\n";
-  const a = join(dir, "visible-a.jsonl"), b = join(dir, "visible-b.jsonl");
-  writeFileSync(a, record(answer)); writeFileSync(b, record(other));
-  const first = await pane([dir], answer), second = await pane([dir], other);
-  for (const [id, text] of [[first, answer], [second, other]]) {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if ((await paneRead({ paneId: id! })).text.includes(text!.slice(0, 40))) break;
-      await Bun.sleep(50);
-    }
-  }
-  utimesSync(b, new Date(), new Date(Date.now() + 60_000));
-  expect(await gjcTranscriptPath(first, home, home)).toBe(a);
-  expect(await gjcTranscriptPath(second, home, home)).toBe(b);
-  writeFileSync(join(dir, "duplicate.jsonl"), record(answer));
-  await expect(gjcTranscriptPath(first, home, home)).rejects.toThrow(ConversationUnavailable);
-});
-
-it("starts the gjc this server found on its PATH, by absolute path, and waits until it runs in the pane", async () => {
+it("starts the gjc this server found on its PATH, by absolute path, and waits until it runs in the pane", async () => withSdkFixture(async () => {
   const shell = async () => {
     const created = await workspaceCreate({ cwd: home, label: "herdr-web-ui-test-gjc-start" });
     workspaces.push(created.workspace.workspace_id);
     return created.root_pane.pane_id;
   };
-  // a `gjc` executable in a directory with a space, on this process's PATH only: the pane shell never sees that PATH
-  const bin = join(home, "agent bin");
-  mkdirSync(bin);
-  const exe = join(bin, "gjc");
-  writeFileSync(exe, `#!/bin/sh\nexec ${process.execPath} ${script} "$@"\n`, { mode: 0o755 });
-  const path = process.env["PATH"];
+  // A `gjc` executable in a directory with a space is on this process's PATH only; the pane shell never sees that PATH.
+  const spacedBin = join(home, "agent bin");
+  mkdirSync(spacedBin);
+  const exe = join(spacedBin, "gjc");
+  writeFileSync(exe, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(script)} "$@"\n`, { mode: 0o755 });
+  const previousPath = process.env["PATH"];
   try {
-    process.env["PATH"] = `${bin}:${path}`;
+    process.env["PATH"] = `${spacedBin}:${previousPath ?? ""}`;
     const id = await shell();
     await startShellAgent("gjc", id, [dir]);
     const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>("pane.process_info", { pane_id: id });
-    expect(info.process_info?.foreground_processes?.find((process) => isGjcProcess(process.argv ?? []))?.argv?.slice(-1)).toEqual([dir]);
+    expect(info.process_info?.foreground_processes?.find((candidate) => isGjcProcess(candidate.argv ?? []))?.argv?.slice(-1)).toEqual([dir]);
     process.env["PATH"] = "/nonexistent";
     const bare = await shell();
     await expect(startShellAgent("gjc", bare, [], { timeoutMs: 1500 })).rejects.toThrow("not on this server's PATH");
     expect((await paneRead({ paneId: bare })).text.replaceAll(home, "")).not.toContain("gjc");
-  } finally { process.env["PATH"] = path; }
-});
+  } finally {
+    if (previousPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = previousPath;
+  }
+}));

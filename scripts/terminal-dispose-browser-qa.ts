@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { buildXtermSource } from "./build-xterm.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = join(import.meta.dir, "..");
 const xterm = buildXtermSource(root);
@@ -87,7 +88,7 @@ const server = Bun.serve({
     return new Response('<!doctype html><button id="immediate">Immediate</button><button id="deferred">Deferred</button><div id="terminal"></div><pre id="result"></pre><script type="module" src="/fixture.js"></script>', { headers: { "Content-Type": "text/html" } });
   },
 });
-const browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true });
+const browser = await chromium.launch({ executablePath: chromePath(), headless: true });
 try {
   const page = await browser.newPage();
   page.setDefaultTimeout(10_000);

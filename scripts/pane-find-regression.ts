@@ -7,6 +7,7 @@ import { chromium, type Browser } from "playwright-core";
 import type { PaneFindResponse } from "../shared/protocol.ts";
 import { createServer } from "../server/index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 /** GUI searches stay in herdr's history, never in browser scrollback or terminal input. */
 export async function checkPaneFind(browser: Browser, origin: string): Promise<void> {
@@ -235,7 +236,7 @@ if (import.meta.main) {
   const server = createServer({ port: 0, stateDir, registerBridge: false });
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH || "/opt/google/chrome/chrome" });
+    browser = await chromium.launch({ headless: true, executablePath: chromePath() });
     await checkPaneFind(browser, `http://127.0.0.1:${server.port}`);
   } finally {
     await browser?.close();

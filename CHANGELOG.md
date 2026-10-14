@@ -7,6 +7,102 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- **Settings → Phone & devices → Portal** gives this PC a public HTTPS address through
+  [Portal](https://github.com/gosuda/portal-tunnel), with no account and no domain of your own.
+  With Portal v2.6.1 or later installed, **Start** runs it on a relay you enter, dropping any
+  `Tailscale-User-Login` header a visitor sends; it starts only with `HERDR_WEB_TOKEN` set. The
+  address and its QR code show on every signed-in device, any device that can type into your
+  terminals can stop it, and an address left on comes back when the app restarts.
+  ([#746](https://github.com/devswha/herdr-web-ui/pull/746) by @rabbitson87)
+- **Two tabs side by side** on a desktop, from different workspaces or PCs: drag a tab down out
+  of its strip, or a sidebar row over the pane area, and drop it on the left or right half. A guide
+  shows the two halves as soon as the drag starts and keeps its side steady at the centre; Escape
+  or a drop elsewhere leaves everything as it was. Each half draws its tab at herdr's own layout,
+  with its own tab strip and a bar with its lens and a close, and a tab is never shown in both
+  halves. A press in a half makes it the one the header, the palette and the shortcuts act on.
+  The split is kept across a reload, and a narrower window shows the active half alone. Drag
+  guide by @flam-ing. ([#861](https://github.com/devswha/herdr-web-ui/pull/861) by @Yoonwoo-Ha)
+- The file viewer and Markdown reader page offer **Show source**, highlighted source with
+  CSS-counter line numbers, and **Copy file**, which selects the source when copying is unavailable.
+  **Settings → Chat → File viewer** controls line wrapping and Markdown width; previews inherit
+  the chat's font and, in the viewer, the opening pane's chat width.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- A line over the panes says when the server can be reached from the network with no access
+  token set and no device paired, and what to do about it. Nothing about who is let in changes:
+  pairing a device or setting a token is still the owner's call.
+  ([#698](https://github.com/devswha/herdr-web-ui/pull/698) by @pt-act)
+- **Shared settings and pins.** The browsers of one server, a PC's and a phone's, keep the same
+  pinned agents and the same settings that do not depend on the device: theme and colors, language,
+  the sidebar's rows, order, cards and pins, chat and usage-meter choices. A
+  change shows on the other open pages at once. Each device keeps its own terminal and chat font
+  sizes, key bar, shortcuts, density, alerts, microphone, the lens panes open in and the like. Opening a page never
+  overwrites anything: a server that holds no shared settings yet takes them from the first change,
+  and the browser that shares first brings its pins along. A page that lost its connection catches up
+  when it is back. A watching device follows the shared settings and cannot change them for everyone. ([#854](https://github.com/devswha/herdr-web-ui/pull/854))
+- **Settings → Appearance → Agent logos: Color | Mono.** Mono draws the logos without color:
+  Claude's in the text color without its orange tile, the other logos with brand colors in grey,
+  so a sidebar where nearly every agent is the same one is not a column of colored tiles. Color,
+  today's look, stays the default. ([#850](https://github.com/devswha/herdr-web-ui/pull/850) by @phirschybar)
+- File paths in a tool call's command and output, and in a code block with no language (a log
+  an agent pasted), open in the file viewer like the paths in its prose: a line such as
+  `/tmp/shot/t0.png (1600, 1000) -> (1255, 960)` opens the picture, from a phone or another PC
+  as well, since the server reads the file. An HTML file now shows as its page, with a switch to
+  its source: its own script runs in a sandbox with no origin, storage or network (not the web
+  either), and the pictures, stylesheet and script it takes from its own folder are put into it,
+  so an agent's report with its screenshots draws whole. Files outside that folder, hidden ones such as `.env`,
+  and anything of another kind than the tag asks for are never put in.
+  ([#691](https://github.com/devswha/herdr-web-ui/pull/691) by @MovieHolic-Plex)
+- PCs saved in herdr appear automatically. Connect once per PC to enable automatic reconnection;
+  installing or starting a bridge still needs separate approval. Changing the address, port or
+  session clears both permissions and cached panes.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
+
+### Changed
+- Install and update counts include app setting values such as theme, text size and notification
+  choices, rather than only the names of changed appearance settings. Custom text and account
+  identifiers stay out; custom choices use flags or counts. The expanded notice is shown again
+  before sending, and existing opt-outs and install/update-only delivery stay unchanged.
+  ([#866](https://github.com/devswha/herdr-web-ui/pull/866))
+- Markdown file previews are parsed in a worker with a 2 s budget and a 60 000-element limit,
+  keeping the existing HTML blocks, images and reader-page navigation. A preview that cannot
+  be drawn offers its source. Partial text and preview, highlighting or line-number limits are
+  reported beside the file size with a warning icon and tooltip. **Open in a new tab**,
+  **Open raw file** and **Download** retain their existing destinations without a duplicate Raw action.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- The sidebar's RUN mark is a working-colored dot that breathes, as T3 Code's does, instead of a
+  spinning arc that read as flicker beside the rows: it holds full most of a 2-second cycle and
+  dims to half in a few steps, and every running row breathes in step. BG is a still ring in the
+  same color, so the two read apart without motion; it breathes under reduced motion too.
+  ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
+
+### Fixed
+- First-device pairing waits for the browser to return its device cookie before restricting
+  access. A proxy that drops the cookie no longer locks out an otherwise open installation;
+  Settings reports the failed pairing instead. Already restricted installations stay restricted.
+  ([#915](https://github.com/devswha/herdr-web-ui/pull/915))
+- A message another Claude Code session sends into a pane (its `peer` messages) shows in the chat as
+  a folded **Message from another session: {name}** that opens its own turn, instead of being skipped so the work it
+  started was appended to the answer before it.
+- Attached files upload three at a time instead of one after another, and each file's `@path` goes
+  to the start of the message in the order the files were picked, once a `/command` being typed or
+  an IME composition is finished. It used to go where the caret
+  was, so a path that arrived while you typed landed in the middle of your words and moved the caret.
+- One paste, pick or drop attaches up to 20 files instead of silently keeping the first four, and
+  the message box says how many it left out. **Settings → Chat → Files at once** sets the number
+  for the device, from 1 to 50.
+- Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
+- **Send now** on a working Codex pane sends the message at once. Codex kept it until its next
+  tool call; once Codex shows that very message waiting, Send now presses Escape, which Codex
+  itself offers to interrupt the turn and send it. An ordinary Send and the automatic next-turn
+  delivery never interrupt Codex.
+  ([#783](https://github.com/devswha/herdr-web-ui/pull/783) by @kilhyeonjun)
+- On Windows, a pane that runs a launcher which starts OmO as its child is recognized as OmO. herdr
+  names only the launcher there, so the bridge now also looks for OmO below the pane's shell in the
+  PC's process table, so its chat and session are found. Only processes below that pane's own
+  shell count. ([#886](https://github.com/devswha/herdr-web-ui/pull/886) by @willowite)
+
 ## [0.4.8] - 2026-10-12
 
 ### Added
@@ -109,6 +205,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   start or length (Claude, Codex, Grok), from 5% of the window on.
   ([#513](https://github.com/devswha/herdr-web-ui/pull/513) by @kilhyeonjun, [#834](https://github.com/devswha/herdr-web-ui/pull/834))
 - Turkish (Türkçe) UI translation: a full `i18n.tr.ts` dictionary, the language in the Settings menu with browser detection, and a Turkish README. ([#815](https://github.com/devswha/herdr-web-ui/pull/815) by @fitzgpt)
+- Configurable paging shortcuts scroll the current chat transcript or native terminal history with Mod+Shift+PageUp/PageDown and 0–100 lines of overlap (one by default). Settings → Chat can opt into plain PageUp/PageDown while composing, preserving the draft, selection and focus. When herdr explicitly reports no native history, a paging action sends plain page keys to the running application, which controls its own page length. ([#811](https://github.com/devswha/herdr-web-ui/pull/811) by @kratam)
 - Native conversation transcripts for Hermes Agent: turns, thinking blocks, and tool calls are read directly from its SQLite session store. ([#604](https://github.com/devswha/herdr-web-ui/pull/604) by @RikiSanjayaa)
   A remote PC reads them once its bridge is updated to this release's runtime.
 - **Deep links.** The address now says where you are, and opens there: the PC, the workspace (by id and a short slug of its name, so `?ws=w2K-herdr-web-ui&pane=w2K:p1&view=chat` reads like the place), the pane and its lens, an open file, a Settings page and group (`&settings=about&section=updates`), the New workspace dialog with its fields filled (`?new=workspace&cwd=…&name=…&agent=…`; a link never creates anything), and a collapsed sidebar (`&sidebar=hidden`). Opening another pane is a history entry, so Back returns to the last one. A link to a pane that has closed opens its workspace, a link to nothing open says so, and **Copy link** in the header's More menu copies the address on a phone.

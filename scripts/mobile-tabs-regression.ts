@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import { herdrRpc, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 type Box = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type KeyboardQA = Window & { keyboardQA: (height: number | null) => void };
@@ -207,7 +208,7 @@ if (import.meta.main) {
   const { UsageService } = await import("../server/usage.ts");
   const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-mobile-tabs-state-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
-  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try {
     await checkMobileTabs(browser, `http://127.0.0.1:${server.port}`);
   } finally {

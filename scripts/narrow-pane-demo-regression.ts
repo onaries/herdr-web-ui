@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // A split pane under 80 columns draws in a smaller font to reach them (src/lib/narrowPaneFont.ts),
 // on the unmodified app over the demo's fixture transport: no herdr session is opened. The font
@@ -84,7 +85,7 @@ try {
     return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
   } });
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       const context = await browser.newContext({ viewport: { width: 1700, height: 900 }, locale: "en-US" });
       await context.addInitScript(() => {

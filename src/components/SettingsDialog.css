@@ -135,6 +135,21 @@
   width: 14rem;
 }
 
+.settings-shortcut-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-shortcut-record[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.settings-shortcut-search {
+  width: 100%;
+}
+
 .settings-integration-check {
   flex: none;
   width: 18px;
@@ -272,6 +287,22 @@
   }
 }
 
+/* Contrast: the stepper and, before it, the way back to the palette's own drawing. At the default
+   that arrow keeps its place, unseen, so the row does not shift as the step changes */
+.settings-contrast {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-contrast > .icon-button {
+  color: var(--text-dim);
+}
+
+.settings-contrast > .icon-button:disabled {
+  visibility: hidden;
+}
+
 @media (max-width: 640px) {
   .settings-dialog {
     grid-template-columns: minmax(0, 1fr);
@@ -328,9 +359,23 @@
     width: 100%;
   }
 
+  .settings-shortcut-control {
+    width: 100%;
+  }
+
+  .settings-shortcut-control .settings-shortcut-select {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   /* the key takes the line; Save and Remove share the next one */
   .voice-key-input {
     flex-basis: 100%;
+  }
+
+  /* under its sentence, the arrow and the stepper keep to the end of the line, where the row has them */
+  .settings-row.is-wide > .settings-contrast {
+    justify-content: flex-end;
   }
 }
 
@@ -345,5 +390,96 @@
   .settings-tab:active {
     opacity: 1;
     background: var(--bg-elevated);
+  }
+}
+
+/* the font field: the typed list, and where the browser can list them a Browse button that opens the installed fonts under it */
+.settings-font-field {
+  display: flex;
+  flex: 0 1 18rem;
+  width: 18rem;
+  max-width: 100%;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* the installed fonts open under the field and make the row tall: its label stays at the top, beside the field */
+.settings-row:has(> .settings-font-field .settings-font-picker) {
+  align-items: flex-start;
+}
+
+.settings-font-line {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.settings-font-line > .settings-font-input {
+  flex: 1 1 0;
+}
+
+.settings-font-search {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.settings-font-browse {
+  flex: 0 0 auto;
+}
+
+.settings-font-picker {
+  box-sizing: border-box;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.settings-font-list {
+  max-height: 14rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.settings-font-option {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-font-option:hover,
+.settings-font-option:focus-visible {
+  background: var(--bg-hover);
+}
+
+.settings-font-note,
+.settings-font-empty {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  list-style: none;
+}
+
+@media (max-width: 640px) {
+  .settings-row.is-wide > .settings-font-field {
+    flex: 0 0 auto;
   }
 }

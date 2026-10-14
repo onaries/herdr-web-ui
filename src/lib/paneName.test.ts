@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { folderName, placeLine, shortPathTitle, taskRowLines } from "./paneName.ts";
+import { codexThreadTitle, folderName, placeLine, shortPathTitle, taskRowLines, stripPaneChrome } from "./paneName.ts";
 
 it("shows a path title as its last folder, and leaves any other title alone", () => {
   expect(shortPathTitle("/tmp/audit-oDjsU2/lms-backend")).toBe("lms-backend");
@@ -54,4 +54,19 @@ it("draws a two-line row as the pane's title over its place, without repeating a
   // a pane named as its worktree's workspace does not have that name said again under it
   expect(taskRowLines({ paneTitle: "Hotfix", labelled: true, folder: "fix-payment", workspace: "Hotfix", alias: "fix/payment" }))
     .toEqual({ title: "Hotfix", place: "fix/payment · fix-payment" });
+});
+
+it("keeps the thread of a Codex title and drops the project folder Codex adds after it", () => {
+  expect(codexThreadTitle("Respond to greeting | worktree-rapid-valley...")).toBe("Respond to greeting");
+  expect(codexThreadTitle("Compare a | b outputs | herdr-web-ui")).toBe("Compare a | b outputs");
+  expect(codexThreadTitle("Respond to greeting")).toBe("Respond to greeting");
+  expect(codexThreadTitle(" | herdr-web-ui")).toBe(" | herdr-web-ui");
+});
+
+it("strips a Codex title to its thread for a row, and keeps the folder for an alert and for other agents", () => {
+  expect(stripPaneChrome("Respond to greeting | worktree-rapid-valley...", "codex")).toBe("Respond to greeting");
+  expect(stripPaneChrome("Respond to greeting | worktree-rapid-valley...", "codex", true)).toBe("Respond to greeting | worktree-rapid-valley...");
+  expect(stripPaneChrome("Fix the build | api", "claude")).toBe("Fix the build | api");
+  // a shell's title is not an agent's: its user@host goes, a pipe in it stays
+  expect(stripPaneChrome("me@host:~/work | notes", null)).toBe("~/work | notes");
 });

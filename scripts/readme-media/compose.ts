@@ -7,6 +7,7 @@
  */
 import { chromium, type Browser, type Page } from "playwright-core";
 import type { Cue, Recording } from "./record.ts";
+import { chromePath } from "../chrome-path.ts";
 
 export type Frame = "window" | "phone";
 
@@ -152,7 +153,7 @@ window.draw = (L, S, type, quality) => {
 
 let shared: Browser | null = null;
 async function compositor(): Promise<Page> {
-  shared ??= await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  shared ??= await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await shared.newPage();
   await page.setContent(PAGE);
   return page;

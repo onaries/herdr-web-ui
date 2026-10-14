@@ -1,0 +1,46 @@
+/* the whole page after a render error reached the top (AppCrash.tsx) */
+.app-crash {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--app-height, 100dvh);
+  padding: var(--space-4);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-crash-card {
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+}
+
+.app-crash-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--danger-text);
+}
+
+.app-crash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.app-crash-details {
+  margin-top: var(--space-3);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.app-crash-details pre {
+  max-height: 40vh;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

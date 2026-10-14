@@ -168,6 +168,7 @@ describe("push delivery", () => {
     const [received] = fake.received;
     expect(received!.payload).toEqual({
       pane_id: "w1:p1",
+      workspace_id: "w1",
       title: "claude: fix the build",
       body: "waiting for your input",
       tag: "herdr-pane-w1:p1",
@@ -233,8 +234,10 @@ describe("push delivery", () => {
     const push = subscribed();
     push.seed([pane("w1:p1", "working", "vim notes.md")]);
     await push.onEnded("w1:p1");
+    // the pane is gone from herdr by now: the workspace it was seen in is named, for the tap to open
     expect(fake.received[0]!.payload).toEqual({
       pane_id: "w1:p1",
+      workspace_id: "w1",
       title: "vim notes.md",
       body: "terminal ended",
       tag: "herdr-pane-w1:p1",

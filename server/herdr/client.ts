@@ -11,7 +11,8 @@ import type {
   PaneFindResponse,
   PaneFindMatch,
 } from "../../shared/protocol.ts";
-import type { AgentInfo, AgentManifestInfo, AgentStartParams, PaneInfo, PaneLayoutSnapshot, PaneMoveParams, PaneMoveResult, PaneScrollInfo, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
+import type { AgentInfo, AgentManifestInfo, AgentStartParams, PaneInfo, PaneLayoutSnapshot, PaneMoveParams, PaneMoveResult, PaneProcessInfo, PaneScrollInfo, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
+import type { HerdrMethod, HerdrMethods, SingleHerdrMethod, UntypedHerdrMethod } from "./methods.ts";
 import type { HerdrIdentity } from "../../shared/machines.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -81,15 +82,38 @@ function makeLineReader(onLine: (line: string) => void): (chunk: Uint8Array) => 
  * connect is awaited, and a caller's right to send can lapse meanwhile. A guard that
  * answers false sends nothing and rejects with `cancelled`.
  */
-export async function herdrRpc<T = unknown>(
-  method: string,
+export function herdrRpc<M extends HerdrMethod>(
+  method: SingleHerdrMethod<M>,
+  params: HerdrMethods[M]["params"],
+  socketPath?: string,
+  timeoutMs?: number,
+  guard?: () => boolean,
+): Promise<HerdrMethods[M]["result"]>;
+/**
+ * Untyped fallback for a method `HerdrMethods` does not list yet. Outside server/herdr/ only
+ * tests, scripts and the files in HERDR_RPC_ALLOWED (server/conventions.test.ts) may call it;
+ * server code adds a typed wrapper here instead. It rejects a typed method only when `M` is
+ * inferred from a literal: with an explicit result type (`herdrRpc<T>("pane.process_info", …)`)
+ * or a method typed as plain `string`, `M` is `string` and any params compile. Closing that
+ * needs this fallback under its own name, left to the follow-up PR that moves the
+ * HERDR_RPC_ALLOWED files to the wrappers once their open PRs land.
+ */
+export function herdrRpc<T = unknown, M extends string = string>(
+  method: UntypedHerdrMethod<M>,
   params: Record<string, unknown>,
+  socketPath?: string,
+  timeoutMs?: number,
+  guard?: () => boolean,
+): Promise<T>;
+export async function herdrRpc(
+  method: string,
+  params: object,
   socketPath: string = herdrSocketPath(),
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
   guard?: () => boolean,
-): Promise<T> {
+): Promise<unknown> {
   const id = nextId();
-  return await new Promise<T>((resolve, reject) => {
+  return await new Promise<unknown>((resolve, reject) => {
     let settled = false;
     let socket: { end: () => void } | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -124,7 +148,7 @@ export async function herdrRpc<T = unknown>(
         finish(() => reject(new HerdrError(code, message)));
         return;
       }
-      finish(() => resolve(frame.result as T));
+      finish(() => resolve(frame.result));
     };
 
     const onData = makeLineReader(handleLine);
@@ -540,6 +564,22 @@ export async function paneFind(request: PaneFindRequest, socketPath?: string): P
 export async function paneSelectionRead(paneId: string, anchor: PaneTextPoint, cursor: PaneTextPoint, socketPath?: string): Promise<string> {
   const result = await herdrRpc<{ text: string }>("pane.selection.read", { pane_id: paneId, anchor, cursor }, socketPath);
   return result.text;
+}
+
+/** What herdr knows of the processes in a pane's terminal (`pane.process_info`). */
+export type ProcessInfo = PaneProcessInfo;
+
+/**
+ * The pane's shell and foreground processes, or undefined when herdr names none. Always by
+ * `pane_id`: given `target`, herdr silently answers for the focused pane. Rejects as herdrRpc does.
+ */
+export async function paneProcessInfo(paneId: string, socketPath?: string): Promise<ProcessInfo | undefined> {
+  return (await herdrRpc("pane.process_info", { pane_id: paneId }, socketPath)).process_info;
+}
+
+/** The agent herdr tracks in a pane (`agent.get`), including the session it reported. */
+export async function agentGet(paneId: string, socketPath?: string): Promise<AgentInfo> {
+  return (await herdrRpc("agent.get", { target: paneId }, socketPath)).agent;
 }
 
 export async function paneSendText(paneId: string, text: string, socketPath?: string, guard?: () => boolean): Promise<void> {

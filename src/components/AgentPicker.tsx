@@ -59,7 +59,8 @@ export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(funct
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onMove = (event: Event): void => {
-      if (!(event.target instanceof Node && rootRef.current?.contains(event.target))) setOpen(false);
+      // Only an ancestor's scroll can move the anchor; text inputs scroll too.
+      if (event.type === "resize" || (event.target instanceof Node && rootRef.current !== null && event.target.contains(rootRef.current))) setOpen(false);
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("scroll", onMove, true);
@@ -76,7 +77,15 @@ export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(funct
   }, [disabled]);
 
   useEffect(() => {
-    if (open) document.getElementById(`${listId}-${active}`)?.scrollIntoView({ block: "nearest" });
+    if (!open) return;
+    const option = document.getElementById(`${listId}-${active}`);
+    const menu = option?.parentElement;
+    if (!option || !menu) return;
+    // Scroll only the list; moving its modal would close the anchored picker.
+    const optionBounds = option.getBoundingClientRect();
+    const menuBounds = menu.getBoundingClientRect();
+    if (optionBounds.top < menuBounds.top) menu.scrollTop -= menuBounds.top - optionBounds.top;
+    else if (optionBounds.bottom > menuBounds.bottom) menu.scrollTop += optionBounds.bottom - menuBounds.bottom;
   }, [open, active, listId]);
 
   const show = (): void => {

@@ -10,8 +10,8 @@
     "url": "git+https://github.com/devswha/herdr-web-ui.git"
   },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
     "server": "bun run server/index.ts",
     "start": "bun run build && bun run server/managed.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tools.json",
@@ -19,14 +19,16 @@
     "test": "bun test",
     "test:unit": "bun scripts/ci-tests.ts unit",
     "test:integration": "bun scripts/ci-tests.ts integration",
-    "test:ui": "bun run build && bun scripts/ui-regression.ts && bun scripts/sticky-modifiers-regression.ts",
+    "test:ui": "bun run build && bun scripts/ui-regression.ts && bun scripts/ui-contexts-regression.ts && bun scripts/sticky-modifiers-regression.ts",
     "generate:types": "bun run scripts/generate-protocol-types.ts",
     "build:remote": "bun run scripts/build-remote-bundle.ts",
     "build:site": "bun scripts/build-site.ts",
     "test:ssh": "bun run scripts/ssh-integration.ts"
   },
   "dependencies": {
+    "@legendapp/list": "3.3.5",
     "@lydell/node-pty": "1.1.0",
+    "@pierre/diffs": "1.5.2",
     "@tanstack/highlight": "^1.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-unicode-graphemes": "0.4.0",
@@ -36,22 +38,24 @@
     "lucide-react": "^1.47.0",
     "mermaid": "^12.1.0",
     "qrcode-generator": "^2.0.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/bun": "^1.1.14",
     "@types/katex": "^0.16.8",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/web-push": "^3.6.4",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.1.2",
     "playwright-core": "^1.49.1",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "typescript": "^7.0.2",
+    "typescript-api": "npm:typescript@^6.0.3",
+    "vite": "^8.3.4"
   },
   "patchedDependencies": {
+    "@legendapp/list@3.3.5": "patches/@legendapp%2Flist@3.3.5.patch",
     "@xterm/xterm@5.5.0": "patches/@xterm%2Fxterm@5.5.0.patch"
   }
 }

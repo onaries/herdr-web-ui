@@ -1,0 +1,22 @@
+.portal-start {
+  display: flex;
+  flex: 0 1 22rem;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.portal-start .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* a relay's or Portal's sentence can carry a long address or path */
+.portal-error {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .settings-row.is-wide > .portal-start {
+    flex: 0 0 auto;
+  }
+}

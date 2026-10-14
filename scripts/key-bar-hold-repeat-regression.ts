@@ -185,6 +185,21 @@ try {
         assert.ok(escapeKeys.length <= 1 && escapeKeys.every((key) => key === "esc"), `held Escape does not repeat: ${JSON.stringify(escapeKeys)}`);
         console.log("PASS held Escape does not repeat");
 
+        // 5b. The editing keys repeat too: a held Backspace clears a line without one tap per character.
+        const backspace = bar.locator('.key[data-key="Backspace"]');
+        before = (await framesOf(page)).length;
+        const backspaceRelease = await hold(page, cdp, backspace, HOLD_MS);
+        // Backspace goes out as the pane's DEL byte on the input path, not as a logical key.
+        const backspaceFrames = await framesSince(page, before);
+        const backspaceKeys = backspaceFrames.flatMap((frame) => frame.type === "input" ? [...frame.text] : frame.keys);
+        assert.ok(backspaceKeys.length >= 5, `a held Backspace repeats before release (got ${backspaceKeys.length})`);
+        assert.ok(backspaceKeys.every((key) => key === "\x7f"), `Backspace repeats stay Backspace: ${JSON.stringify(backspaceKeys)}`);
+        // fixed wait: proves no repeat arrives after release
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        assert.equal((await framesOf(page)).length, backspaceRelease, "Backspace stops after release with no extra click");
+        console.log(`PASS holding Backspace repeats (${backspaceKeys.length} keys) and stops on release`);
+        await bar.evaluate((row) => { row.scrollLeft = 0; });
+
         // 6. Repeats must use the same sticky-modifier path as the existing touch click.
         await ctrl.tap();
         assert.equal(await ctrl.getAttribute("aria-pressed"), "true", "Ctrl is armed");

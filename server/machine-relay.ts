@@ -1,8 +1,31 @@
 import { authenticatedWebSocket } from "./remote-websocket.ts";
 import type { ServerWebSocket } from "bun";
-import { OUTPUT_HARD_BYTES, OUTPUT_STALL_MS } from "./output-window.ts";
+import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_STALL_MS } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import type { MachineManager } from "./machines.ts";
+
+/**
+ * The relay's backstop against its own sockets backing up, with this PC's rule (reconcileOutput):
+ * blocked only while OUTPUT_HIGH_BYTES or more is queued, closed after OUTPUT_STALL_MS of that.
+ * A slow phone link keeps a few KB queued in userspace while output still moves, so any byte
+ * must not count. The end-to-end ACK window is enforced by the remote bridge. A stall closes
+ * with 4008 like this PC's: an overload is never auto-replayed. Returns the close code, or 0.
+ */
+export class RelayStallClock {
+  private blockedAt: number | null = null;
+
+  sample(buffered: number, now: number): number {
+    if (buffered > OUTPUT_HARD_BYTES) return OUTPUT_STALLED_CLOSE_CODE;
+    if (buffered < OUTPUT_HIGH_BYTES) this.blockedAt = null;
+    else if (this.blockedAt === null) this.blockedAt = now;
+    return this.blockedAt !== null && now - this.blockedAt >= OUTPUT_STALL_MS ? OUTPUT_STALLED_CLOSE_CODE : 0;
+  }
+}
+
+/** The phone sees an upstream 4008 as is (the remote bridge's ACK window stalled); any other end is 1012. */
+export function upstreamCloseCode(code: number): number {
+  return code === OUTPUT_STALLED_CLOSE_CODE ? code : 1012;
+}
 
 /** Relay ACK frames unchanged: only xterm parsing releases remote output credit. */
 export class MachineRelay {
@@ -13,7 +36,7 @@ export class MachineRelay {
   private closed = false;
   private untrack: () => void;
   private timer: ReturnType<typeof setInterval>;
-  private blockedAt = 0;
+  private stall = new RelayStallClock();
   readonly ready: Promise<void>;
 
   constructor(manager: MachineManager, id: string, private readonly readOnly = false) {
@@ -39,14 +62,16 @@ export class MachineRelay {
         else this.waiting.push(raw);
       } else this.send(raw);
     };
-    this.upstream.onclose = (event) => this.close(event.code === OUTPUT_STALLED_CLOSE_CODE ? event.code : 1012, event.reason || "Remote connection ended");
-    this.timer = setInterval(() => {
-      const buffered = Math.max(this.client?.getBufferedAmount() ?? 0, this.upstream.bufferedAmount);
-      if (!buffered) this.blockedAt = 0;
-      else if (!this.blockedAt) this.blockedAt = Date.now();
-      if (buffered > OUTPUT_HARD_BYTES || (this.blockedAt && Date.now() - this.blockedAt > OUTPUT_STALL_MS)) this.close(OUTPUT_STALLED_CLOSE_CODE, "terminal transport stalled");
-    }, 100);
+    this.upstream.onclose = (event) => this.close(upstreamCloseCode(event.code), event.reason || "Remote connection ended");
+    this.timer = setInterval(() => this.tick(), 100);
     this.timer.unref();
+  }
+  /** One stall-clock sample of both sockets' queues; the 100 ms timer calls it, and tests inject `now`. */
+  tick(now = Date.now()): void {
+    if (this.closed) return;
+    const buffered = Math.max(this.client?.getBufferedAmount() ?? 0, this.upstream.bufferedAmount);
+    const code = this.stall.sample(buffered, now);
+    if (code) this.close(code, "terminal transport stalled");
   }
   bind(client: ServerWebSocket<unknown>): void {
     this.client = client;

@@ -1,0 +1,71 @@
+diff --git a/react.mjs b/react.mjs
+--- a/react.mjs
++++ b/react.mjs
+@@ -5668,7 +5668,10 @@ function sortDOMElements(container, indexByElement) {
+           break;
+         }
+       }
+-      if (nextStableElement) {
++      // Keep focus when reordering an already mounted row.
++      if (typeof container.moveBefore === "function") {
++        container.moveBefore(element, nextStableElement);
++      } else if (nextStableElement) {
+         container.insertBefore(element, nextStableElement);
+       } else {
+         container.appendChild(element);
+@@ -5716,32 +5719,19 @@
+ function useDOMOrder(ref) {
+   const ctx = useStateContext();
+-  const debounceRef = useRef(void 0);
+-  useEffect(() => {
+-    const unsubscribe = listen$(ctx, "lastPositionUpdate", () => {
+-      if (debounceRef.current !== void 0) {
+-        clearTimeout(debounceRef.current);
+-      }
+-      debounceRef.current = setTimeout(() => {
+-        const parent = ref.current;
+-        if (parent) {
+-          const indexByElement = /* @__PURE__ */ new Map();
+-          for (const [containerId, viewRef] of ctx.viewRefs) {
+-            const element = viewRef.current;
+-            const index = peek$(ctx, `containerItemIndex${containerId}`);
+-            if (element && index !== void 0) {
+-              indexByElement.set(element, index);
+-            }
+-          }
+-          sortDOMElements(parent, indexByElement);
+-        }
+-        debounceRef.current = void 0;
+-      }, 500);
+-    });
+-    return () => {
+-      unsubscribe();
+-      if (debounceRef.current !== void 0) {
+-        clearTimeout(debounceRef.current);
++  const [version, invalidate] = useReducer((value) => value + 1, 0);
++  useEffect(() => listen$(ctx, "lastPositionUpdate", invalidate), [ctx]);
++  useLayoutEffect(() => {
++    const parent = ref.current;
++    if (parent) {
++      const indexByElement = /* @__PURE__ */ new Map();
++      for (const [containerId, viewRef] of ctx.viewRefs) {
++        const element = viewRef.current;
++        const index = peek$(ctx, `containerItemIndex${containerId}`);
++        if (element && index !== void 0) {
++          indexByElement.set(element, index);
++        }
+       }
+-    };
+-  }, [ctx]);
++      sortDOMElements(parent, indexByElement);
++    }
++  }, [ctx, version]);
+ }
+@@ -7288,6 +7278,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+   const startImperativeScroll = (resolve) => {
++    state.mvcpAnchorLock = void 0;
+     state.scheduledWork.cancel("imperativeScrollReady");
+     const token = ++imperativeScrollToken;
+     settlePendingImperativeScroll(state);
+     state.pendingScrollResolve = resolve;
+     return token;

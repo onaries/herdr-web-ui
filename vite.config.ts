@@ -1,5 +1,6 @@
 import { buildXtermSource } from "./scripts/build-xterm.ts";
 import { compressedAssets } from "./scripts/compressed-assets.ts";
+import { serviceWorkerBuild } from "./scripts/service-worker-build.ts";
 import { defineConfig, normalizePath, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -20,19 +21,24 @@ const thirdPartyNotices: Plugin = {
 };
 
 export default defineConfig({
-  plugins: [react(), thirdPartyNotices, compressedAssets()],
+  plugins: [react(), thirdPartyNotices, compressedAssets(), serviceWorkerBuild()],
   define: {
     __APP_REVISION__: JSON.stringify(revision),
     __APP_VERSION__: JSON.stringify((JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version),
+    // test hooks (src/lib/crashProbe.ts): on only in the browser lane's demo build (scripts/demo-build.ts)
+    __HERDR_TEST_HOOKS__: JSON.stringify(process.env["HERDR_TEST_HOOKS"] === "1"),
   },
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:7317",
+      // not the string shorthand: Vite gives that changeOrigin, and the server's same-origin check
+      // compares the browser's Origin (:5173) with the Host it was sent, which must stay :5173
+      "/api": { target: "http://localhost:7317", changeOrigin: false },
       "/ws": { target: "ws://localhost:7317", ws: true },
     },
   },
-  build: { outDir: "dist" },
+  // Keep Vite 6's syntax targets when changing the bundler, including installed mobile clients.
+  build: { outDir: "dist", target: ["es2020", "edge88", "firefox78", "chrome87", "safari14"] },
   // The Bun patch targets xterm's readable source, not its minified distribution. Build that
   // source so dev, production and the website use the same reviewed IME backport.
   resolve: { alias: [

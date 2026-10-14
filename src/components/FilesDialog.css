@@ -1,0 +1,9 @@
+/* Browse | Changes in the Files dialog's header, between the title and Close */
+.files-dialog-tabs {
+  flex: none;
+}
+
+/* the dialog keeps one height across its two tabs: a short list of changes does not shrink it */
+.files-dialog .modal-body {
+  min-height: calc(var(--control-h) * 8);
+}

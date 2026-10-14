@@ -6,6 +6,7 @@ import { chromium } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { checkMobileViewport } from "./mobile-viewport-regression.ts";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // Build the real app with the demo's fixture transport, without the website build's
 // media downloads or a live herdr server. Keep every output in a disposable directory.
@@ -35,7 +36,7 @@ try {
 });
 
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true });
     try {
       await checkMobileViewport(browser, `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app`, panes.api);
     } finally {

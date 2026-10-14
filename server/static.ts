@@ -201,6 +201,11 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
       });
     }
   }
+  // a missing file is not a page: the shell under a bundle's URL fails as a script anyway, and a
+  // service worker would keep it there. An old tab asks for its own build's chunks after an update.
+  if (pathname.startsWith("/assets/") || pathname.startsWith("/icons/")) {
+    return new Response(null, { status: 404, headers: { "cache-control": REVALIDATE, ...cspHeader() } });
+  }
   return new Response(await body(Bun.file(indexPath), "shell"), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader() },
   });

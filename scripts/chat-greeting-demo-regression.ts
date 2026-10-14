@@ -6,6 +6,7 @@ import { chromium, type Page } from "playwright-core";
 import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // An empty chat's greeting, on the unmodified app over the demo's fixture transport: a workspace
 // the demo creates starts with a conversation of no turns. All files and HTTP traffic stay in
@@ -108,7 +109,7 @@ try {
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.infra)}`;
   const settings = (): void => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })); };
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       // a mouse-driven window: the greeting and the input card sit at the pane's vertical centre
       const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
@@ -286,7 +287,11 @@ try {
         const title = (await page.locator(".composer-greeting-title").boundingBox())!;
         // Chromium blurs a field on any tap outside it and iOS does not, so the blur alone proves
         // nothing here: what counts is that the touch lands on the chat, whose handler iOS needs
-        const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".chat-view, .composer")?.className ?? null, { x: title.x + title.width / 2, y: title.y + title.height / 2 });
+        const hit = await page.evaluate(({ x, y }) => {
+          // which of the two the touch reaches, whatever other classes it carries (a virtualized chat has one more)
+          const surface = document.elementFromPoint(x, y)?.closest(".chat-view, .composer");
+          return surface == null ? null : surface.matches(".chat-view") ? "chat-view" : "composer";
+        }, { x: title.x + title.width / 2, y: title.y + title.height / 2 });
         assert.equal(hit, "chat-view", "a touch on the greeting lands on the chat under it");
         await page.touchscreen.tap(title.x + title.width / 2, title.y + title.height / 2);
         await page.waitForFunction(() => !(document.activeElement instanceof HTMLTextAreaElement), undefined, { timeout: 3_000 });

@@ -1,0 +1,149 @@
+/* the chat lies under every dialog, so the picture takes the modal layer itself; the page behind
+   is hidden, as it is behind a diagram (MermaidLightbox.css) */
+.image-lightbox-scrim {
+  padding: 0;
+  background: var(--bg);
+}
+
+.image-lightbox {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.image-lightbox-bar,
+.image-lightbox-foot {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+/* clear of a notch or a rounded corner: the page is laid out with viewport-fit=cover */
+.image-lightbox-bar {
+  top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
+  right: calc(var(--space-3) + env(safe-area-inset-right, 0px));
+}
+
+.image-lightbox-zoom {
+  min-width: 4ch;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox-bar .icon-button.is-copied {
+  color: var(--status-done);
+}
+
+/* the stage never scrolls: the picture moves inside it, and the page behind stays put */
+.image-lightbox-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.image-lightbox-stage.is-dragging { cursor: grabbing; }
+
+/* the canvas is the stage's own box, so a zoom about a stage point is exact; the picture sits
+   fitted at its centre, clear of the bars */
+.image-lightbox-canvas {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: 0 0;
+}
+
+.image-lightbox-canvas img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 2 * var(--space-4));
+  max-height: calc(100% - 2 * (var(--control-h) + 2 * var(--space-3)));
+}
+
+.image-lightbox-failed {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.image-lightbox-failed svg {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+/* the caption and the gallery's steps, centred on the bottom edge, above a phone's home bar */
+.image-lightbox-foot {
+  bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  left: calc(var(--space-3) + env(safe-area-inset-left, 0px));
+  right: calc(var(--space-3) + env(safe-area-inset-right, 0px));
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--space-3) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  margin: 0 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.image-lightbox-foot-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.image-lightbox-caption {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.image-lightbox-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-lightbox-count {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox-note {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+  text-align: center;
+}

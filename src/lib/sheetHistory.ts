@@ -5,7 +5,9 @@
  * pushes (another pane, Settings, a file) replaces the entry, a sheet it opens reuses it, and an
  * address it changes on the entry (the New tab dialog) keeps it. A sheet closed any other way steps
  * back off its entry once whatever it ran has written its own history. A sheet closed by Back
- * leaves its entry ahead of the app; Forward onto it goes on to the next.
+ * leaves its entry ahead of the app; Forward onto it goes on to the next. A sheet opened while
+ * that step back is on its way (the browser runs a traversal later) is not closed by the step's
+ * popstate: its entry is made again over where the step landed.
  */
 import { useEffect, useRef } from "react";
 import { SHEET_QUERY } from "./sheets.ts";
@@ -19,6 +21,12 @@ const leaving = new Map<string, ReturnType<typeof setTimeout>>();
 /** the address each sheet's entry was made on */
 const addresses = new Map<string, string>();
 let pushing = false;
+/**
+ * while a closed sheet's step back is on its way: the sheets that made their entry meanwhile, which
+ * its popstate leaves open. The step always lands somewhere (a sheet's entry is made over another),
+ * so its popstate comes and clears this; the next step starts a set of its own.
+ */
+let stepping: Set<string> | null = null;
 
 function sheetOf(state: unknown): string | null {
   if (state === null || typeof state !== "object") return null;
@@ -59,7 +67,18 @@ export function enterSheet(onBack: () => boolean | void, reuse: string | null): 
   } finally { pushing = false; }
   open.set(id, onBack);
   addresses.set(id, window.location.href);
+  stepping?.add(id);
   return id;
+}
+
+/** Makes the sheet's entry again over the one the history is on (Back refused, or a step that was not Back for it). */
+function remake(id: string, onBack: () => boolean | void): void {
+  const base = window.history.state;
+  pushing = true;
+  try { window.history.pushState({ ...(base !== null && typeof base === "object" ? base : {}), [KEY]: id }, ""); }
+  finally { pushing = false; }
+  open.set(id, onBack);
+  addresses.set(id, window.location.href);
 }
 
 /** Steps off the sheet's entry once the closing click's effects are through (RowMenu's effect on unmount). */
@@ -73,7 +92,11 @@ export function leaveSheet(id: string): void {
     if (sheetOf(window.history.state) !== id) return;
     // an item that changed the address on the sheet's entry (the New tab dialog) keeps the entry as its own
     if (window.location.href !== address) window.history.replaceState(without(window.history.state), "");
-    else window.history.back();
+    else {
+      // the traversal runs later: a sheet that opens before its popstate keeps its entry
+      stepping = new Set();
+      window.history.back();
+    }
   }, 0));
 }
 
@@ -90,24 +113,23 @@ if (typeof window !== "undefined") {
   }) as History["pushState"];
   window.addEventListener("popstate", (event) => {
     const landed = sheetOf(event.state);
+    // the step off a closed sheet's entry: not a Back for the sheets that opened while it was on its way
+    const step = stepping;
+    stepping = null;
+    // the sheets that stay: their entries are made again over where the history landed
+    const again: Array<[string, () => boolean | void]> = [];
     for (const [id, onBack] of [...open]) {
       if (id === landed) continue;
       open.delete(id);
-      if (onBack() !== false) continue;
-      // the sheet is busy and stays: its entry is made again over where Back landed
-      const base = window.history.state;
-      pushing = true;
-      try { window.history.pushState({ ...(base !== null && typeof base === "object" ? base : {}), [KEY]: id }, ""); }
-      finally { pushing = false; }
-      open.set(id, onBack);
-      addresses.set(id, window.location.href);
+      // a sheet busy at Back refuses it and stays; one that opened during the step was never asked
+      if (step?.has(id) || onBack() === false) again.push([id, onBack]);
     }
     // the entry of a sheet that Back closed lies ahead of the app: Forward lands on it and goes on,
     // and the entry is an ordinary one from here
-    if (landed !== null && !open.has(landed) && !leaving.has(landed)) {
-      window.history.replaceState(without(event.state), "");
-      window.history.forward();
-    }
+    const retired = landed !== null && !open.has(landed) && !leaving.has(landed);
+    if (retired) window.history.replaceState(without(event.state), "");
+    for (const [id, onBack] of again) remake(id, onBack);
+    if (retired && again.length === 0) window.history.forward();
   });
   // a reload keeps the history and not the sheet: its entry is an ordinary one now
   if (sheetOf(window.history.state) !== null) window.history.replaceState(without(window.history.state), "");

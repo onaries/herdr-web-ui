@@ -7,10 +7,15 @@
  * BROWSER_WORKERS: worker count (default: min(cores/2, 6))
  * BROWSER_SCRIPTS: comma-separated list of scripts to run (default: all from ci-browser.sh)
  * BROWSER_EXCLUDE: comma-separated list of scripts to leave out of that list
+ * BROWSER_RETRY: 0 runs a failed script once only (default: a failed script runs a second time)
+ *
+ * A script that fails and then passes is reported as flaky, not hidden: its first log is kept as
+ * <script>.attempt-1.log and printed, summary.json lists it, and under GitHub Actions it gets a
+ * warning annotation and a line in the job summary. A script that fails twice fails the lane.
  */
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const repo = join(import.meta.dir, "..");
@@ -38,20 +43,59 @@ interface ScriptResult {
   seconds: number;
   code: number;
   log: string;
+  /** the log of the run that failed before this one passed or failed again */
+  firstLog?: string;
+  site?: string;
+  message?: string;
 }
 
-async function installChromium(): Promise<string> {
-  const cli = join(repo, "node_modules/playwright-core/cli.js");
-  if (process.env.CI) {
-    console.log("[setup] Installing Chromium system dependencies...");
-    const deps = Bun.spawnSync(["sudo", "bash", "scripts/ci-bounded-retry.sh", "300", Bun.which("bun") ?? "bun", cli, "install-deps", "chromium"], { cwd: repo, stdio: ["ignore", "inherit", "inherit"] });
-    if (deps.exitCode !== 0) throw new Error("Failed to install Chromium system dependencies");
+/**
+ * Where a script's log says it failed: the first error line, and the first stack frame after it
+ * that is one of this repository's scripts (a Playwright error's own frames come before it).
+ * Either is null when the log does not hold it.
+ */
+export function failureSite(log: string): { site: string | null; message: string | null } {
+  const lines = log.split(/\r?\n/);
+  const index = lines.findIndex((line) => /^\s*[A-Za-z_$][\w.$]*Error:/.test(line));
+  if (index < 0) return { site: null, message: null };
+  const message = lines[index]?.trim() ?? null;
+  for (const line of lines.slice(index + 1)) {
+    if (!/^\s*at\s/.test(line) || line.includes("node_modules")) continue;
+    const match = line.match(/\/(scripts\/[\w.-]+\.ts:\d+)(?=[:)\s]|$)/);
+    if (match) return { site: match[1] ?? null, message };
   }
-  console.log("[setup] Installing Chromium browser...");
-  const install = Bun.spawnSync(["bun", cli, "install", "chromium"], { cwd: repo, stdio: ["ignore", "inherit", "inherit"] });
-  if (install.exitCode !== 0) throw new Error("Failed to install Chromium");
-  const path = Bun.spawnSync(["bun", "-e", 'console.log(require("playwright-core").chromium.executablePath())'], { cwd: repo });
-  return new TextDecoder().decode(path.stdout).trim();
+  return { site: null, message };
+}
+
+const failureDetail = (result: ScriptResult): string =>
+  [result.site, result.message].filter(Boolean).join(": ");
+
+const workflowData = (message: string): string =>
+  message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+
+/** How a script ended, from its last exit code and whether that was its second run: a pass after a failure is flaky, never a plain pass. */
+export function scriptOutcome(code: number, secondRun: boolean): "pass" | "flaky" | "fail" {
+  if (code !== 0) return "fail";
+  return secondRun ? "flaky" : "pass";
+}
+
+class ChromiumSetupError extends Error {
+  constructor(readonly exitCode: number) {
+    super(`Chromium setup failed with exit code ${exitCode}`);
+  }
+}
+
+function installChromium(): string {
+  const setup = Bun.spawnSync(["bash", "scripts/ci-chromium.sh"], {
+    cwd: repo,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  if (setup.exitCode !== 0) throw new ChromiumSetupError(setup.exitCode ?? 1);
+  const path = setup.stdout.toString().replace(/\r?\n$/, "");
+  if (!path || path.includes("\n")) throw new Error("Chromium setup returned an invalid executable path");
+  return path;
 }
 
 async function buildDemo(dir: string): Promise<void> {
@@ -100,7 +144,7 @@ async function main(): Promise<void> {
 
   console.log(`Browser lane: ${scripts.length} scripts, ${workers} workers, logs in ${logDir}`);
 
-  const chromePath = process.env.CHROME_PATH ?? await installChromium();
+  const chromePath = installChromium();
   const demoBuild = mkdtempSync(join(tmpdir(), "herdr-demo-parallel-"));
   await buildDemo(demoBuild);
 
@@ -108,6 +152,7 @@ async function main(): Promise<void> {
   const baseEvidenceDir = checkDir ? join(checkDir, "browser-evidence") : process.env.CI ? ".ci/browser-evidence" : undefined;
   if (baseEvidenceDir) mkdirSync(baseEvidenceDir, { recursive: true });
 
+  const retry = process.env.BROWSER_RETRY !== "0";
   const queue = [...scripts];
   const results: ScriptResult[] = [];
   const lock = { active: 0 };
@@ -121,19 +166,37 @@ async function main(): Promise<void> {
       const evidenceDir = baseEvidenceDir ? join(baseEvidenceDir, scriptName) : undefined;
       if (evidenceDir) mkdirSync(evidenceDir, { recursive: true });
 
-      const shouldDisableEvidence = baseEvidenceDir && (script === "scripts/ui-regression.ts" || script === "scripts/key-bar-customization-demo-regression.ts");
+      const shouldDisableEvidence = baseEvidenceDir && (
+        script === "scripts/ui-regression.ts" ||
+        script === "scripts/ui-contexts-regression.ts" ||
+        script === "scripts/key-bar-customization-demo-regression.ts"
+      );
 
       const log = join(logDir, `${scriptName}.log`);
-      console.log(`[worker-${workerId}] START ${script}`);
-      const result = await runScript(script, {
+      const env = {
         CHROME_PATH: chromePath,
         HERDR_DEMO_BUILD: demoBuild,
         UI_EVIDENCE_DIR: shouldDisableEvidence ? "" : (evidenceDir ?? ""),
         CHECK_BROWSER_EVIDENCE_DIR: evidenceDir ?? "",
-      }, log);
+      };
+      console.log(`[worker-${workerId}] START ${script}`);
+      let result = await runScript(script, env, log);
+      if (result.code !== 0 && retry) {
+        const firstLog = join(logDir, `${scriptName}.attempt-1.log`);
+        renameSync(log, firstLog);
+        console.log(`[worker-${workerId}] FAIL ${script} (${result.seconds.toFixed(1)}s) exit=${result.code}, log ${firstLog}; running it once more`);
+        const second = await runScript(script, env, log);
+        result = { ...second, seconds: result.seconds + second.seconds, firstLog };
+      }
+      const outcome = scriptOutcome(result.code, result.firstLog !== undefined);
+      if (outcome !== "pass") {
+        const { site, message } = failureSite(readFileSync(outcome === "flaky" ? result.firstLog! : result.log, "utf8"));
+        if (site) result.site = site;
+        if (message) result.message = message;
+      }
       results.push(result);
-      const failure = result.code === 0 ? "" : ` exit=${result.code}, log ${log}`;
-      console.log(`[worker-${workerId}] ${result.code === 0 ? "PASS" : "FAIL"} ${script} (${result.seconds.toFixed(1)}s)${failure}`);
+      const failure = outcome === "fail" ? ` exit=${result.code}, log ${log}` : outcome === "flaky" ? `, failed once: ${result.firstLog}` : "";
+      console.log(`[worker-${workerId}] ${outcome.toUpperCase()} ${script} (${result.seconds.toFixed(1)}s)${failure}`);
       lock.active--;
     }
   }
@@ -150,32 +213,57 @@ async function main(): Promise<void> {
 
   const ordered = scripts.map((s) => results.find((r) => r.script === s)!).filter(Boolean);
   for (const result of ordered) {
-    const status = result.code === 0 ? " " : "!";
+    const status = { pass: " ", flaky: "~", fail: "!" }[scriptOutcome(result.code, result.firstLog !== undefined)];
     console.log(`${status}${result.script.padEnd(59)}${result.seconds.toFixed(1).padStart(8)}${String(result.code).padStart(6)}`);
   }
 
   const totalSeconds = (Date.now() - startedAt) / 1000;
   const passed = results.filter((r) => r.code === 0).length;
   const failed = results.filter((r) => r.code !== 0);
+  const flaky = ordered.filter((r) => scriptOutcome(r.code, r.firstLog !== undefined) === "flaky");
 
   console.log("-".repeat(80));
-  console.log(`Total: ${passed}/${results.length} passed in ${totalSeconds.toFixed(1)}s with ${workers} workers`);
+  console.log(`Total: ${passed}/${results.length} passed in ${totalSeconds.toFixed(1)}s with ${workers} workers${flaky.length > 0 ? `, ${flaky.length} only on a second run (~)` : ""}`);
 
   writeFileSync(join(logDir, "summary.json"), JSON.stringify({
     workers,
     seconds: totalSeconds,
     passed,
     total: results.length,
-    scripts: ordered.map(({ script, seconds, code, log }) => ({ script, seconds, code, log })),
+    flaky: flaky.map((r) => r.script),
+    scripts: ordered.map(({ script, seconds, code, log, firstLog, site, message }) => ({
+      script, seconds, code, log, ...(firstLog ? { firstLog } : {}),
+      ...(site ? { site } : {}), ...(message ? { message } : {}),
+    })),
   }, null, 2) + "\n");
 
-  for (const result of failed) {
-    const lines = readFileSync(result.log, "utf8").split("\n");
+  const tail = (path: string): void => {
+    const lines = readFileSync(path, "utf8").split("\n");
     const shown = lines.slice(-FAILURE_TAIL_LINES);
-    console.log(`\n${"=".repeat(80)}\nFAILED ${result.script} (exit ${result.code}), full log: ${result.log}`);
     if (shown.length < lines.length) console.log(`(last ${shown.length} of ${lines.length} lines)`);
     console.log("=".repeat(80));
     console.log(shown.join("\n"));
+  };
+
+  // A pass on the second run is still a failure somebody has to read: say so where a green job is looked at.
+  for (const result of flaky) {
+    const detail = failureDetail(result);
+    console.log(`\n${"=".repeat(80)}\nFLAKY ${result.script}: failed, then passed when run again; first log: ${result.firstLog}${detail ? `; ${detail}` : ""}`);
+    tail(result.firstLog!);
+    if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Flaky browser script::${workflowData(`${result.script}${detail ? `: ${detail}` : ""} failed once and passed when run again. Its first log is ${basename(result.firstLog!)} in the browser-logs artifact.`)}`);
+  }
+  if (flaky.length > 0 && process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Flaky browser scripts\n\nFailed once, passed when run again:\n\n${flaky.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (first log \`${basename(r.firstLog!)}\`)`).join("\n")}\n`);
+  }
+
+  for (const result of failed) {
+    const detail = failureDetail(result);
+    console.log(`\n${"=".repeat(80)}\nFAILED ${result.script} (exit ${result.code}${result.firstLog ? ", twice" : ""}), full log: ${result.log}${detail ? `; ${detail}` : ""}`);
+    tail(result.log);
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Browser script failed::${workflowData(`${result.script}${detail ? `: ${detail}` : ""} failed (exit ${result.code}${result.firstLog ? ", twice" : ""}). Full log: ${basename(result.log)} in the browser-logs artifact.`)}`);
+  }
+  if (failed.length > 0 && process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Failed browser scripts\n\n${failed.map((r) => `- \`${r.script}\`${failureDetail(r) ? `: ${failureDetail(r)}` : ""} (full log \`${basename(r.log)}\`)`).join("\n")}\n`);
   }
 
   process.exit(failed.length > 0 ? 1 : 0);
@@ -184,6 +272,6 @@ async function main(): Promise<void> {
 if (import.meta.main) {
   main().catch((error) => {
     console.error(error);
-    process.exit(1);
+    process.exit(error instanceof ChromiumSetupError ? error.exitCode : 1);
   });
 }

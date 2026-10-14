@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { paneSendText, workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const cwd = process.cwd();
 const shortUri = "file:///etc/hosts";
@@ -18,7 +19,7 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir });
   browser = await chromium.launch({
-    executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome",
+    executablePath: chromePath(),
     headless: true,
   });
   for (const width of [1280, 390]) {

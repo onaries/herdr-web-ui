@@ -15,7 +15,8 @@ adapted from another project, with its license.
 
 - Linux (x64, arm64), macOS or Windows x64. Windows uses the screen mirror and needs no terminal addon; Alpine and 32-bit ARM have no addon build.
 - Bun 1.4 or newer, Node 18 or newer on Linux/macOS (it runs the terminal-attach sidecar), herdr 0.9.0 or newer for
-  the integration tests. CI runs Bun 1.4.2, Node 22 and herdr 0.9.3.
+  the integration tests. CI runs Bun 1.4.2, Node 22 and herdr 0.9.3, all pinned in
+  [.github/actions/setup-ci/action.yml](.github/actions/setup-ci/action.yml).
 
 ```bash
 bun install
@@ -83,12 +84,12 @@ running terminals: see [development](docs/development.md#checks).
 - **The browser demo:** the [demo](https://herdrweb.dev/demo/) redeploys on every
   merge to `main`. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
   else gets its 404.
-- **Changelog:** a change users notice gets a line under `## [Unreleased]` in
-  [CHANGELOG.md](CHANGELOG.md) (`### Added`, `### Changed` or `### Fixed`). Do not bump versions.
-  The link to your PR and your name are added by a maintainer at release, so you can leave them out.
+- **Changelog:** a change users notice gets a small file in [changelog.d/](changelog.d/README.md)
+  with its `### Added`, `### Changed` or `### Fixed` lines; do not edit CHANGELOG.md, and do not
+  bump versions. The link to your PR and your name are added at release, so you can leave them out.
 
 ## Releases
 
 Maintainers only: see [development](docs/development.md#releasing). App releases are cut by the
 Release workflow; never push a `vX.Y.Z` tag by hand, since installed updaters act on tags alone.
-Remote-PC runtime bundles are released separately with a `remote-vN` tag.
+Remote-PC runtime bundles are published with a `remote-vN` tag, and an app release requires the matching one.

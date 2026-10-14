@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
+import { chromePath } from "./chrome-path.ts";
 
 async function checkState(page: Page, visible: boolean, height: number, inset: number, correction = false): Promise<void> {
   const state = await page.evaluate((visible) => {
@@ -60,7 +61,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
 } });
 let browser: Browser | undefined;
 try {
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   for (const scenario of ["mobile", "split-view", "desktop", "virtual-keyboard", "standalone", "standalone-full", "browser-short"] as const) {
     const mobile = scenario !== "desktop";
     const context = await browser.newContext({ viewport: mobile ? { width: 393, height: 852 } : { width: 1280, height: 800 }, isMobile: mobile, hasTouch: mobile });

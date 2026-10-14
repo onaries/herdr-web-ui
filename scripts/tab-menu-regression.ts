@@ -8,6 +8,7 @@ import type { PaneLayoutSnapshot, PaneSplit } from "../shared/protocol.ts";
 import { paneFocus, paneRead, paneRename, paneSplit, sessionSnapshot, tabClose, tabCreate, tabMove, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { sheetsSettled } from "./sheets-settled.ts";
 import { routeDrained } from "./drained-route.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const TAB = "Tab 1";
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -594,7 +595,7 @@ if (import.meta.main) {
   const { UsageService } = await import("../server/usage.ts");
   const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-tab-menu-state-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
-  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try { await checkTabMenu(browser, `http://127.0.0.1:${server.port}`); }
   finally { await browser.close(); server.stop(); rmSync(state, { recursive: true, force: true }); }
 }

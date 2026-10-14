@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
+import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
@@ -342,6 +343,33 @@ try {
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload closes the Settings a link opened");
         assert.deepEqual(errors, []);
         console.log("PASS a link to Settings opens it, and a reload there closes it");
+
+        // another script's entries pushed while Settings is open bury its entries: Back out of them
+        // closes Settings, and the next Back steps over the buried entries instead of opening them again
+        await page.goto(url);
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await openSettings(page);
+        await openSettingsPage(page, "Terminal");
+        await dialog.getByRole("button", { name: "Edit key bar", exact: true }).tap();
+        await page.getByRole("dialog", { name: "Key bar", exact: true }).waitFor();
+        await historyHolds(page, "the key bar editor", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 3);
+        await page.evaluate(() => { history.pushState({ route: "markerless" }, ""); history.pushState({ route: "after-markerless" }, ""); });
+        await page.goBack();
+        await page.locator(".settings-dialog").waitFor({ state: "detached" });
+        await page.evaluate(() => {
+          const seen = window as unknown as { settingsShown: boolean };
+          seen.settingsShown = false;
+          new MutationObserver(() => { if (document.querySelector(".settings-dialog") !== null) seen.settingsShown = true; }).observe(document, { childList: true, subtree: true });
+        });
+        await page.goBack();
+        await historyHolds(page, "Back over the buried entries", () => {
+          const state = history.state as Record<string, unknown> | null;
+          return state?.["herdr-web-ui:settings"] === undefined && state?.["route"] === undefined;
+        });
+        assert.equal(await page.locator(".settings-dialog").count(), 0, "Back under an unrelated entry does not reopen Settings");
+        assert.equal(await page.evaluate(() => (window as unknown as { settingsShown: boolean }).settingsShown), false, "the buried entries are stepped over without showing Settings");
+        assert.deepEqual(errors, []);
+        console.log("PASS Back past an unrelated entry steps over the Settings entries it buried");
       } finally {
         await phone.close();
       }
@@ -395,6 +423,29 @@ try {
         await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
         assert.deepEqual(errors, []);
         console.log("PASS a window that changes width with Settings open keeps Back to the steps it shows");
+
+        // a link to a file and Settings opens the preview over Settings; a reload there closes
+        // Settings and keeps the file, and Back then steps out of both
+        const infra = panes.infra;
+        await page.goto(`${url}?ws=${infra.split(":")[0]}&pane=${encodeURIComponent(infra)}&file=README.md&settings=about`);
+        await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
+        await page.locator(".modal.file-viewer").waitFor();
+        await historyHolds(page, "a link to a file and Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:file-preview"] !== undefined);
+        await page.reload();
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await page.locator(".modal.file-viewer").waitFor();
+        await historyHolds(page, "the reload on a preview over Settings", () => {
+          const address = new URLSearchParams(window.location.search);
+          return address.get("file") === "README.md" && !address.has("settings") && (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined;
+        });
+        assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload on a preview over Settings closes Settings");
+        assert.equal(await page.locator(".modal.file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
+        await page.goBack();
+        await page.locator(".modal.file-viewer").waitFor({ state: "detached" });
+        await historyHolds(page, "Back from the reloaded preview", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        assert.equal(await page.locator(".settings-dialog").count(), 0, "Back from the reloaded preview does not reopen Settings");
+        assert.deepEqual(errors, []);
+        console.log("PASS a reload on a preview opened over Settings closes Settings and keeps the file");
       } finally {
         await desktop.close();
       }

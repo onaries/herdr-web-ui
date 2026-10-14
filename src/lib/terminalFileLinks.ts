@@ -3,13 +3,14 @@ import type { IBuffer, ILink, ILinkProvider } from "@xterm/xterm";
 /** what a name is made of: letters, digits and the marks that complete them (a decomposed `é` is two) */
 const NAME = "\\p{L}\\p{N}\\p{M}_";
 /**
- * A path, optionally followed by an agent's line/column reference. Only a path with a folder in
+ * A path, optionally followed by an agent's line/column or #L reference, kept for the viewer.
+ * Only a path with a folder in
  * it becomes a link (see below): a terminal is full of bare names (`ls`, `git status`, a
  * compiler's output), a tap or a click to focus the pane lands on one, and the file viewer
  * would open over the terminal for it. A chat's plain text is read the same way (BARE_PATH in
  * filePaths.ts).
  */
-const FILE_PATH = new RegExp(`(?<![${NAME}/.@~:-])((?:~\\/|\\.{1,2}\\/|\\/)?(?:[${NAME}@.+-]+\\/)*[${NAME}@+-][${NAME}@.+-]*\\.[A-Za-z0-9]{1,8})(?::\\d+(?::\\d+)?)?(?![${NAME}/])`, "gu");
+const FILE_PATH = new RegExp(`(?<![${NAME}/.@~:-])((?:~\\/|\\.{1,2}\\/|\\/)?(?:[${NAME}@.+-]+\\/)*[${NAME}@+-][${NAME}@.+-]*\\.[A-Za-z0-9]{1,8})(?::\\d+(?::\\d+)?|#L\\d+(?:-L?\\d+)?)?(?![${NAME}/])`, "gu");
 /** `name.ext(` is a call, not a file, unless the parenthesis holds a compiler's line and column: `App.tsx(120,8)` */
 const CALL = /\s*\((?!\d+(?:,\d+)?\))/y;
 const FILE_URI = /file:\/\/\/[^\s<>"`]+/gi;
@@ -157,7 +158,7 @@ export function terminalFileLinks(buffer: IBuffer, lineNumber: number, open: (pa
     if (CALL.test(text)) continue;
     while (span < spans.length && spans[span]![1] <= match.index) span++;
     if (span < spans.length && spans[span]![0] <= match.index) continue;
-    link(match.index, match[0], path);
+    link(match.index, match[0], match[0]);
   }
   return links;
 }

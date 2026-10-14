@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // A plugin action that outlasts the server's wait, on the unmodified app over the demo's fixture
 // transport. The demo's own plugin answers at once, so the two plugin routes are patched here, in
@@ -57,7 +58,7 @@ try {
     return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
   } });
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       // 390x420: what `interactive-widget=resizes-content` leaves of a phone while its keyboard is up
       const context = await browser.newContext({ viewport: { width: 390, height: 420 }, isMobile: true, hasTouch: true, locale: "en-US" });

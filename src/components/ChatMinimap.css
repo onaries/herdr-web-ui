@@ -1,0 +1,58 @@
+/* the turn rail: a short dash per turn the user sent, in the margin left of the chat column */
+.chat-minimap {
+  position: absolute;
+  top: 50%;
+  left: var(--space-2);
+  z-index: var(--z-header);
+  width: var(--space-4);
+  transform: translateY(-50%);
+}
+
+.chat-minimap-tick {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  /* one step of the rail: a dense rail's ticks touch and never overlap */
+  height: min(var(--space-2), calc(100% / var(--minimap-steps)));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.chat-minimap-tick::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: var(--space-2);
+  height: 1px;
+  background: var(--border-strong);
+  transition: width var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.chat-minimap-tick:hover::before {
+  width: var(--space-3);
+  background: var(--text-dim);
+}
+
+.chat-minimap-tick[aria-current="true"]::before {
+  width: var(--space-3);
+  background: var(--text-strong);
+}
+
+.chat-minimap-tick:focus-visible {
+  outline: var(--ring);
+  outline-offset: 0;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-minimap-tick::before { transition: none; }
+}
+
+/* a phone and a narrow window have no margin beside the column */
+@media (max-width: 768px) {
+  .chat-minimap { display: none; }
+}

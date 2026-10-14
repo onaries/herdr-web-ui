@@ -1,0 +1,57 @@
+.chat-frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-frame-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat-view.chat-view-virtual {
+  padding: 0;
+  overflow-anchor: none;
+}
+
+.chat-view.chat-view-with-find {
+  top: 0;
+}
+
+.chat-transcript.chat-transcript-virtual {
+  width: min(calc(100% - 2 * var(--space-4)), var(--chat-w));
+  display: block;
+  min-height: 100%;
+  gap: 0;
+}
+
+.chat-virtual-row {
+  padding-bottom: var(--space-3);
+}
+
+.chat-virtual-row.is-before-user {
+  padding-bottom: calc(var(--space-3) + var(--space-5));
+}
+
+.chat-virtual-row[data-chat-match] {
+  background: var(--accent-tint);
+}
+
+.chat-virtual-header {
+  padding-top: calc(var(--space-4) + var(--header-over, 0px));
+}
+
+.chat-virtual-header-with-find {
+  padding-top: var(--space-4);
+}
+
+.chat-virtual-footer {
+  padding-bottom: calc(var(--space-5) + var(--composer-over, 0px));
+}
+
+.chat-new-messages.chat-virtual-jump {
+  position: absolute;
+}

@@ -8,13 +8,14 @@
 // Symbols Nerd Font Mono is the app's own (PaneTerminal.css) and covers only the private use
 // area, so it never sizes a cell: it draws the Nerd Font icons a prompt or `ls` replacement
 // prints, which no system font has and Safari will not take from a font the user installed.
-// It stays first, ahead of a chosen font too, so the icons draw even when that font has none
-const TERMINAL_SYMBOLS_FONT = '"Symbols Nerd Font Mono"';
+// It stays first, ahead of a chosen font too, so the icons draw even when that font has none.
+// The chrome's code stack (--font-mono, lib/typography.ts) opens with it for the same reason
+export const SYMBOLS_FONT = '"Symbols Nerd Font Mono"';
 // xterm sizes every cell from the first matching font, so a proportional one (Malgun Gothic)
 // must never win it: it stays behind the generic monospace as a per-glyph Hangul fallback
 const TERMINAL_TEXT_FONTS =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Cascadia Mono", Consolas, "Noto Sans Mono CJK KR", monospace, "Malgun Gothic"';
-export const TERMINAL_FONT_STACK = `${TERMINAL_SYMBOLS_FONT}, ${TERMINAL_TEXT_FONTS}`;
+export const TERMINAL_FONT_STACK = `${SYMBOLS_FONT}, ${TERMINAL_TEXT_FONTS}`;
 
 /** the chat's own stack: --font-ui in src/styles.css */
 const CHAT_FONT_STACK = "var(--font-ui)";
@@ -65,7 +66,7 @@ export function sanitizeFontFamily(value: unknown): string {
 /** The xterm `fontFamily`: the icon font, the user's list, then the built-in text fonts. */
 export function terminalFontStack(family: string): string {
   const chosen = sanitizeFontFamily(family);
-  return chosen === "" ? TERMINAL_FONT_STACK : `${TERMINAL_SYMBOLS_FONT}, ${chosen}, ${TERMINAL_TEXT_FONTS}`;
+  return chosen === "" ? TERMINAL_FONT_STACK : `${SYMBOLS_FONT}, ${chosen}, ${TERMINAL_TEXT_FONTS}`;
 }
 
 /** The chat body's `font-family`, or null to keep the UI font. */

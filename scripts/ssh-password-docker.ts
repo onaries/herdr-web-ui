@@ -25,14 +25,39 @@ async function docker(args: string[], input?: string): Promise<string> {
   if (code !== 0) throw new Error(`docker ${args[0]} failed: ${stderr}`);
   return stdout.trim();
 }
+/** The same image from three registries: each limits anonymous pulls by address, on its own count. */
+const IMAGES = ["public.ecr.aws/docker/library/debian:bookworm-slim", "mirror.gcr.io/library/debian:bookworm-slim", "debian:bookworm-slim"];
+const PULL_ROUNDS = 2;
+/**
+ * A shared runner's address is often over a registry's anonymous limit ("toomanyrequests"), which
+ * is not this test's failure: the image is asked of the next registry, and of all of them once
+ * more after a pause, before the run is called failed. Any other refusal fails at once.
+ */
+async function pullImage(): Promise<string> {
+  let refusal: unknown;
+  for (let round = 1; round <= PULL_ROUNDS; round++) {
+    for (const image of IMAGES) {
+      try {
+        await docker(["pull", "--quiet", image]);
+        return image;
+      } catch (error) {
+        if (!/toomanyrequests|rate exceeded|rate limit/i.test(String(error))) throw error;
+        console.log(`docker pull ${image} was rate limited`);
+        refusal = error;
+      }
+    }
+    if (round < PULL_ROUNDS) await Bun.sleep(20_000);
+  }
+  throw refusal;
+}
 async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(`http://127.0.0.1:${server!.port}${path}`, { method, headers: { "x-herdr-machine": "1", "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   assert.ok(response.ok, `${path}: ${response.status} ${response.ok ? "" : await response.text()}`);
   return response.json();
 }
 try {
-  // Docker's official ECR mirror avoids Docker Hub's shared-runner anonymous pull limit.
-  await docker(["run", "--rm", "-d", "--name", name, "-p", "127.0.0.1::22", "public.ecr.aws/docker/library/debian:bookworm-slim", "sleep", "infinity"]);
+  const image = await pullImage();
+  await docker(["run", "--rm", "-d", "--name", name, "-p", "127.0.0.1::22", image, "sleep", "infinity"]);
   console.log("Preparing a disposable SSH PC (OpenSSH + Python, no Bun/Node/build tools)…");
   await docker(["exec", name, "sh", "-c", "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server python3 >/dev/null && useradd -m -s /bin/sh testpc && mkdir -p /run/sshd"]);
   await docker(["exec", "-i", name, "chpasswd"], `testpc:${password}\n`);

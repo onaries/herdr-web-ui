@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { runMoreItem } from "./header-more.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // Settings → Agents order (Activity) and Quiet opened finishes, on the unmodified app over the
 // demo's fixture transport, whose agents carry herdr's state_change_seq and bump it on every state
@@ -79,7 +80,7 @@ try {
   url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/`;
 
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       // Workspace menus no longer mix in pane operations; header More keeps pane movement.
       // off by default: herdr's order in a flat list, each row naming its own workspace

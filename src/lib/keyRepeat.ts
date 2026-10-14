@@ -4,9 +4,17 @@ export const KEY_REPEAT_DELAY_MS = 400;
 export const KEY_REPEAT_INTERVAL_MS = 50;
 export const KEY_REPEAT_MOVE_SLOP_PX = 10;
 
+/**
+ * Keys that move or edit, which a held hardware key repeats too. Escape, Tab, Enter, ^C and the
+ * function keys stay single: a repeated Tab or ^C acts many times on what one press meant.
+ */
+const REPEATABLE_KEYS: ReadonlySet<string> = new Set([
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Backspace", "Delete", "Home", "End", "PageUp", "PageDown",
+]);
+
 export function isRepeatableKeyBarItem(item: KeyBarItem): boolean {
-  return item.type === "key" && (item.key === "ArrowUp" || item.key === "ArrowDown"
-    || item.key === "ArrowLeft" || item.key === "ArrowRight");
+  return item.type === "key" && REPEATABLE_KEYS.has(item.key);
 }
 
 export interface KeyRepeatClock {

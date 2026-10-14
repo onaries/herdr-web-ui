@@ -172,31 +172,53 @@ Large-output chunk APIs and a broader provider abstraction remain deferred:
 whole-output reads retain their existing 2,000,000-character response cap and
 still read the native file on demand. This change does not alter the input path.
 
-### GJC pane binding (2026-09-28)
+### GJC pane binding
 
-GJC resolution prefers a unique open JSONL file under the canonical
-`~/.gjc/agent/sessions/` store, belonging to the requested pane's GJC process and
-matching the pane cwd in its session header. When the writer does not keep that file
-open, the bridge reads GJC's native `~/.gjc/agent/terminal-sessions/<terminal-id>`
-breadcrumb (cwd and exact session path on separate lines). The key comes from the
-running process's terminal; the breadcrumb must have been written during that process's
-lifetime. Its cwd, canonical store containment, and transcript header are checked.
-Linux uses `/proc`; macOS uses `ps` for the tty and process start time. macOS metadata
-parsing is fixture-tested; an end-to-end macOS run is still required.
+GJC identity comes from its public broker-bound SDK CLI, not terminal content.
+`server/gjc-sdk.ts` asks `gjc sdk session raw global --op session.list --page`
+with attach-only mode and the SDK's workspace scope. A bounded Git root probe
+supplies the scope's worktree identity; the broker validates it. Discovery matches
+the requested pane's GJC process to a unique live SDK session, then resolves that exact session ID to the broker's
+`savedSession` path. The two responses must agree on process and session identity.
+Discovery is limited to eight pages of 100 rows in that workspace, an eight-second
+total deadline and two seconds per command, with at most 1 MiB of command output.
+An incomplete or ambiguous answer is not used; unrelated workspaces' retired
+sessions do not consume the page budget.
 
-For GJC builds that publish neither signal, a bounded scan of the native store matches
-substantial assistant text against the requested pane's visible output. Exactly one
-same-cwd transcript must match; short/generic text and duplicate matches are rejected.
-The local GJC 0.17.2 binary was verified with an isolated resumed session, no model
-request, and no open transcript or breadcrumb: its native answer resolved correctly.
+The native transcript must remain inside the canonical `~/.gjc/agent/sessions/`
+store and its header must identify the selected session and workspace. The pane's
+process is checked again after discovery. Session titles, visible answers, file
+recency, open descriptors and terminal breadcrumbs no longer select a GJC chat.
+The descriptor and breadcrumb helpers remain for omp, which still uses them.
+GJC can retain a generation-zero direct-session GC fence after `/new`. Only the
+known non-endpoint shape at the canonical agent root is excluded from candidate
+selection; foreign-root or uncertain zero-generation rows still refuse a binding.
 
-Directory descriptors, cwd matches alone, and transcript modification times do not establish
-ownership. Missing, unreadable, stale or ambiguous evidence still returns
-`no_session_path`; visible-text recovery also requires the identifying answer to remain
-on screen. Custom GJC stores and terminal IDs that cannot be resolved remain
-unsupported. No newest-file fallback is restored.
+This requires GJC 0.18.9 or later, for its public SDK session CLI,
+on the server PC's PATH and an already running broker. The bridge does not start
+or restart that broker, attach to private SDK endpoints, or register a live
+session observer. Missing, stale or unavailable identity returns `no_session_path`
+and leaves Terminal available. A new session without a saved transcript has no
+native chat yet. Custom transcript stores remain unsupported.
 
-`server/gjc.contract.test.ts` covers distinct open files and fresh per-terminal
-breadcrumbs in same-cwd panes, session switching, stale breadcrumbs and ambiguous
-files against an isolated herdr session. `server/gjc-runtime.test.ts` checks macOS
-metadata parsing and rejects mismatched cwd, path traversal and symlink escapes.
+The first migration changes session identity only: herdr still owns terminals
+and agent status; chat rendering, message submission and prompt answers retain
+their existing contracts. Real Windows and macOS SDK integration require separate
+validation.
+
+`server/gjc.contract.test.ts` reproduces the copied-neighbor-answer failure and
+checks exact-PID binding, same-process session switches and fail-closed SDK errors
+on isolated herdr panes. `server/gjc-sdk.test.ts` covers the broker contract and
+bounded pagination; `server/gjc-runtime.test.ts` covers path/header and process
+race checks, including Windows process-table fixtures.
+
+The opt-in `server/gjc-sdk-live.contract.test.ts` was run on Linux with real GJC
+0.18.9, disposable HOME and herdr state, and no model requests. It resumes seeded
+history, resolves the exact SDK-selected file despite an identical neighboring
+answer, reads its chat, and refuses to fall back when the SDK CLI becomes
+unavailable. It also runs `/new` in the real TUI and checks the new session's
+SDK-selected history without sending a model request. Run it with:
+
+```sh
+HERDR_GJC_SDK_TEST_BIN=/absolute/path/to/gjc bun run check run bun test --timeout 90000 ./server/gjc-sdk-live.contract.test.ts
+```

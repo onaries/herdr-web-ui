@@ -1,0 +1,20 @@
+/* a placeholder the size of what loads in its place (Skeleton.tsx): a text pill unless the surface that draws it sizes it */
+.skeleton {
+  display: inline-block;
+  flex: none;
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
+}
+
+/* a name's length, one of three, as a share of its row (lib/skeleton.ts picks them) */
+.skeleton[data-width="short"] { width: 35%; }
+.skeleton[data-width="medium"] { width: 50%; }
+.skeleton[data-width="long"] { width: 65%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}

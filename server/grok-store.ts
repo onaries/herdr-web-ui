@@ -2,7 +2,7 @@
 import { opendirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
-import { herdrRpc } from "./herdr/client.ts";
+import { paneProcessInfo } from "./herdr/client.ts";
 import { runsAgent } from "./gjc-runtime.ts";
 
 const SESSION = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -10,7 +10,7 @@ const MAX_GROUPS = 4096;
 /** The one native build whose held-file evidence was observed. Others have no reader yet. */
 const GROK_NATIVE_BUILD = "grok-1.0.50-linux-x86_64";
 
-export interface GrokProcessInfo { foreground_processes?: { pid: number; argv?: string[] }[] }
+export interface GrokProcessInfo { foreground_processes?: { pid: number; argv?: string[] | null }[] }
 const GROK_EXECUTABLE = /(^|[\\/])grok(?:-\d[^\\/]*)?(?:\.exe|\.[cm]?js)?$/i;
 export function grokPaneProcesses(info: GrokProcessInfo): { pid: number }[] {
   return (info.foreground_processes ?? []).filter((p) => runsAgent(p.argv ?? [], GROK_EXECUTABLE));
@@ -91,8 +91,7 @@ export async function resolveGrokStore(pane: HerdrPane, configuredHome?: string)
   // Every other build and PC gets the terminal view; argv alone does not attest the version.
   if (process.platform !== "linux") return null;
   try {
-    const info = await herdrRpc<{ process_info?: GrokProcessInfo }>("pane.process_info", { pane_id: pane.pane_id });
-    const processes = grokPaneProcesses(info.process_info ?? {});
+    const processes = grokPaneProcesses((await paneProcessInfo(pane.pane_id)) ?? {});
     if (processes.length !== 1) return null;
     const owner = processes[0]!;
     if (basename(readlinkSync(`/proc/${owner.pid}/exe`)) !== GROK_NATIVE_BUILD) return null;

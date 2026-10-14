@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { toolVerb, toolVerbKind } from "./toolVerbs.ts";
+import { isToolNarration, toolVerb, toolVerbKind } from "./toolVerbs.ts";
 
 describe("toolVerbKind", () => {
   it("reads every agent's file and shell tools as one of four verbs", () => {
@@ -92,5 +92,21 @@ describe("toolVerb", () => {
   it("keeps the id of a tool it does not know", () => {
     expect(toolVerb(part("Grep", { pattern: "TODO" }), "TODO")).toBeNull();
     expect(toolVerb(part("mcp__linear__create_issue", { path: "Fix the chart" }), "Fix the chart")).toBeNull();
+  });
+});
+
+describe("isToolNarration", () => {
+  const part = (name: string, input: unknown) => ({ name, input: JSON.stringify(input) });
+
+  it("knows the agent's own sentence about a call from its command or path", () => {
+    expect(isToolNarration(part("eval", { code: "await check()", summary: "Run the checks" }), "Run the checks")).toBe(true);
+    expect(isToolNarration(part("Bash", { command: "bun test", description: " Run the unit tests " }), "Run the unit tests")).toBe(true);
+    expect(isToolNarration(part("bash", { command: "lsof -i", intent: "Checking ports" }), "Checking ports")).toBe(true);
+    // the server cuts the sentence, so the cut one still matches
+    expect(isToolNarration(part("eval", { code: "1", summary: "x".repeat(200) }), "x".repeat(120))).toBe(true);
+    expect(isToolNarration(part("Bash", { command: "bun test", description: "Run the unit tests" }), "bun test")).toBe(false);
+    expect(isToolNarration(part("Read", { file_path: "src/a.ts" }), "src/a.ts")).toBe(false);
+    expect(isToolNarration(part("eval", { code: "1" }), "eval")).toBe(false);
+    expect(isToolNarration({ name: "exec", input: "console.log(1)" }, "console.log(1)")).toBe(false);
   });
 });

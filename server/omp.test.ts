@@ -82,7 +82,7 @@ describe("an omp pane's chat", () => {
     mkdirSync(cwd);
     pane = { pane_id: "pane-omp", cwd, foreground_cwd: cwd, agent: "omp" } as HerdrPane;
     const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane] } as SessionSnapshot));
-    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method) => {
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => {
       if (method === "agent.get") return { agent: { agent_session: agentSession } } as never;
       if (method === "pane.process_info") return { process_info: { foreground_processes: processes } } as never;
       throw new Error(`unexpected RPC: ${method}`);

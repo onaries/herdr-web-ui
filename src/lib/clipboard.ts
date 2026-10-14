@@ -1,3 +1,53 @@
+/** Whether a picture can go on the clipboard here: only the clipboard API takes one, and only in a secure context. */
+export function canCopyImage(): boolean {
+  return typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function";
+}
+
+/**
+ * Copies a picture the page has shown. The clipboard takes PNG alone, so a PNG goes as its own
+ * bytes (the browser has them cached) and anything else is drawn on a canvas and encoded. The
+ * clipboard item is made in the click itself and the bytes follow: Safari refuses a write that
+ * begins after the gesture is over. Returns whether the picture is on the clipboard.
+ */
+export async function copyImage(image: HTMLImageElement): Promise<boolean> {
+  if (!canCopyImage()) return false;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngOf(image) })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pngOf(image: HTMLImageElement): Promise<Blob> {
+  try {
+    const response = await fetch(image.currentSrc);
+    const blob = await response.blob();
+    if (response.ok && blob.type.split(";", 1)[0] === "image/png") return blob;
+  } catch {
+    /* the bytes could not be read again: the decoded picture is drawn instead */
+  }
+  if (image.naturalWidth === 0 || image.naturalHeight === 0) throw new Error("image not decoded");
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("canvas unavailable");
+  context.drawImage(image, 0, 0);
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("png encoding failed"))), "image/png");
+  });
+}
+
+/** Selects everything inside `node`, so the user can long-press or Ctrl+C it. */
+export function selectContents(node: HTMLElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 /**
  * Copies text. The clipboard API exists only in secure contexts (HTTPS or localhost), so on a
  * plain-HTTP LAN address it tries the browser's copy command. If copying is refused, it
@@ -49,11 +99,7 @@ export async function copyText(text: string, fallback?: HTMLElement | null): Pro
     fallback.focus();
     fallback.select();
   } else if (fallback) {
-    const range = document.createRange();
-    range.selectNodeContents(fallback);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    selectContents(fallback);
   }
   return false;
 }

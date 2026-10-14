@@ -51,6 +51,7 @@ describe("a paired watch device", () => {
     // paired before the server starts, so its own store holds the device
     const devices = new DeviceStore(root);
     const paired = devices.pair(devices.startPairing().code, "Watch", "watch")!;
+    expect(devices.match(paired.token)).not.toBeNull();
     cookie = `herdr_web_device=${encodeURIComponent(paired.token)}`;
     server = createServer({ port: 0, stateDir: root });
     base = `http://127.0.0.1:${server.port}`;
@@ -115,6 +116,7 @@ describe("a token set: guessing it", () => {
     // paired before the server starts, so its own store holds the device
     const store = new DeviceStore(stateDir);
     watchToken = store.pair(store.startPairing().code, "Watch", "watch")!.token;
+    expect(store.match(watchToken)).not.toBeNull();
     server = createServer({ port: 0, stateDir, token: TOKEN });
     base = `http://127.0.0.1:${server.port}`;
   });

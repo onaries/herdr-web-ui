@@ -66,11 +66,17 @@ async function connect(paneId: string, ack = true, observer = false, port = serv
   return { ws, state, send, acknowledge };
 }
 
-/** Bun.spawn throws synchronously for the pty sidecar while `node` is not on PATH. */
+/** Bun.spawn throws synchronously for the pty sidecar while `node` is not on PATH (herdr itself stays found). */
 function breakPath(): () => void {
   const previous = process.env["PATH"];
+  const previousHerdr = process.env["HERDR_WEB_HERDR_BIN"];
+  process.env["HERDR_WEB_HERDR_BIN"] = Bun.which(previousHerdr || "herdr", { PATH: previous ?? "" }) ?? previousHerdr ?? "herdr";
   process.env["PATH"] = "/nonexistent";
-  return () => { process.env["PATH"] = previous; };
+  return () => {
+    process.env["PATH"] = previous;
+    if (previousHerdr === undefined) delete process.env["HERDR_WEB_HERDR_BIN"];
+    else process.env["HERDR_WEB_HERDR_BIN"] = previousHerdr;
+  };
 }
 
 async function flood(paneId: string): Promise<void> {
@@ -121,6 +127,36 @@ describe("real terminal output flow control", () => {
     } finally { operator.ws.close(); observer.ws.close(); }
   }, 35_000);
 
+  it("gives a late joiner time to acknowledge its replay without pausing the operator", async () => {
+    const paneId = await pane();
+    const operator = await connect(paneId);
+    let joiner: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      await flood(paneId);
+      // the replay tail is full: the joiner's first frame is ~128 KiB
+      await until(() => operator.state.bytes >= 160 * 1024, "operator fills the replay tail", 15_000);
+      // a phone on a slow link: it does not acknowledge its replay for longer than the stall deadline
+      joiner = await connect(paneId, false);
+      const joined = Date.now();
+      expect(joiner.state.bytes).toBeGreaterThan(64 * 1024);
+      await Bun.sleep(1000); // fixed wait: the joiner must stay silent past the time its window blocks
+      const before = operator.state.bytes;
+      await Bun.sleep(OUTPUT_STALL_MS); // fixed wait: proving nothing stalls or closes for a full stall deadline
+      // the joiner held only its own window up: the shared pty kept streaming to the operator
+      expect(operator.state.bytes - before).toBeGreaterThan(64 * 1024);
+      expect(Date.now() - joined).toBeGreaterThan(OUTPUT_STALL_MS);
+      expect(joiner.state.code).toBe(0);
+      // its ACK arrives inside its budget and it carries on as an ordinary client
+      joiner.state.ack = true;
+      joiner.acknowledge();
+      const caught = joiner.state.bytes;
+      await until(() => joiner!.state.bytes > caught + 4096, "joiner keeps receiving");
+      expect(joiner.state.code).toBe(0);
+      expect(operator.state.code).toBe(0);
+      operator.send({ type: "input", pane_id: paneId, text: "\x03" });
+    } finally { operator.ws.close(); joiner?.ws.close(); }
+  }, 30_000);
+
   it("resumes on valid ACKs and rejects future credit without accepting stale subscriptions", async () => {
     const paneId = await pane();
     const client = await connect(paneId, false);
@@ -170,6 +206,44 @@ describe("a terminal attach that cannot spawn (#154)", () => {
       expect(third.state.errors).toEqual([]);
       expect(third.state.exits).toBe(0);
     } finally { third.ws.close(); ws.close(); }
+  }, 30_000);
+});
+
+describe("a herdr the server cannot start (#925)", () => {
+  it("tells the attaching client and logs it, instead of a terminal that waits in silence", async () => {
+    const paneId = await pane();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    sockets.push(ws);
+    const errors: string[] = [];
+    const errorPanes: (string | undefined)[] = [];
+    ws.addEventListener("message", (event) => {
+      const frame = JSON.parse(String(event.data)) as ServerMessage;
+      if (frame.type === "error") { errors.push(frame.code); errorPanes.push(frame.pane_id); }
+    });
+    await until(() => ws.readyState === WebSocket.OPEN, "socket open");
+    const missing = join(root, "missing-herdr");
+    const logged: string[] = [];
+    const log = console.error;
+    console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+    const previous = process.env["HERDR_WEB_HERDR_BIN"];
+    process.env["HERDR_WEB_HERDR_BIN"] = missing;
+    try {
+      ws.send(JSON.stringify({ type: "attach", pane_id: paneId, cols: 100, rows: 30, flow_control: "ack" } satisfies ClientMessage));
+      await until(() => errors.includes("attach_failed"), "the missing herdr is reported", 3_000);
+    } finally {
+      console.error = log;
+      if (previous === undefined) delete process.env["HERDR_WEB_HERDR_BIN"];
+      else process.env["HERDR_WEB_HERDR_BIN"] = previous;
+    }
+    expect(errors).toEqual(["attach_failed"]);
+    // the panes of a PC share one connection: the failure names its pane, so only that terminal ends
+    expect(errorPanes).toEqual([paneId]);
+    expect(logged.filter((line) => line.includes(paneId) && line.includes(missing))).toHaveLength(1);
+    // nothing was left behind: with herdr back, the pane attaches for real
+    const client = await connect(paneId);
+    try {
+      expect(client.state.errors).toEqual([]);
+    } finally { client.ws.close(); ws.close(); }
   }, 30_000);
 });
 

@@ -2,7 +2,9 @@ import { constants, fstatSync, closeSync, openSync, readdirSync, readFileSync, r
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
+import { recentProcessTable } from "./gjc-runtime.ts";
 import { processStartedAt } from "./process-start.ts";
+import { descendantProcesses, type ProcessRow } from "./windows-processes.ts";
 
 const OMO_PROCESS = /(^|\/)omo(\.js)?$|\/omo-ai\/|\/\.omo\//;
 /** node and bun run a script: the program is then the script, the first word that is not a flag */
@@ -231,8 +233,30 @@ function resumedIds(argv: string[]): string[] {
   return result;
 }
 
-export type ProcessInfo = { process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } } | null;
-const processInfo = (paneId: string): Promise<ProcessInfo> => herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId }).catch(() => null);
+export type ProcessInfo = { process_info?: { shell_pid?: number; foreground_processes?: { pid: number; argv?: string[] }[] } } | null;
+
+/**
+ * herdr on Windows names only the pane's launcher in foreground_processes, not what the launcher
+ * starts (windows-processes.ts). The OmO below the pane's shell joins the list, so the pane is
+ * seen as OmO and its session arguments are read. Only processes below this pane's own shell
+ * count, and one herdr already named is not added twice.
+ */
+export function withOmoDescendants(info: ProcessInfo, rows: readonly ProcessRow[]): ProcessInfo {
+  const shell = info?.process_info?.shell_pid;
+  if (shell === undefined) return info;
+  const foreground = info?.process_info?.foreground_processes ?? [];
+  const omo = descendantProcesses(rows, shell).filter((entry) =>
+    isOmoProcess(entry.argv) && !foreground.some((existing) => existing.pid === entry.pid));
+  return omo.length === 0 ? info : { ...info, process_info: { ...info?.process_info, foreground_processes: [...foreground, ...omo] } };
+}
+
+const processInfo = async (paneId: string): Promise<ProcessInfo> => {
+  const [info, rows] = await Promise.all([
+    herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId }).catch(() => null),
+    process.platform === "win32" ? recentProcessTable() : Promise.resolve([]),
+  ]);
+  return withOmoDescendants(info, rows);
+};
 
 /**
  * The session each OmO pane of one folder holds, from the processes herdr named for its panes.

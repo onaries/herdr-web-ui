@@ -8,6 +8,7 @@ import { chromium } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { PtySession } from "../server/pty/session.ts";
 import { herdrRpc, herdrSocketPath, type WorkspaceCreateResult, paneRead, paneSendKeys, paneSendText, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 /** how long a resize that should not happen gets to show up */
 const NO_RESIZE_WAIT_MS = 400;
@@ -611,10 +612,9 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
               await page.locator(`.pane-select[title^="${next} — "]`).evaluate((button: HTMLElement) => button.click());
               await waitWire("out", "attach", 2);
               await page.locator(`.terminal-stack[data-pane-owner="${next}"]`).waitFor({ state: "attached" });
-              await waitWire("out", "detach", 1);
               await page.clock.runFor(0);
-              assert.deepEqual(detachedPanes(await recorded()), [first],
-                "navigation detaches pane A while pane B starts its own release delay");
+              assert.deepEqual(detachedPanes(await recorded()), [],
+                "navigation keeps pane A attached while its queued message waits");
               await assertSharedConnection(page);
               await waitWire("in", "input-ready", 2);
               await page.clock.runFor(900);
@@ -625,11 +625,11 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
                 window.dispatchEvent(new Event("blur"));
               });
               await page.clock.runFor(100);
-              assert.deepEqual(detachedPanes(await recorded()), [first],
-                "pane A's orphaned timer cannot shorten pane B's new delay");
+              assert.deepEqual(detachedPanes(await recorded()), [],
+                "pane A's retained attach cannot shorten pane B's new delay");
               await page.clock.runFor(900);
-              await waitWire("out", "detach", 2);
-              assert.deepEqual(detachedPanes(await recorded()), [first, next], "pane B releases only after its full new delay");
+              await waitWire("out", "detach", 1);
+              assert.deepEqual(detachedPanes(await recorded()), [next], "pane B releases only after its full new delay; pane A stays for its queue");
               await assertSharedConnection(page);
             } else {
               assert.ok(releaseSubmit, "the explicit Send is waiting at the server boundary");
@@ -764,9 +764,10 @@ if (import.meta.main) {
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
+    browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
     const origin = `http://127.0.0.1:${server.port}`;
-    if (process.env.CHAT_SIZE_CASE) await checkInactiveAttachLifecycle(browser, origin);
+    if (process.env.CHAT_SIZE_CASE === "reclaim") await checkFocusedWindowReclaimsTerminalSize(browser, origin);
+    else if (process.env.CHAT_SIZE_CASE) await checkInactiveAttachLifecycle(browser, origin);
     else {
       await checkChatKeepsTerminalSize(browser, origin);
       await checkPaneSwitchKeepsTerminalSize(browser, origin);
@@ -816,7 +817,7 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
     await attached(desktop);
     const desktopSize = await askedGrid(desktop);
     await sizeBecomes(desktopSize, "the desktop took the pane at its own size");
-    const phone = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, settings, false, inFront);
+    const phone = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { ...settings, terminalInputMode: "line" }, false, inFront);
     await attached(phone);
     const phoneSize = await askedGrid(phone);
     await sizeBecomes(phoneSize, "the phone took the pane at its own size");
@@ -834,6 +835,56 @@ export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, o
     await desktop.keyboard.press("Shift");
     await sizeBecomes(desktopSize, "a key in the desktop terminal");
     console.log("PASS a window that kept its focus takes the pane back on a click or a key in its terminal");
+
+    // The phone's own input sits outside its grid: the input line, its Send and Enter and the key
+    // bar. Each takes the pane back to the phone's grid, and the resize goes out before what it sends.
+    const [phoneRows, phoneCols] = phoneSize.split(" ").map(Number);
+    const outFrom = async (page: Page, from: number) => (await framesOf(page)).slice(from).filter((f) => f.dir === "out");
+    const resizedBefore = async (what: string, from: number, sends: readonly string[]) => {
+      const deadline = Date.now() + 10_000;
+      let out: Frame[] = [];
+      while (Date.now() < deadline) {
+        out = await outFrom(phone, from);
+        if (out.some((f) => sends.includes(f.type))) break;
+        await Bun.sleep(50);
+      }
+      const sent = out.findIndex((f) => sends.includes(f.type));
+      assert.ok(sent >= 0, `${what}: the phone sent none of ${sends.join("/")}: ${JSON.stringify(out)}`);
+      const resized = out.findIndex((f) => f.type === "resize" && f.cols === phoneCols && f.rows === phoneRows);
+      assert.ok(resized >= 0 && resized < sent, `${what}: the phone's own grid goes out before its input: ${JSON.stringify(out)}`);
+      await sizeBecomes(phoneSize, what);
+    };
+    // focus into the line: a tap there is the user on the phone, before a key is typed
+    let mark = (await framesOf(phone)).length;
+    await phone.locator(".terminal-input-text").tap();
+    const focusDeadline = Date.now() + 10_000;
+    while (Date.now() < focusDeadline) {
+      if ((await outFrom(phone, mark)).some((f) => f.type === "resize")) break;
+      await Bun.sleep(50);
+    }
+    assert.ok((await outFrom(phone, mark)).some((f) => f.type === "resize" && f.cols === phoneCols && f.rows === phoneRows), "a tap into the input line takes the pane back to the phone's grid");
+    await sizeBecomes(phoneSize, "a tap into the input line");
+    // the line keeps its focus from here on: no focus event helps the steps below
+    await desktop.keyboard.press("Shift");
+    await sizeBecomes(desktopSize, "a key in the desktop terminal, the phone's line focused");
+    await phone.keyboard.type("true");
+    mark = (await framesOf(phone)).length;
+    await phone.keyboard.press("Enter");
+    // the line's Enter follows its text after the server's gap: the size is asked once the line is in
+    await phone.waitForFunction(() => (document.querySelector(".terminal-input-text") as HTMLTextAreaElement | null)?.value === "", undefined, { timeout: 10_000 });
+    await resizedBefore("a line sent from the phone's input line", mark, ["submit", "input"]);
+    await desktop.keyboard.press("Shift");
+    await sizeBecomes(desktopSize, "a key in the desktop terminal, before the key bar");
+    mark = (await framesOf(phone)).length;
+    // Ctrl+C, not Esc: the shell would read Esc and the size command's first letter as one Meta key
+    await phone.locator(".key-bar").getByRole("button", { name: "Control C" }).tap();
+    await resizedBefore("a key-bar tap on the phone", mark, ["input", "keys"]);
+    await desktop.keyboard.press("Shift");
+    await sizeBecomes(desktopSize, "a key in the desktop terminal, before the empty line's Enter");
+    mark = (await framesOf(phone)).length;
+    await phone.locator(".terminal-input-send").tap();
+    await resizedBefore("Enter from the phone's empty input line", mark, ["input", "keys"]);
+    console.log("PASS the phone's input line, its Enter and the key bar take the pane back before they send");
   } finally {
     for (const context of contexts) await context.close().catch(() => undefined);
     if (workspace) await workspaceClose(workspace).catch(() => undefined);

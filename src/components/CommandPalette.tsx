@@ -1,21 +1,23 @@
 import { MachineContext, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { Bell, Columns2, FolderOpen, LoaderCircle, LockKeyhole, Maximize2, MessageSquarePlus, Minimize2, Monitor, PanelLeft, Plus, Puzzle, RefreshCw, Rows2, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { Bell, Columns2, CornerLeftUp, Folder, FolderOpen, FolderSearch, History, LoaderCircle, LockKeyhole, Maximize2, MessageSquarePlus, Minimize2, Monitor, PanelLeft, Pin, Plus, Puzzle, RefreshCw, Rows2, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 
 import "./CommandPalette.css";
 
-import type { HerdrPane, PluginActions, SessionSnapshot, TabInfo } from "../../shared/protocol.ts";
+import type { DirectoryListing, HerdrPane, PluginActions, SessionSnapshot, TabInfo } from "../../shared/protocol.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { ApiError } from "../lib/api.ts";
 import { paneStatus, STATUS_WORD } from "../lib/status.ts";
 import { zoomMode } from "../lib/layoutMap.ts";
 import type { AppActions, PaneView } from "../lib/actions.ts";
 import { FILTER_KEYS, offeredPluginActions, parseQuery, STATUS_FILTERS, statusCounts, type OfferedPluginAction, type PaletteStatusFilter } from "../lib/paletteSearch.ts";
+import { actionAliases, rankByTitle, requestSettingsPage, settingsPageEntries } from "../lib/paletteSettings.ts";
 import { Ownership, runPluginActionToEnd } from "../lib/pluginRun.ts";
 import { shortcutDisplayKeys, formatKeys, type ShortcutId } from "../lib/shortcuts.ts";
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
+import { PAGES } from "./SettingsDialog.tsx";
 import { folderName, placeLine } from "../lib/paneName.ts";
 import { agentTabName } from "../lib/sidebarAgents.ts";
 import { tabLabel } from "../lib/tabName.ts";
@@ -26,13 +28,20 @@ import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
+import { browseEntries, folderQuery, folderQueryFor, homeRelative, matchFolders, pinnedFolders, requestFilesFolder } from "../lib/paletteFolders.ts";
+import { currentSidebarPins, subscribeSidebarPins } from "../lib/sidebarPins.ts";
+import { recentDirectories } from "../lib/recent-directories.ts";
 
 import { availableTarget, groupMachinePanes, loadRecentTargets, rankMachinePanes, recentTargets, rememberTarget, targetKey, RECENT_KEY, type MachineBranches, type MachinePane, type RecentPane } from "../lib/machinePalette.ts";
 import { worktreeWorkspaceSignature, type WorkspaceBranch } from "../lib/worktreeBranches.ts";
 const RECENT_SHOWN = 3;
+/** pinned and recent folders offered as jumps, each */
+const FOLDERS_SHOWN = 5;
 
 interface CommandPaletteProps {
   open: boolean;
+  /** the search text it opens with; blank from the shortcut */
+  initialQuery?: string;
   onClose: () => void;
   machines: readonly Machine[];
   onSelect(machineId: string, paneId: string): void;
@@ -48,13 +57,21 @@ interface PaletteAction {
   label: string;
   icon: ComponentType;
   shortcut?: ShortcutId;
+  /** the palette stays open after it: it changes the palette's own list */
+  keepOpen?: boolean;
   run: () => void;
 }
 
 interface PaneRow extends MachinePane { kind: "pane" }
 interface ActionRow { kind: "action"; action: PaletteAction }
 interface PluginRow { kind: "plugin"; offered: OfferedPluginAction }
-type PaletteRow = PaneRow | ActionRow | PluginRow;
+/** a folder of the selected PC: picking it lists it in the palette */
+interface FolderRow { kind: "folder"; id: string; label: string; path: string; detail: string | null; icon: ComponentType }
+type PaletteRow = PaneRow | ActionRow | PluginRow | FolderRow;
+
+/** what went wrong listing a folder, said in the empty list */
+type BrowseError = "invalid" | "failed";
+interface FolderBrowse { directory: string; listing: DirectoryListing | null; error: BrowseError | null }
 
 interface PaletteSectionView {
   id: string;
@@ -86,7 +103,15 @@ function pluginActionKey({ plugin, action }: OfferedPluginAction): string {
 }
 
 function rowKey(sectionId: string, row: PaletteRow): string {
-  return `${sectionId}:${row.kind === "pane" ? targetKey(row) : row.kind === "action" ? row.action.id : pluginActionKey(row.offered)}`;
+  return `${sectionId}:${row.kind === "pane" ? targetKey(row) : row.kind === "action" ? row.action.id : row.kind === "folder" ? row.id : pluginActionKey(row.offered)}`;
+}
+
+function lastSegment(path: string): string {
+  return path.replace(/[\\/]+$/u, "").split(/[\\/]/u).pop() || path;
+}
+
+function childPath(parent: string, name: string): string {
+  return parent.endsWith("/") ? `${parent}${name}` : `${parent}/${name}`;
 }
 
 function storeRecent(recent: RecentPane[]): RecentPane[] {
@@ -121,7 +146,7 @@ function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
   return <span className="palette-shortcut" aria-label={keys.join(" + ")}>{keys.map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>;
 }
 
-export function CommandPalette({ open, onClose, machines, onSelect, snapshot, online, selectedPaneId, view, actions }: CommandPaletteProps) {
+export function CommandPalette({ open, initialQuery = "", onClose, machines, onSelect, snapshot, online, selectedPaneId, view, actions }: CommandPaletteProps) {
   const t = useT();
   const machineId = useMachineId();
   const api = useMachineApi();
@@ -138,6 +163,12 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   owner.current ??= new Ownership();
   const loadRecent = () => loadRecentTargets((key) => window.localStorage.getItem(key), [machineId, ...machines.map((machine) => machine.id).filter((id) => id !== machineId)]);
   const [recentPaneIds, setRecentPaneIds] = useState<RecentPane[]>(loadRecent);
+  // folder browsing (a query that starts as a path does): the folder listed, the PC's home once
+  // one listing told it, the PC's recent folders and the folders of the pinned agents
+  const [browse, setBrowse] = useState<FolderBrowse>({ directory: "", listing: null, error: null });
+  const [home, setHome] = useState<string | null>(null);
+  const [recentFolders, setRecentFolders] = useState<string[]>([]);
+  const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins);
   const inputRef = useRef<HTMLInputElement>(null);
   // a pane picked here is where the keyboard goes: giving it back to the opener (a sibling pane
   // still mounted in the split) would select that pane again (PaneCanvas onFocusCapture)
@@ -186,12 +217,41 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   // task, where a quick Tab focuses a row at an index the full list then gives to another row (#608).
   useLayoutEffect(() => {
     if (!open) return;
-    setQuery("");
+    setQuery(initialQuery);
     setFilter("all");
     setSelection(NO_SELECTION);
     focusedRow.current = null;
+    requestSettingsPage(null);
     setRecentPaneIds(loadRecent());
+    setRecentFolders(recentDirectories.read(machineId));
   }, [open]);
+
+  // The folder a path-like query names, read from the selected PC as the query crosses a `/`: the
+  // last segment only filters what is listed. A dot starting it asks for the hidden folders too.
+  const folder = open ? folderQuery(query) : null;
+  const folderDirectory = folder?.directory ?? null;
+  const folderHidden = folder?.filter.startsWith(".") ?? false;
+  useEffect(() => {
+    if (folderDirectory === null || !online) return;
+    let alive = true;
+    setBrowse((current) => current.directory === folderDirectory ? { ...current, error: null } : { directory: folderDirectory, listing: null, error: null });
+    api.fetchDirectories(folderDirectory, folderHidden).then(
+      (listing) => {
+        if (!alive) return;
+        setHome(listing.home);
+        setBrowse({ directory: folderDirectory, listing, error: null });
+      },
+      (reason: unknown) => {
+        if (alive) setBrowse({ directory: folderDirectory, listing: null, error: reason instanceof ApiError && reason.code === "invalid_cwd" ? "invalid" : "failed" });
+      },
+    );
+    return () => { alive = false; };
+  }, [folderDirectory, folderHidden, online, api]);
+  const browseTo = useCallback((path: string): void => {
+    setQuery(folderQueryFor(path, home));
+    setSelection(NO_SELECTION);
+    inputRef.current?.focus();
+  }, [home]);
 
   // The PC's plugin actions, read on each opening. A herdr with no plugins, an older bridge
   // without the route and an unreachable herdr all leave the group out. A layout effect: the
@@ -230,6 +290,9 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   // then sets the tab's flag, so a toggle on a pane other than the one shown alone would unzoom the tab
   const zoom = tabLayout !== undefined && selectedPaneId !== null ? zoomMode(tabLayout, selectedPaneId) : null;
   const { splitPane, zoomPane } = actions;
+  // browsing starts in the selected pane's folder, home without one
+  const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId);
+  const browseStart = selectedPane && panePath(selectedPane) ? panePath(selectedPane) : null;
 
   const paletteActions = useMemo<PaletteAction[]>(() => [
     { id: "new", label: t("New workspace"), icon: MessageSquarePlus, shortcut: "new-session", run: actions.openNewSession },
@@ -251,8 +314,16 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
     ...(actions.enableNotifications ? [{ id: "notifications", label: t("Enable notifications"), icon: Bell, run: actions.enableNotifications }] : []),
     ...(actions.lock ? [{ id: "lock", label: t("Sign out"), icon: LockKeyhole, run: actions.lock }] : []),
     ...(actions.openFiles ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: actions.openFiles }] : []),
+    ...(online ? [{ id: "browse-folders", label: t("Browse folders"), icon: FolderSearch, keepOpen: true, run: () => browseTo(browseStart ?? home ?? "~") }] : []),
     { id: "refresh", label: t("Refresh"), icon: RefreshCw, run: actions.refresh },
-  ], [actions, splitPane, zoomPane, tabPanes, zoom, view, t, selectedPaneId]);
+  ], [actions, splitPane, zoomPane, tabPanes, zoom, view, t, selectedPaneId, online, browseTo, browseStart, home]);
+
+  // Settings pages are found by a query only, and open on the page itself: the dialog reads the request as it mounts
+  const settingsActions = useMemo(() => {
+    const icons = new Map(PAGES.map(({ id, icon }) => [id, icon]));
+    return settingsPageEntries(t).map((entry) => ({ action: { id: `settings-${entry.id}`, label: entry.label, icon: icons.get(entry.id) ?? Settings, run: () => { requestSettingsPage(entry.id); actions.openSettings(); } } satisfies PaletteAction, aliases: entry.aliases }));
+  }, [actions, t]);
+  const aliasesByAction = useMemo(() => actionAliases(t), [t]);
 
   const allPanes = useMemo(() => machines.flatMap((machine) => machine.state === "connected" ? machine.snapshot?.panes ?? [] : []), [machines]);
   const multiMachine = machines.length > 1;
@@ -265,6 +336,29 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   // the panes went to last lead an unsearched, unfiltered list
   const sections = useMemo<PaletteSectionView[]>(() => {
     const list: PaletteSectionView[] = [];
+    // a path lists the selected PC's folders (T3 Code's browse mode): where it is, with Open in
+    // Files and the way up, then the pinned and recent folders it leads to, then its folders
+    if (folder !== null) {
+      const listing = browse.directory === folder.directory ? browse.listing : null;
+      const machineName = multiMachine ? selectedMachineName : undefined;
+      const jump = (path: string, prefix: string, icon: ComponentType): FolderRow => ({ kind: "folder", id: `${prefix}:${path}`, label: lastSegment(path), path, detail: home === null ? path : homeRelative(path, home), icon });
+      if (listing && folder.filter === "") {
+        const { openFiles } = actions;
+        const here: PaletteRow[] = [
+          ...(openFiles ? [{ kind: "action" as const, action: { id: "open-folder", label: t("Open in Files"), icon: FolderOpen, run: () => { requestFilesFolder(listing.path); openFiles(); } } }] : []),
+          ...(listing.parent !== null ? [{ kind: "folder" as const, id: "up", label: "..", path: listing.parent, detail: null, icon: CornerLeftUp }] : []),
+        ];
+        if (here.length > 0) list.push({ id: "folder-here", heading: folderQueryFor(listing.path, listing.home), machineName, branch: null, placeNamesWorkspace: false, rows: here });
+      }
+      const pinned = pinnedFolders(pins, machineId, snapshot?.panes ?? []);
+      const pinnedRows = matchFolders(pinned, query, home, FOLDERS_SHOWN).map((path) => jump(path, "pin", Pin));
+      if (pinnedRows.length > 0) list.push({ id: "pinned-folders", heading: t("Pinned folders"), machineName, branch: null, placeNamesWorkspace: false, rows: pinnedRows });
+      const recentRows = matchFolders(recentFolders.filter((path) => !pinned.includes(path)), query, home, FOLDERS_SHOWN).map((path) => jump(path, "recent", History));
+      if (recentRows.length > 0) list.push({ id: "recent-folders", heading: t("Recent folders"), machineName, branch: null, placeNamesWorkspace: false, rows: recentRows });
+      const names = listing ? browseEntries(listing.directories, folder.filter) : [];
+      if (listing && names.length > 0) list.push({ id: "folder-list", heading: t("Folders"), machineName, branch: null, placeNamesWorkspace: false, rows: names.map((name) => ({ kind: "folder", id: `dir:${name}`, label: name, path: childPath(listing.path, name), detail: null, icon: Folder })) });
+      return list;
+    }
     if (!actionsOnly) {
       const panes = rankMachinePanes(text, machines, filter, branches, t);
       if (text === "" && filter === "all") {
@@ -277,14 +371,16 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
       }
     }
     if (actionsOnly || filter === "all") {
-      const needle = text.toLocaleLowerCase();
-      const visible = needle ? paletteActions.filter((action) => action.label.toLocaleLowerCase().includes(needle)) : paletteActions;
+      // a name found only through an alias comes after the titles that hold the query
+      const visible = rankByTitle(text, paletteActions.map((action) => ({ item: action, title: action.label, aliases: aliasesByAction[action.id] })));
       if (visible.length > 0) list.push({ id: "actions", heading: t("Actions"), machineName: multiMachine ? selectedMachineName : undefined, branch: null, placeNamesWorkspace: false, rows: visible.map((action) => ({ kind: "action", action })) });
+      const pages = text === "" ? [] : rankByTitle(text, settingsActions.map(({ action, aliases }) => ({ item: action, title: action.label, aliases })));
+      if (pages.length > 0) list.push({ id: "settings-pages", heading: t("Settings"), machineName: multiMachine ? selectedMachineName : undefined, branch: null, placeNamesWorkspace: false, rows: pages.map((action) => ({ kind: "action", action })) });
       const offered = offeredPluginActions(plugins, selectedPaneId !== null, text);
       if (offered.length > 0) list.push({ id: "plugins", heading: t("Plugin actions"), machineName: multiMachine ? selectedMachineName : undefined, branch: null, placeNamesWorkspace: false, rows: offered.map((item) => ({ kind: "plugin", offered: item })) });
     }
     return list;
-  }, [actionsOnly, text, filter, machines, multiMachine, selectedMachineName, machineId, branches, recentPaneIds, selectedPaneId, paletteActions, plugins, t]);
+  }, [actionsOnly, text, filter, machines, multiMachine, selectedMachineName, machineId, branches, recentPaneIds, selectedPaneId, paletteActions, aliasesByAction, settingsActions, plugins, t, folder?.directory, folder?.filter, query, browse, home, pins, recentFolders, snapshot, actions]);
 
   const rows = useMemo(() => sections.flatMap((section) => section.rows), [sections]);
   const rowKeys = useMemo(() => sections.flatMap((section) => section.rows.map((row) => rowKey(section.id, row))), [sections]);
@@ -365,7 +461,7 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   };
   const runAction = (action: PaletteAction): void => {
     action.run();
-    onClose();
+    if (!action.keepOpen) onClose();
   };
   const runPluginAction = async ({ plugin, action }: OfferedPluginAction): Promise<void> => {
     if (running !== null) return;
@@ -401,6 +497,7 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
     if (!row) return;
     if (row.kind === "pane") runPane(row);
     else if (row.kind === "action") runAction(row.action);
+    else if (row.kind === "folder") browseTo(row.path);
     else void runPluginAction(row.offered);
   };
   const adjacentSectionStart = (index: number, direction: -1 | 1): number => {
@@ -496,8 +593,14 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
   const footerPlace = activeRow?.kind === "pane"
     ? [multiMachine ? activeRow.machine.name : null, activeWorkspace?.label ?? t("Unknown workspace"), activeTab?.tab ? tabLabel(activeTab.tab, t, activeTab.place) : null].filter(Boolean).join(" › ")
     : activeRow?.kind === "action" ? activeRow.action.label
+    : activeRow?.kind === "folder" ? activeRow.label
     : activeRow?.offered.action.title ?? "";
-  const footerPath = activeRow?.kind === "pane" ? panePath(activeRow.pane) : "";
+  const footerPath = activeRow?.kind === "pane" ? panePath(activeRow.pane) : activeRow?.kind === "folder" ? activeRow.path : "";
+  const browseListing = folder !== null && browse.directory === folder.directory ? browse : null;
+  const emptyText = folder === null ? t("No matching panes or actions")
+    : browseListing?.error === "invalid" ? t("This folder cannot be opened.")
+    : browseListing?.error === "failed" || !online ? t("Folders could not be loaded.")
+    : browseListing?.listing ? t("No matching folders") : t("Loading…");
 
   const onSurfaceFocus = (event: ReactFocusEvent<HTMLElement>): void => {
     focusedRow.current = (event.target as HTMLElement).closest<HTMLElement>("[role=\"option\"]");
@@ -512,7 +615,7 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
           <input ref={inputRef} className="input" type="search" value={query} placeholder={t("Search panes and actions…")} aria-label={t("Search panes and actions")} aria-controls="palette-results" aria-activedescendant={itemCount ? `palette-item-${activeIndex}` : undefined} onKeyDown={onInputKeyDown} onChange={(event) => { setQuery(event.target.value); setSelection(NO_SELECTION); }} />
           <button type="button" className="icon-button" aria-label={t("Close command palette")} onClick={onClose}><X /></button>
         </div>
-        {!actionsOnly && (
+        {!actionsOnly && folder === null && (
           <div className="palette-filters" role="radiogroup" aria-label={t("Filter panes by status")} onKeyDown={onChipsKeyDown}>
             {STATUS_FILTERS.map((status) => (
               <button key={status} type="button" role="radio" className="palette-filter" data-status={status} aria-checked={filter === status} tabIndex={filter === status ? 0 : -1} data-empty={counts[status] === 0 || undefined} onClick={(event) => onChipClick(event, status)}>
@@ -546,6 +649,15 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
                     </button>
                   );
                 }
+                if (row.kind === "folder") {
+                  const Icon = row.icon;
+                  return (
+                    <button key={row.id} id={`palette-item-${index}`} type="button" role="option" className="menu-item palette-folder" title={row.path} aria-selected={activeIndex === index} onFocus={() => select(index)} onMouseMove={() => select(index)} onClick={() => browseTo(row.path)}>
+                      <Icon aria-hidden="true" />
+                      <span className="menu-item-main"><span className="palette-row-title">{row.label}</span>{row.detail !== null && <span className="palette-row-subtitle">{row.detail}</span>}</span>
+                    </button>
+                  );
+                }
                 if (row.kind === "action") {
                   const Icon = row.action.icon;
                   return <button key={row.action.id} id={`palette-item-${index}`} type="button" role="option" className="menu-item" aria-selected={activeIndex === index} onFocus={() => select(index)} onMouseMove={() => select(index)} onClick={() => runAction(row.action)}><Icon /><span className="menu-item-main">{row.action.label}</span><ShortcutHint shortcutId={row.action.shortcut} /></button>;
@@ -568,7 +680,7 @@ export function CommandPalette({ open, onClose, machines, onSelect, snapshot, on
               })}
             </div>
           ))}
-          {itemCount === 0 && <p className="palette-empty" role="status">{t("No matching panes or actions")}</p>}
+          {itemCount === 0 && <p className="palette-empty" role="status">{emptyText}</p>}
         </div>
         <footer className="palette-footer">
           <div className="palette-footer-where" aria-live="polite">

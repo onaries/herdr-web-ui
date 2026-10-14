@@ -16,6 +16,26 @@ export function offsetAtThumb(scroll: PaneScrollInfo, top: number, height: numbe
   const ratio = Math.max(0, Math.min(1, top / Math.max(1, height - thumbHeight)));
   return Math.round(scroll.max_offset_from_bottom * (1 - ratio));
 }
+/** a metrics read re-arms this soon while output is arriving */
+export const SCROLL_POLL_BUSY_MS = 250;
+/** the longest an idle, visible pane waits between metrics reads */
+export const SCROLL_POLL_IDLE_MAX_MS = 15_000;
+/** Delay before the next metrics read after `idleReads` reads in a row with no output, scroll,
+ * resize or visibility change in between: 1 s, 2 s, 4 s, 8 s, then 15 s. Any of those events
+ * resets the count, so a quiet pane stops asking herdr every second yet still catches a scroll
+ * made without output (another client, herdr itself) within the cap. */
+export function idleScrollPollDelay(idleReads: number): number {
+  const reads = Number.isFinite(idleReads) && idleReads > 0 ? Math.floor(idleReads) : 0;
+  return Math.min(SCROLL_POLL_IDLE_MAX_MS, 1000 * 2 ** Math.min(reads, 4));
+}
+/** The poll's next delay: busy while something is moving, 1 s while scrolled up into history (herdr can
+ * hold that view still while output grows the history below it, which sends this client no bytes to wake
+ * the poll), else the idle backoff. */
+export function scrollPollDelay(busy: boolean, idleReads: number, metrics: PaneScrollInfo | null | undefined): number {
+  if (busy) return SCROLL_POLL_BUSY_MS;
+  if (validScroll(metrics) && metrics.offset_from_bottom > 0) return 1000;
+  return idleScrollPollDelay(idleReads);
+}
 export function sameFindMatch(a: PaneFindMatch | null | undefined, b: PaneFindMatch): boolean {
   return !!a && a.start.row === b.start.row && a.start.col === b.start.col && a.end.row === b.end.row && a.end.col === b.end.col;
 }

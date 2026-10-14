@@ -9,25 +9,34 @@ import type { ZoomMode } from "./layoutMap.ts";
 
 export type PaneView = "chat" | "terminal";
 
+/** The selected pane’s mounted history, bound to its PC. */
+export interface PaneControls {
+  scrollPage: (direction: -1 | 1) => void;
+}
+
 export interface AppActions {
   selectPane: (paneId: string) => void;
   /** the previous/next pane in sidebar order; wraps around */
   selectAdjacentPane: (direction: -1 | 1) => void;
   setView: (view: PaneView) => void;
   toggleView: () => void;
+  scrollPage: (direction: -1 | 1) => void;
   openNewSession: () => void;
   /**
    * The New tab dialog for a workspace: the named one (a sidebar row's menu, on its own PC),
    * else the selected pane's. Nothing happens without a workspace to add the tab to.
    */
   openNewTab: (target?: { machineId: string; workspaceId: string }) => void;
-  openPalette: () => void;
+  /** the palette, blank or opened on `query` (a `>` prefix keeps the actions alone) */
+  openPalette: (query?: string) => void;
   /**
    * A pane this client moved (POST /api/pane/move), under the id it answers to now: the lens
    * and drafts kept under the old id follow it, and the selection too when it was the
    * selected pane. A move made elsewhere (the TUI, another client) never moves the selection.
    */
   paneMoved: (machineId: string, previousPaneId: string, paneId: string) => void;
+  /** A pane this page started an agent in opens in an agent's lens, whatever its first snapshot says. */
+  agentStarted: (machineId: string, paneId: string) => void;
   openFind: () => void;
   openSettings: () => void;
   /** the Add PC dialog, from Settings → Remote PCs and the palette; Settings closes first */

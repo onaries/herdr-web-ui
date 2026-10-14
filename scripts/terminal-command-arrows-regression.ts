@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paneRead, paneSendKeys } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -163,7 +164,7 @@ if (import.meta.main) {
   try {
     const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-command-arrows" });
     workspace = made.workspace.workspace_id;
-    browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     await checkCommandArrows(browser, `http://127.0.0.1:${server.port}`, made.root_pane.pane_id);
   } finally {
     await browser?.close(); server.stop();

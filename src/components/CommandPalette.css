@@ -170,6 +170,12 @@
   min-height: var(--row-h);
 }
 
+/* a folder row (a path typed in the search): its glyph quieter than the name, the path under a jump */
+.palette-folder > svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
 .palette-mark {
   display: inline-flex;
   flex: 0 0 auto;

@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, Minimize2, Plus, Square, TriangleAlert, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -32,21 +32,28 @@ import {
   type DraftRefusal,
   formatTokens,
   imageMention,
-  insertMention,
+  insertLeadingMention,
   MAX_COMPOSER_CHARS,
   rankSlashCommands,
   submitNote,
   terminalOnlyCommand,
 } from "../lib/compose.ts";
+import { compactCommandText } from "../lib/compactContext.ts";
+import { composerStrip } from "../lib/composerStrip.ts";
+import { composerLabelDraw } from "../lib/composerLabelFit.ts";
+import { composerFull, formatChars, pasteOverflow } from "../lib/composerLength.ts";
+import { normalizeComposerImageFile } from "../lib/composerImageMime.ts";
 import { paneStatus } from "../lib/status.ts";
 import { modelLabel } from "../lib/modelName.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
+import { resolveComposerMenuActiveItemId } from "../lib/composerMenuHighlight.ts";
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
 import { composerUsage, formatPercent, formatResetIn, HIGH_PERCENT, meterPercent, meterText, providerForAgent, statusWindows, usageName, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
+import { cachedPaneCommands } from "../lib/paneCommandCache.ts";
 import { useT } from "../lib/i18n.ts";
 import { modalOpen } from "../lib/focus.ts";
 
@@ -73,6 +80,14 @@ export interface ComposerProps {
   restored?: string | null;
   /** an empty chat's greeting: it stands over the composer's column and takes no row of its own */
   greeting?: ReactNode;
+  /** the pane's notices over the input card (PaneTerminal builds them): rows of its own, above the replies */
+  notices?: ReactNode;
+  /** the pane's working folder, named in the strip tucked under the card; nothing is drawn for it while absent */
+  cwd?: string | null;
+  /** the pane's branch, beside the folder in that strip; nothing is drawn for it while absent */
+  branch?: string | null;
+  /** the workspace is a linked worktree of its repository: the strip says so beside the folder */
+  worktree?: boolean;
   /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
    * note offers to send again with `clearDraft`, which clears that draft from the terminal first; a
    * promise settles to any of them */
@@ -81,13 +96,12 @@ export interface ComposerProps {
   onUploadImage: (file: File) => Promise<string>;
 }
 
-const MAX_IMAGES_PER_ACTION = 4;
+const UPLOADS_AT_ONCE = 3;
 /**
  * Any file can be attached (an icon, a PDF, a log): the server stores it beside the pane
  * and the message mentions its path. These image types also get a thumbnail.
  */
 const PREVIEW_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] as const;
-const COMMAND_CACHE_MS = 60_000;
 const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
 /** One height for every pane on this device: it is the screen, not the conversation, that decides it. */
 const COMPOSER_HEIGHT_KEY = "herdr-web-ui:composer-height";
@@ -106,8 +120,6 @@ export const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
   plugin: "Plugins",
 };
 
-type CommandCacheEntry = { loadedAt: number; commands: SlashCommand[] };
-const commandCache = new Map<string, CommandCacheEntry>();
 let attachmentSequence = 0;
 
 type Attachment = {
@@ -116,6 +128,8 @@ type Attachment = {
   previewUrl: string;
   path: string | null;
   state: "uploading" | "ready" | "error";
+  /** what the pick this file came in with left out, repeated beside an upload error of the batch */
+  leftOut: string | null;
 };
 
 function readSlashUsage(): Record<string, number> {
@@ -155,21 +169,13 @@ function composerHeightLimit(): number {
   return Math.min(COMPOSER_HEIGHT_MAX, Math.floor(viewport / 2));
 }
 
-async function cachedPaneCommands(paneId: string, machineId: string, fetchCommands: (pane: string) => Promise<SlashCommand[]>): Promise<SlashCommand[]> {
-  const cached = commandCache.get(paneStorageId(machineId, paneId));
-  if (cached && Date.now() - cached.loadedAt < COMMAND_CACHE_MS) return cached.commands;
-  const commands = await fetchCommands(paneId);
-  commandCache.set(paneStorageId(machineId, paneId), { loadedAt: Date.now(), commands });
-  return commands;
-}
-
 /**
  * What is left of the context, as a ring filled by what is used (as Codex's app shows it):
  * red when little is left. The number is on hover, and on a tap beside the ring (a touch
  * screen has no hover). A window the transcript does not name draws no ring. Whether the number
  * is open is the composer's to keep: its text takes room in the row the model label is fitted to.
  */
-function ContextRing({ context, shown, readOnly = false, onToggle }: { context: NonNullable<ConversationMetadata["context"]>; shown: boolean; readOnly?: boolean; onToggle: () => void }) {
+function ContextRing({ context, shown, readOnly = false, onToggle, onCompact }: { context: NonNullable<ConversationMetadata["context"]>; shown: boolean; readOnly?: boolean; onToggle: () => void; onCompact?: (() => void) | undefined }) {
   const t = useT();
   const left = contextLeftPercent(context);
   if (left === null || context.window === null) return null;
@@ -186,6 +192,7 @@ function ContextRing({ context, shown, readOnly = false, onToggle }: { context: 
     <span className="visually-hidden">{label} · {detail}</span>
   </span>;
   return (
+    <>
     <button
       type="button"
       className={`composer-context${left <= 20 ? " is-low" : ""}`}
@@ -201,6 +208,10 @@ function ContextRing({ context, shown, readOnly = false, onToggle }: { context: 
       </svg>
       {shown && <span className="composer-context-text">{label}</span>}
     </button>
+    {shown && onCompact && <button type="button" className="composer-compact" title={t("Compact context")} aria-label={t("Compact context")} onClick={onCompact}>
+      <Minimize2 aria-hidden="true" />
+    </button>}
+    </>
   );
 }
 
@@ -233,6 +244,10 @@ export function Composer({
   suggestion = null,
   restored = null,
   greeting = null,
+  notices = null,
+  cwd = null,
+  branch = null,
+  worktree = false,
   onSend,
   onAbort,
   onUploadImage,
@@ -279,7 +294,10 @@ export function Composer({
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [slashUsage, setSlashUsage] = useState<Record<string, number>>(readSlashUsage);
-  const [storedIndex, setSelectedIndex] = useState(0);
+  // the highlight lives in the refs below: a move redraws the menu, also when it lands on an index it held before
+  const [, redrawMenu] = useState(0);
+  const highlightedItemId = useRef<string | null>(null);
+  const highlightedSearchKey = useRef<string | null>(null);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -367,14 +385,15 @@ export function Composer({
     return () => window.clearTimeout(timer);
   }, [paneId, trigger?.kind, trigger?.query]);
 
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [trigger?.kind, trigger?.query]);
+  const searchKey = trigger === null ? null : `${trigger.kind}:${trigger.prefix ?? ""}:${trigger.query}`;
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // files not yet sent and paths not yet placed go with the pane
+      uploadQueue.current = [];
+      waitingMentions.current = [];
       for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.previewUrl);
     };
   }, []);
@@ -421,10 +440,11 @@ export function Composer({
    * Two things the controls row asks of the layout itself, since what fits depends on the
    * model's name, the mic, the chip and the language, not on a width.
    * - The model label: measured with everything drawn, then drawn as composerModelDraw says
-   *   (stepped out whole while Queue shows, the effort word alone without it). Stepping out is
-   *   CSS on the mark's attribute, so the label is still read. It runs after every render of the
-   *   composer, which is why the context ring's open number is this component's state: opening it
-   *   takes room from the label without changing the card's size.
+   *   (the effort word steps out first); measured again without it, a name cut to its floor steps
+   *   out whole with its mark (composerLabelDraw), so the ring after it is drawn whole. Stepping
+   *   out is CSS on the mark's attribute, so the label is still read. It runs after every render
+   *   of the composer, which is why the context ring's open number is this component's state:
+   *   opening it takes room from the label without changing the card's size.
    * - The sentence is never cut. Where it does not fit beside the model it wraps to a line of its
    *   own (CSS); there it is marked, so it takes the whole line and drops the dot that separated
    *   it from the model. The sentence alone wraps: the rest stays one row (.composer-status-meta),
@@ -440,11 +460,20 @@ export function Composer({
       const item = status.querySelector<HTMLElement>(selector);
       return item !== null && item.scrollWidth > item.clientWidth;
     };
-    const draw = composerModelDraw({
+    const first = composerModelDraw({
       modelClipped: clipped(".composer-model"),
       effortClipped: clipped(".composer-reasoning"),
     });
-    if (draw !== "full") status.setAttribute("data-model", draw);
+    if (first !== "full") status.setAttribute("data-model", first);
+    // with the level stepped out the row is laid out again: a name still cut to its floor (its
+    // min-width, in px once computed) takes the mark and the hairlines out with it
+    const model = status.querySelector<HTMLElement>(".composer-model");
+    const draw = model === null ? first : composerLabelDraw(first, {
+      modelClipped: model.scrollWidth > model.clientWidth,
+      modelWidth: model.clientWidth,
+      modelFloor: parseFloat(getComputedStyle(model).minWidth) || 0,
+    });
+    if (draw !== first) status.setAttribute("data-model", draw);
     const hint = hintRef.current;
     if (!hint) return;
     // with the label stepped out and no ring, the row beside the sentence draws nothing: it gives
@@ -566,7 +595,23 @@ export function Composer({
   const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
   // clamped as the list is drawn, not by an effect after it: a Tab or Enter typed before that
   // effect's render found no row at the old index and did nothing
-  const selectedIndex = Math.min(storedIndex, Math.max(0, choices.length - 1));
+  const choiceIds = choices.map((choice) => trigger?.kind === "slash"
+    ? `${(choice as SlashCommand).source}:${(choice as SlashCommand).name}`
+    : choice as string);
+  const activeItemId = resolveComposerMenuActiveItemId({
+    items: choiceIds.map((id) => ({ id })),
+    highlightedItemId: searchKey === null ? null : highlightedItemId.current,
+    currentSearchKey: searchKey,
+    highlightedSearchKey: highlightedSearchKey.current,
+  });
+  const selectedIndex = activeItemId === null ? 0 : choiceIds.indexOf(activeItemId);
+  if (activeItemId !== null && searchKey !== null) {
+    highlightedItemId.current = activeItemId;
+    highlightedSearchKey.current = searchKey;
+  } else {
+    highlightedItemId.current = null;
+    highlightedSearchKey.current = searchKey;
+  }
 
   // dictation lands at the caret without taking focus (a phone's keyboard stays as it was)
   const dictation = useDictation({
@@ -593,6 +638,9 @@ export function Composer({
     onNote: setNote,
   });
 
+  /** the note for a paste the box cut, held across the change event that follows it */
+  const pasteCutNote = useRef<string | null>(null);
+
   const setTextAndCaret = useCallback((nextText: string, nextCaret: number) => {
     const limitedText = nextText.slice(0, MAX_COMPOSER_CHARS);
     const clampedCaret = Math.min(nextCaret, MAX_COMPOSER_CHARS);
@@ -611,18 +659,62 @@ export function Composer({
     if (activeRef.current) element.focus();
   }, []);
 
-  const insertMentionAtCursor = useCallback(
-    (mention: string) => {
-      const element = textareaRef.current;
-      const currentText = textRef.current;
-      const selectionIsCurrent = element?.value === currentText;
-      const start = selectionIsCurrent ? (element.selectionStart ?? caretRef.current) : caretRef.current;
-      const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
-      const next = insertMention(currentText, start, end, mention);
-      setTextAndCaret(next.text, next.caret);
-    },
-    [setTextAndCaret],
-  );
+  // an upload finishes while the user may be typing: its mention goes to the start (insertLeadingMention),
+  // and the caret and selection only move along with the text they sit in, without taking focus
+  // `false` when the message has no room for the whole mention: nothing is written then
+  const insertMentionAtStart = useCallback((mention: string, earlier: readonly string[]): boolean => {
+    const element = textareaRef.current;
+    const currentText = textRef.current;
+    const selectionIsCurrent = element?.value === currentText;
+    const start = selectionIsCurrent ? (element.selectionStart ?? caretRef.current) : caretRef.current;
+    const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
+    const direction = selectionIsCurrent ? (element.selectionDirection ?? undefined) : undefined;
+    const next = insertLeadingMention(currentText, mention, earlier);
+    if (next.length === 0) return false;
+    const moved = (position: number) => (position >= next.at ? position + next.length : position);
+    textRef.current = next.text;
+    caretRef.current = moved(start);
+    flushSync(() => {
+      setText(next.text);
+      setCaret(moved(start));
+    });
+    if (element) element.setSelectionRange(moved(start), moved(end), direction);
+    return true;
+  }, []);
+
+  // one queue for the whole box: a pick made while another uploads waits its turn
+  const uploadQueue = useRef<Attachment[]>([]);
+  const uploadsRunning = useRef(0);
+  /** paths placed so far, by attachment id: ids follow pick order */
+  const placedMentions = useRef(new Map<number, string>());
+  /** finished uploads whose paths wait for a /command or an IME composition to end */
+  const waitingMentions = useRef<{ id: number; path: string }[]>([]);
+
+  const placeWaitingMentions = useCallback(() => {
+    if (waitingMentions.current.length === 0) return;
+    if (composingRef.current || /^\/\S*$/u.test(textRef.current)) return;
+    const waiting = waitingMentions.current.sort((a, b) => a.id - b.id);
+    waitingMentions.current = [];
+    for (const [index, { id, path }] of waiting.entries()) {
+      if (removedAttachments.current.has(id)) continue;
+      const mention = imageMention(path);
+      const earlier = [...placedMentions.current].filter(([placed]) => placed < id).map(([, placed]) => placed);
+      // no room for the whole path: this attachment and the ones picked after it stay uploading, in
+      // their order, Send stays off, and the next edit of the text tries again (the effect below);
+      // a cut path would name a file that is not there
+      if (!insertMentionAtStart(mention, earlier)) { waitingMentions.current.push(...waiting.slice(index)); break; }
+      placedMentions.current.set(id, mention);
+      setAttachments((current) => current.map((item) => (item.id === id ? { ...item, path, state: "ready" } : item)));
+    }
+  }, [insertMentionAtStart]);
+
+  // whatever wrote the text (typing, a completion, dictation, a cleared draft), a waiting path tries
+  // again in the next frame, after that write's own caret placement has landed
+  useEffect(() => {
+    if (waitingMentions.current.length === 0) return;
+    const frame = requestAnimationFrame(placeWaitingMentions);
+    return () => cancelAnimationFrame(frame);
+  }, [placeWaitingMentions, text]);
 
   const selectCompletion = useCallback(
     (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
@@ -646,46 +738,68 @@ export function Composer({
     [setTextAndCaret, text],
   );
 
+  const pumpUploads = useCallback(() => {
+    // a few at a time: each upload holds its file as base64 until it is sent
+    while (mounted.current && uploadsRunning.current < UPLOADS_AT_ONCE && uploadQueue.current.length > 0) {
+      const attachment = uploadQueue.current.shift()!;
+      if (removedAttachments.current.has(attachment.id)) continue;
+      uploadsRunning.current += 1;
+      void onUploadImage(attachment.file)
+        .then(
+          (path) => {
+            if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
+            waitingMentions.current.push({ id: attachment.id, path });
+            placeWaitingMentions();
+          },
+          (error: unknown) => {
+            if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
+            setAttachments((current) =>
+              current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
+            );
+            const failed = error instanceof Error ? error.message : String(error);
+            setNote(attachment.leftOut ? `${failed} ${attachment.leftOut}` : failed);
+          },
+        )
+        .finally(() => {
+          uploadsRunning.current -= 1;
+          pumpUploads();
+        });
+    }
+  }, [onUploadImage, placeWaitingMentions]);
+
   const uploadImages = useCallback(
-    async (incoming: readonly File[]) => {
-      const images = incoming.slice(0, MAX_IMAGES_PER_ACTION);
+    (incoming: readonly File[]) => {
+      const images = incoming.slice(0, settings.attachLimit);
       if (images.length === 0) return;
 
-      const added = images.map<Attachment>((file) => ({
-        id: ++attachmentSequence,
-        file,
-        previewUrl: (PREVIEW_TYPES as readonly string[]).includes(file.type) ? URL.createObjectURL(file) : "",
-        path: null,
-        state: "uploading",
-      }));
+      // the files left out of this pick: told now, and again beside an upload error of this batch
+      const leftOut = images.length < incoming.length
+        ? t("Only the first {count} of {total} files were taken. Settings → Chat → Files at once sets how many one paste, pick or drop takes.", { count: images.length, total: incoming.length })
+        : null;
+      const added = images.map<Attachment>((file) => {
+        const uploadFile = normalizeComposerImageFile(file);
+        return {
+          id: ++attachmentSequence,
+          file: uploadFile,
+          previewUrl: (PREVIEW_TYPES as readonly string[]).includes(uploadFile.type)
+            ? URL.createObjectURL(uploadFile)
+            : "",
+          path: null,
+          state: "uploading",
+          leftOut,
+        };
+      });
       setAttachments((current) => [...current, ...added]);
-      setNote(null);
-
-      for (const attachment of added) {
-        if (!mounted.current) break;
-        try {
-          const path = await onUploadImage(attachment.file);
-          if (!mounted.current) break;
-          if (removedAttachments.current.has(attachment.id)) continue;
-          setAttachments((current) =>
-            current.map((item) => (item.id === attachment.id ? { ...item, path, state: "ready" } : item)),
-          );
-          insertMentionAtCursor(imageMention(path));
-        } catch (error) {
-          if (!mounted.current) break;
-          if (removedAttachments.current.has(attachment.id)) continue;
-          setAttachments((current) =>
-            current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
-          );
-          setNote(error instanceof Error ? error.message : String(error));
-        }
-      }
+      setNote(leftOut);
+      uploadQueue.current.push(...added);
+      pumpUploads();
     },
-    [insertMentionAtCursor, onUploadImage],
+    [pumpUploads, settings.attachLimit, t],
   );
 
   const removeAttachment = useCallback((attachment: Attachment) => {
     removedAttachments.current.add(attachment.id);
+    placedMentions.current.delete(attachment.id);
     URL.revokeObjectURL(attachment.previewUrl);
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
     if (attachment.path) {
@@ -717,7 +831,7 @@ export function Composer({
       textRef.current = rest;
       caretRef.current = rest.length;
       setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
-      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
+      for (const attachment of sentAttachments) { URL.revokeObjectURL(attachment.previewUrl); placedMentions.current.delete(attachment.id); }
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
     if (!composerDrafts.begin(draftKey, sent)) return;
@@ -760,7 +874,10 @@ export function Composer({
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
           const direction = event.key === "ArrowDown" ? 1 : -1;
-          setSelectedIndex((current) => (Math.min(current, choices.length - 1) + direction + choices.length) % choices.length);
+          const nextIndex = (selectedIndex + direction + choices.length) % choices.length;
+          redrawMenu((count) => count + 1);
+          highlightedItemId.current = choiceIds[nextIndex] ?? null;
+          highlightedSearchKey.current = searchKey;
           return;
         }
         if (event.key === "Enter" || event.key === "Tab") {
@@ -804,6 +921,15 @@ export function Composer({
 
   const onPaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const box = event.currentTarget;
+      const over = pasteOverflow(box.value, box.selectionStart, box.selectionEnd, event.clipboardData.getData("text"), MAX_COMPOSER_CHARS);
+      if (over > 0) {
+        // the box cuts the paste itself; the change event it fires would clear a note, so this one is kept for it
+        const cut = t("{count} characters of the paste did not fit: a message holds {max}.", { count: formatChars(over), max: formatChars(MAX_COMPOSER_CHARS) });
+        pasteCutNote.current = cut;
+        setNote(cut);
+        setTimeout(() => { pasteCutNote.current = null; }, 0);
+      }
       const images = Array.from(event.clipboardData.items)
         .filter((item) => item.kind === "file")
         .map((item) => item.getAsFile())
@@ -812,7 +938,7 @@ export function Composer({
       event.preventDefault();
       void uploadImages(images);
     },
-    [uploadImages],
+    [t, uploadImages],
   );
 
   const onDrop = useCallback(
@@ -825,6 +951,9 @@ export function Composer({
   );
 
   const isWorking = agentStatus === "working";
+  // an explicit click sends /compact the way a typed message goes; only where the agent lists it, never while it works
+  const compactText = compactCommandText(commands);
+  const compactNow = compactText !== null && connected && !sending && !isWorking && agentStatus !== "blocked" ? () => sendQuick(compactText) : undefined;
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
@@ -839,6 +968,10 @@ export function Composer({
   const usageCaption = usageLimit === undefined ? "" : `${usageLimit.kind === "session" ? "5h" : windowLabel(usageLimit)} ${formatPercent(meterPercent(usageLimit, settings.usageCount))}`;
   const usageAccessible = usage === undefined ? "" : `${t("Subscription usage")}: ${usageName(usage)}, ${usageDetail.replaceAll("\n", ", ")}`;
   const hintText = hint === null ? null : t(hint === "uploading" ? "Uploading file…" : "Reconnecting… message held here, never queued");
+  /** the strip under the card: the folder and the branch the caller knows; none, no strip */
+  const strip = composerStrip({ cwd, branch });
+  /** a hairline between two parts of the model group, as t3code's composer controls are parted */
+  const sep = <span className="composer-sep" aria-hidden="true" />;
   const menuId = `composer-menu-${paneId}`;
   // the arrow keys move the selection, not the focus (it stays in the box), so the browser does not scroll to it
   useEffect(() => {
@@ -846,8 +979,9 @@ export function Composer({
   }, [menuOpen, menuId, selectedIndex, choices]);
 
   return (
-    <div className="composer" role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
+    <div className={`composer${notices ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
       {greeting}
+      {notices}
       {/* no Tab key on a phone: the suggestion is a chip there that fills the box, unless Settings turns it off */}
       {settings.showSuggestionChip && offered !== null && text === "" && (
         <div className="composer-quick composer-suggestion-row">
@@ -989,7 +1123,12 @@ export function Composer({
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}
-        onCompositionEnd={() => { composingRef.current = false; }}
+        onCompositionEnd={() => {
+          composingRef.current = false;
+          // after the input that commits the candidate, which WebKit sends after compositionend, and
+          // in a frame, after the caret of dictation held through the composition has landed
+          setTimeout(() => requestAnimationFrame(() => { if (mounted.current) placeWaitingMentions(); }), 0);
+        }}
           className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
           rows={1}
           maxLength={MAX_COMPOSER_CHARS}
@@ -1016,10 +1155,62 @@ export function Composer({
             setText(event.target.value);
             setCaret(event.target.selectionStart);
             setMenuDismissed(false);
-            setNote(null);
+            setNote(pasteCutNote.current);
           }}
         />
 
+        {/* the card's last row, as t3code's composer orders it: the model group at the row's start, the action
+            icons and the one round button at its end. The agent's name, its separator and the state word are
+            read, not drawn: the mark and the header name the agent, and Stop, the live row and the prompt card
+            say the state. All state words stay available to assistive tech only.
+            Where the model label does not fit, it steps out and is still read (fitStatus marks data-model) */}
+        <div ref={statusRef} className="composer-status" role="status" data-status={shownStatus}
+          data-offline={connected ? undefined : ""} data-hint={hint ?? undefined}>
+          {/* everything but the sentence: one row that never wraps, also where the sentence takes a line of its own */}
+          <span className="composer-status-meta">
+            <span className="composer-agent-label visually-hidden">{agentLabel}</span>
+            <span className="composer-status-separator visually-hidden" aria-hidden="true">·</span>
+            <strong className="visually-hidden">{t(composerStatusWord(shownStatus))}</strong>
+            {/* the mark, the model, the level and the context ring as one quiet group, its parts told apart by
+                hairlines (.composer-sep) as t3code's composer controls are. It only shows: no role, no focus,
+                nothing to press but the ring inside it. A pane that names no model draws no group (.is-bare):
+                the mark, a level if it has one, and the ring stand in the row as they are */}
+            <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
+              {agent && <AgentMark agent={agent} size={14} />}
+              {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
+                {/* a name only for an id modelLabel can name for certain; any other id is drawn as received, in the identifier face */}
+                <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? t("Model —")}</span>
+                {/* behind a name the id as received is still read; a touch cannot reach the title */}
+                {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
+                {/* no level recorded: nothing is drawn for it, no hairline and no dash; the sentence is still read */}
+                {metadata?.reasoning_effort && sep}
+                <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
+                  <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
+                  {metadata?.reasoning_effort && <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>}
+                </span>
+              </span>}
+              {metadata?.context && modelShown && sep}
+              {metadata?.context && <ContextRing context={metadata.context} shown={contextShown} readOnly={mobile} onToggle={() => setContextShown((open) => !open)} onCompact={compactNow} />}
+              {usage !== undefined && usage.problem === null && usageLimit !== undefined && (modelShown || metadata?.context) && sep}
+              {usage !== undefined && usage.problem === null && usageLimit !== undefined && <span
+                className={`composer-usage${usageLimit.used_percent >= HIGH_PERCENT ? " is-high" : ""}${usage.problem ? " has-problem" : ""}`}
+                title={`${usageName(usage)}\n${usageDetail}`}
+              >
+                <span aria-hidden="true">{usageCaption}</span>
+                <span className="visually-hidden">{usageAccessible}</span>
+              </span>}
+            </span>
+            {/* the chip is a button in the action group; its count is still said here, where a change is announced */}
+            {backgroundTasks > 0 && <span className="composer-task-count visually-hidden">{t(backgroundTasks === 1 ? "{n} background task" : "{n} background tasks", { n: backgroundTasks })}</span>}
+          </span>
+          {hintText !== null && (
+            <span ref={hintRef} className="composer-status-hint" title={hintText}>
+              <span className="composer-status-hint-dot" aria-hidden="true">· </span>{hintText}
+            </span>
+          )}
+        </div>
+        {/* the action icons, between the model group and the round button (the class names are the groups'
+            first names, kept for the browser scripts that read them) */}
         <div className="composer-controls composer-controls-left">
           <input
             ref={fileInputRef}
@@ -1044,54 +1235,6 @@ export function Composer({
           </button>
           {dictation.shown && <MicButton dictation={dictation} />}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
-        </div>
-        {/* between the two control groups of the card's last row. The agent's name, its separator and the
-            state word are read, not drawn: the mark and the header name the agent, and Stop, the live row and
-            the prompt card say the state. All state words stay available to assistive tech only.
-            Where the model label does not fit, it steps out and is still read (fitStatus marks data-model) */}
-        <div ref={statusRef} className="composer-status" role="status" data-status={shownStatus}
-          data-offline={connected ? undefined : ""} data-hint={hint ?? undefined}>
-          {/* everything but the sentence: one row that never wraps, also where the sentence takes a line of its own */}
-          <span className="composer-status-meta">
-            <span className="composer-agent-label visually-hidden">{agentLabel}</span>
-            <span className="composer-status-separator visually-hidden" aria-hidden="true">·</span>
-            <strong className="visually-hidden">{t(composerStatusWord(shownStatus))}</strong>
-            {/* the mark, the model, the level and the context ring as one quiet pill. It only shows: no role,
-                no focus, nothing to press but the ring inside it. A pane that names no model draws no pill
-                (.is-bare): the mark, a level if it has one, and the ring stand in the row as they are */}
-            <span className={`composer-pill${metadata?.model ? "" : " is-bare"}`}>
-              {agent && <AgentMark agent={agent} size={14} />}
-              {modelShown && <span className="composer-model-info" aria-label={t("Model and reasoning")}>
-                {/* a name only for an id modelLabel can name for certain; any other id is drawn as received, in the identifier face */}
-                <span className={`composer-model${model ? model.named ? "" : " is-id" : " is-none"}`} title={metadata?.model ?? t("Model not available")}>{model?.text ?? t("Model —")}</span>
-                {/* behind a name the id as received is still read; a touch cannot reach the title */}
-                {model?.named && <span className="composer-model-id visually-hidden">{metadata?.model}</span>}
-                {/* no level recorded: nothing is drawn for it, no dot and no dash; the sentence is still read */}
-                <span className={`composer-reasoning${metadata?.reasoning_effort ? "" : " visually-hidden"}`} title={metadata?.reasoning_effort ? t("Reasoning effort: {effort}", { effort: metadata.reasoning_effort }) : t("Reasoning effort not available")}>
-                  <span className="composer-reasoning-full visually-hidden">{t("Reasoning {effort}", { effort: metadata?.reasoning_effort ?? "—" })}</span>
-                  {metadata?.reasoning_effort && <>
-                    <span className="composer-reasoning-dot" aria-hidden="true">·</span>
-                    <span className="composer-reasoning-short" aria-hidden="true">{metadata.reasoning_effort}</span>
-                  </>}
-                </span>
-              </span>}
-              {metadata?.context && <ContextRing context={metadata.context} shown={contextShown} readOnly={mobile} onToggle={() => setContextShown((open) => !open)} />}
-              {usage !== undefined && usage.problem === null && usageLimit !== undefined && <span
-                className={`composer-usage${usageLimit.used_percent >= HIGH_PERCENT ? " is-high" : ""}${usage.problem ? " has-problem" : ""}`}
-                title={`${usageName(usage)}\n${usageDetail}`}
-              >
-                <span aria-hidden="true">{usageCaption}</span>
-                <span className="visually-hidden">{usageAccessible}</span>
-              </span>}
-            </span>
-            {/* the chip is a button in the left controls; its count is still said here, where a change is announced */}
-            {backgroundTasks > 0 && <span className="composer-task-count visually-hidden">{t(backgroundTasks === 1 ? "{n} background task" : "{n} background tasks", { n: backgroundTasks })}</span>}
-          </span>
-          {hintText !== null && (
-            <span ref={hintRef} className="composer-status-hint" title={hintText}>
-              <span className="composer-status-hint-dot" aria-hidden="true">· </span>{hintText}
-            </span>
-          )}
         </div>
         <div className="composer-controls composer-controls-right">
           {!sendShown ? (
@@ -1119,9 +1262,30 @@ export function Composer({
           )}
         </div>
       </div>
+      {/* the strip tucked under the card (t3code's composer context strip): the pane's working folder and its
+          branch, each drawn only when the caller passes it. It only names them; nothing in it is pressed */}
+      {strip !== null && (
+        <div className="composer-strip">
+          {strip.folder !== null && <span className="composer-strip-item composer-strip-folder" title={strip.path ?? undefined}>
+            {worktree ? <FolderGit2 aria-hidden="true" /> : <Folder aria-hidden="true" />}
+            <span className="visually-hidden">{t("Working folder")}: </span>
+            <span className="composer-strip-text">{strip.folder}</span>
+            {worktree && <span className="composer-strip-kind">{t("Worktree")}</span>}
+          </span>}
+          {strip.branch !== null && <span className="composer-strip-item composer-strip-branch" title={strip.branch}>
+            <GitBranch aria-hidden="true" />
+            <span className="visually-hidden">{t("Branch")}: </span>
+            <span className="composer-strip-text">{strip.branch}</span>
+          </span>}
+        </div>
+      )}
       {/* said while typing, before the send: after it the browser is already open and the reader is
           already in the state the words describe. Not a block — the text still goes, and pi runs the
           command in the terminal the way its own palette would */}
+      {/* why typing stopped: the box clamps at its cap without a word, so the box says it */}
+      {!note && composerFull(text.length, MAX_COMPOSER_CHARS) && (
+        <div className="composer-hint composer-limit" role="status">{t("Message limit reached: {max} characters. Nothing more can be added.", { max: formatChars(MAX_COMPOSER_CHARS) })}</div>
+      )}
       {!note && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}

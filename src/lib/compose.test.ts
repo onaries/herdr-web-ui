@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage } from "./compose.ts";
+import { agentDisplayLabel, composerDelivery, composerMessage, terminalOnlyCommand, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage } from "./compose.ts";
 
 describe("composerMessage and submitNote", () => {
   it("keeps the message as written for agent.prompt: inner newlines stay, the composer's own trailing ones go", () => {
@@ -23,6 +23,9 @@ describe("composerMessage and submitNote", () => {
     // refused before the paste because Claude's input box held a draft (#609)
     expect(submitNotTyped("input_draft")).toBe(true);
     expect(submitNotTyped("agent_queue_unsupported")).toBe(true);
+    // refused by the view while the terminal holds input, before anything reached the socket
+    expect(submitNotTyped("held_input")).toBe(true);
+    expect(submitNote("held_input", "x")).toBe("Not sent: send or discard the held input first.");
     expect(submitNote("pending_input_unsupported", "x")).toBe("Update this PC to send messages in the next turn. Your draft stayed here.");
     expect(submitNotTyped("submit_changed")).toBe(false);
     expect(submitNotTyped("pending_uncertain")).toBe(false);
@@ -90,30 +93,35 @@ describe("imageMention", () => {
   });
 });
 
-describe("insertMention", () => {
-  const mention = imageMention("/tmp/p.png");
+describe("insertLeadingMention", () => {
+  const first = imageMention("/tmp/1.png");
+  const second = imageMention("/tmp/2.png");
 
-  it("separates a mention from the word before the caret (#120)", () => {
-    expect(insertMention("test.", 5, 5, mention)).toEqual({ text: "test. @/tmp/p.png ", caret: 18 });
+  it("puts an attachment's mention at the start, whatever is being typed further on", () => {
+    expect(insertLeadingMention("", first, [])).toEqual({ text: "@/tmp/1.png ", at: 0, length: 12 });
+    expect(insertLeadingMention("look at this", first, [])).toEqual({ text: "@/tmp/1.png look at this", at: 0, length: 12 });
   });
 
-  it("adds no space in an empty composer or after whitespace", () => {
-    expect(insertMention("", 0, 0, mention)).toEqual({ text: "@/tmp/p.png ", caret: 12 });
-    expect(insertMention("test. ", 6, 6, mention).text).toBe("test. @/tmp/p.png ");
-    expect(insertMention("test.\n", 6, 6, mention).text).toBe("test.\n@/tmp/p.png ");
+  it("keeps a leading slash command first", () => {
+    expect(insertLeadingMention("/review the menu", first, [])).toEqual({ text: "/review @/tmp/1.png the menu", at: 8, length: 12 });
+    expect(insertLeadingMention("/review", first, [])).toEqual({ text: "/review @/tmp/1.png ", at: 7, length: 13 });
   });
 
-  it("looks at the text before the selection, and replaces the selection", () => {
-    expect(insertMention("see this here", 4, 8, mention)).toEqual({ text: "see @/tmp/p.png  here", caret: 16 });
-    expect(insertMention("ab", 1, 1, mention)).toEqual({ text: "a @/tmp/p.png b", caret: 14 });
+  it("goes after the mentions of files picked before it, so a batch reads in pick order however its uploads finish", () => {
+    expect(insertLeadingMention(`${first}notes`, second, [first])).toEqual({ text: `${first}${second}notes`, at: 12, length: 12 });
+    expect(insertLeadingMention(`${second}notes`, first, [])).toEqual({ text: `${first}${second}notes`, at: 0, length: 12 });
+    // an earlier mention the user deleted no longer anchors anything
+    expect(insertLeadingMention("notes", second, [first])).toEqual({ text: `${second}notes`, at: 0, length: 12 });
   });
 
-  it("cuts the insertion to what still fits", () => {
-    const full = "x".repeat(MAX_COMPOSER_CHARS - 3);
-    expect(insertMention(full, full.length, full.length, mention)).toEqual({
-      text: `${full} @/`,
-      caret: MAX_COMPOSER_CHARS,
-    });
+  it("goes in whole or not at all: a cut path would name a file that does not exist", () => {
+    const full = "x".repeat(MAX_COMPOSER_CHARS - 2);
+    expect(insertLeadingMention(full, first, [])).toEqual({ text: full, at: 0, length: 0 });
+    const room = "x".repeat(MAX_COMPOSER_CHARS - first.length);
+    expect(insertLeadingMention(room, first, [])).toEqual({ text: `${first}${room}`, at: 0, length: first.length });
+    // the separating space counts: after a command with no room for it, nothing goes in
+    const command = `/review${"x".repeat(MAX_COMPOSER_CHARS - 7 - first.length)}`;
+    expect(insertLeadingMention(command, first, [])).toEqual({ text: command, at: command.length, length: 0 });
   });
 });
 

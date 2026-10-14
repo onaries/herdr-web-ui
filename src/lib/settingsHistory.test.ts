@@ -21,7 +21,7 @@ function fakeWindow() {
 const fake = fakeWindow();
 (globalThis as unknown as { window: unknown }).window = fake.window;
 // after the window: the module listens to it as it loads
-const { recordSettings, settingsEntry, settingsLevels } = await import("./settingsHistory.ts");
+const { outsideSettings, recordSettings, settingsEntry, settingsLevels } = await import("./settingsHistory.ts");
 const settled = async () => { for (let i = 0; i < 4; i++) await new Promise((resolve) => queueMicrotask(() => resolve(undefined))); };
 
 describe("settingsLevels", () => {
@@ -244,7 +244,7 @@ describe("history traversal races", () => {
     expect(moves).toEqual([]);
   });
 
-  it("characterizes markerless landing leaving the old Settings depth reachable by Back", async () => {
+  it("steps Back over Settings entries a markerless entry buried, instead of opening them again", async () => {
     const browser = await delayedHistory();
     browser.recordSettings(browser.settingsLevels(true, "terminal", true));
     const moves: Array<[ReturnType<typeof browser.settingsEntry>, boolean]> = [];
@@ -252,14 +252,83 @@ describe("history traversal races", () => {
     browser.history.pushState({ route: "markerless" });
     browser.history.pushState({ route: "after-markerless" });
 
-    // Back lands on a state without our marker. Closing cannot tell that older Settings entries
-    // are still in history, so it does not rewind them; another Back restores their old depth.
+    // Back lands on a state without the marker that is not the one Settings opened from: the app
+    // closes Settings, and its entries stay buried under that state
     await browser.move(-1);
     expect(moves).toEqual([[null, false]]);
     browser.recordSettings([]);
     expect(browser.requests).toEqual([]);
+    // the next Back lands on them from above: they are stepped over, never shown again
     await browser.move(-1);
-    expect(moves[1]).toEqual([{ page: "terminal", keyBar: true, depth: 3 }, false]);
+    expect(moves).toEqual([[null, false]]);
+    await browser.land();
+    expect(moves).toEqual([[null, false], [null, true]]);
+    expect(browser.index).toBe(0);
+    expect(browser.settingsEntry(browser.history.state)).toBeNull();
+    // Forward from where they began still opens them again, as for any earlier opening
+    await browser.move(1);
+    expect(moves[2]).toEqual([{ page: null, keyBar: false, depth: 1 }, false]);
+  });
+
+  it("steps over every opening a markerless entry buried, not only the latest", async () => {
+    const browser = await delayedHistory();
+    const moves: Array<[ReturnType<typeof browser.settingsEntry>, boolean]> = [];
+    browser.onSettingsHistory((entry, own) => moves.push([entry, own]));
+    // a first opening, buried by a markerless entry and closed
+    browser.recordSettings(browser.settingsLevels(false, "appearance", false));
+    browser.history.pushState({ route: "first" });
+    browser.history.pushState({ route: "after-first" });
+    await browser.move(-1);
+    browser.recordSettings([]);
+    // a second opening from there, buried the same way and closed
+    browser.recordSettings(browser.settingsLevels(false, "appearance", false));
+    browser.history.pushState({ route: "second" });
+    browser.history.pushState({ route: "after-second" });
+    await browser.move(-1);
+    browser.recordSettings([]);
+    expect(browser.requests).toEqual([]);
+    // Back steps over the newer opening, then the older one: neither shows Settings again
+    await browser.move(-1);
+    await browser.land();
+    await browser.move(-1);
+    await browser.land();
+    expect(browser.index).toBe(0);
+    expect(browser.settingsEntry(browser.history.state)).toBeNull();
+    expect(browser.requests).toEqual([]);
+    expect(moves.at(-1)).toEqual([null, true]);
+  });
+
+  it("steps over the entries a foreign pushState buried when Settings closed by itself", async () => {
+    const browser = await delayedHistory();
+    browser.recordSettings(browser.settingsLevels(false, "appearance", false));
+    const moves: boolean[] = [];
+    browser.onSettingsHistory((_entry, own) => moves.push(own));
+    browser.history.pushState({ route: "other" });
+    // the X: nothing of Settings is under the cursor, so nothing is stepped back over now
+    browser.recordSettings([]);
+    expect(browser.requests).toEqual([]);
+    await browser.move(-1);
+    await browser.land();
+    expect(moves).toEqual([true]);
+    expect(browser.index).toBe(0);
+  });
+
+  it("keeps a preview opened over Settings on a reload, and steps Back over the Settings under it", async () => {
+    // what a link to a file and Settings leaves: the entry it opened from, Settings, the preview over it
+    const base = { "herdr-web-ui:settings-base": "a" };
+    const settings = { ...base, "herdr-web-ui:settings": { page: "about", keyBar: false, depth: 1 } };
+    const preview = { ...outsideSettings(settings), "herdr-web-ui:file-preview": { path: "README.md", paneId: null, machineId: "local" } };
+    expect(settingsEntry(preview)).toBeNull();
+    const browser = await delayedHistory([base, settings, preview]);
+    const moves: Array<[ReturnType<typeof browser.settingsEntry>, boolean]> = [];
+    browser.onSettingsHistory((entry, own) => moves.push([entry, own]));
+    // the reload closes Settings without stepping back: the preview's entry stays where it is
+    expect(browser.loadedOnSettingsEntry()).toBe(true);
+    expect(browser.requests).toEqual([]);
+    await browser.move(-1);
+    await browser.land();
+    expect(moves).toEqual([[null, true]]);
+    expect(browser.index).toBe(0);
   });
 
   it("records a deeper reopening after an unanswered close traversal", async () => {

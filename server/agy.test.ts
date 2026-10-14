@@ -25,26 +25,30 @@ it.each(["agy", "agy-native"])("reads %s's held conversation despite an inherite
   const fd = openSync(lock, "r");
   const pane = { pane_id: "account-two", cwd: root, agent: "pi" } as HerdrPane;
   const snapshot = spyOn(herdr, "sessionSnapshot").mockResolvedValue({ panes: [pane] } as SessionSnapshot);
-  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [
+  const info = { pane_id: pane.pane_id, foreground_processes: [
     { pid: process.pid, name, argv: [`/bin/${name}`] },
     { pid: 42, name: "node", argv: ["node", "mcp-server"] },
-  ] } } as never);
+  ] };
+  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: info } as never);
+  const processInfo = spyOn(herdr, "paneProcessInfo").mockResolvedValue(info);
   try {
     const result = await paneConversation(pane.pane_id);
     expect(result.source).toBe("agy-transcript");
     expect(result.turns[0]?.parts).toEqual([{ kind: "text", text: "account two question" }]);
   } finally {
-    rpc.mockRestore(); snapshot.mockRestore(); closeSync(fd); forgetTranscriptState();
+    processInfo.mockRestore(); rpc.mockRestore(); snapshot.mockRestore(); closeSync(fd); forgetTranscriptState();
   }
 });
 
 it.each(["agy", "agy-native"])("rejects active %s without a held conversation instead of reading stale Pi history", async (name) => {
   const pane = { pane_id: "account-two", cwd: root, agent: "pi" } as HerdrPane;
   const snapshot = spyOn(herdr, "sessionSnapshot").mockResolvedValue({ panes: [pane] } as SessionSnapshot);
-  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [{ pid: process.pid, name, argv: [`/bin/${name}`] }] } } as never);
+  const info = { pane_id: pane.pane_id, foreground_processes: [{ pid: process.pid, name, argv: [`/bin/${name}`] }] };
+  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: info } as never);
+  const processInfo = spyOn(herdr, "paneProcessInfo").mockResolvedValue(info);
   try {
     await expect(paneConversation(pane.pane_id)).rejects.toThrow(ConversationUnavailable);
   } finally {
-    rpc.mockRestore(); snapshot.mockRestore(); forgetTranscriptState();
+    processInfo.mockRestore(); rpc.mockRestore(); snapshot.mockRestore(); forgetTranscriptState();
   }
 });

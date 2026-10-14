@@ -13,10 +13,30 @@ const local = { id: "local", name: "QA host", kind: "local", state: "connected",
 const reason = "This PC uses a newer bridge (v99); this app requires v1. Update this app, then reconnect. The remote bridge was left running.";
 const pc: Machine = { ...local, id: "qa-remote", name: "QA remote", kind: "ssh", target: { destination: "qa.invalid" }, state: "error", error: reason, action_required: "bridge_conflict" };
 const requests: SetupRequest[] = [];
+// the roster, and the open event streams told when it changes, as server/machine-api.ts does
+let roster: Machine[] = [local, pc];
+const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+const tell = (event: unknown) => { for (const stream of streams) stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); };
+let removed = 0;
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const path = new URL(request.url).pathname;
   if (path === "/api/health") return Response.json({ ok: true, auth: { authenticated: true, required: false, role: "drive" }, herdr: { version: "0.9.3", protocol: 22 }, web_ui: { revision: null, boot_id: "qa" } });
-  if (path === "/api/machines") return Response.json({ machines: [local, pc] });
+  if (path === "/api/machines") return Response.json({ machines: roster });
+  if (path === "/api/machines/events") {
+    let held: ReadableStreamDefaultController<Uint8Array> | undefined;
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) { held = controller; streams.add(controller); controller.enqueue(new TextEncoder().encode(": open\n\n")); },
+      cancel() { if (held) streams.delete(held); },
+    }), { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
+  }
+  if (path === `/api/machines/${pc.id}` && request.method === "DELETE") {
+    // the server tells the roster without the PC before it answers the request (server/machines.ts remove)
+    roster = [local];
+    tell({ type: "machines", machines: roster });
+    await Bun.sleep(500); // fixed wait: the tab must see the roster before the answer, as on a real server
+    removed += 1;
+    return Response.json({ ok: true });
+  }
   if (path === "/api/session") return Response.json({ snapshot });
   if (path === "/api/machines/settings") return Response.json({ auto_update_bridges: false });
   if (path === "/api/machines/setup" && request.method === "POST") {
@@ -54,6 +74,23 @@ try {
   await page.locator(".update-notice").getByRole("button", { name: "Reconnect", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: `${shots}/conflict-mobile.png` });
+
+  // Removing the PC this tab has selected opens this PC without a word: the header note is for
+  // a link or a selection of a PC removed elsewhere, not for the user's own Remove PC
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(([key, id]) => { for (const storage of [sessionStorage, localStorage]) storage.setItem(key!, JSON.stringify({ machine_id: id, pane_id: null })); }, ["herdr-web-ui:selection", pc.id]);
+  await page.reload();
+  const group = page.locator(`section.machine-group.is-current[aria-label="PC ${pc.name}"]`);
+  await group.waitFor({ timeout: 10_000 });
+  await group.getByRole("button", { name: `Manage ${pc.name}`, exact: true }).click();
+  await group.getByRole("button", { name: "Remove PC", exact: true }).click();
+  await group.getByRole("button", { name: "Confirm remove PC", exact: true }).click();
+  await page.locator(`section.machine-group.is-current[aria-label="PC ${local.name}"]`).waitFor();
+  await page.waitForFunction(() => document.querySelector(`section.machine-group[aria-label="PC QA remote"]`) === null);
+  // the roster without the PC came in while the request was held: a note it raised is still up
+  const deadline = Date.now() + 5_000;
+  while (removed === 0) { if (Date.now() > deadline) throw new Error("Remove PC never sent DELETE"); await Bun.sleep(25); }
+  assert.equal(await page.locator(".context-title-text", { hasText: "That link's PC is not set up here" }).count(), 0, "removing the selected PC here is not a link to a missing PC");
   assert.deepEqual(errors, []);
-  console.log("PASS: a bridge conflict is named as one in the sidebar and under the header, and Reconnect starts a plain setup; screenshots:", shots);
+  console.log("PASS: a bridge conflict is named as one in the sidebar and under the header, and Reconnect starts a plain setup; removing the selected PC opens this one without a note; screenshots:", shots);
 } finally { await browser.close(); server.stop(true); }

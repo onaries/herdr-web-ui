@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { parseClaudeTranscript } from "../server/conversation.ts";
 import { parseCodexTranscript } from "../server/codex.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-skill-browser-"));
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -23,7 +24,7 @@ try {
     { type: "assistant", timestamp: "2026-09-27T00:00:01Z", message: { content: [{ type: "tool_use", id: "one", name: "Skill", input: { skill: "team:review" } }] } },
   ];
   let turns = parseClaudeTranscript(lines(rows));
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

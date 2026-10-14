@@ -1,3 +1,4 @@
+import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -8,8 +9,9 @@ import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientR
 import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
-import { cameThroughProxy, decideAccess, isLoopbackAddress, isServeOwnerRequest } from "./access.ts";
-import { DeviceStore, handleDeviceRequest } from "./devices.ts";
+import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
+import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
+import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
@@ -32,9 +34,11 @@ import { SessionPlans } from "./session-plan.ts";
 import { codexOpenRollout, paneCodexHome } from "./codex.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
+import { launchedAgents } from "./launched-agents.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
-import { fileResponse, locateFile } from "./file-view.ts";
+import { fileResponse, locateFile, crossSiteFileRead } from "./file-view.ts";
+import { repoDiffResponse } from "./repo-diff.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -94,15 +98,18 @@ import { MirrorSession } from "./mirror.ts";
 import { mirrorInput } from "./mirror-input.ts";
 import { PendingInputs, PendingInputError, type PendingIdentity, type PendingRecord } from "./pending-input.ts";
 import { PendingRequestBook } from "./pending-requests.ts";
-import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer } from "./output-window.ts";
+import { interruptCodexSteering } from "./codex-steering.ts";
+import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer, wireBytes } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
 import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
+import { handlePortalRequest, PortalService } from "./portal.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
+import { MAX_LABEL_CHARS } from "../shared/labels.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { bridgeAgentNews, MachineManager } from "./machines.ts";
 import { handleMachineRequest } from "./machine-api.ts";
@@ -110,7 +117,7 @@ import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
 
-const MAX_REPLAY_BYTES = 256 * 1024;
+const MAX_REPLAY_BYTES = 128 * 1024;
 /** How herdr's plugin manifests name the platform this server (and so its herdr) runs on. */
 const PLUGIN_PLATFORM = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
 /** How long POST /api/plugin/action waits for the command herdr started to end before it answers `running`. */
@@ -137,13 +144,14 @@ const ATTACH_RETRY_MAX_MS = 500;
 /** a refused attach says so within milliseconds of its first bytes: those are held this long */
 const ATTACH_HOLD_MS = 100;
 /**
- * What `herdr terminal attach` writes itself before herdr has answered: terminal modes set and
- * reset only (mouse reporting off, the alternate screen on; the last one maybe cut short). The
- * answer can come any time after them, later than the hold on a busy PC, so they say nothing
- * about whether the attach took and do not start the hold. A refusal and a screen both begin
- * with something else.
+ * What `herdr terminal attach` writes itself before herdr has answered, and as the teardown of a
+ * refused one: terminal modes set and reset (mouse reporting off, the alternate screen on, then
+ * off) and the cursor style restored (`ESC [ 0 SP q`), the last one maybe cut short. The answer
+ * can come any time after them, later than the hold on a busy PC, and herdr writes its refusal
+ * apart from the teardown before it, so they say nothing about whether the attach took and do
+ * not start the hold. A refusal and a screen both begin with something else.
  */
-const ATTACH_PREAMBLE_RE = /^(?:\x1b\[\?[\d;]+[hl])*(?:\x1b(?:\[(?:\?[\d;]*)?)?)?$/;
+const ATTACH_PREAMBLE_RE = /^(?:\x1b\[(?:\?[\d;]+[hl]|\d* q))*(?:\x1b(?:\[(?:\?[\d;]*|\d+ ?| )?)?)?$/;
 /** how often a terminal another web bridge holds is tried again, while clients here still want it */
 const ATTACH_HELD_RETRY_MS = 3_000;
 /**
@@ -210,10 +218,7 @@ const RESTORED_CLEAR_GAP_MS = 200;
 const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-hold", "agent-queue", "pending-agent-queue", "secret-input", "input-ready", "take-over", "watch", "conversation-watch"];
-
-/** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
-const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
+const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-hold", "agent-queue", "pending-agent-queue", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping"];
 
 /** the sides herdr's pane.swap and pane.resize take; anything else is refused before the RPC, which would answer invalid_request */
 const isPaneDirection = (value: unknown): value is PaneDirection => value === "left" || value === "right" || value === "up" || value === "down";
@@ -301,6 +306,7 @@ async function agentLaunch(paneId: string, agent: AgentPayload): Promise<{ agent
         }
       }
     }
+    launchedAgents.launched(paneId, kind);
     return { agent_started: true };
   } catch (error) {
     return {
@@ -363,6 +369,7 @@ interface PaneAttachment {
   rows: number;
   /** bounded tail so a client joining late still sees the current screen */
   replay: ReplayBuffer;
+  /** when each client without ACKs (no OutputWindow) became blocked on its transport queue */
   stalled: Map<Client, number>;
   /** another web bridge holds herdr's one attach slot for this terminal: waiting for it to let go */
   held?: boolean;
@@ -427,6 +434,8 @@ export function createServer(
     updates?: UpdateService;
     /** updates herdr itself (server/herdr-update.ts); unset, the app offers no herdr update. Tests pass one that runs a stand-in herdr. */
     herdrUpdate?: HerdrUpdater;
+    /** a public address through Portal (server/portal.ts); unset, the app offers none. Tests pass one that runs a stand-in portal. */
+    portal?: PortalService;
     /** anonymous install and update counts (server/telemetry.ts); unset, the server sends none and answers 404. Only the real entrypoint passes one. */
     telemetry?: Telemetry;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
@@ -434,6 +443,8 @@ export function createServer(
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
     machines?: boolean;
+    /** Read-only saved profiles from the local herdr client; tests supply their own catalog. */
+    herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
     registerBridge?: boolean;
     /** PLUGIN_ACTION_WAIT_MS; a test shortens it to see a run that outlasts the wait */
     pluginActionWaitMs?: number;
@@ -525,6 +536,7 @@ export function createServer(
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
+  const preferences = new PreferenceStore(options.stateDir ?? defaultStateDir());
   const usage = options.usage ?? new UsageService();
   const voice = options.voice ?? new VoiceService({ stateDir: options.stateDir ?? defaultStateDir(), env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (HERDR_WEB_TAILSCALE_OWNER) */
@@ -766,7 +778,7 @@ export function createServer(
     if (attachment !== lease.attachment || attachment.pty !== lease.pty || !owner.data.attached.has(paneId)
       || !attachment.clients.has(owner) || !attachment.ready) throw new HerdrError("input_not_ready", "The pending message's pane connection changed");
   }
-  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean }> {
+  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean; screen: string }> {
     authorizePending(owner, paneId, lease);
     // The same normalized snapshot the client sees includes a known Codex finish that
     // herdr reports as unknown. Nothing is inferred from a bare unknown state.
@@ -798,7 +810,7 @@ export function createServer(
       throw new HerdrError("agent_not_ready", "The agent's current input state is not known");
     }
     authorizePending(owner, paneId, lease);
-    return { pane, identity: current, working: current.agent !== null && (pane.agent_status === "working" || collapsed) };
+    return { pane, identity: current, working: current.agent !== null && (pane.agent_status === "working" || collapsed), screen };
   }
   const pendingFault = (error: unknown) => ({
     code: error instanceof HerdrError || error instanceof PendingInputError ? error.code : "submit_failed",
@@ -818,6 +830,7 @@ export function createServer(
     };
     try {
       const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
+      // fixed wait: let recent terminal typing settle before inspecting OmO's input.
       if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
       authorize();
       if (!(await paneRunsOmo(paneId))) throw new HerdrError("agent_queue_unsupported", "Only an actual OmO pane supports this native queue");
@@ -828,6 +841,7 @@ export function createServer(
         if (error instanceof HerdrError && error.code === "cancelled") { wrote = false; authorize(); }
         throw error;
       });
+      // fixed wait: OmO must receive the bracketed paste before the follow-up key.
       await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
       if (!(await paneRunsOmo(paneId))) throw new HerdrError("agent_queue_unsupported", "OmO is no longer in front of this pane");
       await pendingContext(owner, paneId, lease, context.identity, true);
@@ -885,7 +899,7 @@ export function createServer(
   }
 
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
-    automatic: boolean, arrivedAt: number, committing: (working: boolean) => void = () => {}): Promise<SubmitReply> {
+    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false): Promise<SubmitReply> {
     let wrote = false;
     // what the checks below read is older than a status event that arrives while they run
     let mark = pending.mark(paneId);
@@ -925,6 +939,19 @@ export function createServer(
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
       await paneSendKeys(paneId, [steering && beforeEnter.identity.agent === "claude" ? "ctrl+enter" : "Enter"], undefined, allowed);
+      // the status the panel was read under; a status event since (a finish, an approval) stales the Escape
+      let statusAtRead = pending.current(paneId);
+      await interruptCodexSteering(interruptWorkingCodex, closeMention(text), { agent: beforeEnter.identity.agent, working: beforeEnter.working, screen: beforeEnter.screen }, {
+        read: async () => {
+          const current = await pendingContext(owner, paneId, lease, identity, true);
+          statusAtRead = pending.current(paneId);
+          return { agent: current.identity.agent, working: current.working, screen: current.screen };
+        },
+        restarting: () => committing(true, true),
+        // herdr has no compare-and-send: the screen can change between this read and the write, so the
+        // write is refused when the lease, the deadline or the pane's status moved meanwhile
+        escape: (fresh) => paneSendKeys(paneId, ["Escape"], undefined, () => allowed() && fresh() && pending.current(paneId) === statusAtRead),
+      });
       noteSubmitted(paneId, text);
       return { ok: true };
     } catch (error) {
@@ -933,9 +960,9 @@ export function createServer(
       return { ok: false, ...fault };
     }
   }
-  async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number): Promise<SubmitReply> {
+  async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number, interruptWorkingCodex = false): Promise<SubmitReply> {
     const reply = await dispatchPendingText(item.owner, item.paneId, item.message.text, item.lease, item.identity,
-      automatic, arrivedAt, (working) => pending.committing(item, working));
+      automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex);
     pending.settle(item, reply.ok ? undefined : { code: reply.code!, message: reply.message! }, reply.code === "submit_changed",
       automatic && ["pending_wait", "agent_blocked"].includes(reply.code ?? ""));
     return reply;
@@ -984,7 +1011,15 @@ export function createServer(
     for (const client of attachment.clients) {
       const window = client.data.output.get(paneId);
       const buffered = client.getBufferedAmount();
-      const blocked = window?.blocked || buffered >= OUTPUT_HIGH_BYTES;
+      if (window) {
+        // an ACK client: measured by its ACK progress, and a joiner draining its replay never pauses the pty
+        const verdict = window.check(buffered);
+        if (verdict === "stop") stopSlowClient(client);
+        else if (verdict === "pause") paused = true;
+        continue;
+      }
+      // a client without ACKs has only its transport queue to go by
+      const blocked = buffered >= OUTPUT_HIGH_BYTES;
       if (!blocked) {
         attachment.stalled.delete(client);
         continue;
@@ -1011,7 +1046,7 @@ export function createServer(
     }
     send(client, {
       type: "pty-data", pane_id: paneId, data,
-      ...(window ? { flow: { stream_id: window.id, offset: window.write(bytes) } } : {}),
+      ...(window ? { flow: { stream_id: window.id, offset: window.write(bytes, wireBytes(data)) } } : {}),
     });
   }
   const push = createPushService({
@@ -1066,6 +1101,8 @@ export function createServer(
     // not waited for: finding a transcript costs process calls, and a snapshot must not wait on them.
     // The plans come after: a Claude pane's transcript is the one the subagent tracker found
     void claudeAgents.refresh(named.panes).catch(() => undefined).then(() => plans.refresh(named.panes)).catch(() => undefined);
+    // an agent this server started has had no turn yet: its start screen is no work (launched-agents.ts)
+    for (const pane of named.panes) pane.agent_status = launchedAgents.settle(pane.pane_id, pane.agent_status);
     return named;
   };
   const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId);
@@ -1087,6 +1124,7 @@ export function createServer(
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot);
+  if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
   const bridgeToken = randomBytes(32).toString("hex");
 
   function broadcast(paneId: string, message: ServerMessage): void {
@@ -1260,7 +1298,7 @@ export function createServer(
         attachment.pty = start();
       } catch (error) {
         const message = spawnFailure(paneId, error);
-        broadcast(paneId, { type: "error", code: "command_failed", message });
+        broadcast(paneId, { type: "error", code: error instanceof HerdrError ? error.code : "command_failed", message, pane_id: paneId });
         broadcast(paneId, { type: "pty-exit", pane_id: paneId, code: null });
         closeAttachment(paneId);
       }
@@ -1414,7 +1452,7 @@ export function createServer(
               attachment.pty = start();
             } catch (error) {
               const message = spawnFailure(paneId, error);
-              broadcast(paneId, { type: "error", code: "command_failed", message });
+              broadcast(paneId, { type: "error", code: error instanceof HerdrError ? error.code : "command_failed", message, pane_id: paneId });
               finish();
             }
           }, (error: unknown) => {
@@ -1426,8 +1464,14 @@ export function createServer(
         };
         relookup();
       };
+      const command = process.env["HERDR_WEB_HERDR_BIN"] || "herdr";
+      // node-pty reports a command it cannot exec only as a silent exit 1, which reads as an
+      // ended attach (#925): look it up on the PATH and from the home directory the sidecar uses.
+      if (!Bun.which(command, { PATH: process.env["PATH"] ?? "", cwd: process.env["HOME"] ?? "/" })) {
+        throw new HerdrError("attach_failed", `herdr could not be started: ${command} is not an executable on the server's PATH (set HERDR_WEB_HERDR_BIN to herdr's full path)`);
+      }
       const session = new PtySession({
-        command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
+        command,
         // --takeover goes after the id: before it, herdr reads the id as an unknown option
         args: ["terminal", "attach", attachedTerminal, ...(takingOver ? ["--takeover"] : [])],
         // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
@@ -1560,7 +1604,8 @@ export function createServer(
   const bridgeAgents = machines ? null : bridgeAgentNews(() => broadcastAll({ type: "session-changed" }));
 
   const collector = startStatusCollector({
-    onStatus: (paneId, raw, agent, replay) => {
+    onStatus: (paneId, read, agent, replay) => {
+      const raw = launchedAgents.settle(paneId, read);
       // read back from a snapshot around a gap between subscriptions. An OmO pane's status there
       // is OmO's own or herdr's by turns (server/omo-status.ts), and a difference is no change
       if (replay && (omo.runs(paneId) || !completions.replayed(paneId, raw, replay))) return;
@@ -1648,12 +1693,25 @@ export function createServer(
   waitTimer.unref?.();
   plans.start();
 
+  type PortalStartup = { ok: true } | { ok: false; error: unknown };
+  let settlePortalStartup!: (result: PortalStartup) => void;
+  let portalStartupResult: PortalStartup | undefined;
+  const portalStartup = new Promise<PortalStartup>((resolve) => {
+    settlePortalStartup = (result) => {
+      if (portalStartupResult !== undefined) return;
+      portalStartupResult = result;
+      resolve(result);
+    };
+  });
+
   const envPort = process.env["PORT"];
   const server = Bun.serve<SocketData>({
     port: options.port ?? (envPort ? Number(envPort) : DEFAULT_PORT),
     hostname,
 
     async fetch(request, bunServer) {
+      const startup = portalStartupResult ?? await portalStartup;
+      if (!startup.ok) return compressResponse(request, errorResponse(startup.error));
       // the route's answer, gzipped for a browser that takes it (server/compress.ts)
       return compressResponse(request, await (async (): Promise<Response | undefined> => {
       const url = new URL(request.url);
@@ -1674,7 +1732,13 @@ export function createServer(
       // the connection server's own bridge token does not
       if (presented === "wrong" && !bridgeAuthorized) recordPresentedTokenFailure(client);
       const tokenMatched = presented === "match";
-      const pairedDevice = devices.match(parseCookies(request.headers.get("cookie")).get(DEVICE_COOKIE));
+      let pairedDevice: DeviceMatch | null;
+      try {
+        pairedDevice = devices.match(parseCookies(request.headers.get("cookie")).get(DEVICE_COOKIE));
+      } catch (error) {
+        // First-cookie confirmation is an authorization write, not best-effort telemetry.
+        return errorResponse(error);
+      }
       const requestShape = { loopback, forwarded, funnel, tailscaleLogin, serveOnly };
       const identity = await identityOf(token === "" && pairedDevice === null && isServeOwnerRequest(requestShape) && (pathname === "/ws" || pathname.startsWith("/api/")), requestHost);
       const access = decideAccess({
@@ -1714,7 +1778,9 @@ export function createServer(
       // protection: a watch device's subscription is delivered every status change anyway.
       // /api/push/test stays with a session that can drive only because it is a mutation.
       const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe";
-      if (readOnly && (fileRead || directoryListing || mutating && !ownPreferences)) {
+      // a repository's changes are file contents too: the patch of a credential file is that file
+      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname);
+      if (readOnly && (fileRead || directoryListing || repositoryDiff || mutating && !ownPreferences)) {
         return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
       }
 
@@ -1734,7 +1800,7 @@ export function createServer(
           // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC
           bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : pathname.endsWith("/worktree/create") ? 180 : 80);
           const deviceId = access.level === "full" ? access.device?.id : undefined;
-          const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined);
+          const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined, preferences);
           response.headers.set("cache-control", "no-store");
           return response;
         }
@@ -1777,7 +1843,12 @@ export function createServer(
         return handleUpdateRequest(request, pathname, options.updates);
       }
       if (pathname === "/api/herdr/update") return handleHerdrUpdateRequest(request, options.herdrUpdate);
+      if (pathname === "/api/portal" || pathname.startsWith("/api/portal/")) {
+        return handlePortalRequest(request, pathname, options.portal, { port: bunServer.port ?? DEFAULT_PORT, tokenSet: token !== "", serveOnly });
+      }
       if (pathname === "/api/telemetry") return handleTelemetryRequest(request, options.telemetry);
+      // what every browser of this server shares; a watching device reads it and cannot change it (above)
+      if (pathname === "/api/preferences") return handlePreferencesRequest(request, preferences);
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
@@ -1800,12 +1871,17 @@ export function createServer(
         const auth: HealthAuth = access.level === "full"
           ? { required: false, authenticated: true, via: access.via, role: access.role }
           : { required: true, authenticated, ...(authenticated ? {} : { reason: access.reason }) };
+        // this server is open to the network with no token and nothing paired, told to a client
+        // that got in and to nobody else: naming it to an anonymous caller would be
+        // reconnaissance, not help. Nothing here changes who is let in (server/access.ts).
+        const lan_exposure = access.level === "full" && lanExposed({ hostname, tokenConfigured: token !== "", gated: devices.gated })
+          ? { host: hostname } : undefined;
         if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL });
         try {
           const info = await ping();
           // a forced answer (tests) and a runtime without the PTY sidecar are told the way a Windows herdr's own would be
           const herdr = attachableIdentity(info, sidecar);
-          return jsonResponse({ ok: true, herdr, auth,
+          return jsonResponse({ ok: true, herdr, auth, ...(lan_exposure ? { lan_exposure } : {}),
             web_ui: { boot_id: process.env["HERDR_WEB_BOOT_ID"] ?? null, revision: process.env["HERDR_WEB_REVISION"] ?? null } });
         } catch (error) {
           return errorResponse(error);
@@ -1834,7 +1910,8 @@ export function createServer(
           // not herdr kinds: offered where this server can run them (see shell-agent.ts)
           for (const kind of Object.keys(SHELL_AGENTS)) if (shellAgentExecutable(kind)) kinds.add(kind);
           const agents: AgentKind[] = [...kinds]
-            .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind }))
+            // an agent's command is its kind; the pane's shell may carry another PATH, as for omo and gjc above
+            .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
             .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
           return jsonResponse({ agents });
         } catch (error) {
@@ -1854,6 +1931,7 @@ export function createServer(
 
       if (pathname === "/api/fs/stat" || pathname === "/api/fs/file") {
         if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
+        if (crossSiteFileRead(request)) return jsonResponse({ error: { code: "cross_site", message: "A file is read from this app or opened in a tab, not loaded by another page" } }, 403);
         const paneId = url.searchParams.get("pane_id");
         let cwd: string | null = null;
         if (paneId) {
@@ -1863,7 +1941,7 @@ export function createServer(
         if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
         // several files end in that name: the viewer lists them to choose from
         if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
-        return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1");
+        return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1", url.searchParams.get("render") === "1");
       }
 
       if (pathname === "/api/workspace/directories") {
@@ -1879,6 +1957,30 @@ export function createServer(
         }
         const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1", url.searchParams.get("files") === "1", base);
         return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
+      }
+
+      if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        // file contents, like /api/fs/file: this app reads them, another site's page does not
+        if (request.headers.get("sec-fetch-site") === "cross-site") return jsonResponse({ error: { code: "cross_site", message: "A repository's changes are read from this app" } }, 403);
+        const paneId = url.searchParams.get("pane_id");
+        const directory = (url.searchParams.get("directory") ?? "").trim();
+        if (!paneId && directory === "") return badRequest("missing_directory", "pane_id or directory query parameter is required");
+        let base: string | undefined;
+        if (paneId) {
+          try { base = (await paneContext(paneId)).cwd; } catch (error) {
+            // a named folder is still read; the pane's own folder is gone with the pane
+            if (directory === "") return errorResponse(error);
+          }
+        }
+        let cwd = base;
+        if (directory !== "") {
+          const relative = directory !== "~" && !directory.startsWith("~/") && !isAbsolute(directory);
+          if (relative && base === undefined) return badRequest("invalid_cwd", "a relative directory needs the pane it belongs to");
+          cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
+        }
+        if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
+        return repoDiffResponse(pathname.endsWith("/files") ? "files" : "file", cwd, url.searchParams);
       }
 
       // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and
@@ -1905,6 +2007,13 @@ export function createServer(
         const cwd = payload.cwd === undefined ? undefined : expandedDirectory(payload.cwd);
         if (payload.cwd !== undefined && cwd === null) return badRequest("invalid_cwd", "cwd must be an existing directory");
         if (payload.label !== undefined && typeof payload.label !== "string") return badRequest("missing_label", "label must be a string");
+        if (typeof payload.label === "string") {
+          // a blank name is no name: herdr names the workspace after its folder, the tab by its number
+          const label = payload.label.trim();
+          if (label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
+          if (label === "") delete payload.label;
+          else payload.label = label;
+        }
         const fault = agentFault(payload.agent);
         if (fault !== null) return badRequest("invalid_agent", fault);
         // agent.start can legitimately take a minute; Bun's default idle timeout is shorter.
@@ -1958,6 +2067,8 @@ export function createServer(
         bunServer.timeout(request, 75);
         try {
           const removed = await worktreeRemove(payload.workspace_id, payload.force === true);
+          // herdr closed the worktree's workspace: tell clients now, as the workspace close route does
+          broadcastAll({ type: "session-changed" });
           return jsonResponse({ ok: true, path: removed.path, forced: removed.forced });
         } catch (error) {
           return errorResponse(error);
@@ -1989,6 +2100,7 @@ export function createServer(
         } catch (response) {
           return response as Response;
         }
+        if (label !== undefined && label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
         // a checkout path is taken as git names it, spaces and all
         let path: string | undefined;
         if (payload.path !== undefined && payload.path !== null) {
@@ -2029,6 +2141,11 @@ export function createServer(
             ...(agent ? await agentLaunch(opened.root_pane.pane_id, agent) : {}),
           });
         } catch (error) {
+          // git's own words for a branch that has no commit yet (a folder just `git init`ed): with no
+          // base named there is nothing to check out from, which the dialog says in its own words
+          if (creating && base === undefined && error instanceof HerdrError && error.code === "worktree_create_failed" && /invalid reference: HEAD\b/u.test(error.message)) {
+            return conflictResponse("repository_without_commits", "the repository has no commits yet");
+          }
           return errorResponse(error);
         }
       }
@@ -2048,8 +2165,12 @@ export function createServer(
         if (pathname === "/api/workspace/close" && payload.close_group !== undefined && typeof payload.close_group !== "boolean") {
           return badRequest("invalid_close_group", "close_group must be a boolean");
         }
-        if (pathname === "/api/workspace/rename" && typeof payload.label !== "string") {
-          return badRequest("missing_label", "label is required");
+        if (pathname === "/api/workspace/rename") {
+          // herdr would keep an empty label, and the sidebar row would show no name
+          const label = typeof payload.label === "string" ? payload.label.trim() : "";
+          if (label === "") return badRequest("missing_label", "label is required");
+          if (label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
+          payload.label = label;
         }
         if (pathname === "/api/workspace/move" && (typeof payload.insert_index !== "number" || !Number.isInteger(payload.insert_index) || payload.insert_index < 0)) {
           return badRequest("invalid_index", "insert_index must be a non-negative integer");
@@ -2058,6 +2179,9 @@ export function createServer(
           if (pathname === "/api/workspace/rename") await workspaceRename(payload.workspace_id, payload.label as string);
           else if (pathname === "/api/workspace/move") await workspaceMove(payload.workspace_id, payload.insert_index as number);
           else await workspaceClose(payload.workspace_id, undefined, payload.close_group === true);
+          // a closed workspace's panes send no exit: without this, clients learn of it only after
+          // the collector's structure debounce, and the closed workspace stays on screen meanwhile
+          if (pathname === "/api/workspace/close") broadcastAll({ type: "session-changed" });
           return jsonResponse({ ok: true });
         } catch (error) {
           return errorResponse(error);
@@ -2088,6 +2212,7 @@ export function createServer(
             // herdr would keep an empty label as the tab's name, and its own tab row would show nothing
             const label = typeof payload.label === "string" ? payload.label.trim() : "";
             if (label === "") return badRequest("missing_label", "label is required");
+            if (label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
             await tabRename(payload.tab_id, label);
             // no pane event follows a rename, so the clients are told here
             broadcastAll({ type: "session-changed" });
@@ -2671,6 +2796,15 @@ export function createServer(
         }
         try {
           switch (message.type) {
+            // liveness only: any role, no herdr call, nothing to wait behind
+            case "ping": {
+              if (!Number.isSafeInteger(message.id)) {
+                send(client, { type: "error", code: "invalid_ping", message: "id must be an integer" });
+                break;
+              }
+              send(client, { type: "pong", id: message.id });
+              break;
+            }
             case "watch": {
               const geometry = validGeometry(message.cols, message.rows);
               if (!geometry) {
@@ -2753,7 +2887,10 @@ export function createServer(
               // hand the newcomer the current screen it would otherwise have missed
               // (a mirror keeps its latest screen whole; a pty keeps a bounded tail of its stream)
               const replay = attachment.mirror ? attachment.mirror.current ?? "" : attachment.replay.text();
-              if (!alreadyAttached && replay) sendOutput(client, message.pane_id, replay);
+              if (!alreadyAttached && replay) {
+                client.data.output.get(message.pane_id)?.join(replay, client.getBufferedAmount());
+                sendOutput(client, message.pane_id, replay);
+              }
               // a pane waiting for another web bridge to let go says so to each newcomer, too
               if (!alreadyAttached && attachment.held) send(client, { type: "error", code: "attach_held", message: ATTACH_HELD_MESSAGE, pane_id: message.pane_id });
               reconcileOutput(message.pane_id);
@@ -3200,7 +3337,7 @@ export function createServer(
                   await pendingContext(client, item.paneId, lease!, item.identity);
                   if (!pending.claim(item, false)) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
                   item.lease = lease!;
-                  return dispatchPending(item, false, arrivedAt);
+                  return dispatchPending(item, false, arrivedAt, true);
                 });
                 result(answer);
                 drainPending(message.pane_id);
@@ -3231,7 +3368,10 @@ export function createServer(
           }
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "command_failed";
-          send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
+          // an attach that could not start names its pane: the panes of a PC share this connection, and one
+          // without a pane would end every terminal on it
+          const failed = code === "attach_failed" && message.type === "attach" ? { pane_id: message.pane_id } : {};
+          send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error), ...failed });
         }
       },
 
@@ -3251,6 +3391,21 @@ export function createServer(
     },
   });
 
+  if (options.portal) {
+    let resume: Promise<void>;
+    try {
+      resume = options.portal.resume({ port: server.port ?? DEFAULT_PORT, tokenSet: token !== "", serveOnly });
+    } catch (error) {
+      resume = Promise.reject(error);
+    }
+    void resume.then(
+      () => settlePortalStartup({ ok: true }),
+      (error: unknown) => settlePortalStartup({ ok: false, error }),
+    );
+  } else {
+    settlePortalStartup({ ok: true });
+  }
+
   const registration = options.registerBridge ? registerBridge(server.port ?? 0, bridgeToken) : null;
 
   // ACKs can stop arriving entirely (a suspended tab). Bound the pause even then.
@@ -3267,6 +3422,7 @@ export function createServer(
     alertsSettled: () => push.settled(),
     stop: () => {
       stopped = true;
+      settlePortalStartup({ ok: false, error: new Error("Server stopped before Portal startup cleanup completed") });
       conversations.stop();
       clearInterval(outputTimer);
       collector.stop();
@@ -3275,6 +3431,7 @@ export function createServer(
       clearInterval(waitTimer);
       plans.stop();
       machines?.stop();
+      void options.portal?.shutdown();
       registration?.close();
       for (const client of clients) killWatches(client);
       for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
@@ -3287,7 +3444,8 @@ if (import.meta.main) {
   const updates = connectUpdater();
   const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
-  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, registerBridge: true });
+  const portal = new PortalService({ stateDir: defaultStateDir() });
+  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), portal, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles });
   telemetry.start();
   let stopping = false;
   const shutdown = () => {
@@ -3295,14 +3453,15 @@ if (import.meta.main) {
     stopping = true;
     telemetry.stop();
     instance.stop();
-    // Attach sidecars need ~1.2s to release herdr's exclusive client slot.
-    setTimeout(() => process.exit(0), 2000);
+    // Attach sidecars need ~1.2s to release herdr's exclusive client slot; Portal unregisters from
+    // its relay, and the pipes it logs to must outlive it
+    void Promise.all([Bun.sleep(2000), portal.shutdown()]).then(() => process.exit(0));
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
   if (process.env["HERDR_WEB_MANAGED"] === "1") process.on("disconnect", shutdown);
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
-  if (!LOOPBACK_HOSTNAMES.has(instance.hostname)) {
+  if (!isLoopbackBind(instance.hostname)) {
     if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "") {
       console.error(
         `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,

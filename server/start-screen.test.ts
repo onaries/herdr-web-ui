@@ -1,0 +1,66 @@
+import { describe, expect, it } from "bun:test";
+
+import { readsStartScreen, startScreenMetadata } from "./start-screen.ts";
+
+const CLAUDE = [
+  " ▐▛███▛█   Claude Code v2.1.296",
+  "▝▜██████▀  Haiku 5.5 · Claude Max",
+  " ▝▝   ▝▝   ~/workspace/test-project",
+  "────────────────────────────────────────",
+  "❯ Try \"fix lint errors\"",
+  "────────────────────────────────────────",
+  "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+].join("\n");
+
+const CODEX = [
+  "  >_ OpenAI Codex (v0.162.1)",
+  "     /tmp/test-project",
+  "  permissions: YOLO mode",
+  "  /model - choose what model and reasoning effort to use",
+  "› Ask Codex to do anything",
+  "  GPT-6-Luna medium fast · /tmp/test-project",
+  "  ← for agents · ? for shortcuts",
+].join("\n");
+
+const GJC = [
+  "│                 [ ⬢ Anthropic Opus 5.5 ]                 │ ─────────────── │",
+  "╰──────────────────────────────────────────────────────────┴─────────────────╯",
+  " ⬢ opus-5.5 · ◉ xhigh · 1.5% / ⑂ main / 📁 …/test-project ───── (sub) / v0.17.7",
+  "│ > Type your message... ⌥Q: Queue (busy) · ⇧⇥: Thinking │",
+].join("\n");
+
+describe("startScreenMetadata", () => {
+  it("reads Claude Code's model under its title, as the id its transcript records", () => {
+    expect(startScreenMetadata("claude-transcript", CLAUDE)).toEqual({ model: "claude-haiku-5-5", reasoning_effort: null });
+    expect(startScreenMetadata("claude-transcript", CLAUDE.replace("Haiku 5.5", "Sonnet 5"))).toEqual({ model: "claude-sonnet-5", reasoning_effort: null });
+  });
+
+  it("names no Claude model it cannot give an id for certain", () => {
+    expect(startScreenMetadata("claude-transcript", CLAUDE.replace("Haiku 5.5", "Opus 5.5 (1M context)")).model).toBeNull();
+    expect(startScreenMetadata("claude-transcript", CLAUDE.replace("Haiku 5.5", "Default")).model).toBeNull();
+    // the folder question stands where the title would: nothing says the model yet
+    expect(startScreenMetadata("claude-transcript", "Accessing workspace\nIs this a project you created or one you trust?").model).toBeNull();
+  });
+
+  it("reads Codex's model and effort from the line under its composer", () => {
+    expect(startScreenMetadata("codex-transcript", CODEX)).toEqual({ model: "gpt-6-luna", reasoning_effort: "medium" });
+    expect(startScreenMetadata("codex-transcript", CODEX.replace("GPT-6-Luna medium fast", "GPT-5.6 xhigh"))).toEqual({ model: "gpt-5.6", reasoning_effort: "xhigh" });
+  });
+
+  it("reads nothing of a Codex screen without its header or its status line", () => {
+    expect(startScreenMetadata("codex-transcript", "  GPT-6-Luna medium fast · /tmp/test-project")).toEqual({ model: null, reasoning_effort: null });
+    expect(startScreenMetadata("codex-transcript", "  >_ OpenAI Codex (v0.162.1)\n  Trust this folder?\n› 1. Trust and continue")).toEqual({ model: null, reasoning_effort: null });
+  });
+
+  it("reads gjc's status line, keeping a model it has no id for as gjc wrote it", () => {
+    expect(startScreenMetadata("gjc-transcript", GJC)).toEqual({ model: "claude-opus-5-5", reasoning_effort: "xhigh" });
+    expect(startScreenMetadata("gjc-transcript", GJC.replace("opus-5.5", "kimi-k3"))).toEqual({ model: "kimi-k3", reasoning_effort: "xhigh" });
+  });
+
+  it("reads only the agents whose screen it knows", () => {
+    expect(readsStartScreen("codex-transcript")).toBeTrue();
+    expect(readsStartScreen("opencode-transcript")).toBeFalse();
+    expect(startScreenMetadata("omo-transcript", CODEX)).toEqual({ model: null, reasoning_effort: null });
+    expect(startScreenMetadata("claude-transcript", CODEX)).toEqual({ model: null, reasoning_effort: null });
+  });
+});

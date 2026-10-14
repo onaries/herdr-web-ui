@@ -6,7 +6,7 @@
  */
 import { join } from "node:path";
 
-import { herdrRpc } from "./herdr/client.ts";
+import { paneProcessInfo } from "./herdr/client.ts";
 import { heldTranscript, runsAgent } from "./gjc-runtime.ts";
 import { processEnviron } from "./omo.ts";
 
@@ -36,12 +36,10 @@ export function ompAgentDir(argv: readonly string[], environ: readonly string[] 
 
 /** The transcript the pane's omp process holds open or last pointed its terminal breadcrumb at, or null. */
 export async function ompHeldTranscript(paneId: string, cwd: string, home = process.env["HOME"] ?? ""): Promise<string | null> {
-  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown }[] } }>(
-    "pane.process_info", { pane_id: paneId },
-  ).catch(() => null);
+  const info = await paneProcessInfo(paneId).catch(() => null);
   let agentDir: string | null = null;
   const pids: number[] = [];
-  for (const process of info?.process_info?.foreground_processes ?? []) {
+  for (const process of info?.foreground_processes ?? []) {
     const argv = Array.isArray(process.argv) ? process.argv.map(String) : [];
     if (typeof process.pid !== "number" || !isOmpProcess(argv)) continue;
     const dir = ompAgentDir(argv, processEnviron(process.pid), home);

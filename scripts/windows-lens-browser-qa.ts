@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-winlens-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
@@ -76,7 +77,7 @@ try {
   const origin = `http://127.0.0.1:${server.port}`;
   const health = await (await fetch(`${origin}/api/health`)).json() as { herdr: { terminal_attach?: boolean; terminal_mirror?: boolean } };
   assert.deepEqual([health.herdr.terminal_attach, health.herdr.terminal_mirror], [false, true]);
-  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   const errors: string[] = [];

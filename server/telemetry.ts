@@ -2,13 +2,15 @@
  * Anonymous install and update counts (shared/telemetry.ts). One event when an install first
  * runs, one when it runs a new version; nothing in between. No event goes out before the app
  * has shown its notice once, while the switch is off, or where the environment says not to.
+ * Events include the latest browser's schema-validated settings snapshot; free-form strings and
+ * account identifiers are summarized or omitted by the browser's projection.
  * Only the real entrypoint (index.ts) makes one of these, so tests and a remote PC's bridge
  * send nothing.
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { NOTICE_VERSION, reportedSettings, type InstallMethod, type ReportedSetting, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
+import { NOTICE_VERSION, telemetrySettings, type InstallMethod, type TelemetryChange, type TelemetryEvent, type TelemetrySettings, type TelemetryStatus } from "../shared/telemetry.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { updateRequestAllowed } from "./update-api.ts";
 
@@ -19,6 +21,7 @@ const SEND_TIMEOUT_MS = 10_000;
 const START_DELAY_MS = 15_000;
 /** after the notice was shown, time to read it and press Turn off before the first event goes */
 export const NOTICE_GRACE_MS = 10 * 60_000;
+const TELEMETRY_CHANGE_KEYS = new Set(["enabled", "notice_seen", "notice_version", "settings"]);
 
 interface Saved {
   install_id: string;
@@ -28,8 +31,8 @@ interface Saved {
   notice_version: number;
   /** the version the last delivered event was for; null before the first one */
   reported_version: string | null;
-  /** what a browser last told of its appearance settings; null before one has */
-  changed_settings: ReportedSetting[] | null;
+  /** the last browser's complete, allowlisted settings snapshot; null before one has */
+  settings: TelemetrySettings | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -47,6 +50,47 @@ export function installMethod(env: Env): InstallMethod {
   return env["HERDR_WEB_MANAGED"] === "1" ? "managed" : "source";
 }
 
+function telemetryChange(value: unknown): TelemetryChange | null {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== "string" || !TELEMETRY_CHANGE_KEYS.has(key))) return null;
+
+    const clean: TelemetryChange = {};
+    for (const key of keys as string[]) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return null;
+      switch (key) {
+        case "enabled":
+          if (typeof descriptor.value !== "boolean") return null;
+          clean.enabled = descriptor.value;
+          break;
+        case "notice_seen":
+          if (descriptor.value !== true) return null;
+          clean.notice_seen = true;
+          break;
+        case "notice_version":
+          if (descriptor.value !== NOTICE_VERSION) return null;
+          clean.notice_version = NOTICE_VERSION;
+          break;
+        case "settings": {
+          const settings = telemetrySettings(descriptor.value);
+          if (!settings) return null;
+          clean.settings = settings;
+          break;
+        }
+      }
+    }
+    if (clean.notice_seen === true && clean.notice_version !== NOTICE_VERSION) return null;
+    return clean;
+  } catch {
+    return null;
+  }
+}
+
 function readSaved(file: string): Saved | null {
   try {
     const value: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -58,7 +102,7 @@ function readSaved(file: string): Saved | null {
       notice_seen_at: value["notice_version"] === NOTICE_VERSION && typeof value["notice_seen_at"] === "string" ? value["notice_seen_at"] : null,
       notice_version: NOTICE_VERSION,
       reported_version: typeof value["reported_version"] === "string" ? value["reported_version"] : null,
-      changed_settings: reportedSettings(value["changed_settings"]),
+      settings: telemetrySettings(value["settings"]),
     };
   } catch { return null; }
 }
@@ -88,7 +132,7 @@ export class Telemetry {
   }) {
     this.file = join(options.stateDir, FILE);
     const saved = readSaved(this.file);
-    this.saved = saved ?? { install_id: randomUUID(), enabled: true, notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, changed_settings: null };
+    this.saved = saved ?? { install_id: randomUUID(), enabled: true, notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, settings: null };
     if (!saved) {
       try { this.persist(); } catch (error) {
         // the app still starts; telemetry just stays silent
@@ -137,7 +181,7 @@ export class Telemetry {
       os: this.options.platform ?? process.platform,
       arch: this.options.arch ?? process.arch,
       install_method: installMethod(this.options.env),
-      changed_settings: this.saved.changed_settings,
+      settings: this.saved.settings === null ? null : telemetrySettings(this.saved.settings),
     };
   }
 
@@ -151,15 +195,17 @@ export class Telemetry {
     };
   }
 
-  change(patch: { enabled?: boolean; notice_seen?: true; changed_settings?: ReportedSetting[] }): TelemetryStatus {
+  change(patch: TelemetryChange): TelemetryStatus {
+    const clean = telemetryChange(patch);
+    if (!clean) throw new TypeError("Invalid telemetry change");
     this.refresh();
-    if (patch.enabled !== undefined) this.saved.enabled = patch.enabled;
-    // kept for the next event; telling it sends nothing by itself
-    if (patch.changed_settings !== undefined) this.saved.changed_settings = patch.changed_settings;
-    if (patch.notice_seen && this.saved.notice_seen_at === null) this.saved.notice_seen_at = new Date(this.now()).toISOString();
+    if (clean.enabled !== undefined) this.saved.enabled = clean.enabled;
+    // kept for the next install/update event; telling it sends nothing by itself
+    if (clean.settings !== undefined) this.saved.settings = clean.settings;
+    if (clean.notice_seen && this.saved.notice_seen_at === null) this.saved.notice_seen_at = new Date(this.now()).toISOString();
     this.persist();
     // turned off while an event is on its way: stop it rather than let it land
-    if (patch.enabled === false) this.abort?.abort();
+    if (clean.enabled === false) this.abort?.abort();
     void this.report();
     return this.status();
   }
@@ -211,11 +257,8 @@ export async function handleTelemetryRequest(request: Request, telemetry?: Telem
   let body: unknown;
   try { body = await request.json(); } catch { return badRequest("invalid_json", "The body is not JSON"); }
   if (!isJsonObject(body)) return badRequest("invalid_body", "Send an object");
-  const { enabled, notice_seen } = body;
-  const changed = body["changed_settings"] === undefined ? undefined : reportedSettings(body["changed_settings"]);
-  if (changed === null) return badRequest("invalid_body", "changed_settings is a list of reported setting names");
-  if (enabled !== undefined && typeof enabled !== "boolean") return badRequest("invalid_body", "enabled is a boolean");
-  if (notice_seen !== undefined && notice_seen !== true) return badRequest("invalid_body", "notice_seen can only be true");
-  try { return reply(telemetry.change({ ...(enabled !== undefined ? { enabled } : {}), ...(notice_seen ? { notice_seen } : {}), ...(changed !== undefined ? { changed_settings: changed } : {}) })); }
+  const change = telemetryChange(body);
+  if (!change) return badRequest("invalid_body", "Send enabled, settings, or the current notice acknowledgement");
+  try { return reply(telemetry.change(change)); }
   catch (error) { return errorResponse(error); }
 }

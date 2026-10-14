@@ -63,6 +63,25 @@ function isObjectOf(kind: ToolVerbKind, input: string, object: string): boolean 
   });
 }
 
+/** The input fields an agent says a call's purpose in: OmO's eval, Claude's Bash and subagents, omp. */
+const NARRATION_KEYS = ["summary", "description", "intent"] as const;
+
+/**
+ * Whether a row's summary is the agent's own sentence about the call ("Run the unit tests")
+ * rather than its command or path. Such a row says the sentence alone: the tool id in front of
+ * it ("eval Run the unit tests") tells the reader nothing, and stays in the title and the detail.
+ */
+export function isToolNarration(part: { name: string; input: string }, summary: string): boolean {
+  if (summary.trim().length === 0 || summary === part.name) return false;
+  let args: unknown;
+  try { args = JSON.parse(part.input); } catch { return false; }
+  if (typeof args !== "object" || args === null) return false;
+  return NARRATION_KEYS.some((key) => {
+    const value = (args as Record<string, unknown>)[key];
+    return typeof value === "string" && value.trim().slice(0, SUMMARY_LENGTH) === summary;
+  });
+}
+
 /**
  * The English verb (an i18n key) a row shows in place of the tool id, or null when the id stays:
  * an unknown tool, a call with no object to follow the verb, or a summary that is not the call's

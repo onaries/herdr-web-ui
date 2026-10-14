@@ -1,0 +1,146 @@
+/* Notices over the input card (ComposerNotices.tsx): what the terminal lens floats top-right
+   (PaneTerminal.css) stands here under the chat lens, as rows of the composer's in the held
+   messages' anatomy (Composer.css): one hairline above the group, a row per notice, every line of
+   text --space-3 in, no box. The plain notice is the top row and the activity stands on the card
+   (lib/composerNotices.ts). The column's width is the composer's rule (Composer.css); the resize
+   grip's hit area rises above the box, so the group stops short of it and a row's buttons are whole */
+.composer-notices {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: max(var(--space-2), var(--composer-grip-h));
+  padding-top: var(--space-1);
+  border-top: var(--hairline) solid var(--border);
+}
+
+.composer-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--control-h);
+  padding-left: var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+
+.composer-notice + .composer-notice {
+  border-top: var(--hairline) solid var(--border);
+}
+
+/* a warning (another app holds the pane, the output stream failed): the terminal pill's colour */
+.composer-notice.is-warning {
+  color: var(--status-working);
+}
+
+.composer-notice-mark {
+  display: inline-flex;
+  flex: none;
+}
+
+.composer-notice-mark svg {
+  width: 1em;
+  height: 1em;
+}
+
+.composer-notice-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* held input: its start in mono, cut as the terminal pill cuts it */
+.composer-notice-text code {
+  display: inline-block;
+  max-width: 32ch;
+  overflow: hidden;
+  vertical-align: bottom;
+  font-family: var(--font-mono);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-notice-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+/* a notice's own way on (Open here, Reconnect, Send) in the held rows' button; Discard is the quiet one */
+.composer-notice-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.composer-notice-action.is-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.composer-notice-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.composer-notice-dismiss {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.composer-notice-dismiss svg {
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+
+@media (hover: hover) {
+  .composer-notice-action:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .composer-notice-action.is-quiet:hover,
+  .composer-notice-dismiss:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.composer-notice-action:focus-visible,
+.composer-notice-dismiss:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+@media (pointer: coarse) {
+  .composer-notice-action {
+    min-height: var(--touch-target);
+  }
+
+  .composer-notice-dismiss {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}

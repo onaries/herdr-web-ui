@@ -9,6 +9,7 @@ import { runCommand } from "../server/updater.ts";
 import { workspaceCreate, workspaceClose, sessionSnapshot } from "../server/herdr/client.ts";
 import type { UpdateStatus } from "../shared/update.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const source = resolve(import.meta.dir, "..");
 const temp = mkdtempSync(join(tmpdir(), "herdr-update-browser-"));
@@ -57,7 +58,7 @@ try {
   const workspace = await workspaceCreate({ cwd: temp, label: "herdr-web-ui-test-update-browser" });
   workspaceId = workspace.workspace.workspace_id;
   const paneId = workspace.root_pane.pane_id;
-  browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));

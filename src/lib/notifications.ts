@@ -31,11 +31,11 @@ export async function requestNotificationPermission(): Promise<NotificationState
  * `new Notification()`, and the worker's notificationclick (public/sw.js) selects the
  * pane. The constructor is the fallback for a page without a worker.
  */
-async function show(paneId: string, title: string, body: string, onClick?: () => void, machineId = "local"): Promise<void> {
+async function show(paneId: string, title: string, body: string, onClick?: () => void, machineId = "local", workspaceId?: string): Promise<void> {
   if (typeof globalThis.Notification === "undefined") return;
   if (globalThis.Notification.permission !== "granted") return;
   if (typeof document !== "undefined" && !document.hidden) return; // visible tab: the UI already shows it
-  const options: NotificationOptions = { body, tag: paneNotificationTag(paneId, machineId), data: { pane_id: paneId, machine_id: machineId }, icon: "/icons/icon-192.png?v=ram1" };
+  const options: NotificationOptions = { body, tag: paneNotificationTag(paneId, machineId), data: { pane_id: paneId, machine_id: machineId, ...(workspaceId ? { workspace_id: workspaceId } : {}) }, icon: "/icons/icon-192.png?v=ram1" };
   try {
     const registration = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
     if (registration?.active) {
@@ -52,10 +52,11 @@ async function show(paneId: string, title: string, body: string, onClick?: () =>
   }
 }
 
-export function showPaneStatusNotification(paneId: string, title: string, status: AgentStatus, onClick?: () => void, machineId = "local"): void {
-  void show(paneId, title, statusNotificationBody(status), onClick, machineId);
+/** `workspaceId`: the pane's workspace, as the server's push names it (server/push.ts), so a tap after the pane ends opens it. */
+export function showPaneStatusNotification(paneId: string, title: string, status: AgentStatus, onClick?: () => void, machineId = "local", workspaceId?: string): void {
+  void show(paneId, title, statusNotificationBody(status), onClick, machineId, workspaceId);
 }
 
-export function showPaneEndedNotification(paneId: string, title: string, onClick?: () => void, machineId = "local"): void {
-  void show(paneId, title, ENDED_NOTIFICATION_BODY, onClick, machineId);
+export function showPaneEndedNotification(paneId: string, title: string, onClick?: () => void, machineId = "local", workspaceId?: string): void {
+  void show(paneId, title, ENDED_NOTIFICATION_BODY, onClick, machineId, workspaceId);
 }

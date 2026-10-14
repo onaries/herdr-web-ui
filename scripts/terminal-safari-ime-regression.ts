@@ -1,6 +1,7 @@
 /** Replay the native Safari 26.6.2 trace from #432, not a claim to automate the OS IME. */
 import assert from "node:assert/strict";
 import type { Browser } from "playwright-core";
+import { chromePath } from "./chrome-path.ts";
 
 /** Replay Safari replacement edits and assert emitted bytes, commit order and pane isolation. */
 export async function checkSafariIme(browser: Browser, origin: string, pane: string, otherPane: string): Promise<void> {
@@ -191,7 +192,7 @@ if (import.meta.main) {
   const owned: string[] = [];
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true });
+    browser = await chromium.launch({ executablePath: chromePath(), headless: true });
     const panes: string[] = [];
     for (let i = 0; i < 2; i++) {
       const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-safari-replay" });

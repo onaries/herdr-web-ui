@@ -4,7 +4,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
-import { changedSettings, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
+import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
+import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
@@ -32,6 +34,16 @@ it("keeps the screen wake lock off until this device explicitly enables it", () 
   expect(sanitizeSettings({ terminalWheelSpeed: 99 }).terminalWheelSpeed).toBe(10);
   expect(sanitizeSettings({ terminalWheelSpeed: 0 }).terminalWheelSpeed).toBe(1);
   expect(sanitizeSettings({ terminalWheelSpeed: "3" }).terminalWheelSpeed).toBe(1);
+});
+
+it("takes twenty files from one paste, pick or drop unless this device chose another whole number from 1 to 50", () => {
+  expect(sanitizeSettings({}).attachLimit).toBe(20);
+  expect(sanitizeSettings({ attachLimit: 4 }).attachLimit).toBe(4);
+  expect(sanitizeSettings({ attachLimit: 7.4 }).attachLimit).toBe(7);
+  expect(sanitizeSettings({ attachLimit: 500 }).attachLimit).toBe(50);
+  expect(sanitizeSettings({ attachLimit: 0 }).attachLimit).toBe(1);
+  expect(sanitizeSettings({ attachLimit: "8" }).attachLimit).toBe(20);
+  expect(SETTING_SCOPE.attachLimit).toBe("device");
 });
 
 it("keeps the terminal cursor at a block that blinks unless a saved shape or blink says otherwise", () => {
@@ -73,11 +85,144 @@ it("shows the Agents list's pin stars only when they were turned on", () => {
   }
 });
 
-it("names the appearance settings changed from their defaults, and no other setting", () => {
-  expect(changedSettings(DEFAULT_SETTINGS)).toEqual([]);
-  expect(changedSettings({ ...DEFAULT_SETTINGS, agentPins: true, theme: "light", agentCards: true })).toEqual(["theme", "agentCards", "agentPins"]);
-  // a setting the user types, or one outside the list, is never named
-  expect(changedSettings({ ...DEFAULT_SETTINGS, terminalFontFamily: "D2Coding", terminalFontSize: 16, quietOpenedDone: true })).toEqual([]);
+it("draws agent logos in their brand colors unless Mono was chosen", () => {
+  expect(DEFAULT_SETTINGS.agentMarks).toBe("color");
+  expect(sanitizeSettings({}).agentMarks).toBe("color");
+  expect(sanitizeSettings({ agentMarks: "mono" }).agentMarks).toBe("mono");
+  for (const agentMarks of [null, "Mono", "off", 1]) {
+    expect(sanitizeSettings({ agentMarks }).agentMarks).toBe("color");
+  }
+});
+
+describe("telemetry settings snapshot", () => {
+  it("reports current enum, boolean and bounded scalar values", () => {
+    const settings = sanitizeSettings({
+      terminalInputMode: "direct",
+      theme: "light",
+      density: "compact",
+      sidebarRows: "one",
+      agentOrder: "activity",
+      agentMarks: "mono",
+      palette: "forest",
+      terminalFontSize: 22,
+      terminalCursorStyle: "underline",
+      terminalCursorBlink: false,
+      terminalWheelSpeed: 10,
+      chatFontSize: 11,
+      chatWidth: "wide",
+      autoSendQueued: false,
+      language: "ko",
+      alertDone: "always",
+      usageCount: "left",
+      usageGlance: "session",
+      defaultView: "chat",
+      voiceInput: "on",
+      voiceLanguage: "ko-KR",
+      wrapCode: true,
+      markdownWidth: "full",
+    });
+    const snapshot = telemetrySettingsSnapshot(settings);
+
+    expect(NOTICE_VERSION).toBe(3);
+    expect(snapshot).toMatchObject({
+      terminalInputMode: "direct",
+      theme: "light",
+      density: "compact",
+      sidebarRows: "one",
+      agentOrder: "activity",
+      agentMarks: "mono",
+      palette: "forest",
+      terminalFontSize: 22,
+      terminalCursorStyle: "underline",
+      terminalCursorBlink: false,
+      terminalWheelSpeed: 10,
+      chatFontSize: 11,
+      chatWidth: "wide",
+      autoSendQueued: false,
+      language: "ko",
+      alertDone: "always",
+      usageCount: "left",
+      usageGlance: "session",
+      defaultView: "chat",
+      voiceInput: "on",
+      voiceLanguage: "ko-KR",
+      wrapCode: true,
+      markdownWidth: "full",
+    });
+    expect(telemetrySettings(snapshot)).toEqual(snapshot);
+    expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toMatchObject({
+      terminalFontCustom: false,
+      chatFontCustom: false,
+      shortcutsCustom: false,
+      keyBarCustom: false,
+      quickRepliesCustom: false,
+      quickReplyCount: DEFAULT_SETTINGS.quickReplies.length,
+      usageHiddenCount: 0,
+    });
+  });
+
+  it("summarizes custom text and account-key settings without sending their contents", () => {
+    const settings = sanitizeSettings({
+      terminalFontFamily: "private-terminal-font",
+      chatFontFamily: "private-chat-font",
+      shortcutOverrides: { palette: "x" },
+      keyBarItems: [{ type: "key", key: "x" }],
+      keyBarExtras: ["alt", "shift-tab"],
+      quickReplies: ["private quick reply"],
+      usageOrder: ["private-order-account-id"],
+      usageHidden: ["private-hidden-account-id"],
+    });
+    const snapshot = telemetrySettingsSnapshot(settings);
+    const serialized = JSON.stringify(snapshot);
+
+    expect(snapshot).toMatchObject({
+      terminalFontCustom: true,
+      chatFontCustom: true,
+      shortcutsCustom: true,
+      keyBarCustom: true,
+      quickRepliesCustom: true,
+      quickReplyCount: 1,
+      usageHiddenCount: 1,
+    });
+    for (const key of ["keyBarExtras", "keyBarItems", "shortcutOverrides", "terminalFontFamily", "chatFontFamily", "quickReplies", "usageOrder", "usageHidden"]) {
+      expect(snapshot).not.toHaveProperty(key);
+    }
+    for (const raw of ["private-terminal-font", "private-chat-font", "private quick reply", "private-order-account-id", "private-hidden-account-id"]) {
+      expect(serialized).not.toContain(raw);
+    }
+  });
+
+  // The Worker refuses a whole snapshot over one key it does not know, and an older deployed
+  // Worker refuses a key added since: a new setting is sent only once the Worker takes it.
+  it("sends exactly the keys the Worker accepts", () => {
+    const sent = Object.keys(telemetrySettingsSnapshot(DEFAULT_SETTINGS));
+    expect([
+      ...sent.filter((key) => !(TELEMETRY_SETTINGS_KEYS as string[]).includes(key)).map((key) =>
+        `${key}: the app sends it and the Worker refuses the whole snapshot. Add it to TelemetrySettings and TELEMETRY_SETTINGS_VALIDATORS in shared/telemetry.ts and to the full snapshot in telemetry/worker.test.ts, then deploy the Worker before releasing (telemetry/README.md).`),
+      ...TELEMETRY_SETTINGS_KEYS.filter((key) => !sent.includes(key)).map((key) =>
+        `${key}: the Worker requires it and telemetrySettingsSnapshot in src/lib/settings.ts does not send it. Send it, or remove it from shared/telemetry.ts and deploy the Worker before releasing.`),
+    ]).toEqual([]);
+  });
+
+  it("requires a complete, valid schema and reconstructs a clean own-key snapshot", () => {
+    const snapshot = telemetrySettingsSnapshot(DEFAULT_SETTINGS);
+    const clean = telemetrySettings(snapshot);
+
+    expect(clean).toEqual(snapshot);
+    expect(clean).not.toBe(snapshot);
+    expect(Object.getPrototypeOf(clean!)).toBe(Object.prototype);
+    expect(Object.keys(clean!)).toEqual(Object.keys(snapshot));
+    expect(telemetrySettings(Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== "theme")))).toBeNull();
+    expect(telemetrySettings({ ...snapshot, unknownSetting: true })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, theme: "neon" })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, theme: null })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, terminalFontSize: 9 })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, terminalWheelSpeed: 2.5 })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, chatFontSize: 10 })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, quickReplyCount: 13 })).toBeNull();
+    expect(telemetrySettings({ ...snapshot, usageHiddenCount: 65 })).toBeNull();
+    expect(telemetrySettings(Object.assign(Object.create({ inherited: true }), snapshot))).toBeNull();
+  });
 });
 
 describe("clipboard from a pane", () => {
@@ -147,14 +292,19 @@ describe("chat width", () => {
     expect(step("narrow")).toBe("var(--content-w)");
     expect(step("wide")).toBe("72rem");
     expect(step("full")).toBe("100%");
-    // the default step has no rule here: PaneTerminal writes its pane's lane on .terminal-stack
+    // the default step has no rule here: PaneTerminal writes its pane's lane on .terminal-stack, and a
+    // file viewer, outside every pane, the lane of the pane that opened it on itself (lib/chatLane.ts)
     expect(step("default")).toBeUndefined();
     // a percentage in the token would resolve against each column's own box; Full is the one
     // step that means exactly that
     expect([...tokens.matchAll(/--chat-w: ([^;]+);/g)].map((match) => match[1]).filter((value) => value?.includes("%"))).toEqual(["100%"]);
-    expect(css("components/PaneTerminal.tsx")).toContain(`setProperty("--chat-w", chatLaneLength(`);
+    // one rule for both, so a change to it cannot miss the viewer
+    expect(css("lib/chatLane.ts")).toContain(`setProperty("--chat-w", chatLaneLength(`);
+    expect(css("components/PaneTerminal.tsx")).toContain("usePaneLane(stackRef)");
+    expect(css("components/FileViewer.tsx")).toContain("useOpeningPaneLane(");
+    for (const name of ["components/PaneTerminal.tsx", "components/FileViewer.tsx"]) expect(css(name)).not.toContain("chatLaneLength(");
     // the root font size is not read in JS: the ceiling is 60rem in the length itself
-    expect(css("components/PaneTerminal.tsx")).not.toContain("chatLaneWidth(");
+    expect(css("lib/chatLane.ts")).not.toContain("chatLaneWidth(");
     // Settings and New workspace stay on --content-w. That the chat columns share the lane is
     // measured in the browser (scripts/ui-regression.ts), not read from the stylesheets
     for (const file of ["components/SettingsDialog.css", "components/NewSessionDialog.css"]) {
@@ -574,4 +724,46 @@ it("highlights code unless turned off, and keeps a stored choice only when it is
   expect(sanitizeSettings({ highlightCode: false }).highlightCode).toBe(false);
   expect(sanitizeSettings({ highlightCode: "no" }).highlightCode).toBe(true);
   expect(sanitizeSettings({}).highlightCode).toBe(true);
+});
+
+it("keeps the file viewer's wrap setting only when it is a boolean", () => {
+  expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
+  expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
+  expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
+});
+
+it("keeps the Markdown preview's width to readable or full, readable by default", () => {
+  expect(DEFAULT_SETTINGS.markdownWidth).toBe("readable");
+  for (const width of MARKDOWN_WIDTHS) expect(sanitizeSettings({ markdownWidth: width }).markdownWidth).toBe(width);
+  for (const bad of ["narrow", "medium", "wide", "", null, 80]) expect(sanitizeSettings({ markdownWidth: bad }).markdownWidth).toBe("readable");
+});
+
+it("keeps page overlap whole, bounded and persistent, including full-viewport paging", () => {
+  expect(DEFAULT_SETTINGS.pageOverlapRows).toBe(1);
+  expect(sanitizeSettings({}).pageOverlapRows).toBe(1);
+  expect(sanitizeSettings({ pageOverlapRows: 0 }).pageOverlapRows).toBe(0);
+  expect(sanitizeSettings({ pageOverlapRows: 3.6 }).pageOverlapRows).toBe(4);
+  expect(sanitizeSettings({ pageOverlapRows: -8 }).pageOverlapRows).toBe(0);
+  expect(sanitizeSettings({ pageOverlapRows: 101 }).pageOverlapRows).toBe(100);
+  for (const value of ["3", null, true, NaN, Infinity]) expect(sanitizeSettings({ pageOverlapRows: value }).pageOverlapRows).toBe(1);
+  const saved = sanitizeSettings({ ...DEFAULT_SETTINGS, pageOverlapRows: 3 });
+  expect(sanitizeSettings(JSON.parse(JSON.stringify(saved))).pageOverlapRows).toBe(3);
+});
+
+describe("shared settings", () => {
+  it("shares exactly the settings SETTING_SCOPE marks shared", () => {
+    const shared = Object.entries(SETTING_SCOPE).filter(([, scope]) => scope === "shared").map(([key]) => key).sort();
+    expect([...SHARED_SETTING_KEYS].sort() as string[]).toEqual(shared);
+    expect(Object.keys(SETTING_SCOPE).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
+  });
+});
+
+it("keeps plain chat paging opt-in and saves the keyboard choice on this device", () => {
+  expect(DEFAULT_SETTINGS.chatPageKeys).toBe(false);
+  expect(SETTING_SCOPE.chatPageKeys).toBe("device");
+  expect(SETTING_SCOPE.pageOverlapRows).toBe("device");
+  for (const chatPageKeys of [true, false]) {
+    expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ chatPageKeys })))).chatPageKeys).toBe(chatPageKeys);
+  }
+  for (const chatPageKeys of [null, "true", 1]) expect(sanitizeSettings({ chatPageKeys }).chatPageKeys).toBe(false);
 });

@@ -9,11 +9,12 @@ import { Component, type ReactNode } from "react";
  */
 interface Props {
   resetKey: unknown;
-  fallback: (retry: () => void) => ReactNode;
+  /** what to draw instead; `error` is what was thrown, for a fallback that offers to copy it */
+  fallback: (retry: () => void, error: unknown) => ReactNode;
   children: ReactNode;
 }
 
-interface State { failed: boolean; key: unknown }
+interface State { failed: boolean; key: unknown; error?: unknown }
 
 export class RenderBoundary extends Component<Props, State> {
   override state: State = { failed: false, key: this.props.resetKey };
@@ -22,8 +23,8 @@ export class RenderBoundary extends Component<Props, State> {
     return props.resetKey !== state.key ? { failed: false, key: props.resetKey } : null;
   }
 
-  static getDerivedStateFromError(): Partial<State> {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown): Partial<State> {
+    return { failed: true, error };
   }
 
   override componentDidCatch(error: unknown): void {
@@ -33,6 +34,6 @@ export class RenderBoundary extends Component<Props, State> {
   private retry = (): void => this.setState({ failed: false });
 
   override render(): ReactNode {
-    return this.state.failed ? this.props.fallback(this.retry) : this.props.children;
+    return this.state.failed ? this.props.fallback(this.retry, this.state.error) : this.props.children;
   }
 }

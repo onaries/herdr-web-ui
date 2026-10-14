@@ -9,15 +9,27 @@
     "scripts/ci-lanes.ts",
     "scripts/ci-tests.ts",
     "scripts/release-notes.ts",
+    "scripts/release-guards.ts",
+    "scripts/changelog-fold.ts",
     "site/demo/transport.ts",
     "scripts/build-remote-bundle.ts",
     "scripts/ssh-integration.ts",
     "scripts/file-viewer-regression.ts",
+    "scripts/pwa-update-browser-qa.ts",
     "scripts/chat-fallback-browser-qa.ts",
     "scripts/chat-fallback-fixture.tsx",
+    "scripts/chat-virtual-fixture.tsx",
+    "scripts/chat-virtual-browser-qa.ts",
     "scripts/grok-chat-browser-qa.ts",
     "scripts/file-preview-text-browser-qa.ts",
-    "scripts/file-preview-text-fixture.tsx"
+    "scripts/file-preview-text-fixture.tsx",
+    "scripts/virtual-source-browser-qa.ts",
+    "scripts/virtual-source-fixture.tsx",
+    "scripts/repo-diff-browser-qa.ts",
+    "scripts/repo-diff-fixture.tsx",
+    "scripts/lan-exposure-notice-regression.ts",
+    "scripts/application-paging-regression.ts",
+    "scripts/pane-paging-demo-regression.ts"
   ],
   "include": []
 }

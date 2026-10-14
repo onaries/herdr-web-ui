@@ -205,8 +205,8 @@ describe("key bar hold repeat", () => {
 });
 
 describe("repeatable key bar items", () => {
-  it("repeats only the four arrows, including arrows with saved modifiers", () => {
-    for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+  it("repeats the arrows and the editing and paging keys, including saved modifiers", () => {
+    for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown"]) {
       expect(isRepeatableKeyBarItem({ type: "key", key })).toBe(true);
       expect(isRepeatableKeyBarItem({ type: "key", key, modifiers: { ctrl: true, alt: true, shift: true } })).toBe(true);
       expect(isRepeatableKeyBarItem({ type: "key", key, modifiers: { ctrl: false, alt: false, shift: false } })).toBe(true);
@@ -214,7 +214,7 @@ describe("repeatable key bar items", () => {
   });
 
   it("does not repeat catalog keys, printable keys or modifier buttons", () => {
-    for (const key of ["Escape", "Tab", "Enter", "ctrl-c", "Backspace", "Delete", "PageUp", "PageDown", "Home", "End", "F1", "a"]) {
+    for (const key of ["Escape", "Tab", "BackTab", "Enter", "Insert", "ctrl-c", "ctrl-d", "F1", "a", " "]) {
       expect(isRepeatableKeyBarItem({ type: "key", key })).toBe(false);
       expect(isRepeatableKeyBarItem({ type: "key", key, modifiers: { ctrl: true, alt: false, shift: false } })).toBe(false);
     }

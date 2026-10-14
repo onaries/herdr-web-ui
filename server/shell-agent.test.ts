@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { isGjcProcess } from "./gjc-runtime.ts";
 import { paneShell, shellAgentExecutable, shellCommandLine } from "./shell-agent.ts";
-import { descendantArgv, parseProcessTable, windowsArgv, windowsProcessTable } from "./windows-processes.ts";
+import { descendantArgv, descendantProcesses, parseProcessTable, windowsArgv, windowsProcessTable } from "./windows-processes.ts";
 
 it("tells a pane's shell from the program herdr reports in front", () => {
   expect(paneShell("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")).toBe("powershell");
@@ -44,6 +44,8 @@ it("finds what runs under a pane's shell in the process table", () => {
     ["C:\\Program Files\\nodejs\\node.exe", "C:\\x y\\tool.js", "--flag"],
   ]);
   expect(under.some(isGjcProcess)).toBe(true);
+  // the same walk, with each process's number
+  expect(descendantProcesses(table, 41948).map((entry) => entry.pid)).toEqual([12156, 700]);
   // another pane's shell has no gjc under it, though one runs elsewhere on the PC
   expect(descendantArgv(table, 26540).length).toBe(3);
   expect(descendantArgv(table, 4242)).toEqual([]);

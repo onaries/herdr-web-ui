@@ -34,7 +34,9 @@ export function composerPayload(text: string, bracketedPaste: boolean): string {
 /** The server refused the message before any of it reached the pane: nothing was typed. */
 export function submitNotTyped(code: string): boolean {
   return ["agent_blocked", "read_only", "submit_timeout", "agent_not_ready", "pending_input_unsupported", "agent_queue_unsupported", "invalid_delivery", "invalid_submit_text",
-    "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft"].includes(code);
+    "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft",
+    // refused by this view while the terminal holds input (PaneTerminal), before anything was sent
+    "held_input"].includes(code);
 }
 
 /** A send refused over a one-row draft in Claude's terminal input box: the note, and the draft a send may clear first. */
@@ -55,6 +57,7 @@ export function submitNote(code: string, message: string): string {
   if (code === "submit_partial") return t("Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.");
   if (code === "agent_blocked") return t("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
   if (code === "read_only") return t("Not sent: this view only watches the pane.");
+  if (code === "held_input") return t("Not sent: send or discard the held input first.");
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");
@@ -71,22 +74,28 @@ export function imageMention(path: string): string {
 }
 
 /**
- * Puts a mention over the selection [start, end) as its own token: a space goes in
- * front when the text before it does not already end in whitespace, because the chat
- * and the agent only read `@path` after whitespace or at the start. The insertion is
- * cut to what still fits under MAX_COMPOSER_CHARS.
+ * Where an attached file's mention goes: at the start of the message, after a leading `/command`
+ * (it must stay first to be one), and after the mentions of files picked before it in the same
+ * batch that are still there, so a batch reads in pick order however its uploads finish. An upload
+ * finishes while the user may be typing, so the mention never goes where the caret is: the caller
+ * shifts the caret and selection by `length` when they sit at or after `at`. The mention goes in
+ * whole, with its separating space, or not at all (`length` 0): a cut `@path` would name a file
+ * that does not exist, so the caller keeps the attachment waiting until there is room.
  */
-export function insertMention(
+export function insertLeadingMention(
   text: string,
-  start: number,
-  end: number,
   mention: string,
-): { text: string; caret: number } {
-  const before = text.slice(0, start);
+  earlier: readonly string[],
+): { text: string; at: number; length: number } {
+  let at = /^\/\S+\s*/u.exec(text)?.[0].length ?? 0;
+  for (const previous of earlier) {
+    const found = text.indexOf(previous);
+    if (found >= 0) at = Math.max(at, found + previous.length);
+  }
+  const before = text.slice(0, at);
   const snippet = before.length > 0 && !/\s$/u.test(before) ? ` ${mention}` : mention;
-  const room = Math.max(0, MAX_COMPOSER_CHARS - text.length + end - start);
-  const inserted = snippet.slice(0, room);
-  return { text: before + inserted + text.slice(end), caret: start + inserted.length };
+  if (text.length + snippet.length > MAX_COMPOSER_CHARS) return { text, at, length: 0 };
+  return { text: before + snippet + text.slice(at), at, length: snippet.length };
 }
 
 /** Ready states affect the held-message hint only; sending always requires a user action. */

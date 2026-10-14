@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { runMoreItem } from "./header-more.ts";
+import { chromePath } from "./chrome-path.ts";
 
 // Deep links (lib/deepLink.ts) on the unmodified app over the demo's fixture transport: an
 // address names the PC, workspace, pane, lens and Settings page, opens there, and follows the app
@@ -60,7 +61,7 @@ try {
   url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/`;
 
   try {
-    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+    const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       // a link to a workspace opens the pane its row opens, and the address then names it all
       await withPage(browser, `?ws=${wsOf(INFRA)}`, async (page) => {
@@ -331,6 +332,62 @@ try {
         await page.waitForFunction(() => new URLSearchParams(window.location.search).get("agent") !== "nope", undefined, { timeout: 5_000 });
       });
       console.log("PASS a link to the New workspace dialog fills it and creates nothing; the address follows the fields, and a tab link opens it for its workspace");
+
+      // the agent picker in that dialog closes when its anchor can move (an ancestor scrolls, the window resizes),
+      // not when something else scrolls, such as a text field's own text; its keys scroll the list alone
+      await withPage(browser, "?new=workspace", async (page) => {
+        const dialog = page.getByRole("dialog", { name: /New workspace/ });
+        await dialog.waitFor();
+        const trigger = dialog.locator(".agent-picker-trigger");
+        const menu = page.locator(".agent-picker-menu");
+        const body = dialog.locator(".modal-body");
+        const open = async () => {
+          await trigger.focus();
+          await page.keyboard.press("ArrowDown");
+          await menu.waitFor();
+        };
+        // a scroll event is delivered on the next frame; give a wrong close time to show
+        const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await open();
+        assert.equal(await menu.evaluate((node) => node.scrollHeight > node.clientHeight), true, "the demo's agents are more than the list shows");
+        await page.locator("#new-session-cwd").evaluate((input: HTMLInputElement) => {
+          input.value = "/home/demo/".concat("a-long-folder-name/".repeat(20));
+          input.scrollLeft = input.scrollWidth;
+          input.dispatchEvent(new Event("scroll"));
+        });
+        await settle();
+        assert.equal(await trigger.getAttribute("aria-expanded"), "true", "a text field scrolling its own text leaves the picker open");
+        // the keys move through the list and scroll it alone: neither the dialog nor the page moves
+        const scrolls = () => page.evaluate(() => ({ page: scrollY, dialog: document.querySelector(".modal-body")!.scrollTop }));
+        const before = await scrolls();
+        await page.keyboard.press("End");
+        await settle();
+        const inView = (option: string) => menu.evaluate((node, id) => {
+          const list = node.getBoundingClientRect();
+          const row = document.getElementById(id)!.getBoundingClientRect();
+          return row.top >= list.top && row.bottom <= list.bottom;
+        }, option);
+        const last = (await menu.locator('[role="option"]').last().getAttribute("id"))!;
+        assert.equal(await trigger.getAttribute("aria-expanded"), "true", "End keeps the picker open");
+        assert.equal(await trigger.getAttribute("aria-activedescendant"), last);
+        assert.equal(await menu.evaluate((node) => node.scrollTop > 0), true, "End scrolls the list to the last agent");
+        assert.equal(await inView(last), true, "the last agent is in view");
+        await page.keyboard.press("Home");
+        await settle();
+        assert.equal(await trigger.getAttribute("aria-expanded"), "true", "Home keeps the picker open");
+        assert.equal(await inView((await trigger.getAttribute("aria-activedescendant"))!), true, "the first row is in view");
+        assert.deepEqual(await scrolls(), before, "the keys scroll neither the page nor the dialog");
+        // an ancestor of the picker moves it: its scroll closes the list, and so does the window's size
+        await body.evaluate((node) => node.dispatchEvent(new Event("scroll")));
+        await menu.waitFor({ state: "detached" });
+        await open();
+        await page.evaluate(() => document.dispatchEvent(new Event("scroll")));
+        await menu.waitFor({ state: "detached" });
+        await open();
+        await page.setViewportSize({ width: 1180, height: 760 });
+        await menu.waitFor({ state: "detached" });
+      });
+      console.log("PASS the agent picker stays open when a text field scrolls and closes when its anchor moves; its keys scroll the list alone");
 
       // sidebar=hidden opens a desktop with the sidebar collapsed; the address follows the toggle both ways
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&sidebar=hidden`, async (page) => {

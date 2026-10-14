@@ -84,8 +84,8 @@ the test runner. A report is evidence, not an authorization to merge or publish.
 
 A local pass is not CI's: the PC has its own Node (CI pins 22), its own cores and its own system
 libraries. The browser lane uses the lockfile's Chromium, which it downloads into Playwright's
-cache on first use. `HERDR_TEST_SHARDS=4` runs four integration files at a time, as a way to
-look for timing failures; the default is one, as in CI.
+cache on first use. `HERDR_TEST_SHARDS=4` runs four integration files at a time, each with an
+isolated herdr session. Local checks and hosted CI default to one; self-hosted CI uses four.
 
 The single commands still work on their own:
 
@@ -97,7 +97,7 @@ bun test                        # needs herdr installed; creates and removes its
 bun run test:ui                 # browser regression against isolated test servers
 bun scripts/sticky-modifiers-regression.ts # mobile held keys through real legacy/Kitty PTYs
 bun scripts/key-bar-customization-demo-regression.ts # mobile key layout, saved combinations and migration on demo fixtures
-bun scripts/key-bar-hold-repeat-regression.ts # phone touch-arrow taps, holds, swipes and sticky Ctrl on demo fixtures
+bun scripts/key-bar-hold-repeat-regression.ts # phone touch key-bar taps, holds (arrows and editing keys), swipes and sticky Ctrl on demo fixtures
 bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px and a 320px phone, and Back stepping out of the dialog
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
@@ -115,7 +115,7 @@ after a herdr restart. It prints the time each step took. `KEEP=1` leaves the co
 
 Tests run against a herdr session of their own, `herdr-web-ui-test`. The first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
 
-Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH` otherwise. After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
+Browser checks launch `CHROME_PATH` when it is set, else Google Chrome at `/opt/google/chrome/chrome` where that exists, else the lockfile's Playwright Chromium (`scripts/chrome-path.ts`; install it with `bun node_modules/playwright-core/cli.js install chromium`). After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
 
 `HEADED=1 bun scripts/chat-browser-qa.ts` opens its owned native-transcript fixture in a
 visible Chrome window. Its detected Codex fixture process keeps the rollout open; no
@@ -139,6 +139,20 @@ bun scripts/narrow-pane-demo-regression.ts    # a split pane under 80 columns: t
 ```
 
 `FILE_VIEWER_CASE=landscape-notch` selects a viewer case; `FILE_VIEWER_CSS=/path/to/before.css` compares another stylesheet. These checks use Chromium mobile emulation and synthetic safe-area/keyboard geometry; they cannot verify actual iOS Safari keyboard dismissal or notch insets. The existing `bun scripts/file-viewer-regression.ts` separately checks history with an owned herdr pane. The original `scripts/mobile-viewport-regression.ts` exports `checkMobileViewport` for the real-app `bun run test:ui` suite; it also checks the command palette and xterm focus transitions. The demo runners build the real client into a temporary directory, inject the committed fictional-session transport and serve it only on loopback; they do not use a live herdr session or download website media. Run on its own, each builds the client itself (`scripts/demo-build.ts`); the browser lane builds it once and names the directory in `HERDR_DEMO_BUILD`, and each runner copies that instead. They exercise real-app viewport and alert geometry, but not live herdr connectivity.
+
+## Codex Send now
+
+Codex's `Enter` steers the current turn, but can leave the message pending until the next
+tool call. The explicit, connection-owned pending-message **Send now** action checks the
+live native steering panel beside the empty composer, and that the panel holds the message it
+just submitted, before sending one `Escape` to interrupt and submit it. A normal Send,
+automatic delivery, another agent or idle Codex never takes this interruption path.
+Browser-held copies retain their ordinary Submit path. Every fresh read retains the existing
+identity, connection, interactive-menu and secret input guards; if the panel or delivery
+cannot be confirmed, the message is uncertain and must be checked in the terminal rather than
+retried automatically. The restart gate waits for the interrupted turn's readiness followed
+by the new turn's working/ready cycle. If Codex never exposes that cycle, remaining messages
+are held for explicit review.
 
 ## Conversation refresh
 
@@ -317,7 +331,7 @@ the page and the data follows. The SoftwareApplication data is written in the pa
 The build also copies the retained `site/assets/` and `site/media/` files, including the film linked
 from the README and its chat loop. These remain available at their existing URLs even though the
 homepage uses the desktop and phone demos.
-`.github/workflows/pages.yml` installs ffmpeg and runs on pushes to `main` and manual dispatches from
+`.github/workflows/pages.yml` installs ffmpeg when the runner lacks it and runs on pushes to `main` and manual dispatches from
 `main`. Reusable CI validation and the site build run in parallel against the same triggering SHA,
 and deployment requires both to succeed. Deployments are serialized. Immediately before deploying,
 the workflow checks that the validated SHA is still the latest `main` commit; it fails closed if it is
@@ -342,19 +356,30 @@ after changing the staged session. Files, images, push and remote PCs are not pa
 ## Releasing
 
 1. Open a release PR that bumps `version` in `package.json` and `herdr-plugin.toml`,
-   moves the `Unreleased` notes in [CHANGELOG.md](../CHANGELOG.md) under the new version,
-   and tells the release in [release-summaries.json](../release-summaries.json) the way a
-   game's patch notes do: under the version, for each of `en`, `ko`, `ja` and `zh`, the lists
-   `new`, `improved` and `fixed` (a list with nothing to say is left out), each a few lines of
+   runs `bun scripts/changelog-fold.ts X.Y.Z [YYYY-MM-DD]` (it moves the `Unreleased` notes in
+   [CHANGELOG.md](../CHANGELOG.md) and the [changelog.d/](../changelog.d/README.md) fragments under
+   the new version, dated today in local time by default, links each fragment's PR and deletes the
+   fragments; then add the `by @login` credits; a fragment merged later must be moved into the
+   version by hand, since the release workflow refuses while one is left), and tells the release
+   in [release-summaries.json](../release-summaries.json) the way a game's patch notes do: under
+   the version, for each of `en`, `ko`, `ja`, `zh` and `tr`, the lists `new`, `improved` and `fixed` (a list with nothing to say is left out), each a few lines of
    plain text, 90 characters at most, the same number of lines in every language. It is what
    an install shows before and after the update, with the changelog section folded under it,
    so a line names what changes for the people who use the app and leaves out PR numbers and
-   internals. The unit suite and the release workflow fail without all four languages.
+   internals. The unit suite and the release workflow fail without every language.
    The GitHub release is written from the same files by `scripts/release-notes.ts`: the
    English lists under New features, Improvements and Bug fixes, then the version's whole
    changelog section folded under **Full changelog**.
+   When the release guards (below) say so, the same PR raises `REMOTE_BUNDLE_VERSION` in
+   `shared/machines.ts`, and after deploying the telemetry Worker
+   ([telemetry/README.md](../telemetry/README.md#deploy)) commits `telemetry/deployed.json` written by
+   `bun scripts/release-guards.ts --worker-deployed`.
 2. Merge it after CI passes.
-3. Run **Actions → Release → Run workflow**, select `main`, and enter `X.Y.Z` without `v`.
+3. If it raised `REMOTE_BUNDLE_VERSION` to N, push the tag `remote-vN` on the merged commit and wait
+   for the **Remote PC bundles** workflow to publish it ([remote PCs](remote-pcs.md)). Merge nothing
+   that touches `server/`, `shared/`, `bun.lock` or `patches/` until the Release run is done: the
+   Release run would then ask for a follow-up PR that raises the number again and a new tag.
+4. Run **Actions → Release → Run workflow**, select `main`, and enter `X.Y.Z` without `v`.
    The CLI equivalent is `gh workflow run release.yml --ref main -f version=X.Y.Z`.
 
 The workflow validates metadata, then runs the same unit, integration and browser checks
@@ -365,7 +390,15 @@ visible to them even without a GitHub release. Existing tags cannot be reused; f
 published version with a new patch release. If publishing fails after a tag was created,
 verify that tag's commit and repair its GitHub release rather than moving the tag.
 
-Remote-PC runtime bundles are released separately: raise `REMOTE_BUNDLE_VERSION` in `shared/machines.ts` and push a `remote-vN` tag. See [remote PCs](remote-pcs.md).
+Remote-PC runtime bundles are published by a `remote-vN` tag, and an app release requires the bundle
+that matches its server (step 3). See [remote PCs](remote-pcs.md).
+
+`scripts/release-guards.ts` fails a release PR (CI's Fast checks) and the Release run when the bundle's
+inputs changed since the published `remote-vN` without a raised `REMOTE_BUNDLE_VERSION`, when the raised
+one is not published yet (Release only), when `telemetry/worker.ts` or `shared/telemetry.ts` changed
+since the deploy recorded in `telemetry/deployed.json` ([telemetry/README.md](../telemetry/README.md#deploy)),
+or when the step 1 metadata is incomplete. In CI only the change that bumps the version is checked;
+PRs merged before the Release run pass, and the Release run checks the whole tree again.
 
 ## Pull requests and CI
 
@@ -420,13 +453,19 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
   - **Integration tests** runs `bun run check integration`: a build and
     `bun run test:integration` on a herdr of the run's own ([Checks](#checks)). The
     integration files can run a few at a time, each worker on a herdr session of its own
-    (`scripts/ci-tests.ts`); they run one by one (`HERDR_TEST_SHARDS`, default 1 in
-    `scripts/check.ts`) until the timing-bound contract tests hold under load.
+    (`scripts/ci-tests.ts`); hosted CI runs one by one, while self-hosted CI sets
+    `HERDR_TEST_SHARDS=4`. `scripts/check.ts` still defaults to one for local checks.
     Missing herdr fails the run. Its herdr servers are stopped even on failure.
     Integration tests have a 15-second default timeout so their bounded process-startup
     probes can finish; individual tests can still specify a longer timeout.
-  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts` alone.
-  - **Browser regression (other scripts)** runs every other browser script, four at a time.
+  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts` and
+    `scripts/ui-contexts-regression.ts` concurrently. The core's stateful flow stays serial;
+    the extracted feature checks own a separate temporary herdr config/session, Chromium
+    process, server and fixture panes. Those helpers stay sequential within their own fixture.
+    The context suite prints each helper's elapsed time and stops its owned daemon on exit.
+    `bun run test:ui` also runs both suites.
+  - **Browser regression (other scripts)** runs every other browser script, four at a time
+    on hosted CI and six at a time on self-hosted CI.
 
   Both browser jobs run `scripts/ci-browser-parallel.ts`, which takes its script list from
   `scripts/ci-browser.sh` (`BROWSER_SCRIPTS` picks from it, `BROWSER_EXCLUDE` leaves scripts out,
@@ -443,6 +482,22 @@ every minute a script is still running), and keeps running the other scripts aft
 Each script's full output goes to `${CHECK_DIR:-.ci}/browser-logs/<script>.log`, with
 `summary.json` beside it; a failure prints the last 400 lines of its log and the log's path, and
 the job then fails. CI uploads `browser-logs` with the evidence on success or failure.
+A script that fails is run a second time (`BROWSER_RETRY=0` turns that off). One that then passes
+does not fail the job, and is not counted as a plain pass either: its first log is kept as
+`<script>.attempt-1.log` and printed, the summary marks it `~` and `summary.json` lists it under
+`flaky`, and on GitHub it gets a warning annotation and a line in the job summary. A flaky script
+is a bug to fix in the script or the app, not noise: the second run only keeps one PR's merge
+from waiting on another change's race. A script that fails twice fails the job.
+The console, GitHub annotations, job summary and `summary.json` name the failing assertion and
+its first script file and line when the log contains them.
+`bun scripts/ci-flakes.ts` ranks, across the last 24 hours of `ci.yml` runs and every attempt of
+each, which script failed or passed only on a second run, and at which assertion and site. It reads
+through `gh` and changes nothing: a failed job's log, and a passed job's only when the job carries
+the flaky warning.
+Use `--hours 30` for a different window, `--repo owner/name` to select a repository instead of
+the current one, or `--json` for counts and rows as JSON; running jobs and unavailable logs are
+counted as skipped.
+
 Under `CI` or with `CHECK_DIR` set, both runners create `UI_EVIDENCE_DIR` at
 `${CHECK_DIR:-.ci}/browser-evidence`. Only the existing sticky-modifier and file-viewer captures
 are enabled automatically: the UI suite and key-bar demo have evidence branches that add
@@ -458,6 +513,50 @@ automatically covered. Evidence failures never replace the original test failure
 CI uploads nested failure artifacts alongside herdr's `test-server.log`; reports and command
 logs are retained for successful runs too. All captures use isolated fixtures, never live-user
 pages or credentials.
+
+### Self-hosted runner
+
+Linux CI/CD jobs run on GitHub-hosted `ubuntu-24.04` unless the repository variable
+`CI_SELF_HOSTED_LABELS` holds a JSON array of runner labels that contains `"self-hosted"`, for
+example `["self-hosted","linux","x64","herdr-ci"]`. Set, it routes:
+
+- in `ci.yml`: Fast checks, Integration tests and both Browser regression jobs;
+- in `pages.yml`: the site build and the deploy;
+- in `release.yml`: the preflight and publish jobs.
+
+Detect changes, the Integration and browser summary, the Windows and macOS jobs,
+`remote-bundles.yml` and `windows-install.yml` always stay GitHub-hosted.
+
+In `ci.yml`, Detect changes picks the runner with `scripts/ci-runner-route.sh`. A fork pull request
+always gets `ubuntu-24.04`, whatever the variable says. Otherwise the `self_hosted_labels`
+workflow_dispatch input, when not empty, overrides the variable for that one manual run. A value
+that is not a non-empty array of strings containing `"self-hosted"` fails the job instead of
+falling back. `pages.yml` and `release.yml` read the variable directly.
+
+Only a `pull_request` may skip the heavy jobs as docs-only, and only when every changed file is
+under `docs/`, ends in `.md` or `.txt`, is the root `LICENSE` or sits under
+`.github/ISSUE_TEMPLATE/`. Pushes, dispatches and runs called from `release.yml` or `pages.yml`
+always validate in full.
+
+The runner is an ephemeral Docker container that runs one job and exits. Containers have no CPU
+quota or total-memory limit; concurrent slots share the host's available resources. Its image ships Bun,
+Node 22, checksum-pinned herdr, Playwright Chromium and its system libraries, ffmpeg, git, the
+checksum-pinned GitHub CLI (`gh`) for deployment and release publishing, curl, jq, unzip,
+xz-utils and CA certificates, with no sudo. Self-hosted setup verifies the prepared tools and
+fails on a stale image instead of downloading replacements. Rebuild the image after changing
+its pins; its Bun pin must match `.github/actions/setup-ci/action.yml`, and its Playwright pin
+must match `bun.lock`.
+
+The composite setup action used by `ci.yml`, `pages.yml` and `release.yml` keeps Bun's dependency
+cache in `.ci-cache/bun`. Only GitHub-hosted jobs restore/save that cache remotely: on the measured
+self-hosted connection, downloading the archive took longer than a fresh dependency install.
+Self-hosted jobs install directly from the lockfile without transferring a remote dependency cache.
+Hosted browsers use
+`.ci-cache/playwright`; self-hosted browsers come from the image. Neither cache restores a
+home-directory archive across different workspace depths. Tool/browser preparation no longer
+downloads on self-hosted jobs, but dependency installation, checkout and artifact transfers still
+do; measure setup, test execution and retries separately when comparing speed. Setup, routing and the security model are in
+[scripts/self-hosted-runner/README.md](../scripts/self-hosted-runner/README.md).
 
 `scripts/ci-tests.ts` discovers all `.test.ts` files under src/shared/server/scripts.
 Files named `*.contract.test.ts`, tests under `server/herdr/` and `server/pty/`, and

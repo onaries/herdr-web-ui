@@ -103,6 +103,15 @@ try {
   if (evidence) { mkdirSync(evidence, { recursive: true }); await device.screenshot({ path: join(evidence, "android-gboard-line.png") }); }
   await page.reload(); await line.waitFor();
   assert.equal(await line.inputValue(), "한글 ");
+  // Send tapped while Gboard still composes the last syllable: it sends after the commit, never silently drops.
+  await line.fill(""); await line.tap(); await keyboardReady();
+  writeFileSync(received, "");
+  await tap("gksrmf");
+  await until(async () => (await line.inputValue()) === "한글", "native input-line composition without a space failed");
+  await page.getByRole("button", { name: "Send to the terminal", exact: true }).tap();
+  await expectBytes("한글\r");
+  await until(async () => (await line.inputValue()) === "", "the sent line was not cleared");
+  results.push({ name: "input line send during composition", text: readFileSync(received, "utf8") });
   await page.getByRole("button", { name: "Type straight into the terminal", exact: true }).tap();
   await page.locator(".xterm-helper-textarea").tap();
   await keyboardReady();

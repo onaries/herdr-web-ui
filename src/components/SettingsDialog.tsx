@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, RotateCcw, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
-import { SHORTCUTS, formatKeys, isMacPlatform, shortcutDisplayKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
+import { SHORTCUTS, formatKeys, isMacPlatform, modKeyLabel, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
+import { SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, TERMINAL_CURSOR_STYLES, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type TerminalCursorStyle, type VoiceButton } from "../lib/settings.ts";
+import { ATTACH_LIMIT_MAX, ATTACH_LIMIT_MIN, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, TERMINAL_CURSOR_STYLES, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type Palette as PaletteName, type TerminalCursorStyle, type VoiceButton } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
+import { CONTRAST_MAX, CONTRAST_MIN, contrastText } from "../lib/contrast.ts";
+import type { FontSmoothing, PanelMotion } from "../lib/appearanceRendering.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from "./SettingsControls.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
+import { UI_FONT_MAX, UI_FONT_MIN } from "../lib/typography.ts";
+import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "../lib/installedFonts.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
 import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
@@ -27,12 +32,16 @@ import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, u
 import { AgentMark } from "./AgentMark.tsx";
 import { DevicesPanel } from "./DevicesPanel.tsx";
 import { PhonePanel } from "./PhonePanel.tsx";
+import { PortalPanel } from "./PortalPanel.tsx";
 import { copyText } from "../lib/clipboard.ts";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
+import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
+import { RenderBoundary } from "./RenderBoundary.tsx";
+import { requestedSettingsPage, requestSettingsPage, type SettingsPageId } from "../lib/paletteSettings.ts";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -60,14 +69,17 @@ function compactKeys(keys: readonly string[]): string {
   return formatKeys(keys).map((key) => ({ Shift: "⇧", ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→" }[key] ?? (key.length === 1 ? key.toUpperCase() : key))).join("+");
 }
 
+const FONT_LIST_LIMIT = 150;
 const FONT_FAMILY_PLACEHOLDER = 'D2Coding, "Cascadia Mono"';
+const UI_FONT_PLACEHOLDER = '"Noto Sans", "Segoe UI"';
 
 /**
  * A font family list, saved when the field is left, on Enter or when the dialog closes: saving
  * every keystroke would sanitize away the comma or space being typed, and each change of the
  * terminal's font refits the grid and resizes the pane.
  */
-function FontFamilyInput({ value, label, onCommit }: { value: string; label: string; onCommit: (family: string) => void }) {
+function FontFamilyInput({ value, label, onCommit, fixedWidthFor = null, placeholder = FONT_FAMILY_PLACEHOLDER }: { value: string; label: string; onCommit: (family: string) => void; /** the surface that needs every glyph on one advance: a proportional pick from the list is refused in its name */ fixedWidthFor?: "terminal" | "code" | null; placeholder?: string }) {
+  const t = useT();
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const commit = (): void => {
@@ -79,33 +91,112 @@ function FontFamilyInput({ value, label, onCommit }: { value: string; label: str
   const commitRef = useRef(commit);
   commitRef.current = commit;
   useEffect(() => () => commitRef.current(), []);
+  const [families, setFamilies] = useState<string[] | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const [query, setQuery] = useState("");
+  const [refused, setRefused] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
+  // the click is the gesture the permission prompt needs; where the API is missing there is no button
+  const browse = async (): Promise<void> => {
+    if (browsing) {
+      setBrowsing(false);
+      return;
+    }
+    setRefused("");
+    setQuery("");
+    if (families === null) {
+      const result = await queryInstalledFonts();
+      if (result.status !== "granted") {
+        setUnavailable(true);
+        return;
+      }
+      setUnavailable(false);
+      setFamilies(result.families);
+    }
+    setBrowsing(true);
+  };
+  const matches = useMemo(() => filterFamilies(families ?? [], query), [families, query]);
+  const pick = (family: string): void => {
+    if (fixedWidthFor !== null && !isMonospaceFamily(family)) {
+      setRefused(family);
+      return;
+    }
+    const next = sanitizeFontFamily(family);
+    setDraft(next);
+    setBrowsing(false);
+    if (next !== value) onCommit(next);
+  };
   return (
-    <input
-      className="input settings-font-input"
-      value={draft}
-      placeholder={FONT_FAMILY_PLACEHOLDER}
-      maxLength={FONT_FAMILY_MAX_CHARS}
-      aria-label={label}
-      spellCheck={false}
-      autoCapitalize="off"
-      autoCorrect="off"
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        // an IME keeps its Enter, including the committing one WebKit can send after compositionend as key code 229
-        if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-        event.preventDefault();
-        commit();
-      }}
-    />
+    <div className="settings-font-field">
+      <div className="settings-font-line">
+        <input
+          className="input settings-font-input"
+          value={draft}
+          placeholder={placeholder}
+          maxLength={FONT_FAMILY_MAX_CHARS}
+          aria-label={label}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            // an IME keeps its Enter, including the committing one WebKit can send after compositionend as key code 229
+            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            event.preventDefault();
+            commit();
+          }}
+        />
+        {canListInstalledFonts() && (
+          <button type="button" className="btn settings-font-browse" aria-expanded={browsing} aria-label={t("Browse installed fonts for {label}", { label })} onClick={() => void browse()}>
+            <Search aria-hidden="true" />
+            {t("Browse")}
+          </button>
+        )}
+      </div>
+      {unavailable && <p className="settings-font-note" role="status">{t("Installed fonts could not be listed. Type the name instead.")}</p>}
+      {browsing && families !== null && (
+        <div className="settings-font-picker">
+          <input
+            className="input settings-font-search"
+            type="search"
+            value={query}
+            placeholder={t("Search fonts")}
+            aria-label={t("Search fonts")}
+            spellCheck={false}
+            autoFocus
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+                // closes the list, not the dialog behind it
+                event.stopPropagation();
+                setBrowsing(false);
+              }
+            }}
+          />
+          {refused !== "" && <p className="settings-font-note" role="status">{fixedWidthFor === "code" ? t("{font} is not monospace. Code needs a fixed-width font, so the current font was kept.", { font: refused }) : t("{font} is not monospace. The terminal needs a fixed-width font, so the current font was kept.", { font: refused })}</p>}
+          <ul className="settings-font-list" aria-label={t("Installed fonts")}>
+            {matches.slice(0, FONT_LIST_LIMIT).map((family) => (
+              <li key={family}>
+                <button type="button" className="settings-font-option" style={{ fontFamily: `"${family}", var(--font-ui)` }} onClick={() => pick(family)}>
+                  {family}
+                </button>
+              </li>
+            ))}
+            {matches.length === 0 && <li className="settings-font-empty">{t("No fonts found")}</li>}
+          </ul>
+          {matches.length > FONT_LIST_LIMIT && <p className="settings-font-note">{t("Showing the first {count} fonts. Search to narrow the list.", { count: FONT_LIST_LIMIT })}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
+type SettingsPage = SettingsPageId;
 
 /** The pages in the order the list shows them: what is looked at first, then what is set once. */
-const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
+export const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
   { id: "appearance", icon: Palette },
   { id: "chat", icon: MessageSquare },
   { id: "terminal", icon: SquareTerminal },
@@ -142,23 +233,56 @@ function shownBy(entry: SettingsLevel | null): { page: SettingsPage | null; keyB
   return page === null && entry.page !== null ? null : { page, keyBar: entry.keyBar && page === "terminal" };
 }
 
+function PaletteSelect({ id, value, onChange }: { id: string; value: PaletteName; onChange: (palette: PaletteName) => void }) {
+  const t = useT();
+  return (
+    <select id={id} className="select settings-select" value={value} onChange={(event) => onChange(event.target.value as PaletteName)}>
+      <option value="amber">{t("Amber")}</option>
+      <option value="report">{t("Dark report")}</option>
+      <option value="charcoal">{t("Charcoal")}</option>
+      <option value="catppuccin">{t("Catppuccin")}</option>
+      <option value="lilac">{t("Lilac")}</option>
+      <option value="forest">{t("Forest")}</option>
+    </select>
+  );
+}
+
 function AppearancePage() {
   const { settings, update } = useSettings();
   const t = useT();
   return (
+    <>
     <SettingsGroup>
       <SettingsRow label={t("Theme")} wide>
         <Segmented label={t("Theme")} value={settings.theme} onChange={(theme) => update({ theme })} options={[{ value: "dark", label: t("Dark") }, { value: "light", label: t("Light") }, { value: "system", label: t("System") }]} />
       </SettingsRow>
-      <SettingsRow label={t("Colors")} htmlFor="settings-palette">
-        <select id="settings-palette" className="select settings-select" value={settings.palette} onChange={(event) => update({ palette: event.target.value as typeof settings.palette })}>
-          <option value="amber">{t("Amber")}</option>
-          <option value="report">{t("Dark report")}</option>
-          <option value="charcoal">{t("Charcoal")}</option>
-          <option value="catppuccin">{t("Catppuccin")}</option>
-          <option value="lilac">{t("Lilac")}</option>
-          <option value="forest">{t("Forest")}</option>
-        </select>
+      {settings.theme === "system" ? (
+        <>
+          <SettingsRow label={t("Light colors")} description={t("System mode switches between the two palettes")} htmlFor="settings-palette-light">
+            <PaletteSelect id="settings-palette-light" value={settings.paletteLight} onChange={(paletteLight) => update({ paletteLight })} />
+          </SettingsRow>
+          <SettingsRow label={t("Dark colors")} htmlFor="settings-palette-dark">
+            <PaletteSelect id="settings-palette-dark" value={settings.paletteDark} onChange={(paletteDark) => update({ paletteDark })} />
+          </SettingsRow>
+        </>
+      ) : (
+        <SettingsRow label={t("Colors")} htmlFor="settings-palette">
+          <PaletteSelect id="settings-palette" value={settings.palette} onChange={(palette) => update({ palette })} />
+        </SettingsRow>
+      )}
+      <SettingsRow label={t("Contrast")} description={t("How far text and hairlines stand out from the surfaces. Dim text keeps its contrast, so every step stays readable.")} wide>
+        <div className="settings-contrast">
+          <button type="button" className="icon-button" aria-label={t("Reset contrast")} disabled={settings.contrast === DEFAULT_SETTINGS.contrast} onClick={() => update({ contrast: DEFAULT_SETTINGS.contrast })}><RotateCcw aria-hidden="true" /></button>
+          <Stepper label={t("Contrast")} value={settings.contrast} text={contrastText(settings.contrast)} min={CONTRAST_MIN} max={CONTRAST_MAX} decreaseLabel={t("Decrease contrast")} increaseLabel={t("Increase contrast")} onChange={(contrast) => update({ contrast })} />
+        </div>
+      </SettingsRow>
+      {isMacPlatform() ? (
+        <SettingsRow label={t("Text smoothing")} description={t("Grayscale draws thinner text; System uses the macOS default.")} wide>
+          <Segmented<FontSmoothing> label={t("Text smoothing")} value={settings.fontSmoothing} onChange={(fontSmoothing) => update({ fontSmoothing })} options={[{ value: "grayscale", label: t("Grayscale") }, { value: "system", label: t("System") }]} />
+        </SettingsRow>
+      ) : null}
+      <SettingsRow label={t("Panel motion")} description={t("How fast the sidebar and phone sheets open and close. Off snaps them.")} wide>
+        <Segmented<PanelMotion> label={t("Panel motion")} value={settings.panelMotion} onChange={(panelMotion) => update({ panelMotion })} options={[{ value: "off", label: t("Off") }, { value: "fast", label: t("Fast") }, { value: "default", label: t("Default") }, { value: "slow", label: t("Slow") }]} />
       </SettingsRow>
       <SettingsRow label={t("Density")}>
         <Segmented label={t("Density")} value={settings.density} onChange={(density) => update({ density })} options={[{ value: "comfortable", label: t("Comfortable") }, { value: "compact", label: t("Compact") }]} />
@@ -183,7 +307,23 @@ function AppearancePage() {
       <SettingsRow label={t("Quiet opened finishes")} description={t("A finished agent you have opened here loses its dot, as herdr's own view would clear it; remembered per PC on this browser")}>
         <Toggle label={t("Quiet opened finishes")} checked={settings.quietOpenedDone} onChange={(quietOpenedDone) => update({ quietOpenedDone })} />
       </SettingsRow>
+      <SettingsRow label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
+        <Segmented label={t("Agent logos")} value={settings.agentMarks} onChange={(agentMarks) => update({ agentMarks })} options={[{ value: "color", label: t("Color") }, { value: "mono", label: t("Mono") }]} />
+      </SettingsRow>
     </SettingsGroup>
+
+    <SettingsGroup title={t("Typography")} section="typography">
+      <SettingsRow label={t("Interface font size")} description={t("Menus, lists, dialogs and the sidebar. The chat follows it until it has a size of its own; the terminal keeps its own.")}>
+        <Stepper label={t("Interface font size")} value={uiFontSize(settings)} text={`${uiFontSize(settings)}px`} min={UI_FONT_MIN} max={UI_FONT_MAX} decreaseLabel={t("Decrease interface font size")} increaseLabel={t("Increase interface font size")} onChange={(size) => update({ uiFontSize: size })} />
+      </SettingsRow>
+      <SettingsRow label={t("Interface font")} description={t("Everything outside code and the terminal; the chat's text follows it until it has a font of its own. Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
+        <FontFamilyInput value={settings.uiFontFamily} label={t("Interface font")} placeholder={UI_FONT_PLACEHOLDER} onCommit={(uiFontFamily) => update({ uiFontFamily })} />
+      </SettingsRow>
+      <SettingsRow label={t("Code font")} description={t("Code blocks, the file viewer, diffs, paths and keycaps; the terminal has a font of its own. Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
+        <FontFamilyInput value={settings.codeFontFamily} label={t("Code font")} fixedWidthFor="code" onCommit={(codeFontFamily) => update({ codeFontFamily })} />
+      </SettingsRow>
+    </SettingsGroup>
+    </>
   );
 }
 
@@ -219,8 +359,14 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">
+        <SettingsRow label={t("PageUp / PageDown scroll chat")} description={t("Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.")}>
+          <Toggle label={t("PageUp / PageDown scroll chat")} checked={settings.chatPageKeys} onChange={(chatPageKeys) => update({ chatPageKeys })} />
+        </SettingsRow>
         <SettingsRow label={t("Enter sends")} description={t("When off, Mod+Enter sends")}>
           <Toggle label={t("Enter sends")} checked={settings.enterSends} onChange={(enterSends) => update({ enterSends })} />
+        </SettingsRow>
+        <SettingsRow label={t("Files at once")} description={t("How many files one paste, pick or drop attaches. The rest are left out, and the message box says how many.")}>
+          <Stepper label={t("Files at once")} value={settings.attachLimit} text={String(settings.attachLimit)} min={ATTACH_LIMIT_MIN} max={ATTACH_LIMIT_MAX} decreaseLabel={t("Attach fewer files at once")} increaseLabel={t("Attach more files at once")} onChange={(attachLimit) => update({ attachLimit })} />
         </SettingsRow>
         <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
           <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
@@ -260,11 +406,24 @@ function ChatPage() {
           </div>
         </div>
       </SettingsGroup>
+
+      <SettingsGroup title={t("File viewer")}>
+        <SettingsRow label={t("Wrap long lines")}>
+          <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
+        </SettingsRow>
+        <SettingsRow label={t("Markdown width")}>
+          {/* literal keys, so the i18n check finds them */}
+          <Segmented label={t("Markdown width")} value={settings.markdownWidth} onChange={(markdownWidth) => update({ markdownWidth })} options={MARKDOWN_WIDTHS.map((markdownWidth) => ({ value: markdownWidth, label: markdownWidth === "full" ? t("Full width") : t("Default") }))} />
+        </SettingsRow>
+        <SettingsRow label={t("Diff layout")} description={t("A phone shows one column either way.")}>
+          <Segmented label={t("Diff layout")} value={settings.diffStyle} onChange={(diffStyle) => update({ diffStyle })} options={DIFF_STYLES.map((diffStyle) => ({ value: diffStyle, label: diffStyle === "split" ? t("Split") : t("Unified") }))} />
+        </SettingsRow>
+      </SettingsGroup>
     </>
   );
 }
 
-function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefObject<HTMLButtonElement>; onEditKeyBar: () => void }) {
+function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefObject<HTMLButtonElement | null>; onEditKeyBar: () => void }) {
   const { settings, update } = useSettings();
   const t = useT();
   return (
@@ -276,7 +435,7 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
         <Toggle label={t("Fit 80 columns in a split pane")} checked={settings.narrowPaneFont} onChange={(narrowPaneFont) => update({ narrowPaneFont })} />
       </SettingsRow>
       <SettingsRow label={t("Terminal font")} description={t("Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
-        <FontFamilyInput value={settings.terminalFontFamily} label={t("Terminal font")} onCommit={(terminalFontFamily) => update({ terminalFontFamily })} />
+        <FontFamilyInput value={settings.terminalFontFamily} label={t("Terminal font")} fixedWidthFor="terminal" onCommit={(terminalFontFamily) => update({ terminalFontFamily })} />
       </SettingsRow>
       <SettingsRow label={t("Cursor shape")} description={t("A program in the pane can still change this with its own cursor control sequence")} wide>
         <Segmented label={t("Cursor shape")} value={settings.terminalCursorStyle} onChange={(terminalCursorStyle: TerminalCursorStyle) => update({ terminalCursorStyle })}
@@ -587,16 +746,56 @@ function IntegrationRow({ integration }: { integration: AgentIntegration }) {
   );
 }
 
-const SHORTCUT_KEYS: readonly string[] = [..."abcdefghijklmnopqrstuvwxyz0123456789,", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
-
 function ShortcutsPage() {
   const { settings, update } = useSettings();
   const t = useT();
   const platformIsMac = isMacPlatform();
+  const [query, setQuery] = useState("");
+  const [recording, setRecording] = useState<{ id: ShortcutId; problem: string | null } | null>(null);
+  const recordingId = recording?.id ?? null;
+  // while a row records, the chord pressed is read here and the app's own dispatcher stands down
+  useEffect(() => {
+    if (recordingId === null) return;
+    setShortcutRecording(true);
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const result = recordShortcut(event, platformIsMac);
+      if (result.kind === "ignore") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (result.kind === "cancel") return setRecording(null);
+      if (result.kind === "invalid") {
+        const problem = result.reason === "chord" ? t("Hold {mod}+Shift and press a key.", { mod: modKeyLabel() }) : result.reason === "key" ? t("That key cannot be a shortcut.") : t("Your browser or operating system keeps that shortcut.");
+        return setRecording({ id: recordingId, problem });
+      }
+      if (shortcutConflict(recordingId, [result.key], settings.shortcutOverrides)) return setRecording({ id: recordingId, problem: t("Already assigned") });
+      update({ shortcutOverrides: { ...settings.shortcutOverrides, [recordingId]: result.key } });
+      setRecording(null);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      setShortcutRecording(false);
+    };
+  }, [recordingId, platformIsMac, settings.shortcutOverrides, update, t]);
+  const visible = SHORTCUTS.filter((shortcut) => {
+    const keys = shortcutDisplayKeys(shortcut.id, settings.shortcutOverrides);
+    return shortcutMatchesQuery(t(shortcut.label), `${formatKeys(keys).join(" ")} ${compactKeys(keys)}`, query);
+  });
   return (
     <>
+      <input
+        type="search"
+        className="input settings-shortcut-search"
+        value={query}
+        placeholder={t("Search shortcuts")}
+        aria-label={t("Search shortcuts")}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {visible.length === 0 && <p className="settings-hint" role="status">{t("No shortcuts match.")}</p>}
       <SettingsGroup className="settings-shortcuts" section="shortcuts" note={<>{t("Bindings apply to this browser and device; Mod+Shift is fixed.")} {t("Text selection in focused fields stays native; Tab/list keys are UI-local, not global shortcuts.")} {t("The mobile key bar sends terminal keys, not app actions.")}</>}>
-        {SHORTCUTS.map((shortcut) => {
+        {visible.map((shortcut) => {
           const displayedKeys = shortcutDisplayKeys(shortcut.id, settings.shortcutOverrides);
           const selectedKey = displayedKeys[displayedKeys.length - 1];
           const selectedReserved = selectedKey !== undefined && isReservedShortcutKey(selectedKey, platformIsMac);
@@ -604,8 +803,10 @@ function ShortcutsPage() {
           const defaultKey = defaultKeys[defaultKeys.length - 1];
           const defaultReserved = defaultKey !== undefined && isReservedShortcutKey(defaultKey, platformIsMac);
           return (
-            <SettingsRow key={shortcut.id} label={t(shortcut.label)} wide={shortcut.id !== "voice"} description={selectedReserved ? t("Your browser or operating system may intercept {keys}.", { keys: compactKeys(displayedKeys) }) : undefined}>
+            <SettingsRow key={shortcut.id} label={t(shortcut.label)} wide={shortcut.id !== "voice"} description={recording?.id === shortcut.id ? (recording.problem ?? t("Press the new shortcut, or Escape to cancel.")) : selectedReserved ? t("Your browser or operating system may intercept {keys}.", { keys: compactKeys(displayedKeys) }) : undefined}>
               {shortcut.id === "voice" ? <span className="settings-keys">{formatKeys(shortcut.keys).map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span> : (
+                <span className="settings-shortcut-control">
+                <button type="button" className="btn settings-shortcut-record" aria-pressed={recording?.id === shortcut.id} aria-label={t("Record shortcut for {name}", { name: t(shortcut.label) })} onClick={() => setRecording(recording?.id === shortcut.id ? null : { id: shortcut.id, problem: null })}>{recording?.id === shortcut.id ? t("Press keys…") : t("Record")}</button>
                 <select className="select settings-select settings-shortcut-select" aria-label={t(shortcut.label)} value={Object.hasOwn(settings.shortcutOverrides, shortcut.id) ? settings.shortcutOverrides[shortcut.id] ?? "off" : "default"} onChange={(event) => {
                   const next = { ...settings.shortcutOverrides };
                   if (event.target.value === "default") delete next[shortcut.id];
@@ -620,6 +821,7 @@ function ShortcutsPage() {
                     return <option key={key} value={key} disabled={conflict}>{compactKeys(["Mod", "Shift", key])}{reserved ? ` — ${t("Reserved")}` : ""}{conflict ? " — " + t("Already assigned") : ""}</option>;
                   })}
                 </select>
+                </span>
               )}
             </SettingsRow>
           );
@@ -628,6 +830,11 @@ function ShortcutsPage() {
       <div className="settings-actions">
         <button type="button" className="btn" onClick={() => update({ shortcutOverrides: {} })}>{t("Reset shortcuts")}</button>
       </div>
+      <SettingsGroup title={t("Paging")} section="paging">
+        <SettingsRow label={t("Page overlap")} description={t("Lines kept visible between pages in chat and terminal history. Zero scrolls a full page.")}>
+          <Stepper label={t("Page overlap")} value={settings.pageOverlapRows} text={String(settings.pageOverlapRows)} min={0} max={100} decreaseLabel={t("Decrease page overlap")} increaseLabel={t("Increase page overlap")} onChange={(pageOverlapRows) => update({ pageOverlapRows })} />
+        </SettingsRow>
+      </SettingsGroup>
     </>
   );
 }
@@ -657,6 +864,8 @@ function DevicesPage({ auth }: { auth: HealthAuth | null }) {
           {!installPrompt.installed && installPrompt.canInstall && <button type="button" className="btn btn-primary" onClick={() => void installPrompt.install()}>{t("Install app")}</button>}
         </SettingsRow>
       </SettingsGroup>
+
+      <PortalPanel readOnly={auth?.role === "watch"} />
 
       <SettingsGroup title={t("Devices")} section="devices">
         <div className="settings-item"><DevicesPanel pairUrl={pairUrl} auth={auth} /></div>
@@ -731,7 +940,41 @@ function AboutPage({ updates, herdrVersion, bridgesFollow }: { updates: UpdatesM
 
 export function SettingsDialog(props: SettingsDialogProps) {
   // mounted per opening: every opening starts on the list, with nothing left from the last one
-  return props.open ? <OpenSettingsDialog {...props} /> : null;
+  // a page that cannot be drawn closes to the app instead of blanking it; the next opening tries again
+  return props.open ? <RenderBoundary resetKey={null} fallback={() => <SettingsCrash onClose={props.onClose} overPreview={props.overPreview ?? false} />}>
+    <CrashProbe region="settings" />
+    <OpenSettingsDialog {...props} />
+  </RenderBoundary> : null;
+}
+
+/**
+ * Still a modal: Escape, the swipe down on a phone, the system Back button and the kept focus
+ * close it as they close Settings, and it sits over a file preview as Settings does.
+ */
+function SettingsCrash({ onClose, overPreview }: { onClose: () => void; overPreview: boolean }) {
+  const t = useT();
+  // one entry of the history, whatever the crashed dialog had recorded: Back takes it off and the
+  // app closes Settings (lib/settingsHistory.ts). Not settingsLevels: a wide dialog's list is none
+  useEffect(() => { recordSettings([{ page: null, keyBar: false }]); }, []);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: closeRef });
+  useSheetSwipe(surface, onClose);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return (
+    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={t("Settings")} tabIndex={-1}>
+        <RegionCrash message={t("Settings can't be shown.")} retry={onClose} retryLabel={t("Close")} buttonRef={closeRef} />
+      </div>
+    </div>
+  );
 }
 
 function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, actions, updates, auth, herdrVersion, onEnableNotifications, overPreview = false }: SettingsDialogProps) {
@@ -742,7 +985,10 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   // a phone opens on the list of pages; a wider dialog shows the list beside the first page. A
   // button that points at Updates opens on About whatever an entry still landing would restore
   const linked = PAGES.find((candidate) => candidate.id === linkPage)?.id ?? null;
-  const [chosen, setChosen] = useState<SettingsPage | null>(section === "updates" ? "about" : restored ? restored.page : linked);
+  // a page the command palette named opens first; the request is read, not taken, so a remount in development finds it again
+  const [asked] = useState(requestedSettingsPage);
+  useEffect(() => requestSettingsPage(null), []);
+  const [chosen, setChosen] = useState<SettingsPage | null>(section === "updates" ? "about" : asked ?? (restored ? restored.page : linked));
   const page = chosen ?? (narrow ? null : PAGES[0]!.id);
   const [keyBarOpen, setKeyBarOpen] = useState(section === "updates" ? false : restored?.keyBar ?? false);
   // every step in is an entry of the history, so the system Back button takes one step out

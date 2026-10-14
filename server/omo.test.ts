@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
-import { heldRuntime, heldSessionIds, isOmoProcess, omoAgentDir, omoSessionFolder, omoCandidates, omoTranscriptsOfCwd, selectOmoTranscript, type OmoRuntime } from "./omo.ts";
+import { heldRuntime, heldSessionIds, isOmoProcess, omoAgentDir, omoSessionFolder, omoCandidates, omoTranscriptsOfCwd, selectOmoTranscript, withOmoDescendants, type OmoRuntime, type ProcessInfo } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { parseOmpTranscript } from "./transcript-records.ts";
+import type { ProcessRow } from "./windows-processes.ts";
 
 const runtime = (paneId: string, startedAt: number | null = 10_000, paths: string[] = [], ids: string[] = []): OmoRuntime => ({ paneId, startedAt, paths, ids });
 const files = [
@@ -199,4 +200,34 @@ it("names a cwd's session folder as omo's engine does, a Windows cwd included", 
   expect(omoSessionFolder("/home/u/dev/app")).toBe("--home-u-dev-app--");
   expect(omoSessionFolder("C:\\Users\\me\\dev\\app")).toBe("--C--Users-me-dev-app--");
   expect(omoSessionFolder("C:/Users/me/app")).toBe("--C--Users-me-app--");
+});
+
+// herdr on Windows names the pane's launcher, not what the launcher starts (windows-processes.ts)
+const launcherInfo: ProcessInfo = { process_info: { shell_pid: 10, foreground_processes: [{ pid: 11, argv: ["C:\\tools\\pi.exe"] }] } };
+const launcherRows: ProcessRow[] = [
+  { pid: 10, parent: 1, path: "C:\\pwsh.exe", commandLine: "pwsh.exe" },
+  { pid: 11, parent: 10, path: "C:\\tools\\pi.exe", commandLine: "pi.exe" },
+  { pid: 12, parent: 11, path: "C:\\bun.exe", commandLine: 'bun.exe "C:\\node_modules\\omo-ai\\bin\\cli.js" --session-id session-123' },
+  // below another pane's shell
+  { pid: 13, parent: 2, path: "C:\\bun.exe", commandLine: 'bun.exe "C:\\node_modules\\omo-ai\\bin\\cli.js" --session-id other-session' },
+];
+
+it("finds the OmO a Windows launcher started below the pane's shell, with its session arguments", () => {
+  const processes = withOmoDescendants(launcherInfo, launcherRows)?.process_info?.foreground_processes ?? [];
+  expect(processes.map((entry) => entry.pid)).toEqual([11, 12]);
+  expect(isOmoProcess(processes[1]!.argv!)).toBeTrue();
+  expect(processes[1]!.argv).toContain("session-123");
+  expect(launcherInfo?.process_info?.foreground_processes).toHaveLength(1);
+});
+
+it("does not turn an ordinary pi into OmO or borrow another pane's OmO", () => {
+  expect(withOmoDescendants(launcherInfo, launcherRows.filter((entry) => entry.pid !== 12))).toEqual(launcherInfo);
+  expect(withOmoDescendants(launcherInfo, [])).toEqual(launcherInfo);
+  expect(withOmoDescendants({ process_info: { foreground_processes: [] } }, launcherRows)).toEqual({ process_info: { foreground_processes: [] } });
+  expect(withOmoDescendants(null, launcherRows)).toBeNull();
+});
+
+it("does not list an OmO process twice when herdr already names it", () => {
+  const once = withOmoDescendants(launcherInfo, launcherRows);
+  expect(withOmoDescendants(once, launcherRows)).toEqual(once);
 });

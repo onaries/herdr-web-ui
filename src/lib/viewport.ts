@@ -1,3 +1,5 @@
+import { shouldSyncViewportOnResume } from "./viewportResume.ts";
+
 /*
  * Sizes the shell to the VISUAL viewport. When the soft keyboard opens, iOS
  * Safari shrinks window.visualViewport but leaves the layout viewport (and so
@@ -84,6 +86,12 @@ window.addEventListener("orientationchange", syncKeyboard);
 touch.addEventListener("change", syncKeyboard);
 keyboard?.addEventListener("geometrychange", syncKeyboard);
 document.addEventListener("focusin", syncKeyboard);
+document.addEventListener("visibilitychange", () => {
+  if (shouldSyncViewportOnResume("visibilitychange", document.visibilityState)) syncKeyboard();
+});
+window.addEventListener("pageshow", () => {
+  if (shouldSyncViewportOnResume("pageshow", document.visibilityState)) syncKeyboard();
+});
 // focus moving from one field to the next blurs first: read where it landed
 document.addEventListener("focusout", () => window.setTimeout(syncKeyboard, 0));
 // Switching xterm direct typing leaves its helper focused; observe the mode change.

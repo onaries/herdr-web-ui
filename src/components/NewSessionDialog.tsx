@@ -4,6 +4,7 @@ import { FolderOpen, X } from "lucide-react";
 import "./NewSessionDialog.css";
 
 import type { AgentKind } from "../../shared/protocol.ts";
+import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
@@ -215,6 +216,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <input
               className="input"
               value={name}
+              maxLength={MAX_LABEL_CHARS}
               disabled={fieldsDisabled}
               autoComplete="off"
               placeholder={tab ? String(tab.number) : directoryBasename(cwd)}

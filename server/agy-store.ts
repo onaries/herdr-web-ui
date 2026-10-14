@@ -2,7 +2,7 @@
 import { readFileSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
-import { herdrRpc } from "./herdr/client.ts";
+import { paneProcessInfo } from "./herdr/client.ts";
 
 export interface AgyStore { root: string; session: string; path: string; pid: number; started: string }
 const LOCK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lock$/i;
@@ -70,8 +70,8 @@ async function heldPaths(pid: number): Promise<string[]> {
 
 export async function resolveAgyStore(pane: HerdrPane): Promise<AgyStore | null> {
   try {
-    const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; name?: string; argv?: string[] }[] } }>("pane.process_info", { pane_id: pane.pane_id });
-    const owners = (info.process_info?.foreground_processes ?? []).filter((p) => (p.name === "agy" || p.name === "agy-native") && Number.isSafeInteger(p.pid) && p.pid > 1);
+    const info = await paneProcessInfo(pane.pane_id);
+    const owners = (info?.foreground_processes ?? []).filter((p) => (p.name === "agy" || p.name === "agy-native") && Number.isSafeInteger(p.pid) && p.pid > 1);
     if (owners.length !== 1) return null;
     const pid = owners[0]!.pid;
     const before = await processIdentity(pid);

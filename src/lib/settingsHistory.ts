@@ -11,6 +11,10 @@
  */
 
 const KEY = "herdr-web-ui:settings";
+/** names an opening of Settings on the entry it began from and on each of its entries */
+const BASE_KEY = "herdr-web-ui:settings-base";
+/** names the opening an entry another dialog pushed from a Settings entry lies above */
+const ABOVE_KEY = "herdr-web-ui:settings-above";
 /** how long to wait before releasing the traversal's busy state, not its ownership */
 const LANDING_MS = 1000;
 
@@ -47,6 +51,19 @@ export function settingsEntry(state: unknown): SettingsEntry | null {
   return { page, keyBar, depth };
 }
 
+const fieldOf = (state: unknown, key: string): unknown =>
+  state !== null && typeof state === "object" ? (state as Record<string, unknown>)[key] : undefined;
+
+/**
+ * The state for an entry another dialog (a file preview) pushes from this one. It is no Settings
+ * entry, so it does not copy one: it notes the opening it lies above instead, which a reload on
+ * it closes without stepping back over it.
+ */
+export function outsideSettings(state: unknown): Record<string, unknown> {
+  const { [KEY]: _entry, [BASE_KEY]: opening, ...rest } = state !== null && typeof state === "object" ? state as Record<string, unknown> : {};
+  return settingsEntry(state) !== null && typeof opening === "string" ? { ...rest, [ABOVE_KEY]: opening } : rest;
+}
+
 type Listener = (entry: SettingsEntry | null, own: boolean) => void;
 const listeners = new Set<Listener>();
 let wanted: readonly SettingsLevel[] = [];
@@ -60,6 +77,10 @@ let pending: { from: unknown; depth: number; level: SettingsLevel | null; expire
 let observed: unknown = typeof window === "undefined" ? undefined : window.history.state;
 let writing = false;
 let loadedOnSettings = false;
+/** the opening of Settings the entries held belong to, as written into its base entry */
+let opening: unknown;
+/** the openings whose entries lie under an entry that is not their base: Back onto them steps over them, each until it has been */
+const buried = new Set<unknown>();
 
 function releasePending(): void { pending = null; rewinding = 0; clearTimeout(landing); }
 
@@ -92,6 +113,10 @@ function reconcile(): void {
   if (rewinding > 0) return;
   const current = settingsEntry(state);
   const have = current?.depth ?? 0;
+  // entries held under a state that is not the one they began from: a markerless entry (a typed
+  // #hash, another script's pushState, a preview) landed above them, and they are buried there
+  if (have === 0 && held.length > 0 && fieldOf(state, BASE_KEY) !== opening) buried.add(opening);
+  if (have > 0) opening = fieldOf(state, BASE_KEY);
   // what the history holds up to here: a Back landed under what was recorded; the step shown is
   // read from the state; one this module did not push (a reload or a Forward landed on entries
   // of an earlier opening) is unknown, never taken on trust, and rebuilt like a differing one
@@ -105,7 +130,13 @@ function reconcile(): void {
   let differs = 0;
   while (differs < have && differs < wanted.length && same(held[differs]!, wanted[differs]!)) differs++;
   if (differs < have - 1) { rewind(have - differs - 1); return; }
-  const base = state !== null && typeof state === "object" ? state : {};
+  let base = state !== null && typeof state === "object" ? state : {};
+  if (have === 0 && wanted.length > 0) {
+    // a new opening: its base entry is marked, so a Back onto it is told from a foreign entry
+    opening = Math.random().toString(36).slice(2);
+    writeState("replaceState", { ...base, [BASE_KEY]: opening });
+    base = window.history.state as object;
+  }
   if (have > 0 && differs === have - 1) {
     // the step shown is another: a wider dialog turned its page, or the list took a page's place
     writeState("replaceState", { ...base, [KEY]: { ...wanted[have - 1], depth: have } });
@@ -126,7 +157,8 @@ export function recordSettings(levels: readonly SettingsLevel[]): void {
 }
 
 /**
- * Whether this load began on an entry Settings left, which it steps out of. Asked rather than
+ * Whether this load began on an entry Settings left, which it steps out of, or on one above them
+ * (a preview opened over Settings), which it keeps with Settings closed. Asked rather than
  * read from the history by whoever opens Settings from the address: the step lands when the
  * browser gets to it, before or after the app first draws, and either address may name Settings.
  */
@@ -152,8 +184,16 @@ if (typeof window !== "undefined") {
     }) as History["pushState"];
   }
   window.addEventListener("popstate", (event) => {
+    const previous = observed;
     observed = event.state;
     const entry = settingsEntry(event.state);
+    // Back from above onto the entries of a buried opening: Settings closed when they were buried,
+    // so they are stepped over to the entry they began from instead of opening it again
+    if (pending === null && entry !== null && buried.has(fieldOf(event.state, BASE_KEY)) && fieldOf(previous, BASE_KEY) !== fieldOf(event.state, BASE_KEY)) {
+      buried.delete(fieldOf(event.state, BASE_KEY));
+      rewind(entry.depth);
+      return;
+    }
     const matches = pending !== null && (entry?.depth ?? 0) === pending.depth
       && (pending.level === null || (entry !== null && same(pending.level, entry)));
     const own = matches && pending?.claim === true;
@@ -165,4 +205,10 @@ if (typeof window !== "undefined") {
   // a reload keeps the history and not the dialog: step out of the entries it left
   const left = settingsEntry(window.history.state);
   if (left !== null) { loadedOnSettings = true; rewind(left.depth); }
+  else if (typeof fieldOf(window.history.state, ABOVE_KEY) === "string") {
+    // an entry above Settings (a preview opened over it) stays, and Settings stays closed: Back
+    // from it steps over the entries beneath
+    loadedOnSettings = true;
+    buried.add(fieldOf(window.history.state, ABOVE_KEY));
+  }
 }

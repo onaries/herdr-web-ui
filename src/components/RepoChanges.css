@@ -1,0 +1,292 @@
+/* the Changes tab of the Files dialog: a comparison's changed files, one row each, like the folder browser's */
+.repo-changes {
+  display: flex;
+  flex-direction: column;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.repo-changes-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.repo-changes-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.repo-changes-commits {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: end;
+  padding: var(--space-2);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.repo-changes-commits .input {
+  font-family: var(--font-mono);
+}
+
+.repo-changes-repo {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.repo-changes-branch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-strong);
+}
+
+.repo-changes-branch svg {
+  width: 1.1em;
+  height: 1.1em;
+  color: var(--accent);
+}
+
+/* a long root keeps its end, the part that says where you are */
+.repo-changes-root {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+/* the files under their folders (lib/changeTree.ts): a row moves one indent in per level (`--depth`),
+   the fill stays as wide as the list, as the sidebar's worktree rows do */
+.repo-changes-list {
+  --repo-change-indent: var(--space-4);
+  max-height: min(60vh, calc(var(--control-h) * 14));
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.repo-change-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-change,
+.repo-change-folder {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  padding-left: calc(var(--space-3) + var(--depth, 0) * var(--repo-change-indent));
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.repo-change:hover:not(:disabled),
+.repo-change:focus-visible,
+.repo-change-folder:hover:not(:disabled),
+.repo-change-folder:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+/* a folder's fold, in the cell a file's status chip takes, so its glyph lines up with the files' */
+.repo-change-caret {
+  flex: none;
+  width: calc(var(--chip-h) + var(--space-1));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.repo-change-caret svg {
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+
+.repo-change-folder .repo-change-glyph {
+  color: var(--accent);
+}
+
+.repo-change-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* how many files the folder holds, however deep: where the files' counts sit */
+.repo-change-folder-count {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* git's letter for the status, tinted as the rows of that kind are in the diff */
+.repo-change-mark {
+  flex: none;
+  width: calc(var(--chip-h) + var(--space-1));
+  height: var(--chip-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+}
+
+.repo-change-mark[data-status="added"],
+.repo-change-mark[data-status="untracked"] {
+  color: var(--syntax-inserted);
+  background: var(--status-done-tint);
+}
+
+.repo-change-mark[data-status="deleted"],
+.repo-change-mark[data-status="unmerged"] {
+  color: var(--syntax-deleted);
+  background: var(--status-blocked-tint);
+}
+
+.repo-change-mark[data-status="modified"] {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.repo-change-mark[data-status="untracked"] {
+  border-color: var(--border);
+  border-style: dashed;
+  background: transparent;
+}
+
+/* the kind of file, by its name (lib/fileIcons.ts), dim beside the tinted chip as the folder browser's file glyphs are */
+.repo-change-glyph {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--text-dim);
+}
+
+.repo-change-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.repo-change-old {
+  color: var(--text-dim);
+}
+
+.repo-change-counts {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  gap: var(--space-1);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.repo-change-added { color: var(--syntax-inserted); }
+.repo-change-deleted { color: var(--syntax-deleted); }
+
+/* the rows on their way, one placeholder per row the last list had (lib/skeleton.ts), so a refresh holds the list's height */
+.repo-change-skeleton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+}
+
+.repo-change-skeleton-mark {
+  width: calc(var(--chip-h) + var(--space-1));
+  height: var(--chip-h);
+  border-radius: var(--radius-sm);
+}
+
+.repo-change-skeleton-glyph {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  border-radius: var(--radius-sm);
+}
+
+.repo-change-skeleton-counts {
+  width: 3em;
+  margin-left: auto;
+}
+
+.repo-changes-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.repo-changes-error {
+  color: var(--status-blocked);
+}
+
+@media (pointer: coarse) {
+  .repo-change,
+  .repo-change-folder,
+  .repo-change-skeleton {
+    min-height: var(--touch-target);
+  }
+
+  .repo-changes-bar .icon-button {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
+
+/* on a phone the three commit fields stack */
+@media (max-width: 480px) {
+  .repo-changes-commits {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

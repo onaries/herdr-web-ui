@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_SELF_HOSTED_LABELS && fromJSON(vars.CI_SELF_HOSTED_LABELS) || 'ubuntu-24.04' }}
     timeout-minutes: 5
     steps:
       - name: Require main
@@ -24,14 +24,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
+      - uses: ./.github/actions/setup-ci
       - name: Validate version, notes and unused tag
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           bun scripts/release-notes.ts "$RELEASE_VERSION"
+          # the remote-vN this version names is published from this tree, and the Worker deploy is recorded
+          bun scripts/release-guards.ts --release "$RELEASE_VERSION"
           if git show-ref --verify --quiet "refs/tags/v$RELEASE_VERSION"; then
             echo 'This version already has a tag; choose a new version.' >&2
             exit 1
@@ -41,7 +41,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
   publish:
     needs: validate
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_SELF_HOSTED_LABELS && fromJSON(vars.CI_SELF_HOSTED_LABELS) || 'ubuntu-24.04' }}
     timeout-minutes: 5
     permissions:
       contents: write
@@ -49,9 +49,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
+      - uses: ./.github/actions/setup-ci
       - name: Publish the validated commit
         env:
           GH_TOKEN: ${{ github.token }}

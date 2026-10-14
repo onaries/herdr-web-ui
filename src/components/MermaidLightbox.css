@@ -15,8 +15,8 @@
 
 .mermaid-lightbox-bar {
   position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
+  top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
+  right: calc(var(--space-3) + env(safe-area-inset-right, 0px));
   z-index: 1;
   display: flex;
   align-items: center;

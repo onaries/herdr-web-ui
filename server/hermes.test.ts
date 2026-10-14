@@ -118,6 +118,18 @@ describe("hermes message rows parsing", () => {
     expect(toolSummary("write_file", { code: "let x = 1;", path: "test.js" })).toBe("test.js");
   });
 
+  it("sums a call up by what the agent said it is for, and only where that field is a purpose", () => {
+    // OmO's eval carries its own one-line summary beside the code
+    expect(toolSummary("eval", { language: "js", code: "await check()", summary: "  Run the checks  " })).toBe("Run the checks");
+    // Claude describes a Bash command and a subagent's prompt
+    expect(toolSummary("Bash", { command: "bun test", description: "Run the unit tests" })).toBe("Run the unit tests");
+    expect(toolSummary("Agent", { prompt: "Find the callers", description: "Find callers" })).toBe("Find callers");
+    expect(toolSummary("eval", { code: "1", summary: "x".repeat(200) })).toHaveLength(120);
+    // a blank purpose falls back to the command; a summary without code is another tool's data
+    expect(toolSummary("Bash", { command: "bun test", description: " " })).toBe("bun test");
+    expect(toolSummary("mcp__notes__add", { summary: "Weekly notes", path: "notes.md" })).toBe("notes.md");
+  });
+
   it("decodes terminal tool envelopes, marks nonzero exits and errors failed, and preserves invalid/non-terminal JSON", () => {
     const rows: HermesMessageRow[] = [
       {

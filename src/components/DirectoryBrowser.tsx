@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, FileText, Folder, House } from "lucide-react";
+import { ArrowUp, House } from "lucide-react";
 
 import "./DirectoryBrowser.css";
+import { FileGlyph } from "./FileGlyph.tsx";
 
 import type { DirectoryListing } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
 import { formatBytes } from "../lib/bridgeProgress.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
+import { resolveWorkspaceRoot, workspaceRelativePath } from "../lib/workspacePath.ts";
+import { homeRelative, subscribeFilesFolder, takeFilesFolder } from "../lib/paletteFolders.ts";
+
+export { homeRelative };
 
 export interface DirectoryBrowserProps {
   /** where to open: the path typed so far (absolute, `~` or `~/…`); empty or unreadable opens home */
@@ -16,12 +21,8 @@ export interface DirectoryBrowserProps {
   onPick?: (path: string) => void;
   /** lists files too, and opens the one clicked (its absolute path) */
   onOpenFile?: (path: string) => void;
-}
-
-/** `~/…` for a path inside home, as the directory field is usually typed. */
-export function homeRelative(path: string, home: string): string {
-  if (path === home) return "~";
-  return path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
+  /** told the folder shown (its absolute path) each time one opens */
+  onFolder?: (path: string) => void;
 }
 
 function childPath(parent: string, name: string): string {
@@ -32,7 +33,7 @@ function childPath(parent: string, name: string): string {
  * A folder browser for the new-session dialog: one directory at a time, fetched from the
  * PC the session starts on. Nothing is kept but the folder shown now.
  */
-export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowserProps) {
+export function DirectoryBrowser({ start, onPick, onOpenFile, onFolder }: DirectoryBrowserProps) {
   const t = useT();
   const { fetchDirectories } = useMachineApi();
   const [listing, setListing] = useState<DirectoryListing | null>(null);
@@ -42,6 +43,8 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
   const listRef = useRef<HTMLUListElement>(null);
+  const shownPath = listing?.path;
+  useEffect(() => { if (shownPath !== undefined) onFolder?.(shownPath); }, [shownPath]);
 
   const open = useCallback(async (path: string, showHidden: boolean, fallbackHome: boolean) => {
     const id = ++request.current;
@@ -65,10 +68,26 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
     }
   }, [fetchDirectories, listing, onOpenFile, t]);
 
-  useEffect(() => { void open(start, false, true); }, []);
+  // Files opens on a folder the palette picked (lib/paletteFolders.ts) instead of the pane's own,
+  // also when it is open already
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => {
+    const requested = onOpenFile ? takeFilesFolder() : null;
+    void open(requested ?? start, false, requested === null);
+    if (!onOpenFile) return;
+    return subscribeFilesFolder(() => {
+      const next = takeFilesFolder();
+      if (next === null) return;
+      setHidden(false);
+      void openRef.current(next, false, false);
+    });
+  }, []);
 
   const path = listing?.path ?? "";
-  const shown = listing ? homeRelative(listing.path, listing.home) : start || "~";
+  const homeShown = listing ? homeRelative(listing.path, listing.home) : start || "~";
+  // browsing files reads from the folder opened on; picking a folder keeps the `~/…` form it hands back
+  const shown = listing && onPick === undefined ? workspaceRelativePath(listing.path, resolveWorkspaceRoot(start, listing.home), homeShown) : homeShown;
   const normalizedQuery = query.trim().toLowerCase();
   const directories = listing === null || onPick === undefined || normalizedQuery === ""
     ? listing?.directories
@@ -114,7 +133,7 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
           {directories?.map((name) => (
             <li key={name}>
               <button type="button" className="dir-browser-item" disabled={loading} onClick={() => void open(childPath(path, name), hidden, false)}>
-                <Folder aria-hidden="true" />
+                <FileGlyph name={name} kind="directory" />
                 <span>{name}</span>
               </button>
             </li>
@@ -122,7 +141,7 @@ export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowser
           {onOpenFile !== undefined && listing?.files?.map((file) => (
             <li key={`file:${file.name}`}>
               <button type="button" className="dir-browser-item is-file" disabled={loading} onClick={() => onOpenFile(childPath(path, file.name))}>
-                <FileText aria-hidden="true" />
+                <FileGlyph name={file.name} />
                 <span>{file.name}</span>
                 <span className="dir-browser-size">{formatBytes(file.size)}</span>
               </button>

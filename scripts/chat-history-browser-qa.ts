@@ -7,11 +7,23 @@ import { chromium } from "playwright-core";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
 import type {} from "./chat-history-fixture.tsx";
 import { parseAgyTranscript } from "../server/agy.ts";
+import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
 let server: ReturnType<typeof Bun.serve> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const releases: Array<() => void> = [];
+const routeEvents = new EventTarget();
+function nextRoute(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const arrived = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => {
+      routeEvents.removeEventListener(name, arrived);
+      reject(new Error(`No fixture request for ${name}`));
+    }, 10_000);
+    routeEvents.addEventListener(name, arrived, { once: true });
+  });
+}
 try {
   const build = await Bun.build({ entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
   assert.ok(build.success, String(build.logs));
@@ -24,27 +36,26 @@ try {
     if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
-  browser = process.env.CHROME_CDP ? await chromium.connectOverCDP(process.env.CHROME_CDP)
-    : await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   // The fixture follows the browser's language; its text assertions below use English.
   const page = await browser.newPage({ locale: "en-US" });
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => { errors.push(error.message); console.error(error.stack); });
   let epoch = "one", newest = "old newest", before: string | null = null;
-  let holdOlder = false, olderRequested = false;
+  let holdOlder = false;
   let product = false;
   let compacting = false;
   await page.route("**/api/**/prompt?*", route => route.fulfill({ json: { prompt: null, suggestion: null, compacting } }));
   let unavailable = false, terminalFails = false;
-  let holdTerminal = false, terminalReads = 0;
+  let holdTerminal = false;
   let terminalText = "Fictional terminal fallback";
   /** product panes ("machine/pane") whose conversation requests wait for the script, and those that fail */
   const held = new Set<string>(), failing = new Set<string>();
   const pending: Array<{ key: string; answer: (status: number) => Promise<void> }> = [];
   const user = (text: string) => ({ role: "user", ts: text, parts: [{ kind: "text", text }] });
   await page.route("**/api/**/read?*", async (route) => {
-    terminalReads += 1;
+    routeEvents.dispatchEvent(new Event("terminal"));
     if (holdTerminal) await new Promise<void>((resolve) => releases.push(resolve));
     await (terminalFails
       ? route.fulfill({ status: 503, json: { error: { code: "timeout", message: "fictional terminal read failed" } } })
@@ -71,7 +82,10 @@ try {
         : route.fulfill({ status, json: { error: { code: "unavailable", message: "conversation unavailable" } } });
       // answered as it arrives unless its pane is held: a poll an abandoned mount left
       // behind can then never stand in for the request an assertion waits on
-      if (held.has(key)) await new Promise<void>((resolve) => pending.push({ key, answer: (status) => answer(status).finally(resolve) }));
+      if (held.has(key)) await new Promise<void>((resolve) => {
+        pending.push({ key, answer: (status) => answer(status).finally(resolve) });
+        routeEvents.dispatchEvent(new Event(key));
+      });
       else await answer(failing.has(key) ? 503 : 200);
       return;
     }
@@ -86,7 +100,7 @@ try {
       return;
     }
     if (url.searchParams.has("before")) {
-      olderRequested = true;
+      routeEvents.dispatchEvent(new Event("older"));
       if (holdOlder) await new Promise<void>((resolve) => releases.push(resolve));
       await route.fulfill({ json: { source: "omp-transcript", history_id: captured, cursor: null, turns: [user("old earlier")] } });
     } else {
@@ -111,9 +125,9 @@ try {
   await compactionLine.waitFor({ state: "detached" });
   console.log("PASS live compaction appears and clears without a new transcript turn");
   const refresh = () => page.evaluate(() => window.qa.refresh());
-  // Compaction captures scroll the pane; expose older history only after those captures.
+  // A newly exposed older page belongs to a new fixture history, not a sliding newest cursor.
   await page.setViewportSize({ width: 1280, height: 800 });
-  before = "one:100";
+  epoch = "one-paged"; before = "one-paged:100";
   await refresh();
   await page.locator(".chat-older").waitFor();
   const output = page.locator("#output");
@@ -137,15 +151,16 @@ try {
 
   // Start an older-page request, then observe clear before it completes.
   holdOlder = true;
-  const olderRequest = page.waitForRequest(request => new URL(request.url()).searchParams.has("before"));
+  const olderStarted = nextRoute("older");
   await page.locator(".chat-older").click();
-  await olderRequest;
+  await olderStarted;
   epoch = "two"; newest = ""; before = null;
   await refresh();
   await page.getByText("No conversation yet — say something below", { exact: true }).waitFor();
-  const olderResponse = page.waitForResponse(response => new URL(response.url()).searchParams.has("before"));
+  const olderAnswered = page.waitForResponse((response) => new URL(response.url()).searchParams.has("before"));
   releases.splice(0).forEach((release) => release());
-  await (await olderResponse).finished();
+  await (await olderAnswered).finished();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   assert.equal(await page.locator(".chat-turn").count(), 0, "late older page cannot revive cleared history");
   assert.equal(await page.locator(".chat-older").count(), 0);
   console.log("PASS clear while earlier page is in flight and empty history before a new prompt");
@@ -214,10 +229,10 @@ try {
     await page.locator(".chat-tool-more").click();
     const lateOutput = await page.evaluate(() => window.qa.requests.length - 1);
     terminalFails = terminalFailure; unavailable = true; holdTerminal = true;
-    const terminalRequest = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/read"));
+    const terminalStarted = nextRoute("terminal");
     await page.evaluate(() => window.qa.agent(null));
     await refresh();
-    await terminalRequest;
+    await terminalStarted;
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     assert.equal(await page.getByText(newest, { exact: true }).count(), 0, "refused history must disappear while terminal fallback is still pending");
     holdTerminal = false;
@@ -279,10 +294,10 @@ try {
     const talk = document.querySelector(".chat-turn")!;
     talk.setAttribute("data-retained-chat-test", "yes");
   });
-  await page.evaluate(() => window.qa.chat(false));
+  await page.evaluate(() => window.qa.view(false));
   await page.locator('.chat-view').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('[data-retained-chat-test]').count(), 1, "terminal lens retains chat DOM and data");
-  await page.evaluate(() => window.qa.chat(true));
+  await page.evaluate(() => window.qa.view(true));
   await page.locator('.chat-view').waitFor({ state: 'visible' });
   assert.equal(await page.evaluate(() => document.querySelector('.chat-view') === (window as unknown as {retainedChat:Element}).retainedChat), true, "chat lens reuses the existing view");
   await shows("remote-pc/a", "local/a");
@@ -291,9 +306,9 @@ try {
   for (const status of [200, 503]) {
     held.add("remote-pc/b");
     const ended = await page.evaluate(() => window.qa.answered.filter((key) => key === "remote-pc/b").length);
-    const delayedRequest = page.waitForRequest(request => request.url().includes("/api/machines/remote-pc/") && new URL(request.url()).searchParams.get("pane_id") === "b");
+    const remoteStarted = nextRoute("remote-pc/b");
     await select("b", "remote-pc");
-    await delayedRequest;
+    await remoteStarted;
     await select("a", "remote-pc");
     await page.getByText("history remote-pc/a", { exact: true }).waitFor();
     held.delete("remote-pc/b");

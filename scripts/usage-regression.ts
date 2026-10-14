@@ -31,19 +31,24 @@ const report = (): UsageReport => ({
   ],
 });
 
-async function staged(context: BrowserContext): Promise<string[]> {
+/** a header the check puts on every request of the page it reloads: what that page asked for, whenever it is counted */
+const RELOADED = "x-usage-qa-reloaded";
+
+async function staged(context: BrowserContext): Promise<{ asked: string[]; afterReload: string[] }> {
   const asked: string[] = [];
+  const afterReload: string[] = [];
   await context.route("**/api/usage*", (route) => {
     asked.push(new URL(route.request().url()).search);
+    if (route.request().headers()[RELOADED]) afterReload.push(route.request().url());
     return route.fulfill({ json: report() });
   });
-  return asked;
+  return { asked, afterReload };
 }
 
 export async function checkUsageMeters(browser: Browser, origin: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   try {
-    const asked = await staged(context);
+    const { asked, afterReload } = await staged(context);
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -151,10 +156,13 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await openSettingsPage(page, "Subscription usage");
     await toggle.click();
     await strip.waitFor({ state: "detached" });
-    const before = asked.length;
+    // a request Settings made before the switch can still be on its way here, so the count is of
+    // the reloaded page's own requests, not of what arrives after the reload
+    await context.setExtraHTTPHeaders({ [RELOADED]: "1" });
     await page.reload();
     await page.locator(".sidebar-footer").waitFor();
-    assert.equal(asked.length, before, "a hidden strip asks for nothing");
+    assert.deepEqual(afterReload, [], "a hidden strip asks for nothing");
+    await context.setExtraHTTPHeaders({});
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

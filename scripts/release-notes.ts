@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { releaseSummaries, SUMMARIES_FILE } from "../server/release-notes.ts";
 import { SUMMARY_GROUPS, SUMMARY_LANGUAGES, type SummaryGroup } from "../shared/update.ts";
+import { FRAGMENTS_DIR, fragmentFiles } from "./changelog-fold.ts";
 
 /** The GitHub release's headings for the patch-note lists, in SUMMARY_GROUPS order. */
 const GROUP_HEADINGS: Record<SummaryGroup, string> = { new: "New features", improved: "Improvements", fixed: "Bug fixes" };
@@ -11,9 +12,15 @@ const GROUP_HEADINGS: Record<SummaryGroup, string> = { new: "New features", impr
  * which is what an install shows of it.
  * The GitHub release reads as an install shows it: the English patch-note lists (a list with no
  * line left out), then the whole CHANGELOG section folded under them.
+ * `fragments` are the files left in changelog.d/: a fragment merged after the release PR folded
+ * them would ship without a line in these notes, so the release refuses until it is placed.
  */
-export function releaseNotes(version: string, packageVersion: string, manifest: string, changelog: string, summaries: string): string {
+export function releaseNotes(version: string, packageVersion: string, manifest: string, changelog: string, summaries: string, fragments: string[] = []): string {
   if (version !== version.trim() || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error("Expected version X.Y.Z without v");
+  if (fragments.length > 0) {
+    throw new Error(`${FRAGMENTS_DIR}/ still holds ${fragments.join(", ")}, which this release's notes would leave out. In a PR, move their entries `
+      + `under "## [${version}]" in CHANGELOG.md (bun scripts/changelog-fold.ts only makes a new version), add each PR link, and delete the files`);
+  }
   if (packageVersion !== version) throw new Error("package.json version does not match");
   if (!manifest.split(/\r?\n/).some((line) => line === `version = "${version}"`)) throw new Error("herdr-plugin.toml version does not match");
   const sections = changelog.split(/^## /m).slice(1);
@@ -38,5 +45,5 @@ export function releaseNotes(version: string, packageVersion: string, manifest: 
 
 if (import.meta.main) {
   console.log(releaseNotes(process.argv[2] ?? "", JSON.parse(readFileSync("package.json", "utf8")).version,
-    readFileSync("herdr-plugin.toml", "utf8"), readFileSync("CHANGELOG.md", "utf8"), readFileSync(SUMMARIES_FILE, "utf8")));
+    readFileSync("herdr-plugin.toml", "utf8"), readFileSync("CHANGELOG.md", "utf8"), readFileSync(SUMMARIES_FILE, "utf8"), fragmentFiles(FRAGMENTS_DIR)));
 }
