@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import * as herdr from "./herdr/client.ts";
+import * as conversation from "./conversation.ts";
 
 /**
  * Contract test for the composer's "submit" frame, against the real herdr server.
@@ -25,7 +26,8 @@ process.stdin.setRawMode(true);
 process.stdin.resume();
 // bracketed paste on, as agent TUIs have it: herdr passes the paste markers through;
 // then what the TUI would show, when asked to (argv[3])
-process.stdout.write("\\u001b[?2004h" + (process.argv[3] ?? ""), () => writeFileSync(out, ""));
+const screen = process.argv[3] === "--csi-u" ? "\\u001b[>8u" : (process.argv[3] ?? "");
+process.stdout.write("\\u001b[?2004h" + screen, () => writeFileSync(out, ""));
 process.stdin.on("data", (chunk) => appendFileSync(out, JSON.stringify({ at: Date.now(), data: chunk.toString("utf8") }) + "\\n"));
 `;
 
@@ -36,6 +38,8 @@ let agent: Recorder;
 let codex: Recorder;
 let codexApproval: Recorder;
 let claudeQueue: Recorder;
+let omoAgent: Recorder;
+let omoExtended: Recorder;
 
 const chunks = (recorder: Recorder): Chunk[] =>
   readFileSync(recorder.log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Chunk);
@@ -142,8 +146,9 @@ function mockClaudeInput(paneId: string, screen: string | (() => string)) {
 /** Attaches `socket` to `pane` and waits until it may type there; the frames from then on start at the returned mark. */
 async function attached(socket: Socket, pane: string): Promise<number> {
   const mark = socket.seen.length;
+  const ready = socket.waitFor((message) => socket.seen.indexOf(message) >= mark && message.type === "input-ready" && message.pane_id === pane);
   socket.send({ type: "attach", pane_id: pane, cols: 80, rows: 24 });
-  await socket.waitFor((message) => socket.seen.indexOf(message) >= mark && message.type === "input-ready" && message.pane_id === pane);
+  await ready;
   return mark;
 }
 const collapsedCodexScreen = "\n• Queued follow-up inputs\n  ? 1 question\n    alt+↑ to answer\n› Ask Codex to do anything\n";
@@ -169,6 +174,13 @@ beforeAll(async () => {
   // the same text in a pane whose agent is not Codex
   claudeQueue = await recorder("claude-queue", join(root, "claude"), `${queue}› Ask Codex to do anything\n`);
   await herdrRpc("pane.report_agent", { pane_id: claudeQueue.pane, source: "manual", agent: "claude", state: "blocked" });
+  copyFileSync(process.execPath, join(root, "omo"));
+  chmodSync(join(root, "omo"), 0o755);
+  omoAgent = await recorder("omo", join(root, "omo"));
+  await herdrRpc("pane.report_agent", { pane_id: omoAgent.pane, source: "manual", agent: "pi", state: "working" });
+  // The recorder emits negotiation itself: shell line editing consumes a literal ESC argument.
+  omoExtended = await recorder("omo-extended", join(root, "omo"), "--csi-u");
+  await herdrRpc("pane.report_agent", { pane_id: omoExtended.pane, source: "manual", agent: "pi", state: "working" });
 }, 30_000);
 
 afterAll(async () => {
@@ -178,6 +190,227 @@ afterAll(async () => {
 });
 
 describe("WebSocket submit", () => {
+  it("transfers one held ID once across duplicate and steer races, then drains the next item", async () => {
+    const socket = await Socket.connect();
+    const entered = deferred(); const release = deferred();
+    const originalText = herdr.paneSendText;
+    const text = spyOn(herdr, "paneSendText").mockImplementation(async (...args) => {
+      if (args[1] === paste("transfer held")) { entered.resolve(); await release.promise; }
+      return originalText(...args);
+    });
+    const keys = spyOn(herdr, "paneSendKeys");
+    try {
+      await attached(socket, omoAgent.pane);
+      expect(socket.seen.find((frame) => frame.type === "snapshot")?.features).toContain("pending-agent-queue");
+      socket.send({ type: "submit", id: 9400, pane_id: omoAgent.pane, text: "transfer held", payload: "unused", delivery: "hold" });
+      const accepted = await socket.result(9400);
+      expect(accepted).toMatchObject({ ok: true, pending: { state: "held" } });
+      const pendingId = accepted.pending.id;
+      socket.send({ type: "submit", id: 9401, pane_id: omoAgent.pane, text: "next pending", payload: "unused", delivery: "queue" });
+      const next = await socket.result(9401);
+      expect(next).toMatchObject({ ok: true, pending: { state: "queued" } });
+      const transfer = { type: "pending-action", id: 9410, pane_id: omoAgent.pane, pending_id: pendingId, action: "agent-queue" };
+      const reply = socket.waitFor((frame) => frame.type === "pending-result" && frame.id === 9410);
+      const removed = socket.waitFor((frame) => frame.type === "pending-messages" && frame.removed?.some((item: { id: string; outcome: string }) => item.id === pendingId && item.outcome === "sent"));
+      socket.send(transfer);
+      await entered.promise;
+      const steer = socket.waitFor((frame) => frame.type === "pending-result" && frame.id === 9411);
+      socket.send(transfer);
+      socket.send({ ...transfer, id: 9411, action: "steer" });
+      release.resolve();
+      expect(await reply).toMatchObject({ ok: true });
+      expect(await steer).toMatchObject({ ok: true });
+      expect((await removed).messages.some((item: { id: string }) => item.id === pendingId)).toBe(false);
+      expect(text.mock.calls.filter((call) => call[1] === paste("transfer held"))).toHaveLength(1);
+      expect(keys.mock.calls.map((call) => call[1])).toEqual([["ctrl+q"]]);
+      const drained = socket.waitFor((frame) => frame.type === "pending-messages" && frame.removed?.some((item: { id: string }) => item.id === next.pending.id));
+      await herdrRpc("pane.report_agent", { pane_id: omoAgent.pane, source: "manual", agent: "pi", state: "idle" });
+      await drained;
+      expect(keys.mock.calls.map((call) => call[1])).toEqual([["ctrl+q"], ["Enter"]]);
+    } finally {
+      release.resolve(); text.mockRestore(); keys.mockRestore(); socket.close();
+      await herdrRpc("pane.report_agent", { pane_id: omoAgent.pane, source: "manual", agent: "pi", state: "working" });
+    }
+  }, 15_000);
+
+  for (const failure of ["other-agent", "process", "prompt", "partial"] as const) it(`retains the pending transfer ID on ${failure} failure`, async () => {
+    const socket = await Socket.connect();
+    const target = failure === "other-agent" ? agent : omoAgent;
+    let restore = (): void => {};
+    const text = spyOn(herdr, "paneSendText");
+    const keys = spyOn(herdr, "paneSendKeys");
+    try {
+      await attached(socket, target.pane);
+      socket.send({ type: "submit", id: 9500, pane_id: target.pane, text: "retain held", payload: "unused", delivery: "hold" });
+      const accepted = await socket.result(9500);
+      expect(accepted).toMatchObject({ ok: true, pending: { state: "held" } });
+      if (failure === "process") {
+        const process = spyOn(conversation, "paneRunsOmo").mockResolvedValue(false);
+        restore = () => process.mockRestore();
+      } else if (failure === "prompt") {
+        const screen = mockClaudeInput(target.pane, "Password:");
+        restore = () => { screen.read.mockRestore(); screen.scroll.mockRestore(); };
+      } else if (failure === "partial") {
+        keys.mockRejectedValue(new herdr.HerdrError("connect_failed", "key failed"));
+      }
+      const code = failure === "partial" ? "submit_partial" : failure === "prompt" ? "agent_blocked" : "agent_queue_unsupported";
+      const retained = socket.waitFor((frame) => frame.type === "pending-messages" && frame.messages?.some((item: { id: string; error?: { code: string } }) => item.id === accepted.pending.id && item.error?.code === code));
+      const reply = socket.waitFor((frame) => frame.type === "pending-result" && frame.id === 9510);
+      socket.send({ type: "pending-action", id: 9510, pane_id: target.pane, pending_id: accepted.pending.id, action: "agent-queue" });
+      expect(await reply).toMatchObject({ ok: false, code });
+      expect((await retained).messages).toContainEqual(expect.objectContaining({ id: accepted.pending.id, state: failure === "partial" ? "uncertain" : "held", error: expect.objectContaining({ code }) }));
+      if (failure !== "partial") { expect(text).not.toHaveBeenCalled(); expect(keys).not.toHaveBeenCalled(); }
+      else {
+        expect(text.mock.calls.map((call) => call[1])).toEqual([paste("retain held")]);
+        const retry = socket.waitFor((frame) => frame.type === "pending-result" && frame.id === 9511);
+        socket.send({ type: "pending-action", id: 9511, pane_id: target.pane, pending_id: accepted.pending.id, action: "steer" });
+        expect(await retry).toMatchObject({ ok: false, code: "pending_uncertain" });
+        expect(text).toHaveBeenCalledTimes(1);
+      }
+    } finally { restore(); text.mockRestore(); keys.mockRestore(); socket.close(); }
+  });
+
+  for (const extended of [false, true]) it(`delivers a native OmO bracketed paste then Ctrl+Q once (${extended ? "CSI-u" : "legacy"}), never Enter or bridge pending input`, async () => {
+    const socket = await Socket.connect();
+    const prompt = spyOn(herdr, "agentPrompt");
+    const target = extended ? omoExtended : omoAgent;
+    const chord = extended ? "\u001b[113;5u" : "\u0011";
+    let cancel = (): void => {};
+    try {
+      await attached(socket, target.pane);
+      expect(socket.seen.find((message) => message.type === "snapshot")?.features).toContain("agent-queue");
+      const from = chunks(target).length;
+      // Subscribe before submission: the recorder's write, not elapsed time, settles the read.
+      const input = new Promise<Chunk[]>((resolve, reject) => {
+        const watcher = watch(target.log, () => {
+          const read = chunks(target).slice(from);
+          const bytes = read.map((chunk) => chunk.data).join("");
+          const end = bytes.indexOf("\u001b[201~");
+          if (end === -1 || bytes.length <= end + "\u001b[201~".length) return;
+          clearTimeout(timeout); watcher.close(); resolve(read);
+        });
+        const timeout = setTimeout(() => { watcher.close(); reject(new Error(`native queue key not received: ${JSON.stringify(typed(target, from))}`)); }, 4_000);
+        cancel = () => { clearTimeout(timeout); watcher.close(); };
+      });
+      const reply = socket.result(9000);
+      const message = { type: "submit", id: 9000, pane_id: target.pane, text: "native\nfollow-up\n", payload: "ignored payload", delivery: "agent-queue" };
+      socket.send(message);
+      expect(await reply).toMatchObject({ ok: true });
+      const read = await input;
+      expect(JSON.stringify(read.map((chunk) => chunk.data).join(""))).toBe(JSON.stringify(`${paste(message.text)}${chord}`));
+      expect(read.at(-1)?.at).toBeGreaterThanOrEqual((read[0]?.at ?? 0) + SUBMIT_DELAY_MS - 20);
+      expect(prompt).not.toHaveBeenCalled();
+      expect(socket.seen.some((frame) => frame.type === "pending-messages" && frame.messages?.length)).toBe(false);
+      const text = spyOn(herdr, "paneSendText");
+      const keys = spyOn(herdr, "paneSendKeys");
+      try {
+        // The existing receipt book replays this id without any second paste or key.
+        const mark = socket.seen.length;
+        const replay = socket.waitFor((frame) => socket.seen.indexOf(frame) >= mark && frame.type === "submit-result" && frame.id === 9000);
+        socket.send(message);
+        expect(await replay).toMatchObject({ ok: true });
+        expect(text).not.toHaveBeenCalled();
+        expect(keys).not.toHaveBeenCalled();
+      } finally { text.mockRestore(); keys.mockRestore(); }
+    } finally { cancel(); prompt.mockRestore(); socket.close(); }
+  });
+
+  it("refuses native queue invalid text, terminal submissions, draft clearing and non-OmO targets", async () => {
+    const socket = await Socket.connect();
+    const text = spyOn(herdr, "paneSendText");
+    const keys = spyOn(herdr, "paneSendKeys");
+    try {
+      await attached(socket, omoAgent.pane);
+      await attached(socket, shell.pane);
+      await attached(socket, agent.pane);
+      const cases = [
+        { text: "", code: "invalid_submit_text" },
+        { text: " \n", code: "invalid_submit_text" },
+        { text: "x\u001b[201~", code: "invalid_submit_text" },
+        { text: "x".repeat(20_001), code: "invalid_submit_text" },
+        { typed: true, code: "invalid_delivery" },
+        { clear_draft: "draft", code: "invalid_delivery" },
+        { pane_id: shell.pane, code: "agent_queue_unsupported" },
+        { pane_id: agent.pane, code: "agent_queue_unsupported" },
+        { pane_id: codex.pane, code: "input_not_ready" },
+      ];
+      for (const [index, fixture] of cases.entries()) {
+        const { code, ...fields } = fixture;
+        const id = 9100 + index;
+        const reply = socket.result(id);
+        socket.send({ type: "submit", id, pane_id: omoAgent.pane, text: "follow-up", payload: "unused", delivery: "agent-queue", ...fields });
+        expect(await reply).toMatchObject({ ok: false, code });
+      }
+      expect(text).not.toHaveBeenCalled();
+      expect(keys).not.toHaveBeenCalled();
+    } finally { text.mockRestore(); keys.mockRestore(); socket.close(); }
+  });
+
+  it("refuses native queue observe connections and live secret or interactive prompts", async () => {
+    const socket = await Socket.connect();
+    const text = spyOn(herdr, "paneSendText");
+    const keys = spyOn(herdr, "paneSendKeys");
+    try {
+      await attached(socket, omoAgent.pane);
+      const role = socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+      socket.send({ type: "role", mode: "observe" });
+      await role;
+      const reply = socket.result(9200);
+      socket.send({ type: "submit", id: 9200, pane_id: omoAgent.pane, text: "follow-up", payload: "unused", delivery: "agent-queue" });
+      expect(await reply).toMatchObject({ ok: false, code: "read_only" });
+      const interact = socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "interact");
+      socket.send({ type: "role", mode: "interact" });
+      await interact;
+      const rule = "─".repeat(60);
+      const form = `${rule}\n Ask user · 30m\n → QA    Submit\n Which one?\n → 1. First\n   2. Second\n   Type your own answer...\n Submit (0/1 answered) — Enter advances\n ↑↓ move  1-9 select  space select  enter next  tab next question  c comment  esc cancel\n${rule}\n/tmp/work • main\n(OmO Native)\n`;
+      for (const [index, value] of ["Password:", form].entries()) {
+        const screen = mockClaudeInput(omoAgent.pane, value);
+        try {
+          const id = 9201 + index;
+          const blocked = socket.result(id);
+          socket.send({ type: "submit", id, pane_id: omoAgent.pane, text: "follow-up", payload: "unused", delivery: "agent-queue" });
+          expect(await blocked).toMatchObject({ ok: false, code: "agent_blocked" });
+        } finally { screen.read.mockRestore(); screen.scroll.mockRestore(); }
+      }
+      expect(text).not.toHaveBeenCalled();
+      expect(keys).not.toHaveBeenCalled();
+    } finally { text.mockRestore(); keys.mockRestore(); socket.close(); }
+  });
+
+  for (const loses of ["lease", "prompt", "process"] as const) it(`withholds native queue Ctrl+Q when ${loses} changes after paste`, async () => {
+    const socket = await Socket.connect();
+    const entered = deferred();
+    const release = deferred();
+    const originalText = herdr.paneSendText;
+    const text = spyOn(herdr, "paneSendText").mockImplementation(async (paneId, value, socketPath, allowed) => {
+      await originalText(paneId, value, socketPath, allowed);
+      entered.resolve();
+      await release.promise;
+    });
+    const keys = spyOn(herdr, "paneSendKeys");
+    let restore = (): void => {};
+    try {
+      await attached(socket, omoAgent.pane);
+      const reply = socket.result(9300);
+      socket.send({ type: "submit", id: 9300, pane_id: omoAgent.pane, text: "uncommitted", payload: "unused", delivery: "agent-queue" });
+      await entered.promise;
+      if (loses === "lease") {
+        const role = socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+        socket.send({ type: "role", mode: "observe" });
+        await role;
+      } else if (loses === "prompt") {
+        const screen = mockClaudeInput(omoAgent.pane, "Password:");
+        restore = () => { screen.read.mockRestore(); screen.scroll.mockRestore(); };
+      } else {
+        const process = spyOn(conversation, "paneRunsOmo").mockResolvedValue(false);
+        restore = () => process.mockRestore();
+      }
+      release.resolve();
+      expect(await reply).toMatchObject({ ok: false, code: "submit_partial" });
+      expect(keys).not.toHaveBeenCalled();
+    } finally { release.resolve(); restore(); text.mockRestore(); keys.mockRestore(); socket.close(); }
+  });
+
   for (const failure of ["read", "menu", "clear", "keys", "send"] as const) {
     it(`reports a partial outcome for a ${failure} failure after clearing starts`, async () => {
       const socket = await Socket.connect();

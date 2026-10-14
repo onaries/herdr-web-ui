@@ -6,7 +6,7 @@ type Handler = (message: ServerMessage) => void;
 /** A submit was delivered, accepted into the bridge's pending queue, or refused. */
 /** `draft`: an input_draft refusal's one-row Claude draft, which a send with clearDraft may clear */
 /** immediate: typed now; queue: waits for the next turn; hold: waits for the user's Send now */
-export type SubmitDelivery = "immediate" | "queue" | "hold";
+export type SubmitDelivery = "immediate" | "queue" | "hold" | "agent-queue";
 export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string; draft?: string };
 
 /** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
@@ -384,6 +384,10 @@ export class HerdrSocket {
     return this.canQueueMessages() && this.features.has("pending-hold");
   }
 
+  canQueuePendingMessages(): boolean {
+    return this.canQueueMessages() && this.features.has("pending-agent-queue");
+  }
+
   sendInput(paneId: string, text: string): boolean {
     if (!this.canInput(paneId)) return false;
     try { this.rawSend({ type: "input", pane_id: paneId, text }); return true; } catch { return false; }
@@ -394,7 +398,9 @@ export class HerdrSocket {
    * terminal key bar must not turn a one-letter message into a control key. A server
    * listing "submit" sends Enter itself, after a gap, and says how it went; an older
    * bridge gets the payload and its Enter in one frame, as before. Queue delivery
-   * requires "pending-input": it never falls back to an immediate send. `text` is the message
+   * requires "pending-input": it never falls back to an immediate send. Native agent-queue
+   * requires "agent-queue" and confirms only Ctrl+Q delivery, never native queue acceptance.
+   * `text` is the message
    * as written, `payload` the same shaped for the pane's paste mode. null, sending
    * nothing, when offline.
    */
@@ -407,6 +413,9 @@ export class HerdrSocket {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
       if (!this.connected || this.socket !== socket) return DISCONNECTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages." };
+      if (delivery === "agent-queue" && (!this.features.has("submit") || !this.features.has("agent-queue"))) {
+        return { ok: false, code: "agent_queue_unsupported", message: "Update this PC to use the agent's native queue. Nothing was sent." };
+      }
       // hold is decided once the snapshot said what the bridge supports: one too old to hold queues it as before
       if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
@@ -421,14 +430,15 @@ export class HerdrSocket {
     })();
   }
 
-  /** Explicitly steer or discard one server-owned pending item. Never queued or replayed. */
-  pendingAction(paneId: string, pendingId: string, action: "steer" | "discard"): Promise<SubmitResult> | null {
+  /** Explicitly steer, transfer to the native queue or discard one pending item. Never replayed. */
+  pendingAction(paneId: string, pendingId: string, action: "steer" | "discard" | "agent-queue"): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     return (async (): Promise<SubmitResult> => {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
       if (!this.connected || this.socket !== socket) return DISCONNECTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot change pending messages." };
+      if (action === "agent-queue" && !this.canQueuePendingMessages()) return { ok: false, code: "agent_queue_unsupported", message: "Update this PC to transfer pending messages to the agent's native queue. Nothing was sent." };
       if (!this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to manage pending messages." };
       return this.submitRequest({ type: "pending-action", id: this.nextSubmit++, pane_id: paneId, pending_id: pendingId, action });
     })();

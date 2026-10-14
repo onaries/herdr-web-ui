@@ -14,11 +14,11 @@ class FakeSocket {
   constructor(readonly url: string) { FakeSocket.last = this; }
   addEventListener(type: string, listener: (event: any) => void): void { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
   send(data: string): void { const frame = JSON.parse(data); this.sent.push(frame); this.emit("sent", frame); }
-  nextSubmission(): Promise<{ id: number }> {
+  nextSubmission(type = "submit"): Promise<{ id: number }> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("no submit frame")), 1_000);
       this.addEventListener("sent", (frame) => {
-        if (frame.type === "submit") { clearTimeout(timeout); resolve(frame); }
+        if (frame.type === type) { clearTimeout(timeout); resolve(frame); }
       });
     });
   }
@@ -37,6 +37,108 @@ afterAll(() => { globals.WebSocket = before.WebSocket; globals.window = before.w
 const snapshot = (features: string[]) => ({ type: "snapshot", snapshot: { workspaces: [], panes: [], agents: [], layouts: [] }, features });
 const secrets = (socket: FakeSocket) => socket.sent.filter((frame) => frame.type === "secret");
 const submissions = (socket: FakeSocket) => socket.sent.filter((frame) => ["submit", "input", "keys"].includes(frame.type));
+
+it("requires the distinct pending native queue feature before sending any action", async () => {
+  for (const features of [[], ["submit", "agent-queue"], ["submit", "pending-input", "agent-queue"], ["pending-agent-queue"]]) {
+    const client = new HerdrSocket("ws://test/ws");
+    client.connect();
+    const socket = FakeSocket.last;
+    socket.open(); socket.receive(snapshot(features));
+    try {
+      expect(client.canQueuePendingMessages()).toBe(false);
+      expect(await client.pendingAction("w1:p1", "held-id", "agent-queue")).toMatchObject({ ok: false, code: "agent_queue_unsupported" });
+      expect(socket.sent.filter((frame) => ["pending-action", "submit", "input", "keys"].includes(frame.type))).toEqual([]);
+    } finally { client.close(); }
+  }
+});
+
+it("transfers a pending ID once and matches only its own pending receipt", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  const sent = socket.nextSubmission("pending-action");
+  const result = client.pendingAction("w1:p1", "held-id", "agent-queue");
+  socket.receive(snapshot(["submit", "pending-input", "pending-agent-queue"]));
+  try {
+    expect(client.canQueuePendingMessages()).toBe(true);
+    const frame = await sent;
+    expect(frame).toMatchObject({ type: "pending-action", pane_id: "w1:p1", pending_id: "held-id", action: "agent-queue" });
+    let resolved = false;
+    void result?.then(() => { resolved = true; });
+    socket.receive({ type: "pending-result", id: frame.id, pane_id: "w1:p1", pending_id: "other-id", ok: true });
+    socket.receive({ type: "submit-result", id: frame.id, pane_id: "w1:p1", ok: true });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    socket.receive({ type: "pending-result", id: frame.id, pane_id: "w1:p1", pending_id: "held-id", ok: true });
+    expect(await result).toEqual({ ok: true });
+    expect(submissions(socket)).toEqual([]);
+    socket.disconnect();
+    client.connect();
+    FakeSocket.last.open();
+    FakeSocket.last.receive(snapshot(["submit", "pending-input", "pending-agent-queue"]));
+    expect(FakeSocket.last.sent.filter((item) => item.type === "pending-action")).toEqual([]);
+  } finally { client.close(); }
+});
+
+it("refuses native queue delivery on unsupported peers without fallback Enter", async () => {
+  for (const features of [[], ["submit"], ["agent-queue"], ["submit", "pending-input"]]) {
+    const client = new HerdrSocket("ws://test/ws");
+    client.connect();
+    const socket = FakeSocket.last;
+    socket.open();
+    socket.receive(snapshot(features));
+    try {
+      expect(await client.submit("w1:p1", "follow-up", "follow-up", false, "agent-queue"))
+        .toMatchObject({ ok: false, code: "agent_queue_unsupported" });
+      expect(submissions(socket)).toEqual([]);
+    } finally { client.close(); }
+  }
+});
+
+it("sends native queue once after capability discovery and matches its key-delivery receipt", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  const sent = socket.nextSubmission();
+  const result = client.submit("w1:p1", "follow-up", "follow-up", false, "agent-queue");
+  expect(submissions(socket)).toEqual([]);
+  socket.receive(snapshot(["submit", "agent-queue"]));
+  try {
+    const frame = await sent;
+    expect(frame).toMatchObject({ type: "submit", pane_id: "w1:p1", delivery: "agent-queue" });
+    let resolved = false;
+    void result?.then(() => { resolved = true; });
+    socket.receive({ type: "submit-result", id: frame.id, pane_id: "w1:p2", ok: true });
+    socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [{ id: "bridge-only", request_id: frame.id, text: "follow-up", state: "queued", created_at: "2026-10-14T00:00:00Z" }] });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    socket.receive({ type: "submit-result", id: frame.id, pane_id: "w1:p1", ok: true });
+    expect(await result).toEqual({ ok: true });
+    socket.receive(snapshot(["submit", "agent-queue"]));
+    expect(submissions(socket)).toHaveLength(1);
+  } finally { client.close(); }
+});
+
+it("never replays an unacknowledged native queue submission after disconnect", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit", "agent-queue"]));
+  const sent = socket.nextSubmission();
+  const result = client.submit("w1:p1", "follow-up", "follow-up", false, "agent-queue");
+  await sent;
+  socket.disconnect();
+  expect(await result).toMatchObject({ ok: false, code: "disconnected" });
+  client.connect();
+  const next = FakeSocket.last;
+  next.open();
+  next.receive(snapshot(["submit", "agent-queue"]));
+  expect(submissions(next)).toEqual([]);
+  client.close();
+});
 
 it("refuses clear-and-send on a legacy bridge without sending payload or Enter", async () => {
   const client = new HerdrSocket("ws://test/ws");

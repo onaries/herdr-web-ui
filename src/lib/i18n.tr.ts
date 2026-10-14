@@ -522,6 +522,8 @@ export const TR: Record<string, string> = {
   "Send now": "Şimdi gönder",
   "Stop agent": "Ajanı durdur",
   "Send message": "Mesajı gönder",
+  "Send to agent queue": "Ajan kuyruğuna gönder",
+  "Send to agent queue (Ctrl+Q)": "Ajan kuyruğuna gönder (Ctrl+Q)",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "Gönderilmedi: ajan terminalde bir yanıt bekliyor. Önce onu yanıtlayın.",
   "Not sent: this view only watches the pane.": "Gönderilmedi: bu görünüm paneli yalnızca izler.",
   "Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.": "Gönderilmedi: terminaldeki Claude Code girdi kutusu boş değil. Orada gönderin veya temizleyin, sonra bu mesajı gönderin.",

@@ -552,6 +552,8 @@ export const KO: Record<string, string> = {
   "Send now": "지금 보내기",
   "Stop agent": "에이전트 중지",
   "Send message": "메시지 보내기",
+  "Send to agent queue": "에이전트 큐로 보내기",
+  "Send to agent queue (Ctrl+Q)": "에이전트 큐로 보내기 (Ctrl+Q)",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "보내지 않음: 에이전트가 터미널에서 답을 기다리고 있습니다. 먼저 답하세요.",
   "Not sent: this view only watches the pane.": "보내지 않음: 이 화면은 패널을 보기만 합니다.",
   "Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.": "보내지 않음: 터미널의 Claude Code 입력란이 비어 있지 않습니다. 그곳에서 보내거나 지운 뒤 이 메시지를 보내세요.",

@@ -210,7 +210,7 @@ const RESTORED_CLEAR_GAP_MS = 200;
 const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "take-over", "watch", "conversation-watch"];
+const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-hold", "agent-queue", "pending-agent-queue", "secret-input", "input-ready", "take-over", "watch", "conversation-watch"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -804,6 +804,42 @@ export function createServer(
     code: error instanceof HerdrError || error instanceof PendingInputError ? error.code : "submit_failed",
     message: error instanceof Error ? error.message : String(error),
   });
+  /** Native OmO follow-up: the receipt proves paste + key delivery, not queue acceptance. */
+  async function dispatchAgentQueue(owner: Client, paneId: string, text: string, lease: PendingLease, arrivedAt: number, identity?: PendingIdentity): Promise<SubmitReply> {
+    let wrote = false;
+    const authorize = (): void => {
+      authorizePending(owner, paneId, lease);
+      if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) {
+        throw new HerdrError("submit_timeout", "The native queue request waited too long");
+      }
+    };
+    const allowed = (): boolean => {
+      try { authorize(); return true; } catch { return false; }
+    };
+    try {
+      const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
+      if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
+      authorize();
+      if (!(await paneRunsOmo(paneId))) throw new HerdrError("agent_queue_unsupported", "Only an actual OmO pane supports this native queue");
+      const context = await pendingContext(owner, paneId, lease, identity);
+      authorize();
+      wrote = true;
+      await paneSendText(paneId, `\u001b[200~${text}\u001b[201~`, undefined, allowed).catch((error: unknown) => {
+        if (error instanceof HerdrError && error.code === "cancelled") { wrote = false; authorize(); }
+        throw error;
+      });
+      await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
+      if (!(await paneRunsOmo(paneId))) throw new HerdrError("agent_queue_unsupported", "OmO is no longer in front of this pane");
+      await pendingContext(owner, paneId, lease, context.identity, true);
+      authorize();
+      await paneSendKeys(paneId, ["ctrl+q"], undefined, allowed);
+      return { ok: true };
+    } catch (error) {
+      return wrote
+        ? { ok: false, code: "submit_partial", message: "Text may be in OmO's input box, but native queue key delivery was not confirmed. Check the terminal before sending again." }
+        : { ok: false, ...pendingFault(error) };
+    }
+  }
   /**
    * The live screen for claudeInputDraft, and the viewport's colors when viewportShowsLive verifies
    * they show it. Read last, the live screen holds anything typed meanwhile. An empty box (or none)
@@ -3057,13 +3093,14 @@ export function createServer(
                 break;
               }
               const waits = message.delivery === "queue" || message.delivery === "hold";
-              if ((message.delivery !== undefined && message.delivery !== "immediate" && !waits)
-                || (waits && message.typed !== undefined && message.typed !== false)) {
-                result(false, "invalid_delivery", "Use immediate delivery, or queue or hold a chat message");
+              const native = message.delivery === "agent-queue";
+              if ((message.delivery !== undefined && message.delivery !== "immediate" && !waits && !native)
+                || ((waits || native) && message.typed !== undefined && message.typed !== false)) {
+                result(false, "invalid_delivery", "Use immediate delivery, or queue, hold or agent-queue a chat message");
                 break;
               }
               if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
-                || waits || (message.typed !== undefined && message.typed !== false))) {
+                || waits || native || (message.typed !== undefined && message.typed !== false))) {
                 result(false, "invalid_delivery", "Clear a terminal draft only for a chat message sent at once");
                 break;
               }
@@ -3078,7 +3115,7 @@ export function createServer(
               }
               const arrivedAt = Date.now();
               try {
-                if (waits) {
+                if (waits || native) {
                   let book = pendingRequests.get(client);
                   if (!book) { book = new PendingRequestBook((reply: SubmitReply) => reply.pending !== undefined && pending.retains(client, reply.pending.id)); pendingRequests.set(client, book); }
                   // a digest, so a receipt kept for replay never holds a large request's bytes
@@ -3086,7 +3123,12 @@ export function createServer(
                   const previous = book.get(message.id, fingerprint);
                   const lease = previous ? null : pendingLease(client, message.pane_id);
                   const reply = previous ?? book.run(message.id, fingerprint, () => serialize(message.pane_id, async (): Promise<SubmitReply> => {
+                    if (native && message.text.length > 20_000) throw new HerdrError("invalid_submit_text", "A native queue message must be at most 20000 characters");
                     const text = pendingText(message.text);
+                    if (native) {
+                      if (!lease) throw new HerdrError("input_not_ready", "The pane has no native queue input lease");
+                      return dispatchAgentQueue(client, message.pane_id, message.text, lease, arrivedAt);
+                    }
                     const mark = pending.mark(message.pane_id);
                     const context = await pendingContext(client, message.pane_id, lease!);
                     if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "This pending message waited too long; nothing was typed");
@@ -3108,7 +3150,7 @@ export function createServer(
                   const accepted = answer.pending ? pending.get(client, message.pane_id, answer.pending.id)?.message : undefined;
                   if (answer.pending && !accepted) replayPendingOutcome(client, message.pane_id, answer.pending.id);
                   result(answer.ok, answer.code, answer.message, accepted);
-                  drainPending(message.pane_id);
+                  if (!native) drainPending(message.pane_id);
                   break;
                 }
                 await serialize(message.pane_id, () => {
@@ -3133,13 +3175,13 @@ export function createServer(
             case "pending-action": {
               const result = (reply: SubmitReply) => send(client, { type: "pending-result", id: message.id, pane_id: message.pane_id, pending_id: message.pending_id, ...reply });
               if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
-                || typeof message.pending_id !== "string" || !message.pending_id || !["steer", "discard"].includes(message.action)) {
-                result({ ok: false, code: "invalid_pending_action", message: "Use steer or discard with a pending-message id" }); break;
+                || typeof message.pending_id !== "string" || !message.pending_id || !["steer", "discard", "agent-queue"].includes(message.action)) {
+                result({ ok: false, code: "invalid_pending_action", message: "Use steer, discard or agent-queue with a pending-message id" }); break;
               }
               const arrivedAt = Date.now();
               try {
                 authorizeSocket(client);
-                const lease = message.action === "steer" ? pendingLease(client, message.pane_id) : null;
+                const lease = message.action !== "discard" ? pendingLease(client, message.pane_id) : null;
                 const answer = await serialize(message.pane_id, async (): Promise<SubmitReply> => {
                   authorizeSocket(client);
                   if (!clients.has(client) || client.data.closing) throw new HerdrError("disconnected", "This connection closed");
@@ -3148,6 +3190,13 @@ export function createServer(
                     ? { ok: true } : { ok: false, code: "pending_not_found", message: "This pending message does not belong to this connection" };
                   if (message.action === "discard") return pending.discard(item) ? { ok: true } : { ok: false, code: "pending_busy", message: "This message is already being sent" };
                   if (item.message.state === "uncertain") return { ok: false, code: "pending_uncertain", message: "Check the terminal before sending this message again" };
+                  if (message.action === "agent-queue" && lease) {
+                    if (!pending.claim(item, false, false)) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
+                    item.lease = lease;
+                    const reply = await dispatchAgentQueue(client, item.paneId, item.message.text, lease, arrivedAt, item.identity);
+                    pending.settle(item, reply.ok ? undefined : { code: reply.code ?? "submit_failed", message: reply.message ?? "Native queue delivery failed" }, reply.code === "submit_partial");
+                    return reply;
+                  }
                   await pendingContext(client, item.paneId, lease!, item.identity);
                   if (!pending.claim(item, false)) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
                   item.lease = lease!;

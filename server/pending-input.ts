@@ -91,14 +91,15 @@ export class PendingInputs<Owner, Lease> {
     return [...this.records.values()].find((item) => item.paneId === paneId && item.message.state === "queued") ?? null;
   }
 
-  claim(item: PendingRecord<Owner, Lease>, automatic: boolean): boolean {
+  claim(item: PendingRecord<Owner, Lease>, automatic: boolean, startsTurn = true): boolean {
     if (this.records.get(item.message.id) !== item || item.inFlight || item.message.state === "uncertain"
       || [...this.records.values()].some((other) => other.paneId === item.paneId && other.inFlight)
       || (automatic ? this.next(item.paneId) !== item : !["queued", "held"].includes(item.message.state))) return false;
     item.message.state = "sending"; delete item.message.error; item.inFlight = true;
     // An explicit send can start while an earlier send's turn is not confirmed yet. That gate keeps
     // watching the turn until this message commits its own key: a refusal before it frees nothing.
-    if (!this.gates.get(item.paneId)?.committed) this.gates.set(item.paneId, { by: item.message.id, committed: false, sawWorking: false, completed: false, deadline: null });
+    // Native queue transfer claims the record but does not start an agent turn.
+    if (startsTurn && !this.gates.get(item.paneId)?.committed) this.gates.set(item.paneId, { by: item.message.id, committed: false, sawWorking: false, completed: false, deadline: null });
     this.publish(item.owner, item.paneId);
     return true;
   }

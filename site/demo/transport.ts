@@ -1181,7 +1181,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "agent-queue", "pending-agent-queue", "secret-input", "input-ready", "conversation-watch"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1298,15 +1298,17 @@ class DemoSocket extends EventTarget {
         }
         if (message.pane_id && message.text !== undefined && message.id !== undefined) {
           const queued = message.delivery === "queue" || message.delivery === "hold";
+          const native = message.delivery === "agent-queue";
           const text = queued ? message.text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n") : message.text;
           let code: string | null = null;
-          if ((message.delivery !== undefined && message.delivery !== "immediate" && !queued) || (queued && message.typed !== undefined && message.typed !== false)) code = "invalid_delivery";
+          if ((message.delivery !== undefined && message.delivery !== "immediate" && !queued && !native) || ((queued || native) && message.typed !== undefined && message.typed !== false)) code = "invalid_delivery";
           else if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
-            || queued || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
+            || queued || native || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
           else if (this.mode === "observe") code = "read_only";
           else if (message.clear_draft !== undefined) code = "unsupported";
-          else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
-          else if (queued) code = this.pendingTargetError(message.pane_id);
+          else if ((queued || native) && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
+          else if (native && (paneOf(message.pane_id)?.agent ?? paneOf(message.pane_id)?.agent_session?.agent) !== "omo") code = "agent_queue_unsupported";
+          else if (queued || native) code = this.pendingTargetError(message.pane_id);
           if (code) {
             this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." });
             break;
@@ -1327,7 +1329,7 @@ class DemoSocket extends EventTarget {
       case "pending-action":
         if (message.id !== undefined && message.pane_id && message.pending_id) {
           const result = (ok: boolean, code?: string) => this.completeRequest({ type: "pending-result", id: message.id!, pane_id: message.pane_id!, pending_id: message.pending_id!, ok, ...(code ? { code, message: "The demo pending message was not changed." } : {}) });
-          if (message.action !== "steer" && message.action !== "discard") { result(false, "invalid_pending_action"); break; }
+          if (message.action !== "steer" && message.action !== "discard" && message.action !== "agent-queue") { result(false, "invalid_pending_action"); break; }
           if (this.mode === "observe") { result(false, "read_only"); break; }
           const pending = this.pending.get(message.pane_id)?.find((item) => item.id === message.pending_id);
           if (!pending) {
@@ -1343,9 +1345,21 @@ class DemoSocket extends EventTarget {
             this.removePending(message.pane_id, pending.id, "discarded");
             result(true);
           } else {
-            const code = this.pendingTargetError(message.pane_id);
-            if (code) { result(false, code); break; }
             if (pending.state === "uncertain") { result(false, "pending_uncertain"); break; }
+            const code = message.action === "agent-queue" && (paneOf(message.pane_id)?.agent ?? paneOf(message.pane_id)?.agent_session?.agent) !== "omo"
+              ? "agent_queue_unsupported" : this.pendingTargetError(message.pane_id);
+            if (code) {
+              if (message.action === "agent-queue") {
+                pending.state = "held";
+                pending.error = { code, message: "The demo agent cannot take this native queue transfer." };
+                this.publishPending(message.pane_id);
+              }
+              result(false, code); break;
+            }
+            if (message.action === "agent-queue") {
+              this.removePending(message.pane_id, pending.id, "sent");
+              result(true); break;
+            }
             const sent = this.deliverPending(message.pane_id, pending);
             result(sent, sent ? undefined : pending.error?.code ?? "pending_changed");
           }

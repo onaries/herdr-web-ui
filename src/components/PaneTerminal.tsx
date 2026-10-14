@@ -2185,14 +2185,14 @@ export function PaneTerminal({
       // A draft is cleared only by a send at once: one that waits its turn is checked when it goes
       // with automatic sending off, a follow-up waits for Send now; the socket queues it on a PC too old to hold one
       const queued = composerDelivery(agent, agentStatus);
-      const delivery: SubmitDelivery = queued === "queue" && !settings.autoSendQueued ? "hold" : queued;
+      const delivery: SubmitDelivery = queued === "queue" && (agent === "omo" || !settings.autoSendQueued) ? "hold" : queued;
       const result = submitComposerMessage(text, delivery, delivery === "immediate" ? clearDraft : undefined);
       return result === null ? false : result.then((answer) => answer.ok ? true : submitRefusal(answer.code, answer.message, answer.draft));
     },
     [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, submitComposerMessage, queueStore, machineId, settings.autoSendQueued],
   );
 
-  const actOnPending = useCallback(async (id: string, action: "steer" | "discard"): Promise<void> => {
+  const actOnPending = useCallback(async (id: string, action: "steer" | "discard" | "agent-queue"): Promise<void> => {
     const owner = queueOwner, pane = paneId;
     const socket = socketRef.current, scope = pendingScopeRef.current;
     if (owner === null || pane === null || paneRef.current !== pane) return;
@@ -2200,7 +2200,7 @@ export function PaneTerminal({
     pendingMessages.refresh(owner);
     const message = pendingMessages.read(owner).find((item) => item.id === id);
     if (!message || message.state === "sending") return;
-    if (action === "steer" && (message.state === "uncertain" || !socket?.connected || heldRef.current || secretRef.current !== null || observeRef.current || ended || heldByOpenQueue || answering !== null)) return;
+    if (action !== "discard" && (message.state === "uncertain" || !socket?.connected || heldRef.current || secretRef.current !== null || observeRef.current || ended || heldByOpenQueue || answering !== null)) return;
     if (message.serverOwned && !pendingMessages.isOwned(owner, id, scope)) return;
     if (!pendingMessages.begin(owner, id)) return;
     try {
@@ -2222,7 +2222,7 @@ export function PaneTerminal({
           pendingMessages.fail(owner, id, { code: "unsaved", message: t("Queue could not be saved. Keep this tab open or copy the messages before reloading.") }, false);
           return;
         }
-        const result = submitComposerMessage(message.text, "immediate");
+        const result = submitComposerMessage(message.text, action === "agent-queue" ? "agent-queue" : "immediate");
         if (!result) {
           pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not sent. Reconnect and try again.") }, false);
           return;
@@ -2458,6 +2458,7 @@ export function PaneTerminal({
         unsaved={pendingMessages.isUnsaved(queueOwner)}
         isBusy={(id) => pendingMessages.isBusy(queueOwner, id)}
         onSendNow={(id) => actOnPending(id, "steer")}
+        onAgentQueue={agent === "omo" ? (id) => actOnPending(id, "agent-queue") : undefined}
         onDiscard={(id) => actOnPending(id, "discard")}
       />}
       {/* The prompt card's place: under the held messages (which fold to their caption while it is

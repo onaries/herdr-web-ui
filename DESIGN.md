@@ -1038,8 +1038,10 @@ One set for both themes: the card is island black wherever it shows.
   again after fonts arrive and the context label opens or closes. The input card keeps one row
   of controls on desktop and phones.
 - Every agent has one primary control: Stop while working with an empty draft, Send with text,
-  and Send at rest. Uploads and in-flight sends disable Send without clearing its text. There
-  is no separate Queue button or send menu. The placeholder is `Message <agent>…`; message text
+  and Send at rest. Uploads and in-flight sends disable Send without clearing its text.
+  OmO's working-turn Send holds the message on the bridge for an explicit pending-row action;
+  it does not automatically deliver it when the agent becomes ready. The input card has no
+  secondary queue control. The placeholder is `Message <agent>…`; message text
   uses `--fs-chat` scaled by `--chat-scale` on `--lh-code` with a fine pointer. Otherwise it
   uses that scaled size or `--fs-input`, whichever is larger, keeping the 16px floor that avoids
   iOS zoom. Changing Chat font size or density resizes an automatic box around its existing
@@ -1054,6 +1056,11 @@ One set for both themes: the card is island black wherever it shows.
   text aligned right, with no outer card. Its scrolling stack is capped by `--pending-max-h`
   (`min(20dvh, 12rem)`). The text stays selectable. Its separate ↑ Send now action sends it, and the small sibling X
   discards it. Actions keep a 40px touch target on phones.
+  An OmO pending row adds a lucide `ListEnd` icon in the same `.icon-button` style beside
+  Send now and Discard. Its accessible name and tooltip say `Send to agent queue (Ctrl+Q)`.
+  It transfers that existing bridge item to OmO's follow-up queue, claiming the same ID as
+  Send now so only one action can deliver it. Offline, blocked, sending and uncertain rows
+  cannot transfer; uncertain rows retain only Copy and Discard saved copy.
   Sending disables that item's actions; errors stay inline. Uncertain messages offer Copy and
   Discard saved copy, with no retry action. Desktop and phones share this flow.
 - Accepted pending messages clear only the draft prefix acknowledged by the bridge. Actual

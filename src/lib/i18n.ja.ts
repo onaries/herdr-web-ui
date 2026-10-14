@@ -554,6 +554,8 @@ export const JA: Record<string, string> = {
   "Send now": "今すぐ送信",
   "Stop agent": "エージェントを停止",
   "Send message": "メッセージを送信",
+  "Send to agent queue": "エージェントのキューに送信",
+  "Send to agent queue (Ctrl+Q)": "エージェントのキューに送信 (Ctrl+Q)",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "未送信: エージェントがターミナルで回答を待っています。先に回答してください。",
   "Not sent: this view only watches the pane.": "未送信: この画面はペインを閲覧するだけです。",
   "Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.": "未送信: ターミナルの Claude Code の入力欄が空ではありません。そこで送信するか消してから、このメッセージを送ってください。",

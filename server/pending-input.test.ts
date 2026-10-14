@@ -11,6 +11,43 @@ function fixture() {
 }
 
 describe("bridge pending input", () => {
+  it("transfers the same ID without a turn gate or a second claim", () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
+    f.queue.status("p1", "idle");
+    expect(f.queue.claim(first, false, false)).toBe(true);
+    expect(f.queue.next("p1")).toBeNull();
+    expect(f.queue.claim(first, false)).toBe(false);
+    expect(f.queue.claim(first, true)).toBe(false);
+    expect(f.queue.discard(first)).toBe(false);
+    f.queue.settle(first);
+    expect(f.queue.get("a", "p1", first.message.id)).toBeUndefined();
+    expect(f.receipts.at(-1)?.removed).toEqual([{ id: first.message.id, outcome: "sent" }]);
+    expect(f.queue.next("p1")).toBe(second);
+    f.advance(101);
+    expect(second.message.state).toBe("queued");
+  });
+
+  it("preserves an earlier committed turn across a native transfer", () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2); const third = f.enqueue(3);
+    f.queue.status("p1", "idle");
+    f.queue.claim(first, true); f.queue.committing(first); f.queue.settle(first);
+    expect(f.queue.claim(second, false, false)).toBe(true); f.queue.settle(second);
+    expect(f.queue.next("p1")).toBeNull();
+    f.queue.status("p1", "working"); f.queue.status("p1", "done");
+    expect(f.queue.next("p1")).toBe(third);
+  });
+
+  for (const partial of [false, true]) it(`retains the same native transfer ID as ${partial ? "uncertain" : "held"} on failure`, () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
+    f.queue.status("p1", "idle");
+    expect(f.queue.claim(first, false, false)).toBe(true);
+    f.queue.settle(first, { code: partial ? "submit_partial" : "agent_queue_unsupported", message: "not confirmed" }, partial);
+    expect(f.queue.get("a", "p1", first.message.id)).toBe(first);
+    expect(first.message.state).toBe(partial ? "uncertain" : "held");
+    expect(f.queue.outcome("a", "p1", first.message.id)).toBeUndefined();
+    expect(f.queue.next("p1")).toBe(partial ? null : second);
+  });
+
   it("deduplicates the same connection's request and rejects id reuse for another message", () => {
     const f = fixture();
     const first = f.enqueue(1);

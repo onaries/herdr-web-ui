@@ -1001,11 +1001,18 @@ export type ClientMessage =
    * Omission keeps the legacy immediate submission. Queued messages never resume after lease loss.
    * Queue request ids increase monotonically per connection; recent duplicates replay their
    * receipt, and retired ids are rejected rather than executed after history eviction.
+   * `delivery:agent-queue` requires "agent-queue" and a live interact attachment to an actual
+   * OmO process: literal bracketed paste then Ctrl+Q, never Enter or bridge pending input.
+   * It refuses typed/clear_draft and prompts; its receipt confirms key delivery only, not
+   * native queue acceptance. It uses the same bounded request-id receipts as queue delivery.
    * `clear_draft`: an immediate chat message only, sent again over the `draft` its input_draft
    * refusal named: the server clears Claude's input box first while it still holds exactly that,
    * and refuses again (input_draft) when it holds anything else or does not read empty after. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold"; clear_draft?: string }
-  | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" }
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold" | "agent-queue"; clear_draft?: string }
+  /** `agent-queue` requires "pending-agent-queue": transfers this same bridge ID to OmO with
+   * paste + Ctrl+Q. Success removes it as sent without opening a turn gate; a failure keeps it
+   * held, or uncertain if input may have reached the terminal. The receipt proves key delivery. */
+  | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" | "agent-queue" }
   /** Masked input: revalidate the visible prompt, type literal bytes + Enter immediately.
    * Never queued, retried, sent through agent.prompt, or echoed in a result. */
   | { type: "secret"; id: number; pane_id: string; prompt: string; secret: string }
@@ -1023,7 +1030,7 @@ export type ClientMessage =
   | { type: "unwatch"; pane_id: string };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch";
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "agent-queue" | "pending-agent-queue" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
