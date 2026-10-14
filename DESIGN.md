@@ -527,8 +527,9 @@ One set for both themes: the card is island black wherever it shows.
   them. The roster has no label or fold of its own.
 - A repository's parent row keeps `workspace.label`; its opened linked
   worktree rows show their actual checkout branches. Each row's compact status
-  glyph rolls up all of the workspace's panes as herdr does (blocked, then done, then working,
-  then ready); a folded worktree parent rolls up its whole group.
+  glyph rolls up all of the workspace's panes (blocked, then working, then waiting on background
+  work, then done, then ready), so an unseen finish cannot hide active work. A folded worktree
+  parent rolls up its whole group; tab indicators use the same priority.
   Clicking its name opens the
   selected pane in that workspace, else the last viewed pane, else the pane herdr has focused,
   else its first pane. Tabs are selected from the tab strip; panes are selected on the canvas or from the command palette.

@@ -30,15 +30,14 @@ export function paneStatus(pane: { agent_status?: AgentStatus; background_wait?:
 }
 
 /**
- * herdr's roll-up order, on its server (workspace aggregate) and in its sidebar: a blocked agent
- * colours the whole workspace, then one that finished and was not looked at yet, then a working one,
- * then one waiting on its turn's background work (working in all but name).
+ * A blocked agent colours the workspace first; active work stays visible before a sibling's
+ * unseen finish, including a turn waiting on its background work.
  */
-const ROLLUP: readonly KnownStatus[] = ["blocked", "done", "working", "waiting", "idle"];
+const ROLLUP: readonly KnownStatus[] = ["blocked", "working", "waiting", "done", "idle"];
 
 /**
- * One state for a row that stands for several panes, as herdr rolls a workspace's agents up:
- * blocked wins, then done, then working, then waiting on background work, then ready; unknown only
+ * One state for a row that stands for several panes:
+ * blocked wins, then working, then waiting on background work, then done, then ready; unknown only
  * when no pane says more.
  */
 export function rollupStatus(statuses: ReadonlyArray<AgentStatus | undefined>): KnownStatus {

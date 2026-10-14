@@ -3,10 +3,11 @@ import { describe, expect, it } from "bun:test";
 import { paneStatus, rollupStatus, statusEdgeRead } from "./status.ts";
 
 describe("rollupStatus", () => {
-  it("rolls a workspace's panes up as herdr does: blocked, then done, then working, then ready", () => {
+  it("keeps running work visible ahead of a sibling's finish, with blocked first", () => {
     expect(rollupStatus(["idle", "blocked", "working"])).toBe("blocked");
     expect(rollupStatus(["blocked", "done"])).toBe("blocked");
-    expect(rollupStatus(["done", "working"])).toBe("done");
+    expect(rollupStatus(["done", "working"])).toBe("working");
+    expect(rollupStatus(["working", "done", "idle"])).toBe("working");
     expect(rollupStatus(["idle", "working"])).toBe("working");
     expect(rollupStatus(["idle", "done"])).toBe("done");
     expect(rollupStatus(["idle", undefined])).toBe("idle");
@@ -15,7 +16,7 @@ describe("rollupStatus", () => {
   it("puts a pane waiting on its background work after working and before ready", () => {
     expect(rollupStatus(["waiting", "idle"])).toBe("waiting");
     expect(rollupStatus(["waiting", "working"])).toBe("working");
-    expect(rollupStatus(["done", "waiting", "idle"])).toBe("done");
+    expect(rollupStatus(["done", "waiting", "idle"])).toBe("waiting");
   });
 });
 
