@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -6,6 +6,48 @@ import type { DirectoryListing } from "../shared/protocol.ts";
 
 /** A folder with more subfolders than this lists the first ones and says it stopped. */
 export const MAX_DIRECTORY_ENTRIES = 500;
+
+/** A folder name past this many bytes is refused before the filesystem is asked (255 on every common filesystem). */
+const MAX_NAME_BYTES = 255;
+
+/** `path` in the dialog's syntax (absolute, `~`, `~/…`, empty for home), resolved against `base` or the server's own folder. */
+function resolveFolder(path: string, home: string, base?: string): string {
+  const trimmed = path.trim();
+  return trimmed === "" || trimmed === "~" ? home : trimmed.startsWith("~/") ? resolve(home, trimmed.slice(2)) : base !== undefined ? resolve(base, trimmed) : resolve(trimmed);
+}
+
+export type CreateDirectoryResult =
+  | { path: string }
+  | { error: "invalid_cwd" | "invalid_name" | "folder_exists" | "permission_denied" };
+
+/**
+ * Makes one folder named `name` directly inside `parent` (the folder the browser shows) and
+ * answers its absolute path. `name` is one path segment: no separator, not `.` or `..`, so
+ * nothing is made anywhere but inside `parent`; nothing is made recursively or overwritten.
+ */
+export function createDirectory(parent: string, name: string): CreateDirectoryResult {
+  const target = resolveFolder(parent, homedir());
+  try {
+    if (!statSync(target).isDirectory()) return { error: "invalid_cwd" };
+  } catch {
+    return { error: "invalid_cwd" };
+  }
+  const folder = name.trim();
+  if (folder === "" || folder === "." || folder === ".." || /[/\\\0]/.test(folder) || Buffer.byteLength(folder) > MAX_NAME_BYTES) return { error: "invalid_name" };
+  const path = join(target, folder);
+  try {
+    mkdirSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return { error: "folder_exists" };
+    if (code === "EACCES" || code === "EPERM" || code === "EROFS") return { error: "permission_denied" };
+    // the parent went away meanwhile; a name Windows will not take (`a:b`, `con`) is EINVAL or ENOENT there
+    if (code === "ENOENT" || code === "ENOTDIR") return { error: process.platform === "win32" ? "invalid_name" : "invalid_cwd" };
+    if (code === "EINVAL" || code === "ENAMETOOLONG") return { error: "invalid_name" };
+    throw error;
+  }
+  return { path };
+}
 
 /**
  * The folders inside one directory, for the new-session dialog's folder browser. One
@@ -17,8 +59,7 @@ export const MAX_DIRECTORY_ENTRIES = 500;
 /** `base`: the folder a relative path is read from (a pane's, for a link in its chat); else the server's own. */
 export function listDirectories(path: string, hidden = false, withFiles = false, base?: string): DirectoryListing | null {
   const home = homedir();
-  const trimmed = path.trim();
-  const target = trimmed === "" || trimmed === "~" ? home : trimmed.startsWith("~/") ? resolve(home, trimmed.slice(2)) : base !== undefined ? resolve(base, trimmed) : resolve(trimmed);
+  const target = resolveFolder(path, home, base);
   let entries;
   try {
     if (!statSync(target).isDirectory()) return null;

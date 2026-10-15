@@ -74,7 +74,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     assert.equal(await page.locator(".key-bar").isVisible(), false, "a desktop shows no key bar under the terminal");
     // a phone keyboard's autocorrect would swap a flag or path for a dictionary word before Send
     assert.deepEqual(await line.evaluate((box) => [box.getAttribute("autocorrect"), box.getAttribute("spellcheck"), box.getAttribute("autocapitalize")]), ["off", "false", "off"]);
-    assert.equal(await page.getByRole("button", { name: "Type straight into the terminal", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Input line", exact: true }).count(), 0);
     await page.locator(".pane-frame.is-current").focus();
     const beforeFocus = sent.length;
     await page.keyboard.press("ControlOrMeta+Shift+E");

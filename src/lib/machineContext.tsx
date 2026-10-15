@@ -43,6 +43,7 @@ export function useMachineApi() {
     fetchAgentKinds: () => api.fetchAgentKinds(id),
     fetchIntegrations: () => api.fetchIntegrations(id),
     fetchDirectories: (path: string, hidden: boolean, files = false, pane: string | null = null) => api.fetchDirectories(path, hidden, id, files, pane),
+    createDirectory: (path: string, name: string) => api.createDirectory(path, name, id),
     fetchFileInfo: (path: string, pane: string | null) => api.fetchFileInfo(path, pane, id),
     fileUrl: (path: string, pane: string | null, download = false) => api.fileUrl(path, pane, id, download),
     fetchRepoDiffFiles: (query: api.RepoDiffQuery) => api.fetchRepoDiffFiles(query, id),

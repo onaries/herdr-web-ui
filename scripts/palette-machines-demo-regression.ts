@@ -12,6 +12,7 @@ import { chromePath } from "./chrome-path.ts";
 const app = mkdtempSync(join(tmpdir(), "herdr-palette-machines-"));
 const patch = `(() => {
   const fetchDemo = window.fetch.bind(window), EventSourceDemo = window.EventSource;
+  const detachedRemote = new URLSearchParams(location.search).has("detached");
   const calls = window.paletteMachineCalls = { branches: [], plugins: [], focus: [], runs: [], closes: [] };
   let last = null, offline = false, missing = false;
   const sources = new Set();
@@ -53,7 +54,8 @@ const patch = `(() => {
     if (path === "/api/worktree/list") {
       calls.branches.push(machine);
       const id = url.searchParams.get("workspace_id");
-      return json({ source: { repo_key: "repo", source_workspace_id: id }, worktrees: [{ path: "/tmp/project/linked", branch: machine === "remote" ? "feature/remote-branch" : "feature/local-branch", is_detached: false, open_workspace_id: id }] });
+      const detached = machine === "remote" && detachedRemote;
+      return json({ source: { repo_key: "repo", source_workspace_id: id }, worktrees: [{ path: "/tmp/project/linked", branch: detached ? undefined : machine === "remote" ? "feature/remote-branch" : "feature/local-branch", is_detached: detached, open_workspace_id: id }] });
     }
     if (path === "/api/tab/close") { calls.closes.push({ machine, tab: JSON.parse(init.body).tab_id }); return json({ ok: true }); }
     if (path === "/api/plugins/actions") calls.plugins.push(machine);
@@ -82,6 +84,26 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      for (const phone of [false, true]) {
+        const detachedContext = await browser.newContext(phone
+          ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" }
+          : { viewport: { width: 1280, height: 900 }, locale: "en-US" });
+        try {
+          const page = await detachedContext.newPage();
+          const renderErrors: string[] = [];
+          page.on("pageerror", (error) => renderErrors.push(error.message));
+          page.on("console", (message) => {
+            if (message.type() === "error" && message.text().includes("render failed")) renderErrors.push(message.text());
+          });
+          await page.goto(`http://127.0.0.1:${server.port}/?machine=remote&pane=${encodeURIComponent(panes.api)}&view=chat&detached=1`);
+          if (phone) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+          await page.locator('.workspace-select[title*="Detached HEAD"]').first().waitFor({ state: "attached" });
+          assert.ok(await page.locator(".workspace-group").count() > 0, "workspace rows survive a remote detached worktree with no branch field");
+          assert.equal(await page.getByRole("alert").filter({ hasText: /can't be shown|Something went wrong/ }).count(), 0);
+          assert.deepEqual(renderErrors, [], "caught render errors must fail the browser check too");
+          console.log(`PASS ${phone ? "phone" : "desktop"} sidebar and detached branch render when the remote API omits branch`);
+        } finally { await detachedContext.close(); }
+      }
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
       try {
         await context.addInitScript((paneId) => {

@@ -629,16 +629,24 @@ function claudeQuestionText(lines: string[], tabsIndex: number, firstRow: number
   return text.length > 0 ? normalizeText(text.join(" ")) : null;
 }
 
-/** After several questions Claude shows the answers and asks before sending them. */
+/**
+ * After several questions Claude shows the answers and asks before sending them. The review is one
+ * panel from its tabs down to its question, with no rule inside it. A review taller than the pane
+ * (long answers, a phone-width pane) is cut off at the top, tabs and heading out of view: then the
+ * screen's first line starts it, and only Claude's own answers (`→ …`) and rows make it the review.
+ */
 function parseClaudeSubmit(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const questionIndex = findLastIndex(lines, (line) => /^Ready to submit your answers\?$/i.test(cleanLine(line)));
   if (questionIndex < 0) return null;
   const tabsIndex = findLastIndex(lines.slice(0, questionIndex), (line) => CLAUDE_TABS_RE.test(cleanLine(line)));
-  if (tabsIndex < 0 || questionIndex - tabsIndex > 40) return null;
+  const panel = lines.slice(tabsIndex + 1, questionIndex);
+  if (panel.some((line) => isDivider(line))) return null;
   const rows = parseNumberedRows(lines, questionIndex + 1, lines.length);
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
-  const body = lines.slice(tabsIndex + 1, questionIndex).map(cleanLine)
+  if (tabsIndex < 0 && (!panel.some((line) => /^→\s/.test(cleanLine(line)))
+    || rows.map((row) => row.label).join("\n") !== "Submit answers\nCancel")) return null;
+  const body = panel.map(cleanLine)
     .filter((line) => line && !isDivider(line) && !/^Review your answers$/i.test(line)).join("\n");
   return finishPrompt("claude", {
     // a menu, not a question: a typed pick submits every answer at once, so it waits for Confirm
@@ -1855,6 +1863,8 @@ const CLAUDE_TASK_ROW_RE = /^[◻◼✔]\s/;
 const CLAUDE_TASKS_MORE_RE = /^…\s\+\d+ pending$/;
 const LABELED_RULE_RE = /^─{3,}\s.*─$/;
 const CLAUDE_HINT_TAIL_RE = /\besc to (?:cancel|exit|go back)\b/i;
+/** the last row of Claude's review of several answers, which ends it in place of a hint */
+const CLAUDE_SUBMIT_TAIL_RE = /^(?:[›>❯]\s*)?\d+\.\s+Cancel$/i;
 /** `hintEnds`: whether the panel's hint ends at line `end`; a hint a narrow pane wrapped needs its own reading */
 function withoutClaudeTasks(shown: string[], hintEnds: (lines: string[], end: number) => boolean = (lines, end) => CLAUDE_HINT_TAIL_RE.test(lines[end - 1] ?? "")): string[] {
   let end = shown.length;
@@ -1904,7 +1914,9 @@ function omoFooterIsActive(lines: string[]): boolean {
 function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   const cleanLines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine);
   const visible = cleanLines.filter((line) => line && !isDivider(line));
-  const shown = prompt.responder.startsWith("claude-") ? withoutClaudeTasks(visible) : visible;
+  // Claude's review has no hint of its own: its last row ends the panel, the session's rule and task list come after it
+  const shown = prompt.responder === "claude-submit" ? withoutClaudeTasks(visible, (lines, end) => CLAUDE_SUBMIT_TAIL_RE.test(lines[end - 1] ?? ""))
+    : prompt.responder.startsWith("claude-") ? withoutClaudeTasks(visible) : visible;
   const last = shown.at(-1) ?? "";
   // The menu is still at the bottom. A narrow pane wraps its hint, so the last line alone can
   // be the hint's tail (`cancel`): the lines before it count only when the match runs into
@@ -1919,7 +1931,7 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   if (prompt.responder === "codex-question") return ends(CODEX_ASK_HINT_RE);
   if (prompt.responder === "codex-async-question") return cleanLines.slice(-4).some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line)) || ends(CODEX_ASYNC_ASK_HINT_RE);
   if (prompt.responder === "claude-question") return ends(CLAUDE_ASK_HINT_RE);
-  if (prompt.responder === "claude-submit") return /^(?:[›>❯]\s*)?\d+\.\s+Cancel$/i.test(last);
+  if (prompt.responder === "claude-submit") return CLAUDE_SUBMIT_TAIL_RE.test(last);
   // the last row carries the cursor once a move has put it there
   if (prompt.responder === "codex-approval") return ends(/press enter to confirm|esc to cancel|enter continue.*esc back|^(?:[›>❯]\s*)?\d+\.\s+(?:No|Reject|Cancel|Deny)\b/i);
   if (prompt.responder === "omp-approval") return ends(/^(?:[›>❯•]\s*)?(?:Approve|Deny)$|esc.*cancel/i);
@@ -2917,6 +2929,73 @@ function colorless(ansi: string): boolean {
     }
   }
   return true;
+}
+
+/** A screen row without its escapes, OSC sequences (titles, links) included. */
+const plainRow = (row: string): string => row.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").replace(ANSI_RE, "");
+
+/** The screen's bottom-most row with a `❯`: Hermes' input, below every message it echoes. */
+function hermesInputRow(screen: string): string | null {
+  const rows = screen.split(/\r?\n/);
+  for (let index = rows.length - 1; index >= 0; index--) if (plainRow(rows[index]!).includes("❯")) return rows[index]!;
+  return null;
+}
+
+/**
+ * Whether Hermes' input is not known to be empty, so that a paste would join what is there and the
+ * Enter send both as one message (measured on Hermes 0.21.5, classic CLI and TUI). The input is the
+ * bottom-most `❯` row, empty when nothing follows the `❯`. Hermes' own hint there is not a draft:
+ * the classic CLI draws its placeholder italic (its skin's `placeholder: "{dim} italic"`), and the TUI
+ * starts its hint with a synthetic cursor, a cell with a background color (ui-tui textInput.tsx
+ * `hintCursorCell`); typed text has neither. `live` is the detection read; `colors` the viewport's
+ * ANSI read, passed only once it is verified to show that screen (viewportShowsLive), else null, and
+ * then any text after the `❯` counts as a draft. A screen without a `❯` row is not known to be empty.
+ */
+export function hermesInputDraft(live: string, colors: string | null): boolean {
+  const row = hermesInputRow(live);
+  if (row === null) return true;
+  const plain = plainRow(row);
+  // the row's first `❯` is the prompt: one after it is typed text
+  if (plain.slice(plain.indexOf("❯") + 1).replace(/\u00a0/g, " ").trim() === "") return false;
+  const shown = colors === null ? null : hermesInputRow(colors);
+  if (shown === null || plainRow(shown).trimEnd() !== plain.trimEnd()) return true;
+  const after = plainRow(shown).indexOf("❯");
+  let column = 0;
+  let italic = false;
+  let background = false;
+  // the first character after the `❯` decides: a TUI hint's cursor chip, or typed (not italic) text
+  let decided: boolean | null = null;
+  const visit = (text: string): void => {
+    for (const character of text) {
+      const at = column;
+      column += character.length;
+      if (decided !== null) return;
+      if (at <= after || character.trim() === "" || character === "\u00a0") continue;
+      if (background) { decided = false; return; }
+      if (!italic) { decided = true; return; }
+    }
+  };
+  const escape = /\u001b(?:\[([0-?]*)[ -/]*([@-~])|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
+  let offset = 0;
+  for (const match of shown.matchAll(escape)) {
+    visit(shown.slice(offset, match.index));
+    offset = match.index! + match[0].length;
+    if (match[2] !== "m") continue;
+    const codes = (match[1] || "0").split(";").map((code) => Number(code || 0));
+    for (let index = 0; index < codes.length; index++) {
+      const code = codes[index]!;
+      if (code === 38 || code === 58) index += codes[index + 1] === 5 ? 2 : codes[index + 1] === 2 ? 4 : 0;
+      else if (code === 48) { background = true; index += codes[index + 1] === 5 ? 2 : codes[index + 1] === 2 ? 4 : 0; }
+      else if (code === 0) { italic = false; background = false; }
+      else if (code === 3) italic = true;
+      else if (code === 23) italic = false;
+      else if (code === 49) background = false;
+      else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) background = true;
+    }
+  }
+  visit(shown.slice(offset));
+  // every character italic: the classic CLI's placeholder
+  return decided ?? false;
 }
 
 /**

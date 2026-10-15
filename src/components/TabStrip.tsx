@@ -31,11 +31,9 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { paneDrag } from "../lib/paneDrag.ts";
+import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
-
-/** the pane each tab was last seen on, per PC: a tab clicked again opens where it was left */
-const lastViewed = new Map<string, string>();
 
 export interface TabStripProps {
   snapshot: SessionSnapshot;
@@ -107,7 +105,8 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   const nameOf = (tab: HerdrTab): string => sent?.tabId === tab.tab_id ? sent.label : tabLabel(tab, t, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1);
 
   useEffect(() => {
-    lastViewed.set(`${machineId}:${selectedPane.tab_id}`, selectedPane.pane_id);
+    // the pane each tab was last seen on, per PC: a tab clicked again opens where it was left
+    rememberViewedPane("tab", machineId, selectedPane.tab_id, selectedPane.pane_id);
   }, [machineId, selectedPane.tab_id, selectedPane.pane_id]);
 
   // a picker, a name field or a question whose tab left (closed in the TUI) goes with it
@@ -204,7 +203,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   const paneFor = (tab: HerdrTab): PaneInfo | undefined => {
     const own = panesOf(tab);
     const pick = (id: string | null | undefined) => (id ? own.find((pane) => pane.pane_id === id) : undefined);
-    return pick(lastViewed.get(`${machineId}:${tab.tab_id}`))
+    return pick(lastViewedPane("tab", machineId, tab.tab_id))
       ?? pick(snapshot.layouts?.find((layout) => layout.tab_id === tab.tab_id)?.focused_pane_id)
       ?? own.find((pane) => pane.focused)
       ?? own[0];

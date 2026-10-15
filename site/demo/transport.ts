@@ -908,6 +908,14 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ ok: true });
   }
+  if (path === "/api/workspace/directories" && method === "POST") {
+    // New folder: the demo has no disk, so the folder opens empty and is not listed again
+    const body = await bodyOf(init, input);
+    const name = String(body["name"] ?? "").trim();
+    if (name === "" || name === "." || name === ".." || /[/\\]/.test(name)) return error("invalid_name", "name must be one folder name", 400);
+    const parent = String(body["path"] ?? "/home/demo");
+    return json({ path: `${parent.replace(/\/$/, "")}/${name}` }, 201);
+  }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
     return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, files: [] });
@@ -1123,7 +1131,7 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; send_anyway?: unknown; resend_id?: unknown; resend_generation?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; stop?: unknown };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; send_anyway?: unknown; resend_id?: unknown; resend_generation?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; stop?: unknown; keep_size?: boolean };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
       const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, send_anyway: message.send_anyway, resend_id: message.resend_id, resend_generation: message.resend_generation, pending_id: message.pending_id, action: message.action });
@@ -1167,7 +1175,14 @@ class DemoSocket extends EventTarget {
         if (Number.isSafeInteger(message.id)) this.push({ type: "pong", id: message.id! });
         break;
       case "attach":
-        if (message.pane_id) { this.resizeGrid(message.pane_id, message.cols, message.rows); this.attach(message.pane_id); }
+        if (message.pane_id) {
+          // keep_size (the chat lens) and an observer leave the shared grid alone and learn it instead
+          const keepsSize = message.keep_size === true || this.mode === "observe";
+          if (!keepsSize) this.resizeGrid(message.pane_id, message.cols, message.rows);
+          this.attach(message.pane_id);
+          const grid = demoGrid(message.pane_id);
+          if (keepsSize && this.attached.has(message.pane_id)) this.push({ type: "pane-geometry", pane_id: message.pane_id, ...grid });
+        }
         break;
       case "resize":
         if (message.pane_id && this.attached.has(message.pane_id) && this.mode === "interact") this.resizeGrid(message.pane_id, message.cols, message.rows);
@@ -1411,7 +1426,12 @@ class DemoSocket extends EventTarget {
 
   private resizeGrid(paneId: string, cols: number | undefined, rows: number | undefined): void {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols! < 2 || rows! < 1 || cols! > 1000 || rows! > 1000) return;
+    const before = terminalGrids.get(paneId);
     terminalGrids.set(paneId, { cols: cols!, rows: rows! });
+    // like the server: a changed grid reaches every client of the pane, this one included even if it is still attaching
+    if (before?.cols !== cols || before?.rows !== rows) {
+      for (const socket of sockets) if (socket === this || socket.attached.has(paneId)) socket.push({ type: "pane-geometry", pane_id: paneId, cols: cols!, rows: rows! });
+    }
     if (histories.get(paneId)?.resize(cols!, rows!)) redrawHistory(paneId);
   }
 

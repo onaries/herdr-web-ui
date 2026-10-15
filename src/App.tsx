@@ -1,4 +1,4 @@
-import { type CSSProperties, type DragEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
@@ -72,8 +72,9 @@ import { Droplet } from "./components/Droplet.tsx";
 import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./lib/droplet.ts";
 import { canPlayAlertSound, playAlertSound, unlockAlertSound, type AlertSoundKind } from "./lib/alertSound.ts";
 import { createAlertTurnPlayer } from "./lib/alertTurns.ts";
-import { dockPane, draggedPane, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, slotSide, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./lib/split.ts";
+import { dockPane, draggedPane, paneDragData, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, slotSide, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./lib/split.ts";
 import { paneDrag } from "./lib/paneDrag.ts";
+import { PaneFollowContext } from "./lib/paneSubmitContext.ts";
 import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
@@ -139,6 +140,12 @@ function storedView(lenses: PaneLenses, picks: ReadonlyMap<string, PaneView>, pa
     /* private mode */
   }
   return lenses.of(key, hasAgent, window.matchMedia?.("(pointer: coarse)").matches === true);
+}
+
+/** Slot b of the split draws on connections of its own: both halves may attach one tab, and each
+ *  attaches and detaches it as the other is not there (lib/split.ts). */
+function SlotSessions({ slot, machineIds, children }: { slot: SplitSlot; machineIds: readonly string[]; children: ReactNode }) {
+  return slot === "b" ? <MachineSessionsProvider machineIds={machineIds}>{children}</MachineSessionsProvider> : <>{children}</>;
 }
 
 function Brand() {
@@ -255,9 +262,13 @@ export function App() {
   // was, changes nothing they watch), and on a link a tap set (its pane may be the one selected)
   const [rosterTick, setRosterTick] = useState(0);
   const [linkTick, setLinkTick] = useState(0);
+  // a split half whose pane the PC could not be asked about is checked again on the next roster
+  const otherRecheck = useRef(false);
+  const [otherRosterTick, setOtherRosterTick] = useState(0);
   const rosterIn = useCallback((): void => {
     rosterSeq.current += 1;
     if (pendingLink.current !== null) setRosterTick(rosterSeq.current);
+    if (otherRecheck.current) { otherRecheck.current = false; setOtherRosterTick(rosterSeq.current); }
   }, []);
   // the file a link named, opened over its pane once that pane is shown
   const pendingFile = useRef<string | null>(initialLink ? fileFromLink(initialLink) : null);
@@ -494,23 +505,6 @@ export function App() {
     if (refetchTimer.current !== null) window.clearTimeout(refetchTimer.current);
   }, []);
 
-  // The tab a pane is in, from the roster this client has: a pane of the tab a half shows is shown
-  // there, so one tab is never drawn twice (two terminals on one pane)
-  const tabOf = useCallback((target: SplitTarget): string | undefined =>
-    machinesRef.current.find((m) => m.id === target.machineId)?.snapshot?.panes.find((pane) => pane.pane_id === target.paneId)?.tab_id, []);
-  const sameTab = useCallback((a: SplitTarget, b: SplitTarget): boolean => {
-    if (a.machineId !== b.machineId) return false;
-    if (a.paneId === b.paneId) return true;
-    const tab = tabOf(a);
-    return tab !== undefined && tab === tabOf(b);
-  }, [tabOf]);
-  /** the pane is in the tab the other half holds, drawn or not: a narrow window keeps the split, and a
-   *  pick of that half's pane there trades the halves instead of putting one tab in both */
-  const inOtherHalf = useCallback((machineId: string, paneId: string): boolean => {
-    const open = splitRef.current;
-    return open !== null && sameTab(open.other, { machineId, paneId });
-  }, [sameTab]);
-
   // In-app alerts (components/Droplet.tsx): only while the app is on screen - a hidden app has
   // its system notifications - and never for the pane already open in front of the user.
   const dropIn = useCallback((machine: Machine, pane: HerdrPane, kind: DropletKind) => {
@@ -717,12 +711,7 @@ export function App() {
     // on the same PC keeps the connected socket, which never reports again: resetting here
     // left the header on "reconnecting" after every pane switch.
     if (machineId !== selectedMachineRef.current) setConnected(false);
-    // a pane of the tab open in the other half is picked by making that half active
-    const open = splitRef.current;
-    const current = selectionRef.current;
-    if (open && paneId !== null && current.paneId !== null && inOtherHalf(machineId, paneId)) {
-      setSplit({ other: { machineId: current.machineId, paneId: current.paneId }, bSide: open.bSide, active: otherSlot(open.active) });
-    }
+    // the active half alone takes the pick, whatever the other half shows (lib/split.ts)
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
     setOutputStopped(false);
     setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
@@ -733,7 +722,7 @@ export function App() {
     selectionHint.current = null;
     // a PC picked now (Open PC, before load() brings it) is checked against a roster sent after this
     selectionSince.current = rosterSeq.current;
-  }, [inOtherHalf, setSplit]);
+  }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
@@ -811,16 +800,11 @@ export function App() {
   const selectPane = useCallback((paneId: string, focusInput = true) => {
     pendingLink.current = null; pendingFile.current = null; setLinkLanded(true);
     selectionHint.current = null;
-    const open = splitRef.current;
-    const current = selectionRef.current;
-    if (open && current.paneId !== null && inOtherHalf(current.machineId, paneId)) {
-      setSplit({ other: { machineId: current.machineId, paneId: current.paneId }, bSide: open.bSide, active: otherSlot(open.active) });
-    }
     setSelectedPaneId(paneId);
     setNotificationViewTarget(null);
     setAutoSelected(!focusInput);
     setDrawerOpen(false);
-  }, [inOtherHalf, setSplit]);
+  }, []);
 
   // a layout call the palette made and the PC refused: a bridge from before the route says so
   // over the pane (the tab's own menu has a line of its own); anything else is logged, as
@@ -920,37 +904,49 @@ export function App() {
   // while a pane is selected; a narrower window shows the active half alone and keeps the split
   const otherMachine = split ? machines.find((m) => m.id === split.other.machineId) : undefined;
   const otherPane = split ? otherMachine?.snapshot?.panes.find((pane) => pane.pane_id === split.other.paneId) ?? null : null;
-  // both halves on one tab (a saved split beside a link to its other tab, a pane moved across) would
-  // attach the tab's panes twice on the PC's one socket, and the detach of the half that then closes
-  // would take the other half's attachment with it: the other half is not drawn while that holds, and
-  // the effect below ends the split
-  const overlapping = split !== null && split.other.machineId === selectedMachineId
-    && (split.other.paneId === selectedPaneId || (otherPane !== null && selectedPane !== null && otherPane.tab_id === selectedPane.tab_id));
-  const splitOn = split !== null && wideScreen && selectedPaneId !== null && !overlapping;
+  // both halves may show one tab: slot b draws on a connection of its own (the slot's
+  // MachineSessionsProvider below), so each half attaches and detaches the tab's panes by itself
+  const splitOn = split !== null && wideScreen && selectedPaneId !== null;
+  // the half that is not active, drawing the active half's tab too, shows it at the grid the active
+  // half gives the pane: one pty has one size (PaneFollowContext)
+  const sameTabs = splitOn && otherPane !== null && selectedPane !== null
+    && split.other.machineId === selectedMachineId && otherPane.tab_id === selectedPane.tab_id;
   splitShownRef.current = splitOn;
   const otherWorkspace = otherPane ? otherMachine?.snapshot?.workspaces.find((workspace) => workspace.workspace_id === otherPane.workspace_id) ?? null : null;
   const otherHerdr = split?.other.machineId === "local" ? health?.herdr : otherMachine?.herdr;
   const otherAttach = otherHerdr?.terminal_attach !== false || otherHerdr?.terminal_mirror === true;
 
   // the other half's pane closed: another pane of its tab takes its place, else back to one pane.
-  // Both halves on one tab (a pane moved in) is one tab too many. An offline PC's cached roster
-  // cannot say so, as for the selection itself
-  const otherTabRef = useRef<string | null>(null);
-  if (otherPane) otherTabRef.current = otherPane.tab_id;
+  // An offline PC's cached roster cannot say so, as for the selection itself
+  const otherTabRef = useRef<{ key: string; tab: string } | null>(null);
+  const otherKey = split ? `${split.other.machineId}:${split.other.paneId}` : null;
+  if (otherPane && otherKey) otherTabRef.current = { key: otherKey, tab: otherPane.tab_id };
+  else if (otherTabRef.current?.key !== otherKey) otherTabRef.current = null;
   useEffect(() => {
     if (!split || !machineRosterLoaded) return;
-    const selected = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
-    if (selected && sameTab(split.other, selected)) { endSplit(split.active); return; }
     if (!otherMachine) { endSplit(split.active); return; }
     if (!otherMachine.snapshot || otherMachine.state !== "connected") return;
     const panes = otherMachine.snapshot.panes;
     if (panes.some((pane) => pane.pane_id === split.other.paneId)) return;
-    const tabId = otherTabRef.current;
+    const tabId = otherTabRef.current?.tab ?? null;
+    // a pane this page has not seen in the roster yet (a saved split, a pane made just before the page
+    // loaded) may be newer than the cached roster: ask the PC before the split ends, as the selection does
+    if (tabId === null) {
+      let cancelled = false;
+      const other = split.other;
+      void fetchSession(other.machineId).then((current) => {
+        if (!cancelled && !current.panes.some((pane) => pane.pane_id === other.paneId)) endSplit(split.active);
+      }).catch(() => {
+        // a failed read is not evidence that the pane closed: ask again on the next roster
+        if (!cancelled) otherRecheck.current = true;
+      });
+      return () => { cancelled = true; };
+    }
     const focused = otherMachine.snapshot.layouts.find((layout) => layout.tab_id === tabId)?.focused_pane_id;
     const heir = panes.find((pane) => pane.tab_id === tabId && pane.pane_id === focused) ?? panes.find((pane) => pane.tab_id === tabId);
     if (heir) setSplit({ ...split, other: { machineId: split.other.machineId, paneId: heir.pane_id } });
     else endSplit(split.active);
-  }, [split, machineRosterLoaded, otherMachine, selectedMachineId, selectedPaneId, endSplit, setSplit, sameTab]);
+  }, [split, machineRosterLoaded, otherMachine, otherRosterTick, endSplit, setSplit]);
 
   /** A split change and the pane it selects. The half that becomes active keeps its terminals: only
    *  a half whose pane moves to another PC attaches again and reports its connection. */
@@ -981,26 +977,23 @@ export function App() {
     if (selectedPaneId === null) return;
     // a pick in the other half (a press on a sibling pane of its tab, a tab opened there) makes that half
     // active with the picked pane selected, in one step. The press's own activation and this pick both
-    // read the state from before the event: as two steps the second would undo the first and leave one
-    // tab in both halves, which ends the split
+    // read the state from before the event: as two steps the second would undo the first
     applySplit({ other: { machineId: selectedMachineId, paneId: selectedPaneId }, bSide: open.bSide, active: slot }, { machineId, paneId }, !focusInput);
   };
-  /** A pane dropped at a point: the half under it opens the pane. A pane of a tab a half already
-   *  shows counts as that half's own pane, and is then picked in it. */
+  /** A pane opened in one half (a drop, the pane menu): that half shows it and is the active one; the
+   *  other half keeps what it shows, the same tab included (lib/split.ts). */
+  const dockSide = (dragged: SplitTarget, side: SplitSide): void => {
+    if (!wideScreen || selectedPaneId === null) return;
+    const result = dockPane(splitOn ? split : null, { machineId: selectedMachineId, paneId: selectedPaneId }, dragged, side, soloSlot);
+    if (result) applySplit(result.split, result.select);
+  };
+  /** A pane dropped at a point: the half under it opens the pane. */
   const dockAt = (dragged: SplitTarget, x: number, y: number): void => {
     const box = paneAreaRef.current?.getBoundingClientRect();
     const inside = !!box && x >= box.left && x < box.right && y >= box.top && y < box.bottom;
     const side = box && inside ? dropSide(x, box.left, box.width, dropAtRef.current) : null;
     clearDropPreview();
-    if (side === null || !wideScreen || selectedPaneId === null) return;
-    const current = { machineId: selectedMachineId, paneId: selectedPaneId };
-    const shown = sameTab(dragged, current) ? current : splitOn && sameTab(dragged, split.other) ? split.other : dragged;
-    const result = dockPane(splitOn ? split : null, current, shown, side, soloSlot);
-    if (!result) {
-      if (shown === current && !sameTarget(dragged, current)) selectPane(dragged.paneId);
-      return;
-    }
-    applySplit(result.split, sameTarget(result.select, shown) ? dragged : result.select);
+    if (side !== null) dockSide(dragged, side);
   };
   const dockAtRef = useRef(dockAt); dockAtRef.current = dockAt;
   useEffect(() => {
@@ -1532,7 +1525,7 @@ export function App() {
               if (active) setView(next); else if (pane) pickView(machineId, pane.pane_id, next);
             };
             return (
-              <MachineContext.Provider key={slot} value={machineId}>
+              <MachineContext.Provider key={slot} value={machineId}><SlotSessions slot={slot} machineIds={machines.map((item) => item.id)}><PaneFollowContext.Provider value={sameTabs && !active}>
               <div
                 className={`pane-slot${showsChat(pane, slotView) ? " is-chat" : ""}${splitOn ? active ? " is-active" : " is-inactive" : ""}`}
                 data-slot={slot}
@@ -1548,7 +1541,13 @@ export function App() {
                 onDropCapture={active ? undefined : (event) => { if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) activateSlot(slot); }}
               >
                 {splitOn && (
-                  <div className="pane-slot-bar">
+                  <div className="pane-slot-bar" draggable={paneId !== null}
+                    // the half's own pane, dropped on a half of the pane area, opens there too (dockSide)
+                    onDragStart={(event) => {
+                      if (paneId === null) return;
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId }));
+                    }}>
                     {pane?.agent && <AgentMark agent={pane.agent} size={14} />}
                     <span className="pane-slot-title" title={pane ? displayPaneTitle(pane) : undefined}>{pane ? displayPaneTitle(pane) : t("Pane closed")}</span>
                     {machines.length > 1 && <span className="pane-slot-machine">{machine?.name ?? machineId}</span>}
@@ -1580,6 +1579,7 @@ export function App() {
                 <main className="terminal-host">
                   <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
+                    onOpenInHalf={wideScreen ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal
                          onOpenDiff={openDiff}
@@ -1587,6 +1587,7 @@ export function App() {
                         // Wait for the roster before attaching: the loading placeholder is replaced
                         // by the keyed tile, and must never claim the pane on a throwaway connection.
                         paneId={item?.restore_error ? null : item?.pane_id ?? null}
+                        terminalId={item?.terminal_id ?? null}
                         mirrored={herdr ? herdr.terminal_attach === false || herdr.terminal_mirror === true : null}
                         restoreError={item?.restore_error ?? null}
                         agent={item?.agent ?? null}
@@ -1620,7 +1621,7 @@ export function App() {
                 </main>
                 </RenderBoundary>
               </div>
-              </MachineContext.Provider>
+              </PaneFollowContext.Provider></SlotSessions></MachineContext.Provider>
             );
           })}
           <SplitDropPreview visible={splitDragOn && (paneDragging || tabDrag !== null)} side={dropAt} />

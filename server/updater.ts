@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
+import { CHECKOUT_CHANGED_REASON, noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
 import { compareVersions, releaseNotes, releaseSummaries, SUMMARIES_FILE } from "./release-notes.ts";
 
 export interface Release {
@@ -185,7 +185,7 @@ export class Updater {
     const branch = await this.git("branch", "--show-current");
     if (branch !== "main" && !(branch === "" && this.options.pluginCheckout)) return "Switch the source checkout to main to update.";
     if (await this.git("status", "--porcelain", "--untracked-files=all")) return "The source checkout has local changes. Commit or move them before updating.";
-    if (await this.git("rev-parse", "HEAD") !== this.sourceRevision) return "The source checkout changed. Restart the app before updating.";
+    if (await this.git("rev-parse", "HEAD") !== this.sourceRevision) return CHECKOUT_CHANGED_REASON;
     return null;
   }
 

@@ -104,6 +104,7 @@ bun scripts/key-bar-hold-repeat-regression.ts # phone touch key-bar taps, holds 
 bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px and a 320px phone, and Back stepping out of the dialog
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/pane-input-focus-demo-regression.ts # the input focus shortcut against fictional panes
+bun scripts/shortcut-exact-modifiers-demo-regression.ts # recording exact-modifier chords: confirm, refusals, dispatch
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
 bun scripts/math-browser-qa.ts  # chat math: KaTeX loads with the first expression
 bun scripts/recent-folders-regression.ts # owned workspaces: PC-scoped history, reload, three chips on one row that fill Directory, pending and failures

@@ -21,11 +21,14 @@ describe("split view", () => {
     expect(slotSide(next.split, "b")).toBe("left");
   });
 
-  it("does nothing for a pane dropped onto itself, or with nothing open", () => {
-    expect(dockPane(null, A, A, "left")).toBeNull();
+  it("does nothing for a pane dropped onto the active half that shows it, or with nothing open", () => {
     expect(dockPane(null, null, B, "left")).toBeNull();
     const split: SplitState = { other: A, bSide: "right", active: "b" };
     expect(dockPane(split, B, B, "right")).toBeNull();
+  });
+
+  it("opens the single pane beside itself when it is dropped on a half", () => {
+    expect(dockPane(null, A, A, "left")).toEqual({ split: { other: A, bSide: "left", active: "b" }, select: A });
   });
 
   it("opens a pane dropped on the active half there, and on the other half there, making it active", () => {
@@ -35,12 +38,12 @@ describe("split view", () => {
     expect(dockPane(split, B, C, "left")).toEqual({ split: { other: B, bSide: "right", active: "a" }, select: C });
   });
 
-  it("trades sides when a half's own pane is dropped on the other half", () => {
+  it("shows a half's own pane in the other half too, never trading sides", () => {
     const split: SplitState = { other: A, bSide: "right", active: "b" };
-    // the active B dropped on the left: the slots trade sides, B stays active
-    expect(dockPane(split, B, B, "left")).toEqual({ split: { other: A, bSide: "left", active: "b" }, select: B });
-    // the other pane A dropped on the active right half: A moves there and is active, B goes left
-    expect(dockPane(split, B, A, "right")).toEqual({ split: { other: B, bSide: "left", active: "a" }, select: A });
+    // the active B dropped on the left: the left half shows B as well and is active, the right keeps B
+    expect(dockPane(split, B, B, "left")).toEqual({ split: { other: B, bSide: "right", active: "a" }, select: B });
+    // the other pane A dropped on the active right half: the right shows A as well, the left keeps A
+    expect(dockPane(split, B, A, "right")).toEqual({ split, select: A });
   });
 
   it("makes the other half active without moving either pane", () => {

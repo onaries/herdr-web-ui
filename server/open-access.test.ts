@@ -70,6 +70,9 @@ describe("a paired watch device", () => {
     expect((await asWatcher("/api/fs/file?path=/etc/hostname")).status).toBe(403);
     expect((await asWatcher("/api/workspace/directories?cwd=/tmp")).status).toBe(403);
     expect((await asWatcher("/api/machines/local/workspace/directories?cwd=/tmp")).status).toBe(403);
+    // nor make a folder there
+    expect((await asWatcher("/api/workspace/directories", "POST")).status).toBe(403);
+    expect((await asWatcher("/api/machines/local/workspace/directories", "POST")).status).toBe(403);
     // sending an alert is not a preference: it makes the server POST somewhere
     expect((await asWatcher("/api/push/test", "POST")).status).toBe(403);
     // watching is the role's whole point

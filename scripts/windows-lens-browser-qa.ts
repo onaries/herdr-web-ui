@@ -161,6 +161,7 @@ try {
   attachServer = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state-attach") });
   const attachOrigin = `http://127.0.0.1:${attachServer.port}`;
   const own = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await own.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "line" })));
   const mine = await own.newPage();
   mine.on("pageerror", (error) => errors.push(error.message));
   mine.setDefaultTimeout(10_000);

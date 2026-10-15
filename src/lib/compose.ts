@@ -49,10 +49,10 @@ export type DraftRefusal = { note: string; draft: string } | { note: string; any
  * submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`)
  * or showed a box it could not tell empty (`box`; empty when it could not read one whole).
  */
-export function submitRefusal(code: string, message: string, draft?: string, box?: string): string | DraftRefusal {
+export function submitRefusal(code: string, message: string, draft?: string, box?: string, agent?: string | null): string | DraftRefusal {
   if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };
   if (code === "input_draft" && box) return { note: t("Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.", { box }), anyway: true };
-  return submitNote(code, message);
+  return submitNote(code, message, agent);
 }
 
 /** The same message as typed, however a terminal wrapped or indented it: equal once all whitespace is gone. */
@@ -60,11 +60,13 @@ export function sameMessage(a: string, b: string): boolean {
   const bare = (text: string): string => text.replace(/[\s\u00a0]+/gu, "");
   return bare(a) !== "" && bare(a) === bare(b);
 }
-export function submitNote(code: string, message: string): string {
+/** `agent`: the pane's agent, which names the input an input_draft refusal is about (Claude Code's when unknown) */
+export function submitNote(code: string, message: string, agent?: string | null): string {
   if (code === "submit_partial") return t("Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.");
   if (code === "agent_blocked") return t("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
   if (code === "read_only") return t("Not sent: this view only watches the pane.");
   if (code === "held_input") return t("Not sent: send or discard the held input first.");
+  if (code === "input_draft" && agent === "hermes") return t("Not sent: Hermes' input in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");

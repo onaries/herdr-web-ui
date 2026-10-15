@@ -1,7 +1,9 @@
 /**
- * Two panes side by side on a desktop, as a window snapped to half the screen: a tab or a
- * sidebar row dragged to the left or right half of the pane area opens its pane there, beside the
- * one already open. The selected pane (App's) is the active half's; the other half keeps its own.
+ * Two panes side by side on a desktop, as a window snapped to half the screen: a tab, a sidebar or
+ * Agents row, or a pane's title dragged to the left or right half of the pane area opens its pane
+ * there, beside the one already open. The selected pane (App's) is the active half's; the other half
+ * keeps its own. The halves are independent: both may show the same tab (the other half draws it on a
+ * connection of its own), and a pick from the sidebar changes the active half alone.
  *
  * The halves are two slots, `a` and `b`, that keep their panes when the active one changes or the
  * halves trade sides, so neither terminal attaches again for a click. A single pane is shown in
@@ -59,13 +61,12 @@ export function dropSide(x: number, left: number, width: number, previous: Split
 
 /**
  * A pane dropped on one half: the split after it, and the pane to select (the dropped one, which
- * becomes the active half). Null when nothing changes: a pane dropped where it already is, or
- * onto a single pane that is itself.
+ * becomes the active half). Null when nothing changes: a pane dropped onto the active half that
+ * already shows it. Nothing trades sides: the half under the drop shows the pane, the other half
+ * keeps what it shows, and a pane may be shown in both.
  * - Single pane: it stays in its slot (`solo`), on the other side, and the dropped pane opens beside it.
- * - Onto the active half: the dropped pane opens there. The other half's own pane, dropped there,
- *   trades sides with it.
- * - Onto the other half: the dropped pane opens there and that half becomes active. The active
- *   pane dropped there trades sides with the other.
+ * - Onto the active half: the dropped pane opens there.
+ * - Onto the other half: the dropped pane opens there and that half becomes active.
  */
 export function dockPane(
   state: SplitState | null,
@@ -76,19 +77,11 @@ export function dockPane(
 ): { split: SplitState; select: SplitTarget } | null {
   if (active === null) return null;
   if (state === null) {
-    if (sameTarget(dragged, active)) return null;
     const opened = otherSlot(solo);
     return { split: { other: active, bSide: opened === "b" ? side : otherSide(side), active: opened }, select: dragged };
   }
   const slot: SplitSlot = side === state.bSide ? "b" : "a";
-  if (slot === state.active) {
-    if (sameTarget(dragged, active)) return null;
-    if (sameTarget(dragged, state.other)) {
-      return { split: { other: active, bSide: otherSide(state.bSide), active: otherSlot(state.active) }, select: dragged };
-    }
-    return { split: state, select: dragged };
-  }
-  if (sameTarget(dragged, active)) return { split: { ...state, bSide: otherSide(state.bSide) }, select: active };
+  if (slot === state.active) return sameTarget(dragged, active) ? null : { split: state, select: dragged };
   return { split: { other: active, bSide: state.bSide, active: slot }, select: dragged };
 }
 

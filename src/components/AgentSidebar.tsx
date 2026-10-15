@@ -10,6 +10,7 @@ import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { activityOrder } from "../lib/sidebarOrder.ts";
 import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin } from "../lib/sidebarPins.ts";
+import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
 import { RowMenu } from "./RowMenu.tsx";
 import { BackgroundBadge, displayPaneTitle, onRowContextMenu, PlanBadge, StatusBadge } from "./Sidebar.tsx";
@@ -144,7 +145,13 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     return <li className={`agent-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`} key={paneStorageId(machine.id, pane.pane_id)} data-machine={machine.id} data-pane={pane.pane_id} data-pin-key={pinKey}
       onMouseDownCapture={(event) => { if (event.button === 2 || (event.button === 0 && event.ctrlKey)) event.preventDefault(); }}
       onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
-      <button type="button" className="agent-select agent-row" disabled={!online} aria-current={selected ? "true" : undefined} title={tooltip} onClick={() => onSelect(machine.id, pane.pane_id)}>
+      <button type="button" className="agent-select agent-row" disabled={!online} aria-current={selected ? "true" : undefined} title={tooltip} onClick={() => onSelect(machine.id, pane.pane_id)}
+        draggable={online}
+        // dropped on the pane area, the row opens its pane in half of it (lib/split.ts)
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId: machine.id, paneId: pane.pane_id }));
+        }}>
         {/* a saved roster's state is not news: a PC that is away says nothing about its agents */}
         <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} backgroundTasks={online ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={online ? activity.status(machine.id, pane) : undefined} pinned={pinned.includes(pinKey)} />
       </button>

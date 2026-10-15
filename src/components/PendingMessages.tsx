@@ -10,6 +10,8 @@ interface Props {
   messages: PendingMessageView[];
   active?: boolean;
   connected: boolean;
+  /** the pane's agent, which names the input a refusal is about */
+  agent?: string | null;
   blocked: boolean;
   unsaved: boolean;
   isBusy: (id: string) => boolean;
@@ -32,7 +34,7 @@ export function pendingStatus(message: Pick<PendingMessageView, "state" | "error
 }
 
 /** Pending text is separate from the transcript; Send now acts on its ID, never on its text. */
-export function PendingMessages({ messages, active = true, connected, blocked, unsaved, isBusy, onSendNow, onAgentQueue, onDiscard }: Props) {
+export function PendingMessages({ messages, active = true, connected, agent, blocked, unsaved, isBusy, onSendNow, onAgentQueue, onDiscard }: Props) {
   const t = useT();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -79,7 +81,7 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
               void onDiscard(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
             }}><X aria-hidden="true" /></button>
         </div>
-        {message.error && !uncertain && <p className="pending-message-note" role="status">{(message.error.code === "input_draft" || message.error.code === "held_input") ? submitNote(message.error.code, message.error.message) : t("Not sent: {message}", { message: message.error.message })}</p>}
+        {message.error && !uncertain && <p className="pending-message-note" role="status">{(message.error.code === "input_draft" || message.error.code === "held_input") ? submitNote(message.error.code, message.error.message, agent) : t("Not sent: {message}", { message: message.error.message })}</p>}
       </li>;
     })}
   </ol>;

@@ -7,6 +7,7 @@ import type {
   CreateWorktreeRequest,
   CreateTabRequest,
   CreateWorkspaceRequest,
+  DirectoryCreated,
   DirectoryListing,
   FileInfo,
   FocusPaneRequest,
@@ -559,6 +560,12 @@ export async function fetchIntegrations(machineId = "local"): Promise<Integratio
 export async function fetchDirectories(path: string, hidden: boolean, machineId = "local", files = false, paneId: string | null = null): Promise<DirectoryListing> {
   const query = new URLSearchParams({ path, ...(hidden ? { hidden: "1" } : {}), ...(files ? { files: "1" } : {}), ...(paneId ? { pane_id: paneId } : {}) });
   return getJson<DirectoryListing>(machinePath(machineId, `workspace/directories?${query.toString()}`));
+}
+
+/** POST /api/workspace/directories: makes the folder `name` inside `path`, for the folder browser's New folder. */
+export async function createDirectory(path: string, name: string, machineId = "local"): Promise<DirectoryCreated> {
+  const response = await sendJson(machinePath(machineId, "workspace/directories"), "POST", { path, name });
+  return (await response.json()) as DirectoryCreated;
 }
 
 function fileQuery(path: string, paneId: string | null): string {

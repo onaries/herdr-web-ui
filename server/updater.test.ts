@@ -526,6 +526,32 @@ describe("managed source updates with real Git repositories and builds", () => {
       await handle.exited;
     }
   }, 30_000);
+
+  it.skipIf(!liveHerdr)("tells over HTTP that the checkout was replaced under the running server", async () => {
+    const { launch, readStatus, until, health, explain } = await managedFixture();
+    const handle = launch();
+    try {
+      await until(async () => /^[0-9a-f]{40}$/.test((await readStatus())?.current_revision ?? ""));
+      const running = (await readStatus())?.current_revision;
+      // what `herdr plugin install` or `git pull` plus a build does to a checkout that is being served
+      const replaced = await commit("replaced checkout");
+      await git(root, "pull", "--ff-only", "--quiet");
+      // pulled, not built: the server serves the build it runs, which a reload does bring
+      expect((await readStatus())?.served_revision ?? null).toBeNull();
+      mkdirSync(join(root, "dist"), { recursive: true });
+      writeFileSync(join(root, "dist", "build.json"), JSON.stringify({ revision: replaced }));
+      // no update check: the bridge reads the build it serves when asked, not every 5 minutes
+      expect((await readStatus())?.served_revision).toBe(replaced);
+      // the server still runs what it started with: only a restart reports the new commit
+      expect((await readStatus())?.current_revision).toBe(running!);
+      expect((await health()).web_ui.revision).toBe(running!);
+    } catch (error) {
+      await explain(error);
+    } finally {
+      handle.kill("SIGTERM");
+      await handle.exited;
+    }
+  }, 30_000);
 });
 
 describe("a release's notes file", () => {

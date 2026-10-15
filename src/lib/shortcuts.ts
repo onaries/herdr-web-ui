@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useSettings } from "./settings.ts";
-import type { ShortcutOverrides } from "./shortcutBindings.ts";
+import { bindingChord, formatExactChord, isMacPlatform, parseExactChord, type ExactChord, type ShortcutOverrides } from "./shortcutBindings.ts";
 import { physicalKey } from "./keys.ts";
 
 import type { AppActions } from "./actions.ts";
@@ -63,13 +63,23 @@ export function shortcutKeys(id: ShortcutId, overrides: ShortcutOverrides): stri
 export function shortcutDisplayKeys(id: ShortcutId, overrides: ShortcutOverrides): string[] {
   const shortcut = SHORTCUTS.find((candidate) => candidate.id === id)!;
   if (id === "voice" || !Object.hasOwn(overrides, id)) return [...shortcut.keys];
-  const key = overrides[id];
-  if (!key) return [];
-  return ["Mod", "Shift", key.length === 1 ? key.toUpperCase() : key];
+  const value = overrides[id];
+  return value ? bindingDisplayKeys(value) : [];
 }
 
-export function shortcutConflict(id: ShortcutId, keys: string[], overrides: ShortcutOverrides): boolean {
-  return SHORTCUTS.some((other) => other.id !== id && shortcutKeys(other.id, overrides).some((key) => keys.includes(key)));
+/** A stored binding as shown: Mod+Shift+key, or its exact modifiers in macOS order (⌃⌥⇧⌘). */
+export function bindingDisplayKeys(value: string): string[] {
+  const chord = parseExactChord(value);
+  const bare = chord?.key ?? value;
+  const key = bare.length === 1 ? bare.toUpperCase() : bare;
+  if (!chord) return ["Mod", "Shift", key];
+  return [...(chord.ctrl ? ["Ctrl"] : []), ...(chord.alt ? ["Alt"] : []), ...(chord.shift ? ["Shift"] : []), ...(chord.meta ? ["Meta"] : []), key];
+}
+
+/** Two bindings conflict when they name the same chord on this platform, however each is stored. */
+export function shortcutConflict(id: ShortcutId, keys: string[], overrides: ShortcutOverrides, platformIsMac = isMacPlatform()): boolean {
+  const wanted = new Set(keys.map((key) => formatExactChord(bindingChord(key, platformIsMac))));
+  return SHORTCUTS.some((other) => other.id !== id && shortcutKeys(other.id, overrides).some((key) => wanted.has(formatExactChord(bindingChord(key, platformIsMac)))));
 }
 
 /** The key a Mod+Shift chord names, as overrides and KEY_TO_ID store it (letters lowercase). */
@@ -81,15 +91,52 @@ export function shortcutEventKey(event: ShortcutEventLike): string {
   // Turkish F's Ç on KeyB, and neither is that binding.
   const nonLatinLetter = /^\p{L}$/u.test(event.key) && !/^\p{Script=Latin}$/u.test(event.key);
   const letter = nonLatinLetter ? physicalKey(event.key, code) : event.key;
-  return code === "Comma"
-    ? ","
-    : /^Digit[0-9]$/.test(code)
-      ? code.slice(-1)
-      : letter.length === 1 ? letter.toLowerCase() : letter;
+  if (code === "Comma") return ",";
+  if (/^Digit[0-9]$/.test(code)) return code.slice(-1);
+  const typed = letter.length === 1 ? letter.toLowerCase() : letter;
+  // An a–z letter stays as typed (AZERTY's M sits on Semicolon); anything else on a punctuation key
+  // is read by position, so a Hungarian É or a German Ö is the key it sits on, on any layout.
+  return !/^[a-z]$/.test(typed) && Object.hasOwn(PUNCTUATION_BY_CODE, code) ? PUNCTUATION_BY_CODE[code]! : typed;
+}
+
+/** Punctuation keys by position, named by the US character (IntlBackslash, the ISO key, as §). */
+const PUNCTUATION_BY_CODE: Readonly<Record<string, string>> = {
+  Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Semicolon: ";", Quote: "'",
+  Backslash: "\\", Period: ".", Slash: "/", Backquote: "`", IntlBackslash: "§",
+};
+const CODE_BY_PUNCTUATION: Readonly<Record<string, string>> = Object.fromEntries(Object.entries(PUNCTUATION_BY_CODE).map(([code, key]) => [key, code]));
+
+/** This keyboard's own character on each key, where the browser tells it (Chromium); else the US name. */
+let layoutMap: ReadonlyMap<string, string> | null = null;
+let layoutRequested = false;
+function loadKeyboardLayout(): void {
+  if (layoutRequested || typeof navigator === "undefined") return;
+  layoutRequested = true;
+  const keyboard = (navigator as Navigator & { keyboard?: { getLayoutMap?: () => Promise<ReadonlyMap<string, string>> } }).keyboard;
+  keyboard?.getLayoutMap?.().then((map) => { layoutMap = map; }, () => { /* keep the US names */ });
+}
+
+/**
+ * The pressed chord with its exact modifiers. With Alt the key is read from its position: macOS
+ * Option turns K into "˚" and E into a dead key, and the binding is the key, not that character.
+ */
+export function exactChordFromEvent(event: ShortcutEventLike): ExactChord {
+  const code = event.code ?? "";
+  const key = event.altKey && /^Key[A-Z]$/.test(code) ? code.slice(3).toLowerCase() : shortcutEventKey(event);
+  return { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey, key };
 }
 
 export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, overrides: ShortcutOverrides = {}): ShortcutId | null {
   if (event.isComposing || event.keyCode === 229) return null;
+  if (event.ctrlKey || event.altKey || event.metaKey) {
+    const pressed = formatExactChord(exactChordFromEvent(event));
+    for (const shortcut of SHORTCUTS) {
+      if (shortcut.id === "voice") continue;
+      const value = Object.hasOwn(overrides, shortcut.id) ? overrides[shortcut.id] : null;
+      const chord = value ? parseExactChord(value) : null;
+      if (chord && formatExactChord(chord) === pressed) return shortcut.id;
+    }
+  }
   const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!hasMod || !event.shiftKey || event.altKey) return null;
   const key = shortcutEventKey(event);
@@ -141,9 +188,11 @@ export function isAppShortcut(event: ShortcutEventLike, overrides: ShortcutOverr
   return matchShortcut(event, isMacPlatform(), overrides) !== null;
 }
 
-export function isMacPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+export { isMacPlatform };
+
+/** Arrows, Home and End select or move in a field with text; there a matching binding gives way. */
+export function keepsKeyForText(event: { key: string; target: KeyTargetLike | EventTarget | null }): boolean {
+  return (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") && keepsArrowsForText(event.target);
 }
 
 export function modKeyLabel(): string {
@@ -151,8 +200,15 @@ export function modKeyLabel(): string {
 }
 
 export function formatKeys(keys: readonly string[]): string[] {
+  const mac = isMacPlatform();
   const mod = modKeyLabel();
-  return keys.map((key) => (key === "Mod" ? mod : key));
+  return keys.map((key) => (key === "Mod" ? mod : key === "Meta" ? (mac ? "⌘" : "Meta") : key === "Alt" && mac ? "⌥" : key === "Ctrl" && mac ? "⌃" : layoutLabel(key)));
+}
+
+function layoutLabel(key: string): string {
+  const code = CODE_BY_PUNCTUATION[key];
+  const own = code === undefined ? undefined : layoutMap?.get(code);
+  return own ? own.toUpperCase() : key;
 }
 
 /** True while Settings records a chord: the dispatcher below stands down so the pressed chord is not run. */
@@ -165,12 +221,13 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
   const { settings } = useSettings();
   useEffect(() => {
     if (!enabled) return;
+    loadKeyboardLayout();
     const platformIsMac = isMacPlatform();
     const onKeyDown = (event: KeyboardEvent): void => {
       if (recordingShortcut) return;
       const shortcut = matchShortcut(event, platformIsMac, settings.shortcutOverrides);
       if (shortcut === null) return;
-      if (event.key.startsWith("Arrow") && keepsArrowsForText(event.target)) return;
+      if (keepsKeyForText(event)) return;
       event.preventDefault();
       // a held chord repeats: a tab or a split is made once per press, not once per key repeat
       if (event.repeat && (shortcut === "new-tab" || shortcut === "split-right" || shortcut === "split-down")) return;

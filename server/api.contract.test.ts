@@ -377,6 +377,25 @@ describe("update API", () => {
     } finally { managed.stop(); rmSync(managedState, { recursive: true, force: true }); }
   });
 
+  it("tells the served build's commit once it differs from the running revision", async () => {
+    const running = "a".repeat(40), moved = "d".repeat(40);
+    let head: string | null = running;
+    const managedState = mkdtempSync(join(tmpdir(), "herdr-update-checkout-"));
+    const managed = createServer({ port: 0, stateDir: managedState,
+      updates: { status: () => ({ ...unmanagedUpdateStatus(), managed: true, current_revision: running }), notes: () => ({ revision: null, releases: [], omitted: 0 }),
+        installed: noInstalledNotes, request() {}, servedRevision: async () => head } });
+    const read = async () => (await (await fetch(`http://localhost:${managed.port}/api/updates`)).json()) as { served_revision?: string | null };
+    try {
+      expect((await read()).served_revision).toBeNull();
+      head = moved;
+      expect((await read()).served_revision).toBe(moved);
+      head = null;
+      expect((await read()).served_revision).toBeNull();
+    } finally { managed.stop(); rmSync(managedState, { recursive: true, force: true }); }
+    // an unmanaged server names no checkout
+    expect((await (await fetch(`${base()}/api/updates`)).json() as { served_revision?: string | null }).served_revision).toBeUndefined();
+  });
+
   it("answers what the last update brought, and nothing where no update was installed", async () => {
     const none = await fetch(`${base()}/api/updates/installed`);
     expect(none.status).toBe(200);
@@ -1107,6 +1126,38 @@ describe("workspace and discovery endpoints", () => {
     } finally {
       process.env["PATH"] = path;
       rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("makes one folder for the folder browser, and refuses names, folders and origins it must not", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-mkdir-"));
+    const make = (body: unknown, headers: Record<string, string> = {}) => fetch(`${base()}/api/workspace/directories`, {
+      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
+    });
+    const code = async (res: Response) => ((await res.json()) as ApiError).error.code;
+    try {
+      const made = await make({ path: root, name: "new-one" });
+      expect(made.status).toBe(201);
+      expect(await made.json()).toEqual({ path: join(root, "new-one") });
+      expect(statSync(join(root, "new-one")).isDirectory()).toBeTrue();
+      const again = await make({ path: root, name: "new-one" });
+      expect(again.status).toBe(409);
+      expect(await code(again)).toBe("folder_exists");
+      for (const name of ["", "..", "a/b", "../escape"]) {
+        const refused = await make({ path: root, name });
+        expect(refused.status).toBe(400);
+        expect(await code(refused)).toBe("invalid_name");
+      }
+      const missing = await make({ path: join(root, "missing"), name: "x" });
+      expect(await code(missing)).toBe("invalid_cwd");
+      expect(await code(await make({ path: root }))).toBe("invalid_body");
+      // another site's page cannot make folders on this PC
+      const crossSite = await make({ path: root, name: "from-elsewhere" }, { origin: "https://evil.example" });
+      expect(crossSite.status).toBe(403);
+      expect(existsSync(join(root, "from-elsewhere"))).toBeFalse();
+      expect(existsSync(join(tmpdir(), "escape"))).toBeFalse();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

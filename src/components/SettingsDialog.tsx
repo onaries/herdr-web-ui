@@ -5,9 +5,9 @@ import "./SettingsDialog.css";
 
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
-import { SHORTCUTS, formatKeys, isMacPlatform, modKeyLabel, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
-import { SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
-import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
+import { SHORTCUTS, bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
+import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
+import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/shortcutBindings.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type Palette as PaletteName, type VoiceButton } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -397,8 +397,9 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
         <Stepper label={t("Wheel scroll speed")} value={settings.terminalWheelSpeed} text={`${settings.terminalWheelSpeed}×`} min={TERMINAL_WHEEL_SPEED_MIN} max={TERMINAL_WHEEL_SPEED_MAX} decreaseLabel={t("Slower wheel scrolling")} increaseLabel={t("Faster wheel scrolling")} onChange={(terminalWheelSpeed) => update({ terminalWheelSpeed })} />
       </SettingsRow>
       <SettingsRow label={t("Terminal input mode")} htmlFor="terminal-input-mode">
-        <select id="terminal-input-mode" className="select settings-select" value={settings.terminalInputMode} onChange={(event) => update({ terminalInputMode: event.target.value as "auto" | "line" | "direct" })}>
-          <option value="auto">{t("Automatic")}</option><option value="line">{t("Input line")}</option><option value="direct">{t("Direct typing")}</option>
+        {/* "auto", the stored default, types straight into the grid on every device: it reads as Direct typing */}
+        <select id="terminal-input-mode" className="select settings-select" value={settings.terminalInputMode === "line" ? "line" : "direct"} onChange={(event) => update({ terminalInputMode: event.target.value as "line" | "direct" })}>
+          <option value="direct">{t("Direct typing")}</option><option value="line">{t("Input line")}</option>
         </select>
       </SettingsRow>
       <SettingsRow label={t("Key bar")} description={t("Keys, order and custom combinations for the terminal.")}>
@@ -698,7 +699,18 @@ function ShortcutsPage() {
   const platformIsMac = isMacPlatform();
   const [query, setQuery] = useState("");
   const [recording, setRecording] = useState<{ id: ShortcutId; problem: string | null } | null>(null);
+  // a recorded chord the terminal or the browser also uses waits here for Save anyway or Cancel
+  const [pending, setPending] = useState<{ id: ShortcutId; value: string; risk: "terminal" | "browser" } | null>(null);
+  // Save anyway and Cancel leave with the prompt: focus goes back to the row's Record button
+  const recordButtons = useRef(new Map<ShortcutId, HTMLButtonElement>());
+  const settlePending = (id: ShortcutId): void => {
+    setPending(null);
+    recordButtons.current.get(id)?.focus();
+  };
   const recordingId = recording?.id ?? null;
+  const riskText = (risk: "terminal" | "browser", keys: string): string => risk === "terminal"
+    ? t("{keys} is a terminal key: shells, editors and agents use it. Once saved, it no longer reaches the pane.", { keys })
+    : t("Your browser or operating system may intercept {keys}.", { keys });
   // while a row records, the chord pressed is read here and the app's own dispatcher stands down
   useEffect(() => {
     if (recordingId === null) return;
@@ -710,12 +722,16 @@ function ShortcutsPage() {
       event.stopPropagation();
       if (result.kind === "cancel") return setRecording(null);
       if (result.kind === "invalid") {
-        const problem = result.reason === "chord" ? t("Hold {mod}+Shift and press a key.", { mod: modKeyLabel() }) : result.reason === "key" ? t("That key cannot be a shortcut.") : t("Your browser or operating system keeps that shortcut.");
+        const problem = result.reason === "chord"
+          ? (platformIsMac ? t("Hold ⌘, Ctrl or ⌥, with or without Shift, and press a key.") : t("Hold Ctrl or Alt, with or without Shift, and press a key."))
+          : result.reason === "key" ? t("That key cannot be a shortcut.") : t("Your browser or operating system keeps that shortcut.");
         return setRecording({ id: recordingId, problem });
       }
-      if (shortcutConflict(recordingId, [result.key], settings.shortcutOverrides)) return setRecording({ id: recordingId, problem: t("Already assigned") });
-      update({ shortcutOverrides: { ...settings.shortcutOverrides, [recordingId]: result.key } });
+      const value = result.kind === "key" ? result.key : result.value;
+      if (shortcutConflict(recordingId, [value], settings.shortcutOverrides, platformIsMac)) return setRecording({ id: recordingId, problem: t("Already assigned") });
       setRecording(null);
+      if (result.kind === "exact" && result.risk !== null) return setPending({ id: recordingId, value, risk: result.risk });
+      update({ shortcutOverrides: { ...settings.shortcutOverrides, [recordingId]: value } });
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => {
@@ -740,22 +756,32 @@ function ShortcutsPage() {
         onChange={(event) => setQuery(event.target.value)}
       />
       {visible.length === 0 && <p className="settings-hint" role="status">{t("No shortcuts match.")}</p>}
-      <SettingsGroup className="settings-shortcuts" section="shortcuts" note={<>{t("Bindings apply to this browser and device; Mod+Shift is fixed.")} {t("Text selection in focused fields stays native; Tab/list keys are UI-local, not global shortcuts.")} {t("The mobile key bar sends terminal keys, not app actions.")}</>}>
+      <SettingsGroup className="settings-shortcuts" section="shortcuts" note={<>{t("Bindings apply to this browser and device. Mod+Shift chords leave the terminal its keys; Record also takes other chords with Ctrl, Alt or (on a Mac) ⌘, exactly as pressed.")} {t("Text selection in focused fields stays native; Tab/list keys are UI-local, not global shortcuts.")} {t("The mobile key bar sends terminal keys, not app actions.")}</>}>
         {visible.map((shortcut) => {
           const displayedKeys = shortcutDisplayKeys(shortcut.id, settings.shortcutOverrides);
           const selectedKey = displayedKeys[displayedKeys.length - 1];
-          const selectedReserved = selectedKey !== undefined && isReservedShortcutKey(selectedKey, platformIsMac);
+          const override = Object.hasOwn(settings.shortcutOverrides, shortcut.id) ? settings.shortcutOverrides[shortcut.id] : null;
+          const exact = override ? parseExactChord(override) : null;
+          const selectedRisk = exact ? exactChordRisk(exact, platformIsMac) : selectedKey !== undefined && isReservedShortcutKey(selectedKey, platformIsMac) ? "browser" : null;
+          const confirming = pending?.id === shortcut.id ? pending : null;
           const defaultKeys = shortcutDisplayKeys(shortcut.id, {});
           const defaultKey = defaultKeys[defaultKeys.length - 1];
           const defaultReserved = defaultKey !== undefined && isReservedShortcutKey(defaultKey, platformIsMac);
           // a binding without a default key is off by default: its Default row reads Off, with no second Off
           const unbound = defaultKeys.length === 0;
+          const rowText = recording?.id === shortcut.id ? (recording.problem ?? t("Press the new shortcut, or Escape to cancel.")) : confirming ? riskText(confirming.risk, compactKeys(bindingDisplayKeys(confirming.value))) : selectedRisk ? riskText(selectedRisk, compactKeys(displayedKeys)) : undefined;
           return (
-            <SettingsRow key={shortcut.id} label={t(shortcut.label)} wide={shortcut.id !== "voice"} description={recording?.id === shortcut.id ? (recording.problem ?? t("Press the new shortcut, or Escape to cancel.")) : selectedReserved ? t("Your browser or operating system may intercept {keys}.", { keys: compactKeys(displayedKeys) }) : undefined}>
+            <SettingsRow key={shortcut.id} label={t(shortcut.label)} wide={shortcut.id !== "voice"} description={rowText === undefined ? undefined : <span role="status">{rowText}</span>}>
               {shortcut.id === "voice" ? <span className="settings-keys">{formatKeys(shortcut.keys).map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span> : (
                 <span className="settings-shortcut-control">
-                <button type="button" className="btn settings-shortcut-record" aria-pressed={recording?.id === shortcut.id} aria-label={t("Record shortcut for {name}", { name: t(shortcut.label) })} onClick={() => setRecording(recording?.id === shortcut.id ? null : { id: shortcut.id, problem: null })}>{recording?.id === shortcut.id ? t("Press keys…") : t("Record")}</button>
-                <select className="select settings-select settings-shortcut-select" aria-label={t(shortcut.label)} value={Object.hasOwn(settings.shortcutOverrides, shortcut.id) ? settings.shortcutOverrides[shortcut.id] ?? (unbound ? "default" : "off") : "default"} onChange={(event) => {
+                <button type="button" className="btn settings-shortcut-record" ref={(button) => { if (button) recordButtons.current.set(shortcut.id, button); else recordButtons.current.delete(shortcut.id); }} aria-pressed={recording?.id === shortcut.id} aria-label={t("Record shortcut for {name}", { name: t(shortcut.label) })} onClick={() => { setPending(null); setRecording(recording?.id === shortcut.id ? null : { id: shortcut.id, problem: null }); }}>{recording?.id === shortcut.id ? t("Press keys…") : t("Record")}</button>
+                {confirming ? <>
+                  <button type="button" className="btn settings-shortcut-confirm" onClick={() => {
+                    settlePending(confirming.id);
+                    update({ shortcutOverrides: { ...settings.shortcutOverrides, [confirming.id]: confirming.value } });
+                  }}>{t("Save anyway")}</button>
+                  <button type="button" className="btn" onClick={() => settlePending(confirming.id)}>{t("Cancel")}</button>
+                </> : <select className="select settings-select settings-shortcut-select" aria-label={t(shortcut.label)} value={Object.hasOwn(settings.shortcutOverrides, shortcut.id) ? settings.shortcutOverrides[shortcut.id] ?? (unbound ? "default" : "off") : "default"} onChange={(event) => {
                   const next = { ...settings.shortcutOverrides };
                   if (event.target.value === "default") delete next[shortcut.id];
                   else next[shortcut.id] = event.target.value === "off" ? null : event.target.value;
@@ -763,12 +789,14 @@ function ShortcutsPage() {
                 }}>
                   <option value="default" title={t("Default")} disabled={shortcutConflict(shortcut.id, shortcutKeys(shortcut.id, {}), settings.shortcutOverrides)}>{unbound ? t("Off") : compactKeys(defaultKeys)}{defaultReserved ? ` — ${t("Reserved")}` : ""}</option>
                   {!unbound && <option value="off" title={t("Send keys to terminal")}>{t("Off")}</option>}
-                  {SHORTCUT_KEYS.map((key) => {
+                  {/* a recorded chord the list below does not offer (exact modifiers, Home, End, punctuation) is listed as itself */}
+                  {override && (exact || !MENU_SHORTCUT_KEYS.includes(override)) && <option value={override}>{compactKeys(displayedKeys)}</option>}
+                  {MENU_SHORTCUT_KEYS.map((key) => {
                     const conflict = shortcutConflict(shortcut.id, [key], settings.shortcutOverrides);
                     const reserved = isReservedShortcutKey(key, platformIsMac);
                     return <option key={key} value={key} disabled={conflict}>{compactKeys(["Mod", "Shift", key])}{reserved ? ` — ${t("Reserved")}` : ""}{conflict ? " — " + t("Already assigned") : ""}</option>;
                   })}
-                </select>
+                </select>}
                 </span>
               )}
             </SettingsRow>
@@ -776,7 +804,11 @@ function ShortcutsPage() {
         })}
       </SettingsGroup>
       <div className="settings-actions">
-        <button type="button" className="btn" onClick={() => update({ shortcutOverrides: {} })}>{t("Reset shortcuts")}</button>
+        <button type="button" className="btn" onClick={() => {
+          setPending(null);
+          setRecording(null);
+          update({ shortcutOverrides: {} });
+        }}>{t("Reset shortcuts")}</button>
       </div>
     </>
   );

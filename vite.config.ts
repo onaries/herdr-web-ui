@@ -20,8 +20,17 @@ const thirdPartyNotices: Plugin = {
   },
 };
 
+// the commit this client was built from, read by the managed bridge that serves it (server/update-api.ts):
+// a checkout rebuilt under a running server serves this build before the server runs it
+const buildRevision: Plugin = {
+  name: "build-revision",
+  generateBundle() {
+    if (revision !== null) this.emitFile({ type: "asset", fileName: "build.json", source: `${JSON.stringify({ revision })}\n` });
+  },
+};
+
 export default defineConfig({
-  plugins: [react(), thirdPartyNotices, compressedAssets(), serviceWorkerBuild()],
+  plugins: [react(), thirdPartyNotices, buildRevision, compressedAssets(), serviceWorkerBuild()],
   define: {
     __APP_REVISION__: JSON.stringify(revision),
     __APP_VERSION__: JSON.stringify((JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version),

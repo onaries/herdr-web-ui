@@ -5,12 +5,12 @@ input boundary; the terminal screen is still rendered from the attach stream.
 
 ## Input modes and drafts
 
-Settings → Terminal → Terminal input mode offers Automatic, Input line and Direct typing.
-Automatic keeps the existing device preference: a touch screen uses the input line unless the
-user previously chose direct typing; a fine pointer uses direct typing. The key bar's keyboard
+Settings → Terminal → Terminal input mode offers Direct typing, the default on every device
+with phones included, and Input line, for a line you edit before sending. The key bar's keyboard
 button switches modes too, on a touch screen only: a desktop changes the mode in Settings.
-Settings → Shortcuts can change each app action's Mod+Shift key or return its keys to the
-terminal. The hold-to-dictate binding remains fixed. Conflicts include the legacy New workspace
+Settings → Shortcuts can change each app action's binding or return its keys to the terminal.
+Bindings default to Mod+Shift, which leaves Ctrl+key to the pane; a recorded plain Ctrl/Alt chord
+takes that key from the pane only after Save anyway. The hold-to-dictate binding remains fixed. Conflicts include the legacy New workspace
 alias, and Reset restores the defaults. Palette hints reflect the saved bindings and disappear
 when a binding is off. Known browser/OS reservations are marked; delivery still depends on the
 browser, OS and installed-app mode. These settings belong to this browser, not the remote PC.

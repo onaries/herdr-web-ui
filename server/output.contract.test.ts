@@ -356,3 +356,48 @@ describe("an attach herdr refuses over a read in progress", () => {
     } finally { impatient.stop(); }
   }, 30_000);
 });
+
+describe("herdr's attach-time terminal queries", () => {
+  it("answers them in the bridge and keeps them out of every client's terminal", async () => {
+    const real = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr") || "herdr";
+    const dir = mkdtempSync(join(root, "probing-herdr-"));
+    const replies = join(dir, "replies");
+    const path = join(dir, "herdr");
+    // herdr 0.9.4+ asks its terminal these before it attaches; the herdr CI pins does not, so a shim asks
+    writeFileSync(path, [
+      "#!/bin/sh",
+      "saved=$(stty -g)",
+      "stty raw -echo",
+      "printf '\\033[?1016$p\\033[c'",
+      // --foreground: a background process group could not read the terminal
+      `timeout --foreground 5 head -c 18 > '${replies}'`,
+      'stty "$saved"',
+      `exec '${real}' "$@"`,
+      "",
+    ].join("\n"));
+    chmodSync(path, 0o755);
+    const previous = process.env["HERDR_WEB_HERDR_BIN"];
+    process.env["HERDR_WEB_HERDR_BIN"] = path;
+    try {
+      const paneId = await pane();
+      const first = await connect(paneId);
+      try {
+        await until(() => first.state.tail.includes("\x1b[?1049h"), "the attach behind the queries paints");
+        await until(() => existsSync(replies) && readFileSync(replies, "utf8").length === 18, "the bridge answered");
+        expect(readFileSync(replies, "utf8")).toBe("\x1b[?1016;4$y\x1b[?1;2c");
+        // a browser joining later gets the replay: the queries are not in it to be answered again
+        const second = await connect(paneId);
+        try {
+          for (const client of [first, second]) {
+            expect(client.state.tail).not.toContain("1016$p");
+            expect(client.state.tail).not.toContain("\x1b[c");
+            expect(client.state.errors).toEqual([]);
+          }
+        } finally { second.ws.close(); }
+      } finally { first.ws.close(); }
+    } finally {
+      if (previous === undefined) delete process.env["HERDR_WEB_HERDR_BIN"];
+      else process.env["HERDR_WEB_HERDR_BIN"] = previous;
+    }
+  }, 30_000);
+});

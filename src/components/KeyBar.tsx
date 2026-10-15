@@ -199,7 +199,7 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
     <div className="key-bar" ref={barRef} role="group" aria-label={t("Terminal keys")}>
       {/* first: on a narrow cover screen the row scrolls, and the mode toggle must not be the key cut off */}
       {onToggleDirect && (
-        <Key disabled={disabled || directDisabled} dataKey="direct" label={t("Type straight into the terminal")} pressed={directTyping} onPress={onToggleDirect}>
+        <Key disabled={disabled || directDisabled} dataKey="direct" label={t("Input line")} pressed={!directTyping} onPress={onToggleDirect}>
           <Keyboard aria-hidden="true" />
         </Key>
       )}

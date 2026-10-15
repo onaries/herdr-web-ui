@@ -15,9 +15,10 @@ const app = mkdtempSync(join(tmpdir(), "herdr-touch-long-press-demo-"));
 /**
  * Fires a contextmenu on the chat as `pointerType` would, and says whether the page took it.
  * "legacy-touch": a browser whose contextmenu carries no pointer type, after a touch;
- * "keyboard": Shift+F10 after that touch, a contextmenu with no pointer type either.
+ * "keyboard": Shift+F10 after that touch, a contextmenu with no pointer type either;
+ * "drag-select": Android Chrome after a dragged selection, a contextmenu typed "mouse" with no press of its own.
  */
-const press = (page: Page, how: "touch" | "mouse" | "legacy-touch" | "empty-touch" | "mouse-touch" | "touchstart-only" | "keyboard"): Promise<boolean> => page.locator(".pane-frame.is-current .pane-frame-body").evaluate((body, how) => {
+const press = (page: Page, how: "touch" | "mouse" | "legacy-touch" | "empty-touch" | "mouse-touch" | "touchstart-only" | "keyboard" | "drag-select"): Promise<boolean> => page.locator(".pane-frame.is-current .pane-frame-body").evaluate((body, how) => {
   const target = body.querySelector(".chat-view, .terminal-stack") ?? body;
   const rect = target.getBoundingClientRect();
   const type = how === "mouse" ? "mouse" : "touch";
@@ -32,6 +33,7 @@ const press = (page: Page, how: "touch" | "mouse" | "legacy-touch" | "empty-touc
   if (how === "keyboard") target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, composed: true, key: "F10", shiftKey: true }));
   const event = how === "empty-touch" ? new PointerEvent("contextmenu", { ...at, pointerType: "", button: 2 })
     : how === "mouse-touch" || how === "touchstart-only" ? new PointerEvent("contextmenu", { ...at, pointerType: "mouse", button: 2 })
+    : how === "drag-select" ? new PointerEvent("contextmenu", { ...at, pointerType: "mouse", button: -1 })
     : how === "touch" || how === "mouse" ? new PointerEvent("contextmenu", { ...at, button: 2 }) : new MouseEvent("contextmenu", { ...at, button: 2 });
   target.dispatchEvent(event);
   return event.defaultPrevented;
@@ -64,6 +66,7 @@ try {
       const paneMenu = page.getByRole("dialog", { name: /^Pane actions for / });
 
       assert.equal(await press(page, "touch"), false, "a touch long press keeps the phone's own selection and copy");
+      assert.equal(await press(page, "drag-select"), false, "the contextmenu typed mouse that ends a dragged selection is the touch's");
       await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
       assert.equal(await paneMenu.count(), 0, "a touch long press opens no pane menu");
 

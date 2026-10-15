@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
 import { Columns2, Ellipsis, Eraser, Maximize2, Pencil, Rows2, ArrowLeftRight, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { HerdrPane, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
-import { useMachineApi } from "../lib/machineContext.tsx";
+import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { PANE_DRAG_TYPE, paneDragData, type SplitSide } from "../lib/split.ts";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
 import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitContext } from "../lib/paneSubmitContext.ts";
 import { cachedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
@@ -29,6 +30,8 @@ interface Props {
   renderPane: (pane: HerdrPane | null, active: boolean, split: boolean) => ReactNode;
   /** filled with this canvas's pane actions on each render: a phone's tab menu offers them for the open pane (TabStrip) */
   actionsRef?: MutableRefObject<((target: HerdrPane) => RowMenuItem[]) | null>;
+  /** where the split view can be drawn: a pane opened in a half of it, from its menu or by dragging its title (lib/split.ts) */
+  onOpenInHalf?: (paneId: string, side: SplitSide) => void;
 }
 type Menu = { paneId: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus: HTMLElement | null };
 interface Drag {
@@ -51,8 +54,9 @@ interface Drag {
 }
 
 /** The active tab, drawn from herdr's rectangles. No browser-owned layout or PTY state. */
-export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef }: Props) {
+export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf }: Props) {
   const t = useT();
+  const machineId = useMachineId();
   const apple = /Mac|iPhone|iPad/.test(navigator.platform);
   const coarse = useMediaQuery("(pointer: coarse)");
   const narrow = useMediaQuery(SOLO_PANE_QUERY);
@@ -127,7 +131,9 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const touchPress = useRef(false);
   const context = (event: MouseEvent<HTMLElement>, target: HerdrPane): void => {
     const pointer = (event.nativeEvent as Partial<globalThis.PointerEvent>).pointerType;
-    if (touchPress.current || pointer === "touch" || pointer === "pen") return;
+    // Android Chrome ends a dragged text selection with a second contextmenu typed "mouse" and no
+    // press of its own: only a mouse or the keyboard pressing since the touch makes it the app's
+    if (pointer === "touch" || pointer === "pen" || touchPress.current) return;
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
@@ -254,6 +260,9 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           const element = event.target instanceof Element ? event.target : null;
           const titleOrFrame = element?.closest(".pane-frame-head") || element === event.currentTarget;
           if (event.button === 0 && !paneContextPress(event, apple) && !coarse && titleOrFrame && !element?.closest("button")) {
+            // Cancelling pointerdown also cancels the title's native mouse drag.
+            // A click focuses below; a drag suppresses that click.
+            if (onOpenInHalf && element?.closest(".pane-frame-head")) return;
             // A title has no native focus action. Prevent its default blur and take typing
             // even when this pane was already selected but a menu/tab still held focus.
             event.preventDefault();
@@ -275,7 +284,22 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           if (paneContextPress(event, apple)) { event.preventDefault(); event.stopPropagation(); }
         }}
         onContextMenuCapture={(event) => context(event, item)}>
-        <div className="pane-frame-head">
+        <div className="pane-frame-head" draggable={onOpenInHalf !== undefined && !coarse}
+          onClick={(event) => {
+            if (!onOpenInHalf || coarse || paneContextPress(event, apple) || (event.target instanceof Element && event.target.closest("button"))) return;
+            const frame = event.currentTarget.parentElement;
+            const input = frame?.querySelector<HTMLElement>(".secret-input input")
+              ?? frame?.querySelector<HTMLElement>(".find-bar input")
+              ?? (frame?.querySelector(".terminal-stack.is-chat")
+                ? frame.querySelector<HTMLElement>(".composer-text")
+                : frame?.querySelector<HTMLElement>(".terminal-input textarea") ?? frame?.querySelector<HTMLElement>(".xterm-helper-textarea"));
+            input?.focus({ preventScroll: true });
+          }}
+          onDragStart={(event: DragEvent<HTMLDivElement>) => {
+            // dropped on a half of the pane area, the title opens its pane there (App's drop)
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId: item.pane_id }));
+          }}>
           <span className="pane-frame-title">{displayPaneTitle(item)}</span>
           <button type="button" className="icon-button pane-frame-menu" aria-label={t("Pane actions for {name}", { name: displayPaneTitle(item) })}
             onClick={(event) => showMenu(item, event.currentTarget)}><Ellipsis aria-hidden="true" /></button>

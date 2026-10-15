@@ -273,6 +273,16 @@ try {
     const later = click.exec(got)!;
     assert.ok(Number(later[1]) > Number(first[1]) && Number(later[2]) > Number(first[2]), "at its own cell, right of and below the first");
 
+    // the top right cell, under a lone pane's floating head: a program's control there (Claude Code's
+    // diff panel close) takes the click, not the head around the hidden ellipsis
+    const grid = (await s.page.locator(".xterm-screen").boundingBox())!;
+    got = "";
+    await s.page.mouse.click(grid.x + grid.width - 3, grid.y + 3);
+    await until(() => click.test(got += s.received()), "a click on the top right cell received");
+    const corner = click.exec(got)!;
+    assert.equal(corner[2], "1", "on the top row");
+    assert.ok(Number(corner[1]) > Number(later[1]), "in the rightmost column");
+
     // a drag is a selection, as before: no button report, and the dragged cells are selected
     const to = await s.point(300, 70);
     await s.page.mouse.move(at.x, at.y);

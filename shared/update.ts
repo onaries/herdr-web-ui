@@ -18,7 +18,18 @@ export interface UpdateStatus {
    * field: an update is always run by the version being replaced.
    */
   step?: UpdateStep | null;
+  /**
+   * The commit the client build the server serves now was made from, once it differs from
+   * `current_revision`; null otherwise. The server serves its directory's `dist/` on every request,
+   * so a source checkout rebuilt under it (a plugin reinstall, or `git pull` and a build) is served
+   * before the server runs it: a tab of that build cannot be reloaded onto the running revision,
+   * only a restart reports it. Read by the bridge when a tab asks. Absent from an older server.
+   */
+  served_revision?: string | null;
 }
+
+/** The update check's reason for a source checkout that moved since the server started. */
+export const CHECKOUT_CHANGED_REASON = "The source checkout changed. Restart the app before updating.";
 
 /** An install's steps, in the order it takes them. */
 export const UPDATE_STEPS = ["download", "dependencies", "typecheck", "build", "restart"] as const;

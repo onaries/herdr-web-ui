@@ -26,6 +26,7 @@ import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { placeBlock, workspaceMoves } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
+import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspacePins, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
@@ -222,13 +223,13 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const revealOpenedWorkspace = useRef<string | null>(null);
   const [collapsedWorktrees, setCollapsedWorktrees] = useState<Set<string>>(() => storedWorktreeCollapsed(machineId, snapshot?.workspaces.flatMap((workspace) => workspace.worktree ? [workspace.worktree.repo_key] : []) ?? []));
-  // the pane each workspace was last seen on: its row keeps showing and opening that one
-  const lastViewed = useRef(new Map<string, string>());
-
+  // the pane each workspace was last seen on in this browser: its row keeps showing and opening
+  // that one, also after the page reloads (lib/lastViewedPane.ts). Kept once per pane opened, not
+  // per snapshot, and a workspace opened again on the same pane becomes the newest seen again.
+  const viewedWorkspaceId = selectedPaneId ? snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId)?.workspace_id : undefined;
   useEffect(() => {
-    const pane = selectedPaneId ? snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) : undefined;
-    if (pane) lastViewed.current.set(pane.workspace_id, pane.pane_id);
-  }, [selectedPaneId, snapshot]);
+    if (selectedPaneId && viewedWorkspaceId) rememberViewedPane("workspace", machineId, viewedWorkspaceId, selectedPaneId);
+  }, [machineId, selectedPaneId, viewedWorkspaceId]);
 
   const setWorktreeCollapsed = (repoKey: string, collapsed: boolean): void => {
     setCollapsedWorktrees((current) => {
@@ -336,7 +337,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const currentPane = (workspace: WorkspaceInfo, panes: PaneInfo[]): PaneInfo => {
     const pick = (id: string | null | undefined) => (id ? panes.find((pane) => pane.pane_id === id) : undefined);
     return pick(selectedPaneId)
-      ?? pick(lastViewed.current.get(workspace.workspace_id))
+      ?? pick(lastViewedPane("workspace", machineId, workspace.workspace_id))
       ?? pick(snapshot?.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
       ?? panes.find((pane) => pane.focused)
       ?? panes[0]!;

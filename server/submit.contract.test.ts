@@ -41,6 +41,7 @@ let codexApproval: Recorder;
 let claudeQueue: Recorder;
 let omoAgent: Recorder;
 let omoExtended: Recorder;
+let hermes: Recorder;
 
 const chunks = (recorder: Recorder): Chunk[] =>
   readFileSync(recorder.log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Chunk);
@@ -162,6 +163,8 @@ beforeAll(async () => {
   chmodSync(join(root, "claude"), 0o755);
   copyFileSync(process.execPath, join(root, "codex"));
   chmodSync(join(root, "codex"), 0o755);
+  copyFileSync(process.execPath, join(root, "hermes"));
+  chmodSync(join(root, "hermes"), 0o755);
   shell = await recorder("shell", process.execPath);
   agent = await recorder("agent", join(root, "claude"));
   await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
@@ -182,6 +185,8 @@ beforeAll(async () => {
   // The recorder emits negotiation itself: shell line editing consumes a literal ESC argument.
   omoExtended = await recorder("omo-extended", join(root, "omo"), "--csi-u");
   await herdrRpc("pane.report_agent", { pane_id: omoExtended.pane, source: "manual", agent: "pi", state: "working" });
+  hermes = await recorder("hermes", join(root, "hermes"));
+  await herdrRpc("pane.report_agent", { pane_id: hermes.pane, source: "manual", agent: "hermes", state: "idle" });
 }, 30_000);
 
 afterAll(async () => {
@@ -752,6 +757,56 @@ describe("WebSocket submit", () => {
       expect(sendKeys).not.toHaveBeenCalled();
     } finally {
       sendKeys.mockRestore();
+      sendText.mockRestore();
+      prompt.mockRestore();
+      screen.scroll.mockRestore();
+      screen.read.mockRestore();
+      socket.close();
+    }
+  }, 30_000);
+
+  // Hermes 0.21.5's input rows (herdr pane read --source visible --format ansi): typed text, and the classic CLI's italic hint
+  const hermesScreen = (input: string) => `● ❯ an earlier message\r\n────────\r\n${input}\r\n────────`;
+  const HERMES_TYPED = "\u001b[0m\u001b[38;5;230m❯ \u001b[0mReply with only the word";
+  const HERMES_HINT = "\u001b[0m\u001b[38;5;230m❯ \u001b[0m\u001b[3m\u001b[38;5;136mType / to browse commands, or Ctrl+P for the palette\u001b[0m";
+
+  it("refuses an immediate Hermes chat send over text typed into its input, typing nothing", async () => {
+    const socket = await Socket.connect();
+    const screen = mockClaudeInput(hermes.pane, hermesScreen(HERMES_TYPED));
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    const sendText = spyOn(herdr, "paneSendText").mockResolvedValue(undefined);
+    const sendKeys = spyOn(herdr, "paneSendKeys").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 31, pane_id: hermes.pane, text: "PINEAPPLE", payload: "PINEAPPLE" });
+      const refused = await socket.result(31);
+      expect(refused).toMatchObject({ ok: false, code: "input_draft", message: "Hermes' input in the terminal is not empty (a draft, or an input that could not be read); send or clear it there, then send this message" });
+      // nothing to clear or send anyway: those are Claude's
+      expect(refused.draft).toBeUndefined();
+      expect(refused.box).toBeUndefined();
+      expect(prompt).not.toHaveBeenCalled();
+      expect(sendText).not.toHaveBeenCalled();
+      expect(sendKeys).not.toHaveBeenCalled();
+    } finally {
+      sendKeys.mockRestore();
+      sendText.mockRestore();
+      prompt.mockRestore();
+      screen.scroll.mockRestore();
+      screen.read.mockRestore();
+      socket.close();
+    }
+  }, 30_000);
+
+  it("sends an immediate Hermes chat message when its input shows only Hermes' own hint", async () => {
+    const socket = await Socket.connect();
+    const screen = mockClaudeInput(hermes.pane, hermesScreen(HERMES_HINT));
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    const sendText = spyOn(herdr, "paneSendText").mockResolvedValue(undefined);
+    try {
+      socket.send({ type: "submit", id: 32, pane_id: hermes.pane, text: "PINEAPPLE", payload: "PINEAPPLE" });
+      expect(await socket.result(32)).toMatchObject({ ok: true, pane_id: hermes.pane });
+      expect(prompt).toHaveBeenCalledWith(hermes.pane, "PINEAPPLE");
+      expect(sendText).not.toHaveBeenCalled();
+    } finally {
       sendText.mockRestore();
       prompt.mockRestore();
       screen.scroll.mockRestore();

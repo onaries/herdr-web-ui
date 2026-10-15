@@ -21,7 +21,7 @@ import { checkHeldDraftPaneSwitch } from "./terminal-draft-regression.ts";
 import { checkCommandBackspace } from "./terminal-command-backspace-regression.ts";
 import { checkCtrlEnter } from "./terminal-ctrl-enter-regression.ts";
 import { checkCommandArrows } from "./terminal-command-arrows-regression.ts";
-import { checkFolderFilter } from "./folder-filter-regression.ts";
+import { checkFolderFilter, checkNewFolder } from "./folder-filter-regression.ts";
 import { checkPaletteKeys } from "./palette-keys-regression.ts";
 import { UsageService } from "../server/usage.ts";
 import { openSettingsPage } from "./settings-page.ts";
@@ -1424,18 +1424,36 @@ try {
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
   releases.push(releaseCreate);
   let createRequests = 0;
+  let createCwd: string | null = null;
   await page.route("**/api/workspace/create", async (route) => {
     createRequests += 1;
+    const body = route.request().postDataJSON() as { cwd?: string | null };
+    createCwd = typeof body.cwd === "string" ? body.cwd : null;
     await createGate;
     await route.continue();
   });
   await page.getByRole("button", { name: /^New workspace on / }).click();
   const dialog = page.getByRole("dialog", { name: /^New workspace/ });
+  // opening Browse on home leaves Directory as typed, `~`, not the absolute path it lists
+  await dialog.getByLabel(/^Directory/).fill("~");
+  await dialog.getByRole("button", { name: "Browse", exact: true }).click();
+  await dialog.locator(".dir-browser-item").first().waitFor();
+  assert.equal(await dialog.getByLabel(/^Directory/).inputValue(), "~", "Browse keeps the home-relative form");
+  await dialog.getByRole("button", { name: "Browse", exact: true }).click();
   await dialog.getByLabel(/^Directory/).fill(root);
   await checkFolderFilter(page, dialog, () => createRequests);
+  // Browse into a child and Start without Use this folder: create must use that child (#1162).
+  // root/a and root/b already exist from the owned panes at the top of this script.
+  await dialog.getByRole("button", { name: "Browse", exact: true }).click();
+  await dialog.getByRole("searchbox", { name: "Filter folders" }).waitFor();
+  await dialog.locator(".dir-browser-item", { hasText: /^a$/ }).click();
+  await until(async () => (await dialog.getByLabel(/^Directory/).inputValue()).endsWith("/a"), "Directory follows Browse into a");
+  // New folder inside a: the workspace starts in the folder it made
+  await checkNewFolder(page, dialog, () => createRequests, "made-here");
   await dialog.getByLabel(/^Name/).fill("herdr-web-ui-test-browser-created");
   await dialog.getByRole("button", { name: "Start", exact: true }).click();
   await until(() => createRequests === 1, "creation started");
+  assert.equal(createCwd, join(root, "a", "made-here"), "Start uses the folder Browse is showing");
   await page.keyboard.press("Escape");
   assert.equal(await dialog.isVisible(), true, "in-flight creation cannot be dismissed");
   assert.equal(await dialog.getByRole("button", { name: "Close dialog" }).isDisabled(), true);
@@ -1681,7 +1699,7 @@ try {
   await page.locator(".tab-strip-add").click();
   const tabDialog = page.getByRole("dialog", { name: /^New tab · herdr-web-ui-test-browser-created/ });
   await tabDialog.waitFor();
-  assert.equal(await tabDialog.locator(".new-session-folder").textContent(), root, "the folder is the workspace's, shown");
+  assert.equal(await tabDialog.locator(".new-session-folder").textContent(), join(root, "a", "made-here"), "the folder is the workspace's, shown");
   assert.equal(await tabDialog.getByRole("button", { name: "Browse", exact: true }).count(), 0, "the folder is not asked for");
   const tabNameField = tabDialog.getByLabel(/^Name/);
   await tabNameField.fill("second");
@@ -2141,7 +2159,8 @@ try {
   await checkIpadIme(browser, origin, paneA, paneB);
   await checkHeldDraftPaneSwitch(browser, origin, paneA, paneB);
 
-  // the terminal lens on a touch screen: an input line sends whole lines; the grid raises no keyboard
+  // the terminal lens on a touch screen starts in direct typing without raising the keyboard;
+  // its input line sends whole lines, and there a tapped grid raises no keyboard
   const touch = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const touchPage = await touch.newPage();
   const touchEvidence = evidenceDirectory ? await watchBrowserEvidence(touch, touchPage, "touch-terminal-input") : undefined;
@@ -2155,8 +2174,17 @@ try {
   await touchPage.goto(`${origin}/?pane=${encodeURIComponent(paneB)}`);
   await touchPage.locator(".conn-live").waitFor();
   await touchPage.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+  await touchPage.locator("[data-direct-typing]").waitFor();
+  assert.equal(await touchPage.locator(".terminal-input").count(), 0, "a phone starts in direct typing");
+  assert.equal(await touchPage.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false), false,
+    "opening the terminal on a phone does not focus the grid, so the keyboard stays down until a tap");
+  // the keyboard key is the input line's switch: lit while the line is shown, unlit in direct typing
+  const lineKey = touchPage.getByRole("button", { name: "Input line", exact: true });
+  assert.equal(await lineKey.getAttribute("aria-pressed"), "false", "direct typing leaves the input-line key unlit");
+  await lineKey.click();
   const line = touchPage.getByRole("textbox", { name: "Terminal input line", exact: true });
   await line.waitFor();
+  assert.equal(await lineKey.getAttribute("aria-pressed"), "true", "the shown input line lights its key");
   assert.equal(await touchPage.locator(".xterm-helper-textarea").getAttribute("inputmode"), "none");
   await line.fill("printf 'line-ok\\n'");
   await line.press("Enter");
@@ -2186,10 +2214,10 @@ try {
   await until(() => touchSent.length > enters && touchSent.at(-1)?.type === "input" && touchSent.at(-1)?.text === "\r", "enter from the empty line");
   await line.fill("unsent 한글 😀");
   // typing straight into the grid is one tap away, and gives the keyboard back to it
-  await touchPage.getByRole("button", { name: "Type straight into the terminal", exact: true }).click();
+  await touchPage.getByRole("button", { name: "Input line", exact: true }).click();
   assert.equal(await touchPage.locator(".terminal-input").count(), 0);
   assert.equal(await touchPage.locator(".xterm-helper-textarea").getAttribute("inputmode"), null);
-  await touchPage.getByRole("button", { name: "Type straight into the terminal", exact: true }).click();
+  await touchPage.getByRole("button", { name: "Input line", exact: true }).click();
   await line.waitFor();
   assert.equal(await line.inputValue(), "unsent 한글 😀", "mode switches preserve the unsent line");
   await touchPage.reload();

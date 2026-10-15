@@ -218,6 +218,20 @@ describe("the reload a tab is offered", () => {
     expect(reloadReason(app, { current_revision: app }, false, false)).toBeNull();
   });
 
+  it("asks for a restart, not a reload, when the tab is the build of a checkout replaced under the server", () => {
+    const checkout = "c".repeat(40);
+    const status = { current_revision: "b".repeat(40), served_revision: checkout };
+    expect(reloadReason(checkout, status, false, false)).toBe("restart");
+    // a part that failed to load needs the reload all the same: the restart line comes after it
+    expect(reloadReason(checkout, status, false, true)).toBe("incomplete");
+    // pulled without a build: the server still serves its own build, so a reload does help
+    expect(reloadReason(app, status, false, false)).toBe("updated");
+    // the server runs what the tab is: nothing to do, whatever the checkout is
+    expect(reloadReason(checkout, { current_revision: checkout, served_revision: checkout }, false, false)).toBeNull();
+    expect(reloadReason(checkout, { current_revision: "b".repeat(40), served_revision: null }, false, false)).toBe("updated");
+    expect(reloadReason(checkout, status, true, false)).toBeNull();
+  });
+
   it("is offered for a part of the app that failed to load, where no commit can be compared", () => {
     // an unmanaged server, a server older than the status, a build outside Git, a rebuild of the same commit
     expect(reloadReason(app, { current_revision: null }, false, true)).toBe("incomplete");

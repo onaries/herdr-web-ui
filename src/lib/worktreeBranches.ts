@@ -83,7 +83,7 @@ export class WorkspaceBranchCache {
 
   rememberOpened(opened: WorktreeOpened): void {
     this.invalidate();
-    if (opened.branch === null) {
+    if (opened.branch == null) {
       // The response has no detached flag. Await the inventory before calling it detached.
       this.records.delete(opened.workspace_id);
       return;
@@ -108,7 +108,7 @@ export class WorkspaceBranchCache {
       this.records.set(id, {
         repoKey,
         checkoutPath: identity.checkoutPath,
-        branch: entry.branch,
+        branch: entry.branch ?? null,
         isDetached: entry.is_detached,
       });
     }

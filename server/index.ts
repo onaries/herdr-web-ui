@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientRole, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanSummary, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved } from "../shared/protocol.ts";
+import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientRole, DirectoryCreated, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanSummary, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved } from "../shared/protocol.ts";
 import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
@@ -36,7 +36,7 @@ import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
-import { listDirectories } from "./directories.ts";
+import { createDirectory, listDirectories } from "./directories.ts";
 import { claudeSessionTempDir } from "./claude-store.ts";
 import { fileResponse, locateFile, locateFileInFolder, crossSiteFileRead } from "./file-view.ts";
 import { repoDiffResponse } from "./repo-diff.ts";
@@ -88,12 +88,12 @@ import {
   worktreeRemove,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { CLAUDE_CLEAR_INPUT_KEYS, claudeClearableDraft, claudeHeldIsGrey, claudeInputBoxContent, claudeInputDraft, shownInputBox, claudeInputEmpty, viewportShowsLive, codexQuestionsCollapsed, handlePromptRequest, isClaudeHeld, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
+import { CLAUDE_CLEAR_INPUT_KEYS, claudeClearableDraft, claudeHeldIsGrey, claudeInputBoxContent, claudeInputDraft, hermesInputDraft, shownInputBox, claudeInputEmpty, viewportShowsLive, codexQuestionsCollapsed, handlePromptRequest, isClaudeHeld, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
 import { PaneWatch } from "./watch.ts";
-import { AttachOutputTail, isTakeoverExit } from "./attach-output.ts";
+import { AttachOutputTail, AttachStartupProbes, isTakeoverExit } from "./attach-output.ts";
 import { attachableIdentity, sidecarAvailable } from "./pty/sidecar.ts";
 import { MirrorSession } from "./mirror.ts";
 import { mirrorInput } from "./mirror-input.ts";
@@ -201,6 +201,7 @@ const MAX_WAITING_KEYS = 256;
  */
 export const SUBMIT_DEADLINE_MS = 45_000;
 const CLAUDE_INPUT_DRAFT_MESSAGE = "Claude Code's input box is not empty (a draft, bash mode, or a box that could not be read); send or clear it in the terminal, then send this message";
+const HERMES_INPUT_DRAFT_MESSAGE = "Hermes' input in the terminal is not empty (a draft, or an input that could not be read); send or clear it there, then send this message";
 /** How long a cleared Claude input box may take to read empty before the send is refused after all. */
 const DRAFT_CLEAR_WAIT_MS = 1_500;
 const DRAFT_CLEAR_POLL_MS = 50;
@@ -212,8 +213,8 @@ const DRAFT_CLEAR_POLL_MS = 50;
  */
 class InputDraftError extends HerdrError {
   readonly draft: string | null;
-  constructor(draft: string | null, readonly identity?: PendingIdentity, readonly box: string | null = null) {
-    super("input_draft", CLAUDE_INPUT_DRAFT_MESSAGE);
+  constructor(draft: string | null, readonly identity?: PendingIdentity, readonly box: string | null = null, message = CLAUDE_INPUT_DRAFT_MESSAGE) {
+    super("input_draft", message);
     this.draft = draft;
   }
 }
@@ -746,6 +747,11 @@ export function createServer(
           }
           if (clearDraft !== undefined && !claudeInputEmpty(...reads)) throw new InputDraftError(null);
         }
+        // a clear request or send anyway reached a Hermes pane only to be refused above: both are Claude's
+        if ((pane?.agent ?? pane?.agent_session?.agent) === "hermes") {
+          await freeHermesInput(paneId, identity ?? undefined);
+          inTime();
+        }
         try {
           await agentPrompt(paneId, closeMention(text));
           noteSubmitted(paneId, text);
@@ -931,6 +937,24 @@ export function createServer(
    * they show it. Read last, the live screen holds anything typed meanwhile. An empty box (or none)
    * needs no colors.
    */
+  /**
+   * Hermes' input, refused with input_draft unless hermesInputDraft knows it empty. As claudeBoxReads,
+   * the viewport's colors are read only for an input row with text, and count only once
+   * viewportShowsLive verifies them; the live read comes last, so text typed meanwhile is in it.
+   * Hermes offers nothing to clear from here: the user sends or clears it in the terminal.
+   */
+  async function freeHermesInput(paneId: string, identity?: PendingIdentity): Promise<void> {
+    const before = (await paneRead({ paneId, source: "detection", format: "text" })).text;
+    if (!hermesInputDraft(before, null)) return;
+    const scrollBefore = await paneScrollInfo(paneId);
+    const colors = (await paneRead({ paneId, source: "visible", format: "ansi" })).text;
+    const scrollAfter = await paneScrollInfo(paneId);
+    const live = (await paneRead({ paneId, source: "detection", format: "text" })).text;
+    if (hermesInputDraft(live, viewportShowsLive(scrollBefore, scrollAfter, colors, before, live) ? colors : null)) {
+      throw new InputDraftError(null, identity, null, HERMES_INPUT_DRAFT_MESSAGE);
+    }
+  }
+
   async function claudeBoxReads(paneId: string): Promise<[string, string | null]> {
     const before = (await paneRead({ paneId, source: "detection", format: "text" })).text;
     if (!claudeInputDraft(before, null)) return [before, null];
@@ -988,6 +1012,7 @@ export function createServer(
       // The box is the live screen's; only the viewport read tells Claude's grey text from a draft. The live
       // read comes after the colors, so text typed between the two is in the box and holds the message.
       if (context.identity.agent === "claude") await freeClaudeBox(paneId, context.working, () => authorizePending(owner, paneId, lease), arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS));
+      else if (context.identity.agent === "hermes") await freeHermesInput(paneId, context.identity);
       if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "The pending message waited too long; nothing was typed");
       authorizePending(owner, paneId, lease);
       // asked again right before herdr is written to: its connect is awaited (#666)
@@ -1411,6 +1436,7 @@ export function createServer(
       let heldSince = 0;
       let holding = false;
       let holdTimer: ReturnType<typeof setTimeout> | undefined;
+      const probes = new AttachStartupProbes();
       const outputTail = new AttachOutputTail();
       let tailTimer: ReturnType<typeof setTimeout> | undefined;
       const flushTail = (taken = false): void => {
@@ -1430,7 +1456,8 @@ export function createServer(
       const release = (): void => {
         clearTimeout(holdTimer);
         if (held === null) return;
-        const data = held;
+        // a read that ended inside what could have been a probe is output after all
+        const data = held + probes.flush();
         held = null;
         if (data) publish(data);
       };
@@ -1577,6 +1604,14 @@ export function createServer(
         rows: attachment.rows,
         onData: (data) => {
           if (retired || attachments.get(paneId) !== attachment) return;
+          // herdr's startup queries are the bridge's to answer: never readiness, broadcast or replay
+          if (!holding && held !== null) {
+            const before = held;
+            const taken = probes.take(data, (text) => ATTACH_PREAMBLE_RE.test(before + text));
+            if (taken.replies) session.write(taken.replies);
+            data = taken.output;
+          } else data = probes.flush() + data;
+          if (!data) return;
           output = (output + data).slice(-1024);
           if (held === null) return publish(data);
           held += data;
@@ -2078,8 +2113,22 @@ export function createServer(
         return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1", url.searchParams.get("render") === "1");
       }
 
+      if (pathname === "/api/workspace/directories" && request.method === "POST") {
+        let payload: unknown;
+        try { payload = await request.json(); } catch { return badRequest("invalid_json", "request body must be JSON"); }
+        if (!isJsonObject(payload) || typeof payload["path"] !== "string" || typeof payload["name"] !== "string") return badRequest("invalid_body", "path and name must be strings");
+        let made;
+        try { made = createDirectory(payload["path"], payload["name"]); } catch (error) { return errorResponse(error); }
+        if ("path" in made) return jsonResponse({ path: made.path } satisfies DirectoryCreated, 201);
+        if (made.error === "folder_exists") return conflictResponse("folder_exists", "a file or folder with that name is already there");
+        if (made.error === "permission_denied") return jsonResponse({ error: { code: "permission_denied", message: "this user cannot make a folder there" } }, 403);
+        return made.error === "invalid_cwd"
+          ? badRequest("invalid_cwd", "path must be a directory this user can read")
+          : badRequest("invalid_name", "name must be one folder name: not empty, `.` or `..`, without a slash, at most 255 bytes");
+      }
+
       if (pathname === "/api/workspace/directories") {
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET or POST");
         // a folder a pane's chat names is read from that pane's folder, as a file it names is
         const paneId = url.searchParams.get("pane_id");
         let base: string | undefined;

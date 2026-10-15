@@ -35,6 +35,19 @@
   padding: var(--space-2);
 }
 
+/* New folder's name field, under the bar it was opened from */
+.dir-browser-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.dir-browser-new .dir-browser-note {
+  padding: 0;
+}
+
 .dir-browser-list {
   max-height: calc(var(--control-h) * 7);
   margin: 0;

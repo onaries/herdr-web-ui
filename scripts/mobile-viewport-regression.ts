@@ -11,6 +11,8 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     await context.addInitScript(() => {
+      // the walk starts in the input line, where a tapped grid raises no keyboard
+      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "line" }));
       const viewport = window.visualViewport!;
       let height = 795; // a standalone app's idle visual viewport can exclude its status bar
       Object.defineProperty(viewport, "height", { get: () => height });
@@ -122,7 +124,7 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     const terminal = page.locator(".xterm-helper-textarea");
     await terminal.focus();
     await shell(false, "", 844);
-    const direct = page.getByRole("button", { name: "Type straight into the terminal", exact: true });
+    const direct = page.getByRole("button", { name: "Input line", exact: true });
     await direct.click();
     await page.locator("[data-direct-typing]").waitFor();
     await shell(true, "500px", 500);

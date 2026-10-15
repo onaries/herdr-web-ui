@@ -514,6 +514,9 @@ try {
         await more.getByRole("button", { name: "Browse files", exact: true }).tap();
         const files = page.getByRole("dialog", { name: "Files", exact: true });
         await files.waitFor();
+        // New folder belongs to New workspace's Browse; the Files browser only reads
+        await files.locator(".dir-browser-bar").first().waitFor({ state: "attached" });
+        assert.equal(await files.locator('.dir-browser-bar button[aria-label="New folder"]').count(), 0, "Files has no New folder");
         const browse = files.getByRole("button", { name: "Browse folders in the palette", exact: true });
         assert.equal(await browse.count(), 0, "Files has no phone palette entry");
         await page.setViewportSize({ width: 1024, height: 768 });

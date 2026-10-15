@@ -104,6 +104,11 @@ side. **Unzoom pane** stays in the phone's tab menu when the tab is zoomed, so i
 remain reachable. **Zoom pane** makes a small pane fill the screen, and **Unzoom pane** restores the split. A split opens the new pane.
 Each pane keeps its own Chat/Terminal view and unsent draft.
 
+To see two panes side by side, drag a workspace row, an **Agents** row, a tab, a pane's title or
+a half's bar onto the left or right half of the pane area. A pick in the sidebar or the **Agents**
+list then opens in the active half only, and the focus stays there. Both halves can show the same
+tab, and you type in whichever half is active; the other half shows that tab at the active half's size.
+
 
 **3. Take it with you.** Scan the installer's QR code with a phone signed in to the same Tailscale account, then install the app from the browser. See [On your phone](#on-your-phone).
 
@@ -208,7 +213,7 @@ A pane's plan is the task list a Claude Code agent keeps (`TaskCreate` / `TaskUp
 | **Follow every agent** | Live RUN / INPUT / DONE / READY status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
 | **Open what agents make** | A file path in an answer opens in a viewer (images, video, audio, PDF, text), or find it with **Browse files**, and download it to your phone. A source file opens whole up to 8 MB and 200,000 lines; past 2,000 lines it scrolls as a window of rows, colored up to 256 KB and 5,000 lines and plain beyond. A link with `:line` or `#L12` opens at that line. |
 | **See what changed** | **Browse files → Changes** lists what changed in the git repository the pane sits in: the **Working tree**, what is **Staged**, or two **Commits** you name, as a folder tree with git's status letter and the added and removed lines. A row opens its diff, **Unified** or **Split** (Settings → Chat → File viewer → Diff layout; a phone shows one column), with **Copy path**, **Copy patch** and **Open file**. The files a turn's edit tools changed, listed in its work block, open the same diff. It only reads; a remote PC's repository is read on that PC. |
-| **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); open a result, then choose **Use this folder**. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces from their ⋯/right-click menu and panes from their own menu, reorder workspaces (drag a row, or on a phone long-press it and drag; Alt+Up/Down moves a focused row one step), and jump anywhere from the command palette. |
+| **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); opening a folder updates Directory, so **Start** uses that path even without **Use this folder** (which closes Browse), and a folder under home stays written as `~/…`. **New folder** (the folder-plus button in Browse's bar) makes a folder inside the one shown and opens it. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces from their ⋯/right-click menu and panes from their own menu, reorder workspaces (drag a row, or on a phone long-press it and drag; Alt+Up/Down moves a focused row one step), and jump anywhere from the command palette. |
 | **Speak instead of typing** | A mic beside Attach in the composer and beside Send in the terminal input line. Hold to talk or tap twice; the words land at the caret and are never sent by themselves. See [Voice input](#voice-input). |
 | **Watch your plan limits** | Beside Settings, how much of each AI subscription signed in on the PC is used, or what is left: the week's or the session's limit per account, and every limit with its reset time on a tap. See [Subscription usage](#subscription-usage). |
 | **Make it yours** | English, Korean, Japanese or Simplified Chinese, following the browser or chosen in Settings. Dark, light or system theme (with separate Light and Dark palettes under System), compact density, interface size, terminal and chat fonts and sizes (Chromium lists the installed fonts to pick from), a resizable composer, Enter behavior and thinking visibility. |
@@ -296,9 +301,9 @@ On a phone:
 - Agent panes open in the chat.
 - The terminal gets a key bar above the keyboard (Esc, Tab, Ctrl+C, Ctrl, Alt, Shift, Enter, arrows).
   Ctrl, Alt and Shift stay held until tapped again and combine with each other.
-  Enable direct terminal typing with the keyboard button to use them with letters and
-  symbols. Herdr encodes each chord for the program's keyboard protocol; legacy
-  protocols cannot distinguish every chord (for example Ctrl+I and Tab).
+  The terminal starts in direct typing, where they combine with letters and symbols; the
+  keyboard button switches to an input line you edit before sending. Herdr encodes each chord
+  for the program's keyboard protocol; legacy protocols cannot distinguish every chord (for example Ctrl+I and Tab).
   Draft text in the input line is sent unchanged. Modifiers clear
   when leaving the pane or terminal view, or when the connection drops.
   **Settings → Terminal → Key bar → Edit key bar** opens a separate screen to add, remove and
@@ -472,6 +477,17 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 
 An update is built and typechecked in a private checkout while the current server keeps serving. The new server must pass a health check, or the previous build comes back. herdr and your agents keep running, and a **Reload app** notice lets you save drafts before the new frontend loads.
 
+After a herdr plugin reinstall, or a `git pull` and a build, in the checkout the app runs from, reloading the page cannot bring the update in: the server keeps running its old code. The page says so on its next status read, in place of the **Reload app** notice, and asks you to restart herdr web ui on the PC. The notice goes away once it restarts:
+
+```sh
+herdr plugin action invoke devswha.herdr-web-ui.stop    # plugin install
+herdr plugin action invoke devswha.herdr-web-ui.start
+herdr plugin action invoke devswha.herdr-web-ui.stop-windows    # on Windows
+herdr plugin action invoke devswha.herdr-web-ui.start-windows
+```
+
+From a checkout, stop `bun run start` and run it again.
+
 Updates need a clean checkout: `main` for a source install, or herdr's plugin checkout. Local changes block an update, and they are never overwritten. More in [app updates](app-updates.md).
 
 ### Updating herdr
@@ -517,17 +533,26 @@ shortcut can be reassigned or disabled in Settings → Shortcuts.
 **New tab**, **Split pane right** and **Split pane down** have no default key: pick one in
 **Settings → Shortcuts**, and the command palette shows it beside the action.
 
-**Settings → Shortcuts** changes the final key of each app binding or turns it off: press
-**Record** on a row, then the new Mod+Shift chord (Escape cancels); a reserved, unbindable or
-already-assigned chord is refused on the row. A search field filters the list. Settings
+**Settings → Shortcuts** changes each app binding or turns it off: press **Record** on a row,
+then the new chord (Escape cancels). A Mod+Shift chord is always safe for the terminal. Other
+chords are kept exactly as pressed, such as `⌘+PageUp` or `Ctrl+K`, and need Ctrl, Alt or (on a
+Mac) ⌘. Letters, digits, the punctuation keys, arrows, PageUp/PageDown and Home/End can be bound. A
+punctuation key is read by where it sits, so on a Hungarian keyboard É is the key US labels `;`, and
+the binding works on any layout; the row shows your keyboard's own character where the browser says it. A chord the browser, the OS or text editing keeps (`Mod+W`/`T`/`N`, `⌘+Q`, `Mod+C`/`V`/`X`/`A`/`Z`,
+`Ctrl+PageUp`/`PageDown`, macOS `Ctrl+arrows`), an unbindable key or an already-assigned chord is
+refused on the row. Plain Ctrl or Alt chords are shells', editors' and agents' keys (`Ctrl+R`,
+`Ctrl+A`/`E`, Alt word moves): the row says so and saves one only after **Save anyway**, and from
+then on that key no longer reaches the pane. A ⌘ chord the browser commonly uses (such as `⌘+S`,
+`⌘+L` or `⌘+⌥+I`) asks the same way. The row's list still picks a Mod+Shift letter, digit,
+arrow or PageUp/PageDown without a keyboard; Home, End and the punctuation keys are bound with Record. A search field filters the list. Settings
 are saved in this browser, not on the remote PC. The command palette shows the current bindings
 and omits disabled ones. Reset shortcuts restores the defaults. Hold-to-dictate
 (`Mod+Shift+Space`) remains fixed.
 
 Known browser/OS reservations are marked, but other combinations can also be intercepted by
 your browser, OS or extensions. Installed-app mode may behave differently. While an IME is
-composing, keys stay with it. In a text field with text, Mod+Shift+arrows keep their text-selection
-behavior; from an empty one, such as the chat's empty message box, they switch panes.
+composing, keys stay with it. In a text field with text, a binding on an arrow, Home or End keeps
+its text-selection behavior; from an empty one, such as the chat's empty message box, they switch panes.
 List and tab controls also have focus-local keys; those do not become global terminal shortcuts.
 On a focused tab, Alt+Shift+Left/Right reorders it and Shift+F10 opens its menu. For the pane menu
 on desktop, tab to the pane header's **⋯** (it appears on keyboard focus) and press Enter.
@@ -554,8 +579,8 @@ while disconnected.
 One line stays visible between pages. Chat uses the displayed text's line height, and Terminal
 uses native rows. A page still advances by at least one pixel in chat or one terminal row.
 For an iPad with an external keyboard that lacks PageUp/PageDown, assign letters such as
-U and D to **Scroll pane up** and **Scroll pane down** in Settings → Shortcuts. Mod+Shift
-stays fixed. This lets you read history without leaving the message box or reaching for
+U and D to **Scroll pane up** and **Scroll pane down** in Settings → Shortcuts (Mod+Shift+U/D,
+or record a chord such as `⌘+U`). This lets you read history without leaving the message box or reaching for
 the screen. Shift+PageUp/PageDown alone retains the focused control's own behavior.
 
 Enter sends and Shift+Enter adds a line. On a touch screen, Settings → Chat → Composer → Return inserts a new line lets Return add a line instead; use Send to send the message. On a desktop, turning off Enter sends switches sending to Mod+Enter. On a touch screen with a hardware keyboard, Mod+Enter sends while Return inserts a new line is on. This choice is saved per device.
