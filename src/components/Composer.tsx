@@ -854,7 +854,6 @@ export function Composer({
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it */
   const send = useCallback((clearDraft?: string, sendAnyway = false) => {
-    if (composingRef.current) return;
     if (!connected || uploading || roomless || sending || text.trim().length === 0) return;
     const sent = text;
     const sentAttachments = attachments;
@@ -908,7 +907,7 @@ export function Composer({
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       // an IME keeps its keys; WebKit can send the committing Enter after compositionend, as key code 229
-      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
       if (menuOpen && trigger) {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();

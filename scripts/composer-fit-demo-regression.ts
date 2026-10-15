@@ -227,6 +227,26 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      await withCard(browser, 390, { status: "idle", model: "gpt-5.6" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const button = page.getByRole("button", { name: "Send message", exact: true });
+        await box.fill("한글 전송");
+        await box.dispatchEvent("compositionstart", { data: "송" });
+        await box.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, keyCode: 229 });
+        assert.equal(await box.inputValue(), "한글 전송", "IME confirmation Enter does not send the draft");
+        const submitted = page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "", undefined, { timeout: 5_000 });
+        await button.tap();
+        await submitted;
+        const conversation = await page.evaluate(async (paneId) => (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
+        assert.ok(conversation.turns.some((turn: { role: string; parts: { kind: string; text?: string }[] }) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === "한글 전송")), "touch sends the full visible Korean draft");
+        assert.equal(await box.evaluate((node) => document.activeElement === node), true, "touch Send keeps the keyboard focused");
+        await box.dispatchEvent("compositionend", { data: "송" });
+        await box.fill("Keyboard still sends");
+        const entered = page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "", undefined, { timeout: 5_000 });
+        await box.press("Enter");
+        await entered;
+      });
+      console.log("PASS phone touch Send accepts the visible IME draft while confirmation Enter stays with the IME");
       for (const width of [390, 1440]) await withCard(browser, width, { status: "idle", model: "gpt-5.6" }, async (page) => {
         await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
         const box = page.getByRole("textbox", { name: "Message", exact: true });
