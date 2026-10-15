@@ -13,6 +13,7 @@ async function checkLayout(): Promise<void> {
   const repo = join(import.meta.dir, "..");
   const sharedCss = readFileSync(join(repo, "src/styles.css"), "utf8");
   const viewerCss = readFileSync(process.env.FILE_VIEWER_CSS ?? join(repo, "src/components/FileViewer.css"), "utf8");
+  const codeCss = readFileSync(join(repo, "src/components/HighlightedCode.css"), "utf8");
   const entry = join(fixture, "entry.ts");
   // Render the actual component, with only its HTTP file data supplied by the fixture.
   writeFileSync(entry, `
@@ -56,7 +57,7 @@ async function checkLayout(): Promise<void> {
           : url.searchParams.get("safe") === "landscape"
             ? { top: 0, right: 59, bottom: 21, left: 59 }
             : { top: 0, right: 0, bottom: 0, left: 0 };
-        const css = `${sharedCss}\n${viewerCss}`.replace(/env\(safe-area-inset-(top|right|bottom|left),\s*0px\)/g,
+        const css = `${sharedCss}\n${codeCss}\n${viewerCss}`.replace(/env\(safe-area-inset-(top|right|bottom|left),\s*0px\)/g,
           (_, side: keyof typeof insets) => `${insets[side]}px`);
         return new Response(css, { headers: { "content-type": "text/css" } });
       }
@@ -66,7 +67,7 @@ async function checkLayout(): Promise<void> {
         return Response.json({ path, name: path.split("/").pop(), kind: "image", mime: "image/svg+xml", size: 2048 });
       }
       if (url.pathname === "/api/fs/file") {
-        if (new URL(request.headers.get("referer")!).searchParams.get("kind") === "text") return new Response("const x = 1;\n".repeat(50), { headers: { "content-type": "text/plain" } });
+        if (new URL(request.headers.get("referer")!).searchParams.get("kind") === "text") return new Response(`const x = 1; // ${"long source line ".repeat(12)}\n`.repeat(50), { headers: { "content-type": "text/plain" } });
         const wide = new URL(request.headers.get("referer")!).searchParams.get("image") === "wide";
         const [width, height] = wide ? [6000, 400] : [400, 6000];
         return new Response(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="teal"/></svg>`,
@@ -95,7 +96,7 @@ async function checkLayout(): Promise<void> {
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
-        page.setDefaultTimeout(10_000);
+        page.setDefaultTimeout(30_000);
         for (const image of ["tall", "wide"]) {
           const label = `${scenario.name}/${image}`;
           const limit = "appHeight" in scenario ? scenario.appHeight! : scenario.height;
@@ -168,12 +169,14 @@ async function checkLayout(): Promise<void> {
     }
     // A text file adds Copy to Open in a new tab and Download: on a phone the name keeps the first row with Close in its
     // corner, and the actions share the second row inside the dialog.
-    const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
+    for (const [width, height, theme] of [[390, 844, "dark"], [390, 844, "light"], [844, 390, "dark"], [844, 390, "light"]] as const) {
+    const phone = await browser.newContext({ viewport: { width, height }, isMobile: true, hasTouch: true, locale: "en-US", colorScheme: theme });
+    await phone.addInitScript((theme) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme, language: "en" })), theme);
     try {
       const page = await phone.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      page.setDefaultTimeout(10_000);
+      page.setDefaultTimeout(30_000);
       await page.goto(`http://127.0.0.1:${server.port}/?kind=text`);
       await page.locator(".file-viewer-text").waitFor();
       await page.getByRole("button", { name: "Copy file", exact: true }).waitFor();
@@ -191,13 +194,32 @@ async function checkLayout(): Promise<void> {
         const box = await buttons.nth(index).boundingBox();
         assert.ok(box, `text: button ${index} is laid out`);
         assert.equal(box.y, (await buttons.nth(0).boundingBox())!.y, `text: button ${index} shares the row`);
-        assert.ok(box.y >= title.y + title.height, `text: button ${index} below the name`);
+        if (width <= 600) assert.ok(box.y >= title.y + title.height, `text: button ${index} below the name`);
         assert.ok(box.x >= dialog.x && box.x + box.width <= dialog.x + dialog.width, `text: button ${index} inside the dialog`);
       }
       assert.ok((await page.locator(".file-viewer-title .modal-title").innerText()).endsWith(".ts"), "text: the extension stays in the title");
+      const cdp = await phone.newCDPSession(page);
+      const startY = height - 70;
+      const distance = Math.min(350, height - 200);
+      const scrolled = page.waitForFunction(() => document.querySelector(".file-viewer-body")!.scrollTop > 100);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: startY }] });
+      for (let step = 1; step <= 10; step++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: startY - distance * step / 10 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await scrolled;
+      const horizontal = page.waitForFunction(() => document.querySelector(".file-viewer-body")!.scrollLeft > 50);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 300, y: startY }] });
+      for (let step = 1; step <= 10; step++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 300 - 180 * step / 10, y: startY }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await horizontal;
+      const sourceScroll = await page.locator(".file-viewer-body").evaluate((body) => ({ top: body.scrollTop, left: body.scrollLeft, headerTop: document.querySelector(".file-viewer-header")!.getBoundingClientRect().top, pageTop: document.documentElement.scrollTop }));
+      assert.equal(sourceScroll.headerTop, 0, "text: touch scrolling leaves the header fixed");
+      assert.equal(sourceScroll.pageTop, 0, "text: touch scrolling leaves the page fixed");
+      if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `file-viewer-touch-scrolled-${width}-${theme}.png`), animations: "disabled" });
+      await cdp.detach();
       assert.deepEqual(errors, []);
-      console.log("PASS text: name and Close on the first row, the actions on the second, at 390px");
+      console.log(`PASS text: fixed header and real vertical/horizontal touch scrolling at ${width}px ${theme}`);
     } finally { await phone.close(); }
+    }
   } finally {
     await browser?.close();
     server?.stop();

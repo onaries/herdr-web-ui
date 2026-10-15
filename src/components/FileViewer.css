@@ -177,7 +177,8 @@
   align-self: stretch;
   margin: 0;
   padding: var(--space-3);
-  overflow: auto;
+  /* The body owns both axes: a nested code scroller traps a phone's vertical pan. */
+  overflow: visible;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -187,6 +188,7 @@
 /* wrapping follows the Wrap setting (data-wrap in HighlightedCode.css); the gutter sits in the code's own padding, inside this one */
 .file-viewer-content {
   align-self: stretch;
+  flex-shrink: 0;
   min-width: 0;
 }
 
