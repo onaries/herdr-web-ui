@@ -278,6 +278,18 @@ describe("composer presentation helpers", () => {
     const command = { name: "prefix:𐐨ab", description: "", source: "plugin" as const };
     expect(rankSlashCommands([command], "𐐀b", {})).toEqual([command]);
   });
+
+  it("limits inline matching to name prefixes and segments after hyphens or colons", () => {
+    const commands = ["deploy", "tools:deploy", "safe-deploy", "redeploy", "tools_deploy", "tools.deploy"]
+      .map((name) => ({ name, description: "deployment", source: "skill" as const }));
+    expect(rankSlashCommands(commands, "DEP", {}, true).map(({ name }) => name)).toEqual(["deploy", "safe-deploy", "tools:deploy"]);
+    expect(rankSlashCommands(commands, "dply", {}, true)).toEqual([]);
+    expect(rankSlashCommands(commands, "deployment", {}, true)).toEqual([]);
+    expect(rankSlashCommands(commands, "", {}, true)).toHaveLength(6);
+    const template = { name: "template-creator", description: "Create a reusable template", source: "skill" as const };
+    expect(rankSlashCommands([template], "tmp", {})).toEqual([template]);
+    expect(rankSlashCommands([template], "creator", {}, true)).toEqual([template]);
+  });
 });
 
 describe("context left", () => {

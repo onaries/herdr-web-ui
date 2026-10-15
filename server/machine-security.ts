@@ -9,7 +9,8 @@ export function validateTarget(value: unknown): SshTarget {
   // Pass a single destination argv, never options or shell syntax. IPv6 is allowed.
   if (typeof v.destination !== "string" || !/^[a-zA-Z0-9_][a-zA-Z0-9_.@:[\]-]{0,254}$/.test(v.destination)) throw new Error("Enter an SSH alias or user@hostname");
   if (v.port !== undefined && (!Number.isInteger(v.port) || Number(v.port) < 1 || Number(v.port) > 65535)) throw new Error("SSH port must be 1–65535");
-  if (v.identity_file !== undefined && (typeof v.identity_file !== "string" || !/^(\/|~\/)[^\r\n\0]{1,1024}$/.test(v.identity_file))) throw new Error("Key path must be absolute or start with ~/");
+  // a key on the web server: absolute (`/…`, or `C:\…` on a Windows one) or in its home (`~/…`)
+  if (v.identity_file !== undefined && (typeof v.identity_file !== "string" || !/^(\/|~[\\/]|[A-Za-z]:[\\/])[^\r\n\0]{1,1024}$/.test(v.identity_file))) throw new Error("Key path must be absolute or start with ~/");
   if (v.session !== undefined && (typeof v.session !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(v.session))) throw new Error("Session names use letters, numbers, underscores and hyphens");
   return { destination: v.destination, ...(v.port === undefined ? {} : { port: Number(v.port) }), ...(v.identity_file ? { identity_file: String(v.identity_file) } : {}), ...(v.session ? { session: String(v.session) } : {}) };
 }

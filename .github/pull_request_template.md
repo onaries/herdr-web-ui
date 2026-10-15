@@ -2,7 +2,7 @@
 
 ## Change
 
-Describe the problem and resulting behavior.
+Describe the problem and resulting behavior. For a feature, link the issue where a maintainer agreed to it.
 
 ## Validation
 

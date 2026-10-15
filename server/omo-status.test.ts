@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol
 import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { paneAfterStatus } from "./machines.ts";
 import { earliestStart, holderStartedAt } from "./omo.ts";
+import { projectStateKey } from "./omo-state-dir.ts";
 import { noTurn, OMO_ALIASES, omoBackgroundTasks, omoSessionId, OmoStatus, omoTurnAfter, omoTurnStatus, readLines, type OmoLine, type OmoPane } from "./omo-status.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-omo-status-"));
@@ -110,10 +111,27 @@ describe("an OmO turn, read from its session file", () => {
     task("st_2.json", { task_id: "st_2", status: "completed", parent_session_id: "mine", host_pid: 10 });
     task("st_3.json", { task_id: "st_3", status: "running", parent_session_id: "other", host_pid: 10 });
     task("st_4.json", { task_id: "st_4", status: "running", parent_session_id: "mine", host_pid: 99 });
-    task("st_5.json", { task_id: "st_5", status: "running", parent_session_id: "mine" });
+    task("st_5.json", { task_id: "st_5", status: "pending", parent_session_id: "mine" });
     writeFileSync(join(tasks, "st_6.json"), "{half");
     expect(Object.fromEntries(omoBackgroundTasks(cwd, (pid) => pid === 10))).toEqual({ mine: 2, other: 1 });
-    expect(omoBackgroundTasks(join(root, "nowhere")).size).toBe(0);
+    expect(omoBackgroundTasks(join(root, "nowhere"), () => true, { env: {}, home: root }).size).toBe(0);
+  });
+
+  it("counts pending and running external tasks, with legacy records taking precedence", () => {
+    const cwd = join(root, "external-project");
+    const agentDir = join(root, "agent");
+    const options = { env: { OMO_CODING_AGENT_DIR: agentDir }, home: root };
+    const tasks = join(agentDir, "projects", projectStateKey(cwd), "senpi-task", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    for (const [index, status] of ["pending", "running", "error", "interrupted"].entries()) {
+      writeFileSync(join(tasks, `st_${index}.json`), JSON.stringify({ status, parent_session_id: "mine", host_pid: 10 }));
+    }
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, options))).toEqual({ mine: 2 });
+    expect(omoBackgroundTasks(cwd, () => false, options).size).toBe(0);
+    const legacy = join(cwd, ".omo", "senpi-task", "tasks");
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, "st_old.json"), JSON.stringify({ status: "pending", parent_session_id: "legacy" }));
+    expect(Object.fromEntries(omoBackgroundTasks(cwd, () => true, options))).toEqual({ legacy: 1 });
   });
 });
 
@@ -129,26 +147,82 @@ describe("OmO panes' status in place of herdr's", () => {
     const ids: Record<string, string> = {};
     const told: ([string, AgentStatus, number, boolean] | [string, AgentStatus, number, boolean, OmoRest])[] = [];
     const found: string[] = [];
+    const again: boolean[] = [];
+    const backgroundCwds: string[] = [];
     const state = { background: 0, discovered: new Map<string, OmoPane>([["omo", { path: FILE, startedAt: null }], ["lost", { path: null, startedAt: null }]]), lookups: 0, clock: 0, failing: false, during: () => {} };
     const omo = new OmoStatus({
       // the session of `lost` cannot be told (two OmO panes in one folder without /proc)
       discover: async () => { state.lookups += 1; state.during(); return new Map(state.discovered); },
       snapshot: async () => herdr(),
       onChange: (id, status, count, turn, rest) => told.push(rest ? [id, status, count, turn, rest] : [id, status, count, turn]),
-      onFound: (id) => found.push(id),
+      onFound: (id, held) => { found.push(id); again.push(held); },
       file: {
         stat: (path) => path in files ? { size: Buffer.byteLength(files[path]!), id: ids[path] ?? "1" } : null,
         lines: (path, from, size, each) => { if (state.failing) return from; const text = Buffer.from(files[path]!).subarray(from, size).toString("utf8"); const whole = text.slice(0, text.lastIndexOf("\n") + 1); for (const line of whole.split("\n").slice(0, -1)) each({ text: line }); return from + Buffer.byteLength(whole); },
       },
-      background: () => new Map([["01a0f88b-481c-7139-8125-c9cd453b9e17", state.background]]),
+      background: (cwd) => { backgroundCwds.push(cwd); return new Map([["01a0f88b-481c-7139-8125-c9cd453b9e17", state.background]]); },
       now: () => state.clock,
     });
     const append = (...entries: string[]) => { files[FILE] += lines(...entries); };
     /** the file put anew in place of the old one, as a rewrite does */
     const replace = (...entries: string[]) => { files[FILE] = lines(...entries); ids[FILE] = `${Number(ids[FILE] ?? 1) + 1}`; };
-    return { omo, told, found, append, replace, state, files };
+    return { omo, told, found, again, append, replace, state, files, backgroundCwds };
   }
   const statuses = (snapshot: SessionSnapshot) => Object.fromEntries(snapshot.panes.map((p) => [p.pane_id, `${p.agent}/${p.agent_status}`]));
+
+  it("uses the session header cwd for counts and lists, falling back to the pane cwd", async () => {
+    const { omo, replace, backgroundCwds } = setup(lines(JSON.stringify({ type: "session", cwd: "/session-project" }), message("assistant", "stop")));
+    await omo.refresh(herdr().panes);
+    expect(omo.sessionOf("omo")?.cwd).toBe("/session-project");
+    expect(backgroundCwds.at(-1)).toBe("/session-project");
+    replace(JSON.stringify({ type: "session", cwd: "/another-project" }), message("assistant", "stop"));
+    omo.poll();
+    expect(omo.sessionOf("omo")?.cwd).toBe("/another-project");
+    expect(backgroundCwds.at(-1)).toBe("/another-project");
+    for (const header of ["{torn", JSON.stringify({ type: "session", cwd: 42 }), JSON.stringify({ type: "session", cwd: "" })]) {
+      replace(header, message("assistant", "stop"));
+      omo.poll();
+      expect(omo.sessionOf("omo")?.cwd).toBe("/work");
+      expect(backgroundCwds.at(-1)).toBe("/work");
+    }
+  });
+
+  it("tells a pane found again after a missed lookup from one found for the first time", async () => {
+    const { omo, found, again, state } = setup();
+    await omo.refresh(herdr().panes);
+    state.discovered.delete("omo");
+    state.clock += 10_000;
+    await omo.refresh(herdr().panes);
+    state.discovered.set("omo", { path: FILE, startedAt: null });
+    state.clock += 10_000;
+    await omo.refresh(herdr().panes);
+    expect(found.filter((id) => id === "omo")).toEqual(["omo", "omo"]);
+    expect(again.slice(found.indexOf("omo"), found.indexOf("omo") + 1)).toEqual([false]);
+    expect(again[found.lastIndexOf("omo")]).toBe(true);
+  });
+
+  it("counts nothing for a folder that cannot be resolved, rather than throwing from the poll", () => {
+    const parent = mkdtempSync(join(tmpdir(), "omo-locked-"));
+    const cwd = join(parent, "project");
+    mkdirSync(cwd);
+    chmodSync(parent, 0o000);
+    try {
+      expect(omoBackgroundTasks(cwd, () => true, { env: { HOME: parent } })).toEqual(new Map());
+    } finally {
+      chmodSync(parent, 0o700);
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a session header that was incomplete when the pane was discovered", async () => {
+    const { omo, append, backgroundCwds } = setup('{"type":"session","cwd":');
+    await omo.refresh(herdr().panes);
+    expect(omo.sessionOf("omo")?.cwd).toBe("/work");
+    append('"/session-project"}', message("assistant", "stop"));
+    omo.poll();
+    expect(omo.sessionOf("omo")?.cwd).toBe("/session-project");
+    expect(backgroundCwds.at(-1)).toBe("/session-project");
+  });
 
   it("reads RUN while a turn runs and DONE when it ends, in events and in every snapshot", async () => {
     const { omo, told, append, state } = setup();

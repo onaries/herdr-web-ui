@@ -37,24 +37,6 @@ it("keeps sidebar rows on two lines unless one line was chosen", () => {
   }
 });
 
-it("draws workspace cards in the Agents list only when they were turned on", () => {
-  expect(DEFAULT_SETTINGS.agentCards).toBe(false);
-  expect(sanitizeSettings({}).agentCards).toBe(false);
-  expect(sanitizeSettings({ agentCards: true }).agentCards).toBe(true);
-  for (const agentCards of [null, "true", 1]) {
-    expect(sanitizeSettings({ agentCards }).agentCards).toBe(false);
-  }
-});
-
-it("shows the Agents list's pin stars only when they were turned on", () => {
-  expect(DEFAULT_SETTINGS.agentPins).toBe(false);
-  expect(sanitizeSettings({}).agentPins).toBe(false);
-  expect(sanitizeSettings({ agentPins: true }).agentPins).toBe(true);
-  for (const agentPins of [null, "true", 1]) {
-    expect(sanitizeSettings({ agentPins }).agentPins).toBe(false);
-  }
-});
-
 it("draws agent logos in their brand colors unless Mono was chosen", () => {
   expect(DEFAULT_SETTINGS.agentMarks).toBe("color");
   expect(sanitizeSettings({}).agentMarks).toBe("color");
@@ -73,6 +55,7 @@ describe("telemetry settings snapshot", () => {
       sidebarRows: "one",
       agentOrder: "activity",
       agentMarks: "mono",
+      statusIndicators: "symbols",
       palette: "catppuccin",
       terminalFontSize: 22,
       terminalWheelSpeed: 10,
@@ -103,6 +86,7 @@ describe("telemetry settings snapshot", () => {
       sidebarRows: "one",
       agentOrder: "activity",
       agentMarks: "mono",
+      statusIndicators: "symbols",
       palette: "catppuccin",
       terminalFontSize: 22,
       terminalWheelSpeed: 10,
@@ -125,6 +109,7 @@ describe("telemetry settings snapshot", () => {
     });
     expect(telemetrySettings(snapshot)).toEqual(snapshot);
     expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).toMatchObject({
+      statusIndicators: "classic",
       terminalFontCustom: false,
       chatFontCustom: false,
       shortcutsCustom: false,
@@ -165,6 +150,16 @@ describe("telemetry settings snapshot", () => {
     }
     for (const raw of ["private-terminal-font", "private-chat-font", "private quick reply", "private-order-account-id", "private-hidden-account-id"]) {
       expect(serialized).not.toContain(raw);
+    }
+  });
+
+  it("reports every status indicator choice in a valid snapshot", () => {
+    for (const statusIndicators of ["classic", "dots", "symbols"] as const) {
+      const settings = sanitizeSettings({ statusIndicators });
+      const snapshot = telemetrySettingsSnapshot(settings);
+
+      expect(snapshot.statusIndicators).toBe(statusIndicators);
+      expect(telemetrySettings(snapshot)).toEqual(snapshot);
     }
   });
 

@@ -152,7 +152,7 @@ export function createGjcStatus(deps: Omit<OmoStatusDeps, "agent" | "aliases" | 
       for (const paneId of found.keys()) if (nativeOmo?.runs(paneId)) found.delete(paneId);
       return found;
     },
-    onFound: (paneId) => { if (!nativeOmo?.runs(paneId)) deps.onFound?.(paneId); },
+    onFound: (paneId, again) => { if (!nativeOmo?.runs(paneId)) deps.onFound?.(paneId, again); },
     onChange: (...change) => { if (!nativeOmo?.runs(change[0])) deps.onChange(...change); },
     agent: "gjc",
     aliases: [],

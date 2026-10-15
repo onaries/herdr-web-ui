@@ -4,6 +4,14 @@ Thanks for helping. Bugs and ideas go in an [issue](https://github.com/devswha/h
 security problems never do: see [SECURITY.md](SECURITY.md). For a larger change, open an issue first so
 the approach can be agreed before you build it. Small fixes can go straight to a PR.
 
+**Features.** Open a [feature request](https://github.com/devswha/herdr-web-ui/issues/new?template=feature_request.yml)
+and wait for a maintainer's yes before you write code; a feature PR without one may be closed, however
+well it is built. The app is a bridge to herdr, so a feature should either mirror something herdr's
+own TUI does, or meet a need that widely used coding-agent apps already meet (the Codex and Claude
+apps, Paseo, T3 Code and the like). A convenience none of them offers, or one that adds a new setting
+or UI concept for a narrow case, is likely to be declined: every one stays for good, to be maintained
+and tested on every release.
+
 Everything a PR is checked against is in this repository: this file, the
 [review rules](.github/REVIEW.md), the [development guide](docs/development.md),
 [DESIGN.md](DESIGN.md) and the `AGENTS.md` files ([root](AGENTS.md), [server](server/AGENTS.md),

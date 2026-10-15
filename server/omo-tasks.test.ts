@@ -1,8 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
+import { projectStateKey } from "./omo-state-dir.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -49,11 +50,37 @@ test("another session's tasks, old ones, unknown states and torn files stay out;
 });
 
 test("no task folder, and at most ten ended tasks", () => {
-  expect(omoTasks(join(tmpdir(), "no-such-folder-omo"), SESSION, alive, NOW)).toEqual([]);
   const cwd = folder(Array.from({ length: 14 }, (_, index) => ({ status: "completed", task_summary: `done ${index}`, terminal_at: ago(index) })));
+  expect(omoTasks(join(cwd, "missing"), SESSION, alive, NOW, { env: {}, home: cwd })).toEqual([]);
   const tasks = omoTasks(cwd, SESSION, alive, NOW);
   expect(tasks.length).toBe(10);
   expect(tasks[0]!.title).toBe("done 0");
+});
+
+test("external project records supply tasks and workflows, unless legacy records exist", () => {
+  const cwd = folder([
+    { status: "pending", started_at: ago(5) },
+    { status: "error", terminal_at: ago(2) },
+    { status: "interrupted", terminal_at: ago(1) },
+  ]);
+  const agentDir = join(cwd, "agent");
+  const options = { env: { OMO_CODING_AGENT_DIR: agentDir }, home: cwd };
+  const project = join(agentDir, "projects", projectStateKey(cwd));
+  mkdirSync(project, { recursive: true });
+  const external = join(project, "senpi-task");
+  renameSync(join(cwd, ".omo", "senpi-task"), external);
+  const runDir = join(external, "dag", "runs");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, "dag_external.json"), JSON.stringify({ runId: "dag_external", parentSessionId: SESSION, status: "running", nodes: [] }));
+  expect(omoTasks(cwd, SESSION, alive, NOW, options).map((task) => [task.id, task.status])).toEqual([
+    ["st_0", "running"], ["st_2", "lost"], ["st_1", "failed"],
+  ]);
+  expect(omoRuns(cwd, SESSION, Date.now(), options).map((run) => run.id)).toEqual(["dag_external"]);
+  const legacy = join(cwd, ".omo", "senpi-task");
+  mkdirSync(join(legacy, "tasks"), { recursive: true });
+  writeFileSync(join(legacy, "tasks", "st_legacy.json"), JSON.stringify({ task_id: "st_legacy", parent_session_id: SESSION, status: "running" }));
+  expect(omoTasks(cwd, SESSION, alive, NOW, options).map((task) => task.id)).toEqual(["st_legacy"]);
+  expect(omoRuns(cwd, SESSION, Date.now(), options)).toEqual([]);
 });
 
 function runs(records: Record<string, unknown>[]): string {

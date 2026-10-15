@@ -1,13 +1,42 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { connect as tcpConnect, createServer, type Socket } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import type { FileSink, Subprocess } from "bun";
 import type { SshTarget } from "../shared/machines.ts";
 import { shellQuote } from "./machine-security.ts";
 import { chunksOf } from "./remote-bundle.ts";
 
 /** A file streamed to a remote command's stdin, with how much of it went so far. */
 export interface StreamInput { path: string; onProgress?(done: number): void; onUploaded?(): void }
+
+const WINDOWS = process.platform === "win32";
+
+/**
+ * A local path as the value of an ssh option. OpenSSH splits option values like a shell and
+ * reads `\` as an escape, so a Windows path goes with forward slashes (which Windows accepts).
+ */
+function sshPath(path: string): string { return WINDOWS ? path.replaceAll("\\", "/") : path; }
+
+/**
+ * Strict checking refused a host it has no key for. A changed key says something else
+ * ("REMOTE HOST IDENTIFICATION HAS CHANGED") and never reaches the fingerprint question.
+ */
+const UNKNOWN_HOST = /No \S+ host key is known for /;
+/** what a forward of the account's own SSH config would add next to ours */
+const CONFIG_FORWARD = /^(localforward|remoteforward|dynamicforward) /m;
+
+/** Whether something accepts connections on this loopback port yet. */
+function listening(port: number): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const socket = tcpConnect({ host: "127.0.0.1", port });
+  const done = (open: boolean) => { socket.destroy(); resolve(open); };
+  socket.once("connect", () => done(true));
+  socket.once("error", () => done(false));
+  socket.setTimeout(1000, () => done(false));
+  return promise;
+}
 
 /**
  * What ssh said last, for the setup dialog: some messages ask the user to act while ssh keeps
@@ -35,38 +64,92 @@ export function decodeClixml(stderr: string): string {
   return message || stderr.replace(/#< CLIXML[\s\S]*/, "").trim() || "PowerShell failed";
 }
 
+/**
+ * One SSH destination for a setup or a connected PC.
+ *
+ * Multiplexed (Linux, macOS): one OpenSSH master; every command, upload and forward goes over
+ * its control socket, so a password typed once serves them all.
+ *
+ * Direct (Windows, whose OpenSSH has no connection sharing: `getsockname failed: Not a socket`):
+ * every command is its own ssh process, a long-lived `ssh -N` stands in for the master, and each
+ * forward is its own `ssh -N -L`. ssh-agent signs for all of them; a password or passphrase the
+ * user typed while connecting is kept in memory for this connection only and answered to the
+ * same prompt again, never stored. A host key is learned without authenticating and confirmed
+ * in the dialog before any connection that authenticates, because a `.cmd` askpass helper only
+ * receives a prompt's first line, not the fingerprint below it.
+ */
 export class SshConnection {
   private dir = mkdtempSync(join(tmpdir(), "herdr-ssh-"));
   private control = join(this.dir, "control");
-  private master: ReturnType<typeof Bun.spawn> | null = null;
-  private children = new Set<ReturnType<typeof Bun.spawn>>();
+  private master: Subprocess | null = null;
+  private children = new Set<Subprocess>();
+  /** direct mode's forwards; one ending is the connection ending */
+  private tunnels = new Set<Subprocess>();
+  private broken = false;
   private closed = false;
+  private started = false;
   private askSockets = new Set<Socket>();
   private askServer = createServer();
+  private askPath = "";
+  private askHelper = "";
+  /** only a helper started by this connection's ssh knows it */
+  private askToken = randomBytes(32).toString("hex");
+  /** direct mode: answers typed during start(), kept once start() authenticated with them */
+  private typed = new Map<string, string>();
+  private answers = new Map<string, string>();
   private stderr = "";
   usedSecret = false;
   onExit: (() => void) | null = null;
   /** ssh's recent stderr while the master connection is still being established */
   onOutput: ((text: string) => void) | null = null;
 
-  constructor(readonly target: SshTarget, readonly stateDir: string, readonly keyPath?: string, readonly keyOnly = false) {
+  constructor(readonly target: SshTarget, readonly stateDir: string, readonly keyPath?: string, readonly keyOnly = false, readonly multiplexed = !WINDOWS) {
     chmodSync(this.dir, 0o700);
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   }
-  /** the options ssh and sftp share; the port flag differs (`-p` is sftp's preserve-times) */
-  private options(): string[] {
-    const args = ["-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "PermitLocalCommand=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
+  /**
+   * The options ssh and sftp share; the port flag differs (`-p` is sftp's preserve-times).
+   * A forward of ours needs `clearForwardings` off: ClearAllForwardings drops a `-L` too.
+   */
+  private options(clearForwardings = true): string[] {
+    const args = ["-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "PermitLocalCommand=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
+    if (clearForwardings) args.unshift("-o", "ClearAllForwardings=yes");
     if (this.keyOnly) args.push("-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none");
+    // the account's own `ControlMaster auto` would make Windows' ssh fail every connection
+    if (!this.multiplexed) args.push("-o", "ControlMaster=no", "-o", "ControlPath=none");
     if (this.target.port) args.push("-o", `Port=${this.target.port}`);
-    if (this.target.identity_file) args.push("-i", this.target.identity_file.replace(/^~\//, homedir() + "/"));
+    if (this.target.identity_file) args.push("-i", this.target.identity_file.replace(/^~[\\/]/, homedir() + "/"));
     if (this.keyPath && existsSync(this.keyPath)) args.push("-i", this.keyPath);
     return args;
   }
   private base(): string[] {
     return ["ssh", "-S", this.control, ...this.options()];
   }
+  private knownHosts(): string { return join(this.stateDir, "known_hosts"); }
+  private knownHostsOption(): string {
+    return `UserKnownHostsFile=${[this.knownHosts(), join(homedir(), ".ssh/known_hosts"), join(homedir(), ".ssh/known_hosts2")].map((path) => shellQuote(sshPath(path))).join(" ")}`;
+  }
+  /**
+   * A direct-mode ssh. It always checks the host strictly; it may answer a prompt only when
+   * start() kept an answer for it, and the helper then refuses any prompt it has none for.
+   * Keyboard-interactive is off: its prompt is the server's own text, and Windows' ssh hands a
+   * prompt to the `.cmd` helper on a command line that cmd parses, quoting `"` only as `\"`, so
+   * a `"` and `&` in it would run a command here before the helper sees it. Password and
+   * passphrase prompts are built by ssh itself from this PC's config.
+   */
+  private direct(batch: "yes" | "no" = this.answers.size ? "no" : "yes", clearForwardings = true): string[] {
+    return ["ssh", ...this.options(clearForwardings), "-o", `BatchMode=${batch}`, "-o", "KbdInteractiveAuthentication=no", "-o", "StrictHostKeyChecking=yes", "-o", this.knownHostsOption()];
+  }
+  private askEnv(): Record<string, string | undefined> {
+    return this.askHelper ? { ...process.env, SSH_ASKPASS: this.askHelper, SSH_ASKPASS_REQUIRE: "force", DISPLAY: "herdr:0", HERDR_ASKPASS_SOCKET: this.askPath, HERDR_ASKPASS_TOKEN: this.askToken } : { ...process.env };
+  }
+  private trusted(token: unknown): boolean {
+    if (typeof token !== "string" || token.length !== this.askToken.length) return false;
+    return timingSafeEqual(Buffer.from(token), Buffer.from(this.askToken));
+  }
   async start(challenge?: (prompt: string, hostKey: boolean) => Promise<string>): Promise<void> {
-    const askPath = join(this.dir, "ask");
+    // a named pipe on Windows, where node:net cannot listen on a file path
+    this.askPath = WINDOWS ? `\\\\.\\pipe\\herdr-askpass-${randomBytes(16).toString("hex")}` : join(this.dir, "ask");
     this.askServer.on("connection", (socket) => {
       this.askSockets.add(socket);
       socket.on("close", () => this.askSockets.delete(socket));
@@ -77,23 +160,48 @@ export class SshConnection {
         if (!data.includes("\n")) return;
         socket.pause();
         try {
-          const prompt = String(JSON.parse(data).prompt);
+          const request = JSON.parse(data) as { token?: unknown; prompt?: unknown };
+          // anyone on this PC may open a named pipe; only our own helper has the token
+          if (!this.trusted(request.token)) throw new Error("Unknown askpass client");
+          const prompt = String(request.prompt);
           const hostKey = /fingerprint|continue connecting/i.test(prompt);
-          if (!challenge) throw new Error("SSH authentication required; reconnect from PC settings");
-          if (!hostKey) this.usedSecret = true;
-          const answer = await challenge(prompt, hostKey);
+          let answer = hostKey ? undefined : this.answers.get(prompt);
+          if (answer === undefined) {
+            // once connected, nothing asks the user again: a new prompt is an auth that failed
+            if (this.started) throw new Error("SSH asked again after connecting");
+            if (!challenge) throw new Error("SSH authentication required; reconnect from PC settings");
+            if (!hostKey) this.usedSecret = true;
+            answer = await challenge(prompt, hostKey);
+            if (!hostKey && !this.multiplexed) this.typed.set(prompt, answer);
+          }
           if (!this.closed) socket.end(JSON.stringify({ answer }) + "\n");
         } catch { socket.destroy(); }
       });
     });
-    await new Promise<void>((resolve, reject) => { this.askServer.once("error", reject); this.askServer.listen(askPath, resolve); });
-    chmodSync(askPath, 0o600);
-    const helper = join(this.dir, "askpass");
-    writeFileSync(helper, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(join(import.meta.dir, "ssh-askpass.ts"))} "$@"\n`, { mode: 0o700 });
-    const knownHosts = join(this.stateDir, "known_hosts");
-    if (!existsSync(knownHosts)) writeFileSync(knownHosts, "", { mode: 0o600 });
-    const args = [...this.base(), "-M", "-N", "-T", "-o", "ControlPersist=no", "-o", "ExitOnForwardFailure=yes", "-o", `BatchMode=${challenge ? "no" : "yes"}`, "-o", `StrictHostKeyChecking=${challenge ? "ask" : "yes"}`, "-o", `UserKnownHostsFile=${shellQuote(knownHosts)} ${shellQuote(join(homedir(), ".ssh/known_hosts"))} ${shellQuote(join(homedir(), ".ssh/known_hosts2"))}`, this.target.destination];
-    const proc = this.master = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "pipe", env: { ...process.env, SSH_ASKPASS: helper, SSH_ASKPASS_REQUIRE: "force", DISPLAY: "herdr:0", HERDR_ASKPASS_SOCKET: askPath } });
+    const listen = Promise.withResolvers<void>();
+    this.askServer.once("error", listen.reject);
+    this.askServer.listen(this.askPath, listen.resolve);
+    await listen.promise;
+    if (!WINDOWS) chmodSync(this.askPath, 0o600);
+    const script = join(import.meta.dir, "ssh-askpass.ts");
+    if (WINDOWS) {
+      // cmd expands %…% even inside quotes; a literal percent sign is %%
+      this.askHelper = join(this.dir, "askpass.cmd");
+      const quoted = (path: string) => `"${path.replaceAll("%", "%%")}"`;
+      writeFileSync(this.askHelper, `@${quoted(process.execPath)} ${quoted(script)} %*\r\n`);
+    } else {
+      this.askHelper = join(this.dir, "askpass");
+      writeFileSync(this.askHelper, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(script)} "$@"\n`, { mode: 0o700 });
+    }
+    if (!existsSync(this.knownHosts())) writeFileSync(this.knownHosts(), "", { mode: 0o600 });
+    if (this.multiplexed) await this.startMaster(challenge);
+    else await this.startDirect(challenge);
+    this.started = true;
+    this.onOutput = null;
+  }
+  private async startMaster(challenge?: (prompt: string, hostKey: boolean) => Promise<string>): Promise<void> {
+    const args = [...this.base(), "-M", "-N", "-T", "-o", "ControlPersist=no", "-o", "ExitOnForwardFailure=yes", "-o", `BatchMode=${challenge ? "no" : "yes"}`, "-o", `StrictHostKeyChecking=${challenge ? "ask" : "yes"}`, "-o", this.knownHostsOption(), this.target.destination];
+    const proc = this.master = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "pipe", env: this.askEnv() });
     void (async () => {
       const reader = proc.stderr.getReader();
       const decoder = new TextDecoder();
@@ -106,12 +214,70 @@ export class SshConnection {
       if (proc.exitCode !== null || Date.now() > until) throw new Error(this.stderr.trim() || "SSH connection timed out");
       await Bun.sleep(100);
     }
-    this.onOutput = null;
+  }
+  private async startDirect(challenge?: (prompt: string, hostKey: boolean) => Promise<string>): Promise<void> {
+    const until = Date.now() + (challenge ? 300_000 : 25_000);
+    // `exit` ends the session in sh, cmd and PowerShell alike, whichever the account's shell is
+    let probe = await this.attempt([...this.direct(challenge ? "no" : "yes"), "-T", this.target.destination, "exit"], until);
+    if (probe.code !== 0 && challenge && UNKNOWN_HOST.test(probe.stderr)) {
+      await this.learnHostKey(challenge);
+      probe = await this.attempt([...this.direct("no"), "-T", this.target.destination, "exit"], until);
+    }
+    if (probe.code !== 0) throw new Error(probe.stderr.trim() || "SSH connection failed");
+    for (const [prompt, answer] of this.typed) this.answers.set(prompt, answer);
+    this.typed.clear();
+    const keepalive = this.master = Bun.spawn([...this.direct(), "-N", "-T", this.target.destination], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: this.askEnv() });
+    void keepalive.exited.then(() => { if (!this.closed) this.onExit?.(); });
+  }
+  /** One ssh run to its end, its stderr reaching the dialog as it comes. */
+  private async attempt(args: string[], until: number, report = true): Promise<{ code: number; stderr: string }> {
+    const proc = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "pipe", env: this.askEnv() });
+    this.children.add(proc);
+    const timer = setTimeout(() => proc.kill(), Math.max(0, until - Date.now()));
+    let stderr = "";
+    try {
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          stderr = (stderr + decoder.decode(value, { stream: true })).slice(-8192);
+          if (report) this.onOutput?.(recentSshOutput(stderr));
+        }
+      } finally { reader.releaseLock(); }
+      const code = await proc.exited;
+      if (this.closed) throw new Error("Connection cancelled");
+      if (code !== 0 && Date.now() >= until) throw new Error(stderr.trim() || "SSH connection timed out");
+      return { code, stderr };
+    } finally { clearTimeout(timer); this.children.delete(proc); }
+  }
+  /**
+   * The server's key, read by a connection that offers no authentication at all, shown in the
+   * dialog, and trusted only on a yes. The connections after it check strictly against it, so
+   * a server that shows another key to them is refused, not asked about.
+   */
+  private async learnHostKey(challenge: (prompt: string, hostKey: boolean) => Promise<string>): Promise<void> {
+    const file = join(this.dir, "learned_hosts");
+    rmSync(file, { force: true });
+    const seen = await this.attempt(["ssh", ...this.options(), "-o", "BatchMode=yes", "-o", "PreferredAuthentications=none", "-o", "IdentityAgent=none", "-o", "StrictHostKeyChecking=accept-new", "-o", `UserKnownHostsFile=${shellQuote(sshPath(file))}`, "-o", `GlobalKnownHostsFile=${WINDOWS ? "NUL" : "/dev/null"}`, "-T", this.target.destination, "exit"], Date.now() + 25_000, false);
+    const learned = existsSync(file) ? readFileSync(file, "utf8").trim() : "";
+    if (!learned) throw new Error(seen.stderr.trim() || "Could not read the server's host key");
+    const fingerprints = (await this.exec(["ssh-keygen", "-l", "-f", file])).split(/\r?\n/).flatMap((line) => {
+      const match = /^\d+ (\S+) .*\((\S+)\)$/.exec(line.trim());
+      return match ? [`${match[2]} key fingerprint is ${match[1]}.`] : [];
+    });
+    if (!fingerprints.length) throw new Error("Could not read the server's host key");
+    const host = this.target.port ? `[${this.target.destination}]:${this.target.port}` : this.target.destination;
+    const answer = await challenge(`The authenticity of host '${host}' can't be established.\n${fingerprints.join("\n")}\nAre you sure you want to continue connecting (yes/no)? `, true);
+    if (this.closed) throw new Error("Connection cancelled");
+    if (answer !== "yes") throw new Error("Host key verification failed.");
+    appendFileSync(this.knownHosts(), learned + "\n", { mode: 0o600 });
   }
   async run(script: string, input?: Uint8Array | StreamInput, timeout = 90_000): Promise<string> {
     if (this.closed) throw new Error("SSH connection closed");
     // BatchMode prevents an expired master from unexpectedly opening a new password prompt.
-    return this.exec([...this.base(), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-T", this.target.destination, "sh -c " + shellQuote(script)], input, timeout);
+    return this.exec([...(this.multiplexed ? [...this.base(), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"] : this.direct()), "-T", this.target.destination, "sh -c " + shellQuote(script)], input, timeout);
   }
   /**
    * A script for a Windows host. OpenSSH there hands the command to cmd or PowerShell,
@@ -124,7 +290,7 @@ export class SshConnection {
     // no progress bars: over a pipe PowerShell 5 serializes them to stderr as CLIXML
     const encoded = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n$ProgressPreference = 'SilentlyContinue'\n${script}`, "utf16le").toString("base64");
     try {
-      const out = await this.exec([...this.base(), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-T", this.target.destination, `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`], input, timeout);
+      const out = await this.exec([...(this.multiplexed ? [...this.base(), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"] : this.direct()), "-T", this.target.destination, `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`], input, timeout);
       return out.replace(/\r\n/g, "\n");
     } catch (error) {
       if (error instanceof Error && error.message.includes("#< CLIXML")) throw new Error(decodeClixml(error.message), { cause: error });
@@ -142,23 +308,54 @@ export class SshConnection {
     if (this.closed) throw new Error("SSH connection closed");
     if (/[\r\n"]/.test(localPath + remotePath)) throw new Error("Invalid characters for a remote path");
     const remote = "/" + remotePath.replaceAll("\\", "/");
-    await this.exec(["sftp", ...this.options(), "-o", `ControlPath=${this.control}`, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-b", "-", this.target.destination], new TextEncoder().encode(`put "${localPath}" "${remote}"\n`), timeout);
+    const put = new TextEncoder().encode(`put "${sshPath(localPath)}" "${remote}"\n`);
+    // sftp's -b adds BatchMode=yes after the options before it, and ssh keeps the first value
+    const options = this.multiplexed
+      ? [...this.options(), "-o", `ControlPath=${this.control}`, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+      : this.direct().slice(1);
+    await this.exec(["sftp", ...options, "-b", "-", this.target.destination], put, timeout);
   }
   async forward(port: number, remotePort: number): Promise<void> {
-    // Mux commands read SSH config too: even a master with ClearAllForwardings
-    // would accept those extra tunnels here. -O uses only our existing control
-    // socket, so no host config is needed; ClearAllForwardings would erase our -L.
-    await this.exec(["ssh", "-F", "none", "-S", this.control, "-O", "forward", "-L", `127.0.0.1:${port}:127.0.0.1:${remotePort}`, this.target.destination]);
+    if (this.closed) throw new Error("SSH connection closed");
+    if (this.multiplexed) {
+      // Mux commands read SSH config too: even a master with ClearAllForwardings
+      // would accept those extra tunnels here. -O uses only our existing control
+      // socket, so no host config is needed; ClearAllForwardings would erase our -L.
+      await this.exec(["ssh", "-F", "none", "-S", this.control, "-O", "forward", "-L", `127.0.0.1:${port}:127.0.0.1:${remotePort}`, this.target.destination]);
+      return;
+    }
+    // Our -L needs ClearAllForwardings off, which would also open the forwards the account's
+    // SSH config names for this host. Those are refused rather than opened on the user's behalf.
+    if (CONFIG_FORWARD.test(await this.exec(["ssh", "-G", ...this.options(false), this.target.destination]))) {
+      throw new Error(`The SSH config for ${this.target.destination} sets LocalForward, RemoteForward or DynamicForward, which the web UI on Windows cannot switch off. Use a host alias without them.`);
+    }
+    const proc = Bun.spawn([...this.direct(undefined, false), "-N", "-T", "-o", "ExitOnForwardFailure=yes", "-L", `127.0.0.1:${port}:127.0.0.1:${remotePort}`, this.target.destination], { stdin: "ignore", stdout: "ignore", stderr: "pipe", env: this.askEnv() });
+    this.tunnels.add(proc);
+    const stderr = new Response(proc.stderr).text();
+    void proc.exited.then(() => {
+      this.tunnels.delete(proc);
+      if (this.closed) return;
+      this.broken = true;
+      this.onExit?.();
+    });
+    // ssh opens the local port only once it authenticated and the forward stands
+    const until = Date.now() + 25_000;
+    while (!(await listening(port))) {
+      if (this.closed) throw new Error("Connection cancelled");
+      if (proc.exitCode !== null || proc.signalCode !== null) throw new Error((await stderr).trim() || "SSH port forward failed");
+      if (Date.now() > until) { proc.kill(); throw new Error("SSH port forward timed out"); }
+      await Bun.sleep(100);
+    }
   }
   private async exec(args: string[], input?: Uint8Array | StreamInput, timeout = 30_000): Promise<string> {
     const stream = input !== undefined && !(input instanceof Uint8Array) ? input : undefined;
-    const proc = Bun.spawn(args, { stdin: stream ? "pipe" : input ? new Blob([new Uint8Array(input as Uint8Array)]) : "ignore", stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(args, { stdin: stream ? "pipe" : input ? new Blob([new Uint8Array(input as Uint8Array)]) : "ignore", stdout: "pipe", stderr: "pipe", env: this.askEnv() });
     this.children.add(proc);
     const timer = setTimeout(() => proc.kill(), timeout);
     // a file goes over in chunks, each written once ssh has taken the last one, so what was
     // written tracks what was sent to within ssh's own buffer
     const feed = stream ? (async () => {
-      const sink = proc.stdin as import("bun").FileSink;
+      const sink = proc.stdin as FileSink;
       let done = 0;
       try {
         for await (const chunk of chunksOf(Bun.file(stream.path).stream())) {
@@ -177,15 +374,17 @@ export class SshConnection {
       return out;
     } finally { clearTimeout(timer); this.children.delete(proc); }
   }
-  /** whether the master connection still stands: false once ssh exited (the PC went away), was killed (Bun then sets only signalCode) or was closed */
-  connected(): boolean { return !this.closed && this.master !== null && this.master.exitCode === null && this.master.signalCode === null; }
+  /** whether the master connection still stands: false once ssh exited (the PC went away), was killed (Bun then sets only signalCode) or was closed; in direct mode also once a forward ended */
+  connected(): boolean { return !this.closed && !this.broken && this.master !== null && this.master.exitCode === null && this.master.signalCode === null; }
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.master?.kill();
     for (const child of this.children) child.kill();
+    for (const tunnel of this.tunnels) tunnel.kill();
     for (const socket of this.askSockets) socket.destroy();
     this.askServer.close();
+    this.typed.clear(); this.answers.clear();
     rmSync(this.dir, { recursive: true, force: true });
   }
 }

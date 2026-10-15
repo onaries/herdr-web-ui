@@ -105,6 +105,24 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   list-style: none;
 }
 
+/* Pinned rows, agents and workspaces alike, stand first in a card: an edge, not a fill, so a row's
+   hover and selection read inside it as anywhere else, its corner the rows' own plus its padding.
+   The list under it follows a gap below, and each pinned row carries a pin after its name. */
+.sidebar-pinned {
+  padding: var(--space-1);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.sidebar-pinned + ul { margin-top: var(--space-2); }
+
+.sidebar-pin-mark {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--accent);
+}
+
 .workspace {
   display: flex;
   flex-direction: column;
@@ -222,6 +240,13 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
 .workspace-name { flex: 0 1 auto; }
 
+/* a workspace's pin follows its name as an agent's does, a step closer than the line's gap */
+.workspace-copy > .sidebar-pin-mark,
+.workspace-line > .sidebar-pin-mark {
+  align-self: center;
+  margin-left: calc(var(--space-1) - var(--space-2));
+}
+
 /* Settings → Sidebar rows → Two lines: a row says what its pane is doing, and where under it,
    on the height and in the type of an agent's row. */
 .machine-workspaces.is-two-line .workspace-header { min-height: var(--side-row-2); }
@@ -337,9 +362,10 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .sidebar-row-action:hover:not(:disabled) { color: var(--text-strong); }
 }
 
-/* A row's menu button takes no room until the row is hovered, focused, selected or its menu is
-   open; only the name gives way to it. It stays in the focus order (never display: none): the
-   menu and the confirm dialog hand the focus back to it. */
+/* A row's menu button is for touch and narrow layouts, where it takes no room until the row is
+   hovered, focused, selected or its menu is open; only the name gives way to it. A desktop draws
+   none: a right-click or the context-menu key opens the same menu at the row, and hands the
+   focus back where it was. */
 .workspace-actions {
   display: flex;
   align-items: center;
@@ -363,6 +389,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
     overflow: visible;
     opacity: 1;
   }
+}
+
+/* as the tab strip's (TabStrip.css): no "..." button where there is a mouse and room for a right-click */
+@media (pointer: fine) and (min-width: 769px) {
+  .workspace-actions { display: none; }
 }
 
 /* The status cell belongs to the selector (a click or a drag on it is the row's) and is drawn at
@@ -428,6 +459,28 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--space-2);
   border-radius: var(--radius-pill);
   background: currentColor;
+}
+
+/* Settings -> Status indicators, Dots or Symbols: herdr's TUI glyph for every state
+   (lib/status.ts indicatorGlyph) in the color herdr gives it (the --indicator-* tokens): yellow
+   runs, red asks for an answer, teal has finished, green is ready, grey is unknown. BG, which herdr
+   does not have, holds RUN's glyph still; RUN breathes as the dot does. */
+.sidebar-status-glyph {
+  color: var(--indicator-unknown);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sidebar-status[data-status="idle"] .sidebar-status-glyph { color: var(--indicator-idle); }
+.sidebar-status[data-status="working"] .sidebar-status-glyph,
+.sidebar-status[data-status="waiting"] .sidebar-status-glyph { color: var(--indicator-working); }
+.sidebar-status[data-status="blocked"] .sidebar-status-glyph { color: var(--indicator-blocked); }
+.sidebar-status[data-status="done"] .sidebar-status-glyph { color: var(--indicator-done); }
+
+.sidebar-status[data-status="working"] .sidebar-status-glyph {
+  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
 }
 
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }

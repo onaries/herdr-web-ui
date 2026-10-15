@@ -30,7 +30,15 @@ The connection server uses its own operating-system account’s OpenSSH configur
 
 After inspection, **Install and connect** lists the proposed changes. The installer uses a private runtime bundle containing Bun, Node and native node-pty, plus a pinned herdr fallback. It uses an existing herdr where available, starts a daemon only when its socket is absent, and never stops/replaces a running herdr daemon. Agent CLI installation and login remain the remote account’s responsibility. Cancelling a setup closes its SSH processes; already-created remote work is preserved.
 
-Password or encrypted-key authentication also offers registration of an app-specific ed25519 key for unattended reconnection. The private key stays on the connection server under `<stateDir>/ssh/<machine-id>`, mode `0600`; only its public key is appended to the remote account’s `authorized_keys`. The original SSH keys/configuration are preserved. One-time secrets pass through a private askpass Unix socket in memory; they are not stored in jobs or configuration files.
+Password or encrypted-key authentication also offers registration of an app-specific ed25519 key for unattended reconnection. The private key stays on the connection server under `<stateDir>/ssh/<machine-id>`, mode `0600`; only its public key is appended to the remote account’s `authorized_keys`. The original SSH keys/configuration are preserved. One-time secrets pass in memory through a private askpass socket (a Unix socket, or a named pipe on Windows) that answers only a helper presenting its connection's random token; they are not stored in jobs or configuration files.
+
+### A Windows connection server
+
+The web UI can itself run on Windows x64 and connect to other PCs with the system OpenSSH (`C:\Windows\System32\OpenSSH\ssh.exe`) and its `ssh-agent` service. That OpenSSH has no connection sharing (`ControlMaster` fails with `getsockname failed: Not a socket`), so each remote command, upload and port forward is its own `ssh` or `sftp` process instead of a channel of one master, and a long-lived `ssh -N` stands in for the master's liveness; a `ControlMaster` or `ControlPath` in the account's SSH config is switched off for these connections. Each process authenticates again; measured from a Windows PC, about 0.2–0.8 s each, which adds seconds to a setup or reconnect but nothing once the forward stands.
+
+- **Keys:** a key loaded into `ssh-agent` (`ssh-add`) signs every one of those processes, so nothing is asked. When the agent cannot sign, the setup dialog asks for the passphrase or password; the answer is kept in memory for that one connection and answered to the same prompt again, never written, and dropped when the connection closes. An answer that did not authenticate is never replayed, and a prompt that first appears after connecting fails instead of asking. The app key registered after such a sign-in makes later reconnects unattended. Keyboard-interactive authentication is switched off: its prompts are the server's own text, and Windows' ssh passes a prompt to the `.cmd` helper on a command line that cmd parses. A host that takes a password only that way (some PAM or one-time-code setups) needs a key in `ssh-agent` instead.
+- **Host keys:** the askpass helper is a `.cmd` file, and cmd hands it only the first line of a prompt, so OpenSSH's own fingerprint question never reaches the dialog whole. An unknown host is instead read by a connection that offers no authentication (`PreferredAuthentications=none`); its fingerprint is shown in the dialog, and only a **Trust fingerprint** adds the key to `<stateDir>/known_hosts`. Every authenticating connection checks strictly against it. A changed key still fails closed.
+- **Forwards:** each bridge forward is an `ssh -N -L 127.0.0.1:<port>:127.0.0.1:<bridge port>`. `ClearAllForwardings` would drop that `-L` too, so a host whose SSH config adds `LocalForward`, `RemoteForward` or `DynamicForward` is refused with that reason rather than opening them; use an alias without them. A forward that ends counts as the connection ending, and the PC reconnects.
 
 ### Windows PCs
 
@@ -84,7 +92,8 @@ PC registrations and last snapshots persist in `<stateDir>/machines.json`; `HERD
 
 SSH commands ignore configured `LocalForward`, `RemoteForward` and `DynamicForward`
 tunnels. The app adds only its own loopback forward through the existing control socket, without
-rereading host config for that forwarding request.
+rereading host config for that forwarding request. A Windows connection server has no control
+socket and refuses such a host instead ([above](#a-windows-connection-server)).
 
 **Disconnect** closes that PC’s observer, forwards and terminal attachments, preserving remote processes. **Remove PC** additionally forgets its local registration/key; the public key line on the remote account remains visible for manual removal (`herdr-web-ui:<machine-id>`). No unrelated authorized keys are removed.
 

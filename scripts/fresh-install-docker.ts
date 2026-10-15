@@ -18,6 +18,7 @@ const ref = process.argv[3] ?? Bun.spawnSync(["git", "rev-parse", "--abbrev-ref"
 const name = `herdr-fresh-install-${process.pid}`;
 const oneLine = process.env["ONE_LINE"] === "1";
 const NOISE = /cannot set terminal process group|no job control in this shell|tcsetattr: Inappropriate ioctl/;
+const pluginRoot = `$(herdr plugin list --json | bun -e 'const d = JSON.parse(await Bun.stdin.text()); console.log(d.result.plugins.find((p) => p.plugin_id === "devswha.herdr-web-ui")?.plugin_root ?? "")')`;
 
 function originSlug(): string {
   const url = Bun.spawnSync(["git", "remote", "get-url", "origin"]).stdout.toString().trim();
@@ -75,7 +76,7 @@ async function oneLineInstall(): Promise<void> {
     console.log(`  ${/up after \d+s/.exec(health)?.[0] ?? health.trim().split("\n").pop()}`);
   });
   await step("a terminal through the sidecar, on install.sh's Node", async () => {
-    const out = await asUser('cd ~/.config/herdr/plugins/github/devswha.herdr-web-ui-*/ && node server/pty/smoke.mjs && echo PTY_OK');
+    const out = await asUser(`cd "${pluginRoot}" && node server/pty/smoke.mjs && echo PTY_OK`);
     assert.match(out, /PTY_OK/, `the bundled PTY smoke test failed:\n${out.slice(-1500)}`);
   });
   const again = await step("install.sh again: keeps what is there", () => asUser(`cat /tmp/install.sh | sh 2>&1; echo "exit=$?"`));
@@ -114,7 +115,7 @@ async function pluginInstall(): Promise<void> {
     assert.match(health, /"ok":true/);
   });
   await step("a terminal through the sidecar, on the box's own Node", async () => {
-    const out = await asUser('cd ~/.config/herdr/plugins/github/devswha.herdr-web-ui-*/ && node server/pty/smoke.mjs && echo PTY_OK');
+    const out = await asUser(`cd "${pluginRoot}" && node server/pty/smoke.mjs && echo PTY_OK`);
     assert.match(out, /PTY_OK/, `the bundled PTY smoke test failed:\n${out.slice(-1500)}`);
   });
   await step("startup hook: herdr restarts, the app comes back by itself", async () => {

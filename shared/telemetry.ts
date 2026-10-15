@@ -33,10 +33,8 @@ export interface TelemetrySettings {
   density: "compact" | "comfortable";
   sidebarRows: "one" | "two";
   agentOrder: "workspace" | "activity";
-  agentCards: boolean;
-  agentPins: boolean;
-  quietOpenedDone: boolean;
   agentMarks: "color" | "mono";
+  statusIndicators: "classic" | "dots" | "symbols";
   palette: "amber" | "charcoal" | "catppuccin";
   /** the pair System mode switches between */
   paletteLight: "amber" | "charcoal" | "catppuccin";
@@ -53,7 +51,7 @@ export interface TelemetrySettings {
   autoSendQueued: boolean;
   showThinking: boolean;
   keepScreenOn: boolean;
-  language: "system" | "en" | "zh" | "ja" | "ko" | "tr";
+  language: "system" | "en" | "zh" | "ja" | "ko";
   alertsOn: boolean;
   alertInput: boolean;
   alertDone: "off" | "long" | "always";
@@ -106,10 +104,8 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   density: oneOf(["compact", "comfortable"]),
   sidebarRows: oneOf(["one", "two"]),
   agentOrder: oneOf(["workspace", "activity"]),
-  agentCards: booleanValue,
-  agentPins: booleanValue,
-  quietOpenedDone: booleanValue,
   agentMarks: oneOf(["color", "mono"]),
+  statusIndicators: oneOf(["classic", "dots", "symbols"]),
   palette: oneOf(PALETTES),
   paletteLight: oneOf(PALETTES),
   paletteDark: oneOf(PALETTES),
@@ -124,7 +120,7 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   autoSendQueued: booleanValue,
   showThinking: booleanValue,
   keepScreenOn: booleanValue,
-  language: oneOf(["system", "en", "zh", "ja", "ko", "tr"]),
+  language: oneOf(["system", "en", "zh", "ja", "ko"]),
   alertsOn: booleanValue,
   alertInput: booleanValue,
   alertDone: oneOf(["off", "long", "always"]),

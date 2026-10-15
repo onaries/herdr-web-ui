@@ -101,8 +101,15 @@ echo "$CONFIG_DIR/env"
 The file holds `KEY=value` lines. A plugin checkout from 0.3.25 on also reads `.env` there (the name
 herdr's plugin docs use), and `.env` wins where both set a key. An older checkout reads only `env`,
 and in-app updates do not replace the checkout: reinstall the plugin (see [Update](#update)) before
-relying on `.env`. `bun "$(ls -d ~/.config/herdr/plugins/github/devswha.herdr-web-ui-* | head -1)/scripts/plugin.ts" status`
-prints the files it read. After editing, restart the plugin:
+relying on `.env`. The plugin path comes from `herdr plugin list`, since herdr 0.9.4 moved plugin
+checkouts. Run:
+
+```bash
+root=$(herdr plugin list --json | bun -e 'const d = JSON.parse(await Bun.stdin.text()); console.log(d.result.plugins.find((p) => p.plugin_id === "devswha.herdr-web-ui")?.plugin_root ?? "")')
+bun "$root/scripts/plugin.ts" status
+```
+
+This prints the files it read. After editing, restart the plugin:
 
 ```bash
 herdr plugin action invoke devswha.herdr-web-ui.stop
@@ -162,8 +169,16 @@ code, or the exact command still to run. Who gets in:
   ([Access and safety](docs/guide.md#access-and-safety)).
 - Any other device (someone else's, or a LAN or public address) is paired: **Settings → Phone & devices**
   on the PC shows a six-digit code and a QR code; the device enters it once. On a headless PC with
-  no browser, `bun "$(ls -d ~/.config/herdr/plugins/github/devswha.herdr-web-ui-* | head -1)/scripts/plugin.ts" pair`
-  prints the code in the terminal. Do this with the user present; never read a code aloud into a log.
+  no browser, find the plugin path with `herdr plugin list` (herdr 0.9.4 moved plugin checkouts),
+  then run:
+
+  ```bash
+  root=$(herdr plugin list --json | bun -e 'const d = JSON.parse(await Bun.stdin.text()); console.log(d.result.plugins.find((p) => p.plugin_id === "devswha.herdr-web-ui")?.plugin_root ?? "")')
+  bun "$root/scripts/plugin.ts" pair
+  ```
+
+  This prints the code in the terminal. Do this with the user present; never read a code aloud into
+  a log.
 - A token (`HERDR_WEB_TOKEN`) is for scripts and proxies. Only when the user asks for one, create it
   without printing it. For the plugin:
 

@@ -25,12 +25,12 @@ describe("shared preferences", () => {
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ revision: 2, settings: { showThinking: false, theme: "light" }, pins: ["local:w1:p1", "pc:w2:p3"] });
     // a change lays its settings over what is held, and leaves the pins when it names none
-    await put(store, JSON.stringify({ settings: { agentPins: true } }));
-    expect(store.get()).toEqual({ revision: 3, settings: { showThinking: false, theme: "light", agentPins: true }, pins: ["local:w1:p1", "pc:w2:p3"] });
+    await put(store, JSON.stringify({ settings: { agentOrder: "activity" } }));
+    expect(store.get()).toEqual({ revision: 3, settings: { showThinking: false, theme: "light", agentOrder: "activity" }, pins: ["local:w1:p1", "pc:w2:p3"] });
     await put(store, JSON.stringify({ settings: { theme: "dark" }, pins: [] }));
     expect(heard).toEqual([1, 2, 3, 4]);
-    expect(JSON.parse(readFileSync(join(dir, "preferences.json"), "utf8"))).toMatchObject({ revision: 4, settings: { showThinking: false, theme: "dark", agentPins: true }, pins: [] });
-    expect(new PreferenceStore(dir).get()).toEqual({ revision: 4, settings: { showThinking: false, theme: "dark", agentPins: true }, pins: [] });
+    expect(JSON.parse(readFileSync(join(dir, "preferences.json"), "utf8"))).toMatchObject({ revision: 4, settings: { showThinking: false, theme: "dark", agentOrder: "activity" }, pins: [] });
+    expect(new PreferenceStore(dir).get()).toEqual({ revision: 4, settings: { showThinking: false, theme: "dark", agentOrder: "activity" }, pins: [] });
   });
 
   it("refuses what is not a preferences document", async () => {

@@ -114,6 +114,8 @@ const COMPOSER_HEIGHT_STEP = 24;
 const RESIZE_SLACK = { mouse: 3, touch: 10 } as const;
 /** Two taps on the grip this close return the box to its automatic height (iOS may send no dblclick). */
 const DOUBLE_TAP_MS = 350;
+/** How long a Send tapped mid-composition waits for the keyboard to commit the word (as in TerminalInput). */
+const COMMIT_WAIT_MS = 300;
 const COMMAND_SOURCES = ["builtin", "user", "project", "skill", "plugin"] as const;
 export const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
   builtin: "Built in",
@@ -608,9 +610,15 @@ export function Composer({
 
   const filteredCommands = useMemo(
     () => (trigger?.kind === "slash"
-      ? rankSlashCommands(commands.filter((command) => (command.trigger ?? "/") === (trigger.prefix ?? "/")), trigger.query, slashUsage)
+      ? rankSlashCommands(commands.filter((command) => {
+        const prefix = command.trigger ?? "/";
+        if (trigger.start === 0) return prefix === (trigger.prefix ?? "/");
+        // Claude honours a skill mention as permission to invoke it; Codex names skills with `$`.
+        // pi expands /skill:name only at message start, and builtins are whole-message commands.
+        return command.source === "skill" && (agent === "claude" ? prefix === "/" : agent === "codex" && prefix === "$");
+      }), trigger.query, slashUsage, trigger.start > 0 && text[trigger.start - 1] !== "\n")
       : []),
-    [commands, slashUsage, trigger],
+    [agent, commands, slashUsage, text, trigger],
   );
   // a typed query lists the matches in rank order, whatever their source (a plugin command whose
   // word starts with it must not sit under a built-in that only has its letters scattered);
@@ -752,7 +760,7 @@ export function Composer({
 
   const selectCompletion = useCallback(
     (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
-      const replacement = currentTrigger.kind === "slash" ? `${currentTrigger.prefix ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
+      const replacement = currentTrigger.kind === "slash" ? `${(choice as SlashCommand).trigger ?? "/"}${(choice as SlashCommand).name} ` : `@${choice as string} `;
       const completed = applyCompletion(text, currentTrigger, replacement);
       setTextAndCaret(completed.text, completed.caret);
       setMenuDismissed(true);
@@ -852,9 +860,10 @@ export function Composer({
   }, [placeWaitingMentions]);
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
-   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it */
-  const send = useCallback((clearDraft?: string, sendAnyway = false) => {
-    if (!connected || uploading || roomless || sending || text.trim().length === 0) return;
+   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. False: nothing went out */
+  const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
+    if (composingRef.current) return false;
+    if (!connected || uploading || roomless || sending || text.trim().length === 0) return false;
     const sent = text;
     const sentAttachments = attachments;
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -872,18 +881,81 @@ export function Composer({
       for (const attachment of sentAttachments) { URL.revokeObjectURL(attachment.previewUrl); placedMentions.current.delete(attachment.id); }
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
-    if (!composerDrafts.begin(draftKey, sent)) return;
+    if (!composerDrafts.begin(draftKey, sent)) return false;
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
       const result = onSend(text, clearDraft, sendAnyway);
-      if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
+      if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return true; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
+    return true;
   }, [attachments, connected, dictation.forget, draftKey, onSend, roomless, sending, text, uploading]);
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const connectedRef = useRef(connected);
+  connectedRef.current = connected;
+
+  // A Send tapped while the keyboard still composes the last word (Gboard composes every word,
+  // CJK IMEs an open syllable) finishes that word and sends once it commits. The button keeps
+  // focus (above), so nothing in the tap commits the word: a blur does (Chrome ends the
+  // composition on a focus change and fires compositionend at once), and the refocus inside the
+  // same gesture keeps the keyboard up. A keyboard that still does not commit by the tap's
+  // deadline gets the tap withdrawn with a note, so a later commit never sends on its own.
+  const commitWait = useRef<{ timer: ReturnType<typeof setTimeout> | null; deadline: number } | null>(null);
+  const clearCommitWait = useCallback(() => {
+    if (commitWait.current?.timer != null) clearTimeout(commitWait.current.timer);
+    commitWait.current = null;
+  }, []);
+  useEffect(() => clearCommitWait, [clearCommitWait]);
+  // a drop withdraws the tap: a quick reconnect inside the wait must not send it after all
+  useEffect(() => {
+    if (connected || commitWait.current === null) return;
+    clearCommitWait();
+    setNote(t("Not sent: the terminal is disconnected."));
+  }, [clearCommitWait, connected, t]);
+  const awaitCommit = useCallback((current: { timer: ReturnType<typeof setTimeout> | null; deadline: number }) => {
+    if (current.timer !== null) clearTimeout(current.timer);
+    current.timer = null;
+    const left = current.deadline - Date.now();
+    if (left <= 0) { commitWait.current = null; setNote(t("Finish the word, then send.")); return; }
+    setNote(t("Finishing the word…"));
+    current.timer = setTimeout(() => {
+      if (commitWait.current !== current) return;
+      commitWait.current = null;
+      setNote(t("Finish the word, then send."));
+    }, left);
+  }, [t]);
+  const sendTapped = useCallback(() => {
+    // only a tap on a live connection waits for the commit: the wait ends with that connection
+    if (!composingRef.current || !connected) { clearCommitWait(); send(); return; }
+    clearCommitWait();
+    const tapped = { timer: null, deadline: Date.now() + COMMIT_WAIT_MS };
+    commitWait.current = tapped;
+    const element = textareaRef.current;
+    if (element !== null && document.activeElement === element) {
+      element.blur();
+      element.focus({ preventScroll: true });
+    }
+    // committed inside the tap (Chrome, Gboard): compositionend already queued the send, no note
+    if (composingRef.current && commitWait.current === tapped) awaitCommit(tapped);
+  }, [awaitCommit, clearCommitWait, connected, send]);
+  /** The committed word's send, a tick after compositionend, for a tap still waiting. */
+  const sendCommitted = useCallback(() => {
+    const current = commitWait.current;
+    if (current === null) return;
+    // a new composition after the commit: wait out what is left of the tap's window, no more
+    if (composingRef.current) { awaitCommit(current); return; }
+    clearCommitWait();
+    setNote(null);
+    // a send that cannot go out (offline, uploading) says so instead of leaving the tap without a word
+    if (!sendRef.current() && textRef.current.trim().length > 0) {
+      setNote(connectedRef.current ? t("Not sent. Send it again.") : t("Not sent: the terminal is disconnected."));
+    }
+  }, [awaitCommit, clearCommitWait, t]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -1009,8 +1081,8 @@ export function Composer({
     : hint === "no-room" ? t("No room for {file}: remove {count} characters", { file: roomless?.file.name ?? "", count: roomless?.missing ?? 0 })
     : hint === "near-limit" ? t("{count} characters left", { count: MAX_COMPOSER_CHARS - text.length })
     : t(hint === "uploading" ? "Uploading file…" : "Reconnecting… message held here, never queued");
-  /** the strip under the card: the folder and the branch the caller knows; none, no strip */
-  const strip = composerStrip({ cwd, branch, repo: worktreeRepo });
+  /** the strip under the card: the folder and the branch the caller knows; none, or a phone's screen, no strip */
+  const strip = mobile ? null : composerStrip({ cwd, branch, repo: worktreeRepo });
   const worktree = worktreeRepo !== null;
   // Fit only changes to drawn content. Streaming context usage is a fixed-size ring unless
   // its number is open on desktop; transcript/status refreshes need no measurement layout.
@@ -1172,6 +1244,13 @@ export function Composer({
         onCompositionStart={() => { composingRef.current = true; }}
         onCompositionEnd={() => {
           composingRef.current = false;
+          const waiting = commitWait.current;
+          if (waiting !== null) {
+            if (waiting.timer !== null) clearTimeout(waiting.timer);
+            waiting.timer = null;
+            // WebKit updates the value with an input event after compositionend: send the committed word
+            setTimeout(sendCommitted);
+          }
           // after the input that commits the candidate, which WebKit sends after compositionend, and
           // in a frame, after the caret of dictation held through the composition has landed
           setTimeout(() => requestAnimationFrame(() => { if (mounted.current) placeWaitingMentions(); }), 0);
@@ -1304,7 +1383,7 @@ export function Composer({
               // focus stays in the text box: leaving it closes the soft keyboard and moves the button
               // out from under the tap before the click lands
               onPointerDown={(event) => event.preventDefault()}
-              onClick={() => send()}
+              onClick={sendTapped}
             >
               {sending ? <LoaderCircle className="composer-send-progress" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
             </button>

@@ -78,6 +78,24 @@
 /* waiting on its background work: something still runs, the agent does not */
 .tab-strip-dot[data-status="waiting"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-working); }
 
+/* Settings -> Status indicators, Dots or Symbols: the sidebar's herdr glyph and color, held still
+   (Sidebar.css .sidebar-status-glyph). Same specificity as the dot's rules, so order wins. */
+.tab-strip-glyph {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tab-strip-glyph[data-status] { background: transparent; box-shadow: none; }
+.tab-strip-glyph[data-status="working"],
+.tab-strip-glyph[data-status="waiting"] { color: var(--indicator-working); }
+.tab-strip-glyph[data-status="blocked"] { color: var(--indicator-blocked); }
+.tab-strip-glyph[data-status="done"] { color: var(--indicator-done); }
+
 /* The touch menu and + share the strip's small square controls. */
 .tab-strip-menu,
 .tab-strip-add {

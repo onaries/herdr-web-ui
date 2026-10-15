@@ -8,6 +8,44 @@ function clock() {
 }
 
 describe("BackgroundWait", () => {
+  it("holds an OmO turn past the limit while its tasks run, and a Claude turn no longer", () => {
+    const time = clock();
+    const waits = new BackgroundWait(time.now);
+    for (const [pane, capped] of [["omo", false], ["claude", true]] as const) {
+      waits.status(pane, "working");
+      waits.running(pane, 1, null, capped);
+      waits.status(pane, "done");
+    }
+    time.pass(WAIT_LIMIT_MS + 1000);
+    expect(waits.tick()).toEqual(["claude"]);
+    expect([waits.waiting("omo"), waits.waiting("claude")]).toEqual([true, false]);
+    // its last task ends: the grace still applies
+    waits.running("omo", 0, null, false);
+    time.pass(WAIT_GRACE_MS);
+    expect(waits.tick()).toEqual(["omo"]);
+    expect(waits.waiting("omo")).toBe(false);
+  });
+
+  it("holds an OmO turn that ends in the same read as its running tasks are counted", () => {
+    const time = clock();
+    const waits = new BackgroundWait(time.now);
+    // omoChanged gives the session's count first, then the turn's status
+    waits.running("p1", 0, null, false);
+    waits.status("p1", "working");
+    waits.running("p1", 2, null, false);
+    waits.status("p1", "done");
+    expect(waits.waiting("p1")).toBe(true);
+    // the tasks end: held for the grace, and OmO's wake is a turn of its own
+    waits.running("p1", 0, null, false);
+    expect(waits.waiting("p1")).toBe(true);
+    waits.running("p1", 0, null, false);
+    waits.status("p1", "working");
+    expect(waits.waiting("p1")).toBe(false);
+    waits.running("p1", 0, null, false);
+    waits.status("p1", "done");
+    expect(waits.waiting("p1")).toBe(false);
+  });
+
   it("accepts the first working baseline after count-only discovery without overwriting later events", () => {
     const waits = new BackgroundWait(clock().now);
     waits.running("p1", 1, 0);

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { crossSiteFileRead, fileInfo, fileResponse, resolveFilePath } from "./file-view.ts";
+import { crossSiteFileRead, fileInfo, fileResponse, locateFileInFolder, resolveFilePath } from "./file-view.ts";
 
 describe("file view", () => {
   const roots: string[] = [];
@@ -141,6 +141,33 @@ describe("file view", () => {
 describe("locateFile", () => {
   const roots: string[] = [];
   afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+  it("refuses parent traversal outside the Claude scratch fallback folder", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-locate-")); roots.push(root);
+    const folder = join(root, "session");
+    mkdirSync(folder);
+    writeFileSync(join(root, "outside.txt"), "outside");
+    expect(locateFileInFolder("../outside.txt", folder)).toBeNull();
+  });
+
+  it("resolves an in-folder Claude scratch fallback link", () => {
+    const folder = mkdtempSync(join(tmpdir(), "herdr-locate-")); roots.push(folder);
+    mkdirSync(join(folder, "scratchpad"));
+    const path = join(folder, "scratchpad", "notes.txt");
+    writeFileSync(path, "notes");
+    expect(locateFileInFolder("scratchpad/notes.txt", folder)).toMatchObject({ info: { path } });
+  });
+
+  it("refuses absolute paths and symlink escapes from the scratch fallback", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-locate-")); roots.push(root);
+    const folder = join(root, "session");
+    mkdirSync(folder);
+    const outside = join(root, "outside.txt");
+    writeFileSync(outside, "outside");
+    symlinkSync(outside, join(folder, "linked.txt"));
+    expect(locateFileInFolder(outside, folder)).toBeNull();
+    expect(locateFileInFolder("linked.txt", folder)).toBeNull();
+  });
 
   it("finds a bare name deeper in the pane's folder, and lists several of that name", async () => {
     const { mkdirSync } = await import("node:fs");

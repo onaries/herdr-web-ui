@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { repoDiffResponse } from "../server/repo-diff.ts";
@@ -112,7 +112,19 @@ function fixtures(): { main: string; detached: string; plain: string } {
 }
 
 const repos = fixtures();
-const panes = new Map([["pane-main", repos.main], ["pane-conflict", repos.detached], ["pane-plain", repos.plain]]);
+const workspace = join(root, "workspace");
+mkdirSync(workspace);
+git(workspace, "init", "-q", "-b", "main");
+const backend = join(workspace, "backend");
+mkdirSync(join(backend, "server"), { recursive: true });
+git(backend, "init", "-q", "-b", "main");
+writeFileSync(join(backend, "server/test_out_work.py"), "assert old_result\n");
+git(backend, "add", ".");
+git(backend, "commit", "-q", "-m", "nested backend");
+git(workspace, "add", "backend");
+git(workspace, "commit", "-q", "-m", "workspace");
+writeFileSync(join(backend, "server/test_out_work.py"), "assert changed_result\n");
+const panes = new Map([["pane-main", repos.main], ["pane-conflict", repos.detached], ["pane-plain", repos.plain], ["pane-nested", workspace]]);
 const requests: string[] = [];
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -124,7 +136,9 @@ async function api(request: Request, url: URL): Promise<Response | null> {
   if (diff) {
     requests.push(url.pathname);
     const paneId = url.searchParams.get("pane_id");
-    const cwd = (paneId !== null ? panes.get(paneId) : undefined) ?? url.searchParams.get("directory");
+    const base = paneId !== null ? panes.get(paneId) : undefined;
+    const directory = url.searchParams.get("directory");
+    const cwd = directory ? (isAbsolute(directory) ? directory : resolve(base ?? root, directory)) : base;
     if (!cwd) return Response.json({ error: { code: "pane_not_found", message: "no such pane" } }, { status: 404 });
     return repoDiffResponse(diff[2] === "files" ? "files" : "file", cwd, url.searchParams);
   }
@@ -555,6 +569,15 @@ try {
     await closeFiles(page);
     assert.deepEqual(errors, [], `${label}: no errors at the end`);
     console.log(`PASS ${label}: a conflict, a detached HEAD and a folder outside git are each explained`);
+    await page.evaluate((directory) => window.repoDiffQA.openFiles("local", "pane-nested", directory), workspace);
+    await page.evaluate(() => document.querySelector<HTMLButtonElement>(".turn-changed-files button")!.click());
+    await waitRows(page);
+    assert.match(await page.locator(".repo-diff-meta").textContent() ?? "", /Modified.*\+1.*−1/, `${label}: a turn file opens the nested repository's patch`);
+    await shot(page, `nested-turn-${width}-${theme}`);
+    await closeDiff(page);
+    await closeFiles(page);
+    assert.deepEqual(errors, [], `${label}: nested repository navigation has no errors`);
+    console.log(`PASS ${label}: chat file opens the owning nested repository's diff`);
     await context.close();
   }
 

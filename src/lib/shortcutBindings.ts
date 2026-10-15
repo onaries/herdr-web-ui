@@ -1,6 +1,6 @@
 /** Overrides keep the app's Mod+Shift convention; null returns a key to the terminal. */
 export type ShortcutOverrides = Record<string, string | null>;
-export const CUSTOM_SHORTCUT_IDS = ["palette", "find", "toggle-view", "scroll-up", "scroll-down", "toggle-sidebar", "new-session", "previous-pane", "next-pane", "settings"];
+export const CUSTOM_SHORTCUT_IDS = ["palette", "find", "toggle-view", "focus-input", "scroll-up", "scroll-down", "toggle-sidebar", "new-session", "new-tab", "split-right", "split-down", "previous-pane", "next-pane", "settings"];
 
 /**
  * Narrow warning list for Mod+Shift browser/OS reservations; this is not exhaustive:

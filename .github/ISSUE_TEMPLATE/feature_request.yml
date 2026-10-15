@@ -2,6 +2,14 @@ name: Feature request
 description: Something herdr web ui should do, or do differently
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Please wait for a maintainer's yes here before you open a PR for this.
+        A feature should mirror something herdr's own TUI does, or meet a need that widely used
+        coding-agent apps (the Codex and Claude apps, Paseo, T3 Code and the like) already meet.
+        A convenience none of them offers, or a new setting for a narrow case, is likely to be
+        declined. See [Contributing](https://github.com/devswha/herdr-web-ui/blob/main/CONTRIBUTING.md).
   - type: textarea
     id: problem
     attributes:
@@ -30,6 +38,13 @@ body:
         - Access, pairing and devices
         - Install and updates
         - Other
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: Where it exists today
+      description: Does herdr's TUI, or a coding-agent app you use, already do this? Name it and say how it works there, or say that none does.
+    validations:
+      required: true
   - type: textarea
     id: alternatives
     attributes:

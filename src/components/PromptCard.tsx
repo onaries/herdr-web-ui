@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Check, Send } from "lucide-react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
+import { Check, FileText, Send } from "lucide-react";
 
 import "./PromptCard.css";
 
@@ -9,6 +9,7 @@ import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
 import { focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useT } from "../lib/i18n.ts";
+import { OpenFileContext } from "../lib/filePaths.ts";
 
 /**
  * One card is one occurrence of a prompt on one pane: its owner mounts a new card (a `key`) for
@@ -114,6 +115,8 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
     return { text, recommended: text !== label };
   };
   const hasChoices = prompt.options.some((_, index) => index !== prompt.custom_option_index);
+  const openFile = useContext(OpenFileContext);
+  const planFile = prompt.plan_file;
 
   return (
     <section className="prompt-card" ref={cardRef} role="region" aria-label={t("Agent is asking")} aria-busy={pending}
@@ -127,6 +130,12 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
         {/* read, not drawn: the title is the card's one red */}
         <span className="visually-hidden">{t("input needed")}</span>
         <h2>{prompt.title}</h2>
+        {/* the card shows a plan in its short box; the file viewer draws the whole of it as Markdown */}
+        {planFile && openFile && (
+          <button type="button" className="btn btn-ghost prompt-card-plan-file" onClick={() => openFile(planFile)}>
+            <FileText aria-hidden="true" />{t("View plan")}
+          </button>
+        )}
       </header>
       {/* a form of several questions (omo): each one, answered or not, and the one asked now */}
       {prompt.steps && (

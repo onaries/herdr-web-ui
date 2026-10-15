@@ -14,6 +14,8 @@
   --droplet-h: 64px;
   --droplet-drop: 44px;
   --droplet-radius: 24px;
+  --droplet-close: 28px;
+  --droplet-close-inset: var(--space-2);
   position: fixed;
   inset: 0 0 auto 0;
   height: 0;
@@ -78,7 +80,7 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-5) 0 var(--space-4);
+  padding: 0 calc(var(--droplet-close) + var(--droplet-close-inset) + var(--space-3)) 0 var(--space-4);
   border: 0;
   background: transparent;
   color: var(--droplet-text);
@@ -90,8 +92,46 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* a sibling of the card (a button holds no button), laid over its right end */
+.droplet-close {
+  position: absolute;
+  top: calc(var(--droplet-top) + (var(--droplet-h) - var(--droplet-close)) / 2);
+  left: calc(50% + var(--droplet-w) / 2 - var(--droplet-close) - var(--droplet-close-inset));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--droplet-close);
+  height: var(--droplet-close);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--droplet-text-dim);
+  cursor: pointer;
+  pointer-events: auto;
+  translate: 0 var(--droplet-drag, 0px);
+  -webkit-tap-highlight-color: transparent;
+  animation: droplet-reveal 260ms 560ms var(--ease-out) both;
+}
+
+.droplet-close:hover {
+  background: var(--droplet-mark-bg);
+  color: var(--droplet-text);
+}
+
+.droplet-close:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.droplet[data-phase="out"] .droplet-close {
+  animation: droplet-hide 160ms var(--ease-out) both;
+  pointer-events: none;
+}
+
 .droplet:not([data-dragging]) .droplet-blob,
-.droplet:not([data-dragging]) .droplet-card {
+.droplet:not([data-dragging]) .droplet-card,
+.droplet:not([data-dragging]) .droplet-close {
   transition: translate 240ms var(--ease-out);
 }
 
@@ -187,7 +227,7 @@
     gap: var(--space-2);
     width: max-content;
     max-width: var(--droplet-max);
-    padding: 0 var(--space-4) 0 var(--space-2);
+    padding: 0 calc(var(--droplet-close) + var(--droplet-close-inset) + var(--space-2)) 0 var(--space-2);
   }
 
   .droplet-mark {
@@ -245,16 +285,19 @@
   .droplet-goo { filter: drop-shadow(0 10px 14px var(--droplet-shadow)); }
   .droplet-blob,
   .droplet-card::before,
-  .droplet-card > * {
+  .droplet-card > *,
+  .droplet-close {
     animation: droplet-reveal 160ms var(--ease-out) both;
   }
   .droplet[data-phase="out"] .droplet-blob,
   .droplet[data-phase="out"] .droplet-card::before,
-  .droplet[data-phase="out"] .droplet-card > * {
+  .droplet[data-phase="out"] .droplet-card > *,
+  .droplet[data-phase="out"] .droplet-close {
     animation: droplet-hide 160ms var(--ease-out) both;
   }
   .droplet:not([data-dragging]) .droplet-blob,
-  .droplet:not([data-dragging]) .droplet-card {
+  .droplet:not([data-dragging]) .droplet-card,
+  .droplet:not([data-dragging]) .droplet-close {
     transition: none;
   }
 }

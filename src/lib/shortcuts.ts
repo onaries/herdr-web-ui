@@ -9,12 +9,17 @@ export const SHORTCUTS = [
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
   { id: "find", label: "Find in terminal", keys: ["Mod", "Shift", "F"] },
   { id: "toggle-view", label: "Switch chat / terminal", keys: ["Mod", "Shift", "J"] },
+  { id: "focus-input", label: "Focus pane input", keys: ["Mod", "Shift", "E"] },
   { id: "scroll-up", label: "Scroll pane up", keys: ["Mod", "Shift", "PageUp"] },
   { id: "scroll-down", label: "Scroll pane down", keys: ["Mod", "Shift", "PageDown"] },
   { id: "toggle-sidebar", label: "Toggle sidebar", keys: ["Mod", "Shift", "B"] },
   // Mod+Shift+N keeps working where the browser lets it through (the installed app), but Chrome
   // keeps Ctrl+Shift+N for a new incognito window in a tab: O is the one shown, and works in both
   { id: "new-session", label: "New workspace", keys: ["Mod", "Shift", "O"] },
+  // no default key: the free Mod+Shift letters are few, so each person picks one in Settings
+  { id: "new-tab", label: "New tab", keys: [] },
+  { id: "split-right", label: "Split pane right", keys: [] },
+  { id: "split-down", label: "Split pane down", keys: [] },
   { id: "previous-pane", label: "Previous pane", keys: ["Mod", "Shift", "ArrowUp"] },
   { id: "next-pane", label: "Next pane", keys: ["Mod", "Shift", "ArrowDown"] },
   { id: "settings", label: "Settings", keys: ["Mod", "Shift", ","] },
@@ -39,6 +44,7 @@ const KEY_TO_ID: Readonly<Record<string, ShortcutId>> = {
   k: "palette",
   f: "find",
   j: "toggle-view",
+  e: "focus-input",
   PageUp: "scroll-up",
   PageDown: "scroll-down",
   b: "toggle-sidebar",
@@ -166,6 +172,8 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
       if (shortcut === null) return;
       if (event.key.startsWith("Arrow") && keepsArrowsForText(event.target)) return;
       event.preventDefault();
+      // a held chord repeats: a tab or a split is made once per press, not once per key repeat
+      if (event.repeat && (shortcut === "new-tab" || shortcut === "split-right" || shortcut === "split-down")) return;
       switch (shortcut) {
         case "palette":
           actions.openPalette();
@@ -175,6 +183,9 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
           break;
         case "toggle-view":
           actions.toggleView();
+          break;
+        case "focus-input":
+          actions.focusInput();
           break;
         case "scroll-up":
           actions.scrollPage(-1);
@@ -187,6 +198,15 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
           break;
         case "new-session":
           actions.openNewSession();
+          break;
+        case "new-tab":
+          actions.openNewTab();
+          break;
+        case "split-right":
+          actions.splitPane?.("right");
+          break;
+        case "split-down":
+          actions.splitPane?.("down");
           break;
         case "previous-pane":
           actions.selectAdjacentPane(-1);

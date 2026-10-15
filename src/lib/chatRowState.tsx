@@ -4,7 +4,6 @@ import { createContext, useCallback, useContext, useState, type ComponentProps }
 export interface ChatRowMemory {
   readonly toggles: Map<string, boolean | null>;
   readonly outputs: Map<string, string>;
-  readonly outputChanged: () => void;
 }
 
 export const ChatRowMemoryContext = createContext<ChatRowMemory | null>(null);

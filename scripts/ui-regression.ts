@@ -481,14 +481,6 @@ try {
   }
   backgroundPeer = null;
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await page.keyboard.press("ControlOrMeta+Shift+Comma");
-  await openSettingsPage(page, "Appearance");
-  const quietFinishes = page.getByRole("switch", { name: "Quiet opened finishes", exact: true });
-  const quietBefore = await quietFinishes.getAttribute("aria-checked");
-  if (quietBefore !== "true") await quietFinishes.click();
-  await page.getByRole("button", { name: "Close settings", exact: true }).click();
-  await waitingBadge.waitFor();
-  assert.equal((await waitingBadge.textContent())?.trim(), "BG", "Quiet opened finishes cannot hide a background hold");
   if (process.env.UI_EVIDENCE_DIR) {
     const viewport = page.viewportSize()!;
     const themeBefore = await page.evaluate(() => document.documentElement.dataset.theme);
@@ -509,12 +501,6 @@ try {
     }
     await page.setViewportSize(viewport);
     await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, themeBefore);
-  }
-  if (quietBefore !== "true") {
-    await page.keyboard.press("ControlOrMeta+Shift+Comma");
-    await openSettingsPage(page, "Appearance");
-    await page.getByRole("switch", { name: "Quiet opened finishes", exact: true }).click();
-    await page.getByRole("button", { name: "Close settings", exact: true }).click();
   }
   await unrouteBackground();
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -1476,8 +1462,7 @@ try {
   const repoRow = workspaceHeader(repoWorkspace.workspace.workspace_id);
   await repoRow.waitFor();
   // herdr has not marked this workspace as a repository's yet: its row is where the first worktree starts
-  await repoRow.hover();
-  await repoRow.locator(".row-menu-toggle").click();
+  await repoRow.locator(".workspace-select").click({ button: "right" });
   const unmarkedRepoMenu = page.getByRole("menu");
   await unmarkedRepoMenu.getByRole("menuitem", { name: "New worktree", exact: true }).waitFor();
   await page.keyboard.press("Escape");
@@ -1518,12 +1503,11 @@ try {
   await repoRow.locator(".workspace-select").click();
   await repoRow.locator(".workspace-toggle").click();
   await initialRow.waitFor({ state: "detached" });
-  await repoRow.hover();
-  await repoRow.locator(".row-menu-toggle").click();
+  await repoRow.locator(".workspace-select").click({ button: "right" });
   const repoMenu = page.getByRole("menu");
   await repoMenu.waitFor();
   const repoActions = await repoMenu.getByRole("menuitem").allTextContents();
-  assert.deepEqual(repoActions, ["Rename workspace", "Close group", "New worktree", "Open worktree…", "Expand"],
+  assert.deepEqual(repoActions, ["Pin workspace", "Rename workspace", "Close group", "New worktree", "Open worktree…", "Expand"],
     "a folded repository group has native workspace and worktree actions");
   await page.keyboard.press("Escape");
   await repoMenu.waitFor({ state: "detached" });
@@ -1571,8 +1555,7 @@ try {
   assert.equal(await childHeader.locator(".worktree-workspace-label").textContent(), "browser/sidebar", "a pre-create inventory cannot erase the new branch");
   assert.equal(await childHeader.locator(".workspace-name").textContent(), "Sidebar redesign", "nor the name it was given");
   await page.unroute("**/api/worktree/list?*");
-  await childHeader.hover();
-  await childHeader.locator(".row-menu-toggle").click();
+  await childHeader.locator(".workspace-select").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Rename workspace", exact: true }).click();
   const worktreeRename = childHeader.getByRole("textbox", { name: "Workspace name", exact: true });
   assert.equal(await childHeader.locator(".workspace-select").getAttribute("draggable"), "false", "an editing field disables row dragging");
@@ -1625,36 +1608,55 @@ try {
   await childHeader.locator('.workspace-select[aria-current="true"]').waitFor();
   assert.equal(await repoToggle.getAttribute("aria-expanded"), "false", "an explicitly selected child remains visible within a folded group");
   await repoToggle.click();
-  // reorder is group-aware: the repository's row moves up past the group before it, as one, and
-  // its lone worktree has no sibling to move among, so nothing is sent for it
+  // reorder is group-aware: the repository's row moves up past the workspace above it with its
+  // worktree (herdr moves only the workspace named), and its lone worktree has no sibling to move
+  // among, so nothing is sent for it
   const moves: number[] = [];
   await page.route("**/api/workspace/move", async (route) => { moves.push(route.request().postDataJSON().insert_index as number); await route.continue(); });
-  const orderBefore = (await herdrRpc<{ snapshot: { workspaces: { workspace_id: string }[] } }>("session.snapshot", {})).snapshot.workspaces.map((workspace) => workspace.workspace_id);
+  const herdrOrder = async () => (await herdrRpc<{ snapshot: { workspaces: { workspace_id: string }[] } }>("session.snapshot", {})).snapshot.workspaces.map((workspace) => workspace.workspace_id);
+  const orderBefore = await herdrOrder();
+  const repoId = repoWorkspace.workspace.workspace_id;
+  const above = orderBefore[orderBefore.indexOf(repoId) - 1]!;
   await repoHeader.locator(".workspace-select").focus();
   await page.keyboard.press("Alt+ArrowUp");
-  await until(() => moves.length === 1, "the repository's row moved up as a group");
-  assert.equal(moves[0], orderBefore.indexOf(repoWorkspace.workspace.workspace_id) - 1, "it lands before the group above it");
+  await until(async () => {
+    const order = await herdrOrder();
+    return order[order.indexOf(repoId) + 1] === worktree.workspace_id && order.indexOf(above) > order.indexOf(worktree.workspace_id);
+  }, "the repository's row and its worktree moved up past the workspace above them");
+  const sent = moves.length;
   await childHeader.locator(".workspace-select").focus();
   await page.keyboard.press("Alt+ArrowDown");
   await page.waitForTimeout(400);
-  assert.equal(moves.length, 1, "a lone worktree has nowhere to move");
+  assert.equal(moves.length, sent, "a lone worktree has nowhere to move");
   await page.unroute("**/api/workspace/move");
   writeFileSync(join(worktree.path, "unsaved.txt"), "dirty\n");
-  await childHeader.hover();
-  await childHeader.locator(".row-menu-toggle").click();
+  // a desktop draws no row ⋯: the context-menu key opens the menu at the focused row
+  await childHeader.locator(".workspace-select").focus();
+  await page.keyboard.press("Shift+F10");
   const childMenu = page.getByRole("menu");
   await childMenu.waitFor();
   const childActions = await childMenu.getByRole("menuitem").allTextContents();
-  assert.deepEqual(childActions, ["Rename workspace", "Close workspace", "Delete worktree checkout…"], "a worktree workspace's menu");
+  assert.deepEqual(childActions, ["Pin workspace", "Rename workspace", "Close workspace", "Delete worktree checkout…"], "a worktree workspace's menu");
   await page.keyboard.press("Escape");
   await childMenu.waitFor({ state: "detached" });
   await childHeader.locator(".workspace-select").click({ button: "right" });
   await childMenu.waitFor();
   assert.deepEqual(await childMenu.getByRole("menuitem").allTextContents(), childActions,
-    "a linked checkout's explicit menu and right-click menu have identical actions");
+    "a linked checkout's keyboard menu and right-click menu have identical actions");
   await page.keyboard.press("Escape");
   await childMenu.waitFor({ state: "detached" });
-  await childHeader.locator(".row-menu-toggle").click();
+  // pinned, the worktree leaves its repository's group for the pinned card at the top; unpinned, it returns
+  await childHeader.locator(".workspace-select").click({ button: "right" });
+  await childMenu.getByRole("menuitem", { name: "Pin workspace", exact: true }).click();
+  const pinnedCard = page.locator(".workspace-list-pinned");
+  await pinnedCard.locator(`.workspace-group[data-workspace="${worktree.workspace_id}"]`).waitFor();
+  assert.equal(await page.locator(`.worktree-children .workspace-group[data-workspace="${worktree.workspace_id}"]`).count(), 0, "a pinned worktree leaves its group");
+  assert.equal(await pinnedCard.locator(".sidebar-pin-mark").count(), 1, "the pinned row carries its pin");
+  await pinnedCard.locator(`.workspace-group[data-workspace="${worktree.workspace_id}"] .workspace-select`).click({ button: "right" });
+  await childMenu.getByRole("menuitem", { name: "Unpin workspace", exact: true }).click();
+  await pinnedCard.waitFor({ state: "detached" });
+  await childRow.waitFor();
+  await childHeader.locator(".workspace-select").click({ button: "right" });
   await childMenu.waitFor();
   await childMenu.getByRole("menuitem", { name: "Delete worktree checkout…", exact: true }).click();
   const deleteConfirm = page.getByRole("alertdialog");
@@ -2209,18 +2211,22 @@ try {
   // is automatic, so it must not offer a sign-out action that cannot lock the app.
   assert.equal(await page.getByRole("button", { name: "Sign out", exact: true }).count(), 0);
   await page.locator(`.pane-select[title^="${created.pane_id} —"]`).click();
-  // closed from the row's ⋯ menu; the workspace's pane goes with it, so a confirm asks first
-  await page.locator(".pane-item.is-selected .row-menu-toggle").click();
+  // closed from the row's menu, which a desktop opens with the context-menu key or a right-click
+  // (it draws no row ⋯); the workspace's pane goes with it, so a confirm asks first
+  const selectedRow = page.locator(".pane-item.is-selected .pane-select");
+  assert.equal(await page.locator(".pane-item.is-selected .row-menu-toggle").isVisible(), false, "a desktop draws no row ⋯");
+  await selectedRow.focus();
+  await page.keyboard.press("Shift+F10");
   const rowMenu = page.getByRole("menu");
   await rowMenu.waitFor();
   const rowActions = await rowMenu.getByRole("menuitem").allTextContents();
-  assert.deepEqual(rowActions, ["Rename workspace", "Close workspace"], "the workspace menu keeps workspace scope");
-  // Escape puts the menu away and the focus back on its button; Enter there opens it again
+  assert.deepEqual(rowActions, ["Pin workspace", "Rename workspace", "Close workspace"], "the workspace menu keeps workspace scope");
+  // Escape puts the menu away and the focus back on the row
   await page.keyboard.press("Escape");
   await rowMenu.waitFor({ state: "detached" });
-  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("row-menu-toggle") ?? false), true, "Escape returns focus to the row's ⋯");
+  assert.equal(await selectedRow.evaluate((row) => document.activeElement === row), true, "Escape returns focus to the row");
   // A right-click opens the same menu at the pointer without changing the selection.
-  await page.locator(".pane-item.is-selected .pane-select").click({ button: "right" });
+  await selectedRow.click({ button: "right" });
   await rowMenu.waitFor();
   assert.equal(await page.locator(".pane-item.is-selected .row-menu-toggle").getAttribute("aria-expanded"), "true", "a right-click opens the row's own menu");
   assert.deepEqual(await rowMenu.getByRole("menuitem").allTextContents(), rowActions, "both workspace menu entry points have identical actions and order");
@@ -2228,19 +2234,19 @@ try {
   await until(async () => await page.evaluate(() => document.activeElement?.getAttribute("role") === "menuitem"), "the menu takes the focus");
   await page.keyboard.press("Escape");
   await rowMenu.waitFor({ state: "detached" });
-  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("row-menu-toggle") ?? false), true, "Escape after a right-click returns focus to the row's ⋯");
-  await page.keyboard.press("Enter");
+  assert.equal(await selectedRow.evaluate((row) => document.activeElement === row), true, "Escape after a right-click returns focus to the row");
+  await page.keyboard.press("Shift+F10");
   await rowMenu.getByRole("menuitem", { name: "Close workspace", exact: true }).click();
   const confirmClose = page.getByRole("alertdialog");
   await confirmClose.waitFor();
   await until(async () => await page.evaluate(() => document.activeElement?.textContent === "Cancel"), "the confirm starts on Cancel");
-  // a no gives the focus back to the row's ⋯; Tab stays inside the confirm
+  // a no gives the focus back to the row; Tab stays inside the confirm
   await page.keyboard.press("Tab");
   assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Close", "Tab moves to the confirm's action");
   await page.keyboard.press("Escape");
   await confirmClose.waitFor({ state: "detached" });
-  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("row-menu-toggle") ?? false), true, "cancelling the confirm returns focus to the row's ⋯");
-  await page.keyboard.press("Enter");
+  assert.equal(await selectedRow.evaluate((row) => document.activeElement === row), true, "cancelling the confirm returns focus to the row");
+  await page.keyboard.press("Shift+F10");
   await rowMenu.getByRole("menuitem", { name: "Close workspace", exact: true }).click();
   await confirmClose.waitFor();
   await confirmClose.getByRole("button", { name: "Close", exact: true }).click();
@@ -2282,27 +2288,52 @@ try {
   csp.push(await watchCsp(securedPage));
   await securedContext.request.post(`${securedOrigin}/api/auth`, { data: { token: "browser-test-token" } });
   await securedPage.goto(`${securedOrigin}/?pane=${encodeURIComponent(securedWorkspace.root_pane.pane_id)}`);
-  await securedPage.getByRole("button", { name: "Sign out", exact: true }).waitFor();
+  await securedPage.getByRole("button", { name: "Command palette", exact: true }).waitFor();
+  assert.equal(await securedPage.getByRole("button", { name: "Sign out", exact: true }).count(), 0, "sign out is not in the header");
   await securedPage.keyboard.press("ControlOrMeta+Shift+K");
-  await securedPage.getByRole("option", { name: "Sign out", exact: true }).waitFor();
+  await securedPage.getByRole("dialog", { name: "Command palette", exact: true }).waitFor();
+  assert.equal(await securedPage.getByRole("option", { name: "Sign out", exact: true }).count(), 0, "the palette cannot bypass confirmation");
   // Simulate a late terminal focus change: Escape must still dismiss the modal.
-  await securedPage.getByRole("button", { name: "Sign out", exact: true }).focus();
+  await securedPage.getByRole("button", { name: "Command palette", exact: true }).focus();
   await securedPage.keyboard.press("Escape");
   await securedPage.getByRole("dialog", { name: "Command palette", exact: true }).waitFor({ state: "hidden" });
-  await securedPage.getByRole("button", { name: "Sign out", exact: true }).click();
+  await securedPage.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(securedPage, "Phone & devices");
+  const settingsSignOut = securedPage.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Sign out", exact: true });
+  const signOutConfirm = securedPage.getByRole("alertdialog", { name: "Sign out of this browser?", exact: true });
+  await settingsSignOut.click();
+  await signOutConfirm.getByRole("button", { name: "Cancel", exact: true }).click();
+  assert.equal((await securedContext.request.get(`${securedOrigin}/api/session`)).status(), 200, "cancel keeps the session");
+  await settingsSignOut.click();
+  // Fail only the sign-out request: health must still see the real authenticated cookie.
+  await securedPage.route("**/api/auth", (route) => route.request().method() === "DELETE"
+    ? route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Sign-out test failure" } } })
+    : route.continue());
+  await signOutConfirm.getByRole("button", { name: "Sign out", exact: true }).click();
+  await signOutConfirm.getByRole("alert").waitFor();
+  assert.equal(await signOutConfirm.getByRole("button", { name: "Cancel", exact: true }).isEnabled(), true);
+  assert.equal(await signOutConfirm.getByRole("button", { name: "Sign out", exact: true }).isEnabled(), true);
+  assert.equal((await securedContext.request.get(`${securedOrigin}/api/session`)).status(), 200, "failed sign out keeps the session");
+  await securedPage.unroute("**/api/auth");
+  await signOutConfirm.getByRole("button", { name: "Sign out", exact: true }).click();
   await securedPage.getByTestId("token-gate").waitFor();
   assert.equal((await securedContext.request.get(`${securedOrigin}/api/session`)).status(), 401);
   const pairing = await securedContext.request.post(`${securedOrigin}/api/devices/pair/start`, { headers: { authorization: "Bearer browser-test-token", "x-herdr-machine": "1" } });
   const { code } = await pairing.json();
   await securedContext.request.post(`${securedOrigin}/api/devices/pair`, { data: { code, label: "Browser test device" } });
+  await securedPage.setViewportSize({ width: 390, height: 844 });
   await securedPage.reload();
-  await securedPage.getByRole("button", { name: "Sign out", exact: true }).click();
+  await securedPage.locator(".app-header.is-zoned").waitFor();
+  await securedPage.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(securedPage, "Phone & devices");
+  await settingsSignOut.click();
+  await signOutConfirm.getByRole("button", { name: "Sign out", exact: true }).click();
   await securedPage.getByTestId("token-gate").waitFor();
   assert.equal((await securedContext.request.get(`${securedOrigin}/api/session`)).status(), 401);
   if (securedEvidence) await securedEvidence.finish();
   await securedContext.close();
   assertCspClean(csp, "the token gate loads with no CSP violation");
-  console.log("PASS token and paired-device sign out return to the access gate");
+  console.log("PASS Settings sign out: cancel preserves access, failure permits retry, token and paired-device sign out return to the access gate");
 } catch (error) {
   for (const evidence of evidenceSessions) {
     if (evidence.isOpen()) await evidence.captureFailure(error);

@@ -2,6 +2,8 @@ import { createContext, useContext, useState } from "react";
 import type { ConversationPart } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
+import { ApiError } from "../lib/api.ts";
+import { pathParts } from "../lib/filePaths.ts";
 import { diffErrorMessage, type RepoDiffTarget } from "../lib/repoDiff.ts";
 import { repositoryTurnPath, turnChangedFiles } from "../lib/turnChangedFiles.ts";
 import "./TurnChangedFiles.css";
@@ -27,13 +29,29 @@ export function TurnChangedFiles({ paneId, parts }: { paneId: string; parts: rea
     setError(null);
     const query = { paneId, directory: context.cwd, scope: "workspace", base: null, head: null } as const;
     try {
-      const list = await fetchRepoDiffFiles(query);
-      const relative = repositoryTurnPath({ path, cwd: context.cwd, root: list.repository.root });
+      let list = await fetchRepoDiffFiles(query);
+      let relative = repositoryTurnPath({ path, cwd: context.cwd, root: list.repository.root });
       if (relative === null) {
         setError(t("This file is outside the pane's repository."));
         return;
       }
-      const file = list.files.find((item) => item.path === relative || item.old_path === relative);
+      let file = list.files.find((item) => item.path === relative || item.old_path === relative);
+      const folder = pathParts(relative).folder;
+      if (file === undefined && folder !== "") {
+        try {
+          // A workspace can hold submodules: ask git in the file's folder, not its parent repository.
+          const nested = await fetchRepoDiffFiles({ ...query, directory: `${list.repository.root}/${folder}` });
+          const nestedPath = repositoryTurnPath({ path: relative, cwd: list.repository.root, root: nested.repository.root });
+          if (nestedPath !== null) {
+            list = nested;
+            relative = nestedPath;
+            file = list.files.find((item) => item.path === relative || item.old_path === relative);
+          }
+        } catch (cause) {
+          // A deleted file's folder may also be gone; keep the original comparison's stale result.
+          if (!(cause instanceof ApiError) || cause.code !== "invalid_cwd") throw cause;
+        }
+      }
       context.openDiff({ ...query, machineId, directory: list.repository.root, path: file?.path ?? relative, oldPath: file?.old_path ?? null });
     } catch (cause) {
       setError(diffErrorMessage(t, cause));

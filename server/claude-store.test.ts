@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
-import { AmbiguousClaudeStore, claudeProcessSession, claudeStoreKey, claudeProjectDir, claudeTranscriptFile, configDirInPsLine, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeProcessSession, claudeSessionTempDir, claudeStoreKey, claudeProjectDir, claudeTranscriptFile, configDirInPsLine, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import type { ProcessRow } from "./windows-processes.ts";
 
 const NATIVE = process.platform === "linux" || process.platform === "darwin";
@@ -498,5 +498,29 @@ describe("a Windows Claude's store", () => {
     expect(await storeOf(dir)).toBeNull();
     record(join(dir, ".claude-second"));
     expect(await storeOf(dir)).toBe(join(dir, ".claude-second"));
+  });
+});
+
+describe("claudeSessionTempDir", () => {
+  const session = "6b93e6b7-7279-449a-b4ab-66e91f7a21d9";
+  const transcript = `/home/u/.claude/projects/-home-u-project/${session}.jsonl`;
+  const uid = process.getuid?.();
+  let root: string;
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), "claude-temp-")); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it.skipIf(uid === undefined)("finds the session's folder under the transcript's project", async () => {
+    const dir = join(root, `claude-${uid}`, "-home-u-project", session);
+    mkdirSync(join(dir, "scratchpad"), { recursive: true });
+    expect(await claudeSessionTempDir(transcript, [join(root, "missing"), root], uid)).toBe(dir);
+  });
+
+  it.skipIf(uid === undefined)("is null without the folder, for another user's base, or for a name that is not a session", async () => {
+    expect(await claudeSessionTempDir(transcript, [root], uid)).toBeNull();
+    mkdirSync(join(root, `claude-${uid! + 1}`, "-home-u-project", session), { recursive: true });
+    // the base exists but under another uid's name; and a base this user owns is not that uid's
+    expect(await claudeSessionTempDir(transcript, [root], uid! + 1)).toBeNull();
+    expect(await claudeSessionTempDir("/home/u/.claude/projects/-home-u-project/notes.jsonl", [root], uid)).toBeNull();
+    expect(await claudeSessionTempDir(transcript, [root], undefined)).toBeNull();
   });
 });

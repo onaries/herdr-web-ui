@@ -206,21 +206,22 @@ try {
     "selecting a split pane keeps the workspace label in Spaces");
   // Both entry points act on the workspace clicked, without changing the selected pane.
   const alphaWorkspace = workspaceSelector(alpha.workspaceId);
-  await page.locator(`${alphaWorkspace} .workspace-header`).hover();
-  await page.locator(`${alphaWorkspace} .row-menu-toggle`).click();
+  // a desktop draws no row ⋯: the context-menu key opens the menu at the focused row
+  await page.locator(`${alphaWorkspace} .workspace-select`).focus();
+  await page.keyboard.press("Shift+F10");
   const workspaceMenu = page.getByRole("menu");
   await workspaceMenu.waitFor();
   const workspaceActions = await workspaceMenu.getByRole("menuitem").allTextContents();
-  assert.deepEqual(workspaceActions, ["Rename workspace", "Close workspace"],
-    "a non-Git workspace's explicit menu contains only native workspace actions");
+  assert.deepEqual(workspaceActions, ["Pin workspace", "Rename workspace", "Close workspace"],
+    "a non-Git workspace's keyboard menu contains only native workspace actions");
   assert.equal(await page.locator(paneSelector(split.pane.pane_id)).getAttribute("aria-current"), "true",
-    "opening another workspace's explicit menu keeps the active pane");
+    "opening another workspace's keyboard menu keeps the active pane");
   await page.keyboard.press("Escape");
   await workspaceMenu.waitFor({ state: "detached" });
   await page.locator(`${alphaWorkspace} .workspace-select`).click({ button: "right" });
   await workspaceMenu.waitFor();
   assert.deepEqual(await workspaceMenu.getByRole("menuitem").allTextContents(), workspaceActions,
-    "right-click and the explicit workspace menu have identical actions and order");
+    "right-click and the keyboard workspace menu have identical actions and order");
   assert.equal(await page.locator(paneSelector(split.pane.pane_id)).getAttribute("aria-current"), "true",
     "right-clicking another workspace keeps the active pane");
   await page.keyboard.press("Escape");

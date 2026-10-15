@@ -160,12 +160,19 @@ describe("lanExposed", () => {
 
   it("names the one state a warning belongs to: bound past this PC, no token, nothing paired", () => {
     expect(lanExposed(open)).toBe(true);
-    // every address, the LAN, the tailnet, a name: all reachable beyond this PC
-    for (const hostname of ["::", "[::]", "192.168.0.10", "100.64.0.2", "fd7a::1", "my-pc.local", "127.devbox.example", "localhost.example"]) {
+    // wildcard, LAN, other IPv6 and DNS binds still warn, even on a PC with Tailscale
+    for (const hostname of ["::", "[::]", "192.168.0.10", "fd7a::1", "my-pc.local", "127.devbox.example", "localhost.example", "100.63.255.255", "100.128.0.0", "fd7a:115c:a1df:ffff:ffff:ffff:ffff:ffff", "fd7a:115c:a1e1::", "100.64.0.999", "100.64.0.2.example"]) {
       expect(isLoopbackBind(hostname)).toBe(false);
       expect(warned({ hostname })).toBe(true);
     }
   });
+
+  for (const hostname of ["100.64.0.0", "100.64.0.2", "100.127.255.255", "fd7a:115c:a1e0::", "fd7a:115c:a1e0::1", "fd7a:115c:a1e0:ffff:ffff:ffff:ffff:ffff", "FD7A:115C:A1E0:0:0:0:0:1", "[fd7a:115c:a1e0::1]", " 100.64.0.2 "]) {
+    it(`does not warn for a Tailscale-only bind at ${hostname}`, () => {
+      expect(isLoopbackBind(hostname)).toBe(false);
+      expect(warned({ hostname })).toBe(false);
+    });
+  }
 
   it("is quiet whenever one of the three is not the case", () => {
     // a loopback bind is unreachable from the network however it is addressed or spelt

@@ -17,10 +17,6 @@
   overflow-anchor: none;
 }
 
-.chat-view.chat-view-with-find {
-  top: 0;
-}
-
 .chat-transcript.chat-transcript-virtual {
   width: min(calc(100% - 2 * var(--space-4)), var(--chat-w));
   display: block;
@@ -36,16 +32,8 @@
   padding-bottom: calc(var(--space-3) + var(--space-5));
 }
 
-.chat-virtual-row[data-chat-match] {
-  background: var(--accent-tint);
-}
-
 .chat-virtual-header {
   padding-top: calc(var(--space-4) + var(--header-over, 0px));
-}
-
-.chat-virtual-header-with-find {
-  padding-top: var(--space-4);
 }
 
 .chat-virtual-footer {

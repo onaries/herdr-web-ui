@@ -19,6 +19,7 @@ import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
+import { movedTabOrder } from "../../src/lib/tabOrder.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import machinesFixture from "./fixtures/machines.json";
@@ -898,10 +899,11 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/workspace/move") {
     const body = await bodyOf(init, input);
     const snap = snapshot();
-    const index = snap.workspaces.findIndex((w) => w.workspace_id === body["workspace_id"]);
-    if (index < 0) return error("not_found", "no such workspace", 404);
-    const [workspace] = snap.workspaces.splice(index, 1);
-    snap.workspaces.splice(Math.max(0, Math.min(snap.workspaces.length, Number(body["insert_index"] ?? 0))), 0, workspace!);
+    const workspace = snap.workspaces.find((w) => w.workspace_id === body["workspace_id"]);
+    if (!workspace) return error("not_found", "no such workspace", 404);
+    const ids = snap.workspaces.map((workspace) => workspace.workspace_id);
+    const order = movedTabOrder(ids, workspace.workspace_id, Number(body["insert_index"] ?? 0));
+    if (order) snap.workspaces.sort((a, b) => order.indexOf(a.workspace_id) - order.indexOf(b.workspace_id));
     snap.workspaces.forEach((w, i) => { w.number = i + 1; });
     structureChanged();
     return json({ ok: true });

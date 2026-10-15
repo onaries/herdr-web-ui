@@ -6,7 +6,6 @@ import { useMachineApi } from "../lib/machineContext.tsx";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
 import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitContext } from "../lib/paneSubmitContext.ts";
 import { cachedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
-import { PaneAwayContext } from "../lib/paneAwayContext.ts";
 import { ApiError, routeMissing } from "../lib/api.ts";
 import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
 import { layoutTopology, paneContextPress, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
@@ -59,8 +58,6 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const narrow = useMediaQuery(SOLO_PANE_QUERY);
   const api = useMachineApi();
   const canvas = useRef<HTMLDivElement>(null);
-  // Survives workspace/tab switches, but the PC-keyed canvas owns this memory exclusively.
-  const awayReleased = useRef(false);
   const [submits] = useState(() => new PaneSubmitRetention());
   const retainedIds = useSyncExternalStore(submits.subscribe, submits.snapshot, submits.snapshot);
   const lastCells = useRef(new Map<string, ReturnType<typeof layoutCells>[number]>());
@@ -230,7 +227,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   // no room for a split, so it shows the selected pane alone the same way and leaves herdr's
   // layout as it is; the tab's menu lists the other panes (TabStrip).
   // a phone's hidden siblings take the whole canvas too, so each keeps the grid it is shown with
-  return <PaneSubmitContext.Provider value={submits}><PaneAwayContext.Provider value={awayReleased}><div className={`pane-canvas${!pane && presented ? " is-pending" : ""}`} ref={canvas} aria-busy={!pane && presented ? true : undefined}>
+  return <PaneSubmitContext.Provider value={submits}><div className={`pane-canvas${!pane && presented ? " is-pending" : ""}`} ref={canvas} aria-busy={!pane && presented ? true : undefined}>
     {cells.length === 0 && renderPane(pane, true, false)}
     {mountedCells.map((cell) => {
       const item = snapshot?.panes.find((item) => item.pane_id === cell.paneId);
@@ -313,7 +310,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     {closing && <ConfirmDialog title={t("Close pane {name}?", { name: displayPaneTitle(closing) })}
       body={t("The pane's running processes will stop. Closing its last pane also closes the workspace.")}
       confirmLabel={t("Close pane")} onClose={() => setClosing(null)} onConfirm={async () => { await api.closePane(closing.pane_id); setClosing(null); onChanged(); }} />}
-  </div></PaneAwayContext.Provider></PaneSubmitContext.Provider>;
+  </div></PaneSubmitContext.Provider>;
 }
 
 function PaneRename({ pane, onClose, onSave }: { pane: HerdrPane; onClose: () => void; onSave: (label: string) => Promise<void> }) {

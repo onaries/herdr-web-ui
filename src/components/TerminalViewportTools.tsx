@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import type { Terminal } from "@xterm/xterm";
 import type { PaneFindResponse, PaneScrollInfo } from "../../shared/protocol.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
@@ -10,7 +11,7 @@ import { scrollPollDelay, validScroll, visibleFindRects, type FindCellRect } fro
 import "./TerminalViewportTools.css";
 
 export interface TerminalSearchState { query: string; result: PaneFindResponse }
-interface Box { left: number; top: number; width: number; height: number; cols: number; rows: number }
+interface Box { left: number; top: number; width: number; height: number; cols: number; rows: number; anchorX: number; anchorY: number }
 interface Props {
   viewportIntent: ViewportIntentGate;
   terminal: Terminal | null;
@@ -68,13 +69,20 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       && getComputedStyle(terminal.element).visibility !== "hidden";
     const clearHits = () => { data = null; lastKey = ""; setHits((old) => old.length ? [] : old); };
     const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+    const mount = terminal.element?.parentElement;
     /** Box geometry: only a resize, a mount scroll or a refresh moves it, never a rendered frame. */
     const paintBox = () => {
       if (!alive || !showing()) return;
       const parent = layer.current?.parentElement;
       if (!screen || !parent) return;
       const rect = screen.getBoundingClientRect(), outer = parent.getBoundingClientRect();
-      const next = { left: rect.left - outer.left, top: rect.top - outer.top, width: rect.width, height: rect.height, cols: terminal.cols, rows: terminal.rows };
+      // The jump button sits at the grid's bottom-right corner clipped to what the mount shows: an adopted
+      // grid (a mirror, an observer) is wider than the mount and scrolls inside it.
+      const view = mount?.getBoundingClientRect();
+      const right = Math.min(rect.right, outer.right, mount && view ? view.left + mount.clientLeft + mount.clientWidth : Infinity);
+      const bottom = Math.min(rect.bottom, outer.bottom, mount && view ? view.top + mount.clientTop + mount.clientHeight : Infinity);
+      const next = { left: rect.left - outer.left, top: rect.top - outer.top, width: rect.width, height: rect.height, cols: terminal.cols, rows: terminal.rows,
+        anchorX: right - outer.left, anchorY: bottom - outer.top };
       setBox((old) => old && Object.keys(next).every((key) => old[key as keyof Box] === next[key as keyof Box]) ? old : next);
     };
     /** Find rectangles: the cells under them change with every frame, so this runs on render, and
@@ -215,7 +223,6 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     if (layer.current?.parentElement) observer.observe(layer.current.parentElement);
     // the screen's own size follows the renderer's cell metrics (a font load, a zoom), not only the mount
     if (screen) observer.observe(screen);
-    const mount = terminal.element?.parentElement;
     mount?.addEventListener("scroll", paint, { passive: true });
     document.addEventListener("visibilitychange", visibility);
     paint(); void read();
@@ -236,5 +243,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
   return <div ref={layer} className="terminal-viewport-tools" aria-hidden={!enabled || undefined}>
     {enabled && search && box && hits.map((hit, index) => <span key={index} className={`terminal-find-hit${hit.current ? " is-current" : ""}`} aria-hidden="true"
       style={{ left: box.left + hit.col * box.width / box.cols, top: box.top + hit.row * box.height / box.rows, width: hit.width * box.width / box.cols, height: box.height / box.rows }} />)}
+    {enabled && interactive && box && validScroll(scroll) && scroll.offset_from_bottom > 0 && <button type="button" className="btn terminal-jump-bottom"
+      aria-label={t("Jump to bottom")} title={t("Jump to bottom")} style={{ left: box.anchorX, top: box.anchorY }}
+      onPointerDown={(event) => event.preventDefault()} onClick={() => writeRef.current(0)}><ArrowDown aria-hidden="true" /></button>}
   </div>;
 }

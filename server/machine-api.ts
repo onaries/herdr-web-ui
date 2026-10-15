@@ -1,5 +1,6 @@
 import type { MachineEvent, SetupAction, SetupRequest } from "../shared/machines.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
+import type { InteractivePrompt } from "../shared/protocol.ts";
 import { MachineManager } from "./machines.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse } from "./http.ts";
@@ -24,7 +25,7 @@ function transportFailure(id: string, path: string, error: unknown): Response {
 }
 
 export async function handleMachineRequest(request: Request, manager: MachineManager, onRevoke?: (close: () => void) => () => void,
-  preferences?: { get(): SharedPreferences; subscribe(listener: (preferences: SharedPreferences) => void): () => void }): Promise<Response> {
+  preferences?: { get(): SharedPreferences; subscribe(listener: (preferences: SharedPreferences) => void): () => void }, readOnly = false): Promise<Response> {
   const url = new URL(request.url);
   // A PC's file opens as this PC's /api/fs/file does, from any navigation: reading it changes
   // nothing, and Chrome on Android shows a PDF in the viewer's frame as an "Open" button whose
@@ -130,11 +131,26 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
           return new Response(response.body, { status: response.status, headers: passed });
         } catch (error) { return transportFailure(id, path, error); }
       }
+      // A watching device gets a plan card as the PC's screen shows it, never Claude's plan file:
+      // the PC is asked for that (`plan=0`), and a PC that ignores the ask loses the file here.
+      const watchedPrompt = readOnly && path === "pane/prompt";
+      const target = new URL(`${endpoint.url}/api/${path}${url.search}`);
+      if (watchedPrompt) target.searchParams.set("plan", "0");
       const untrack = manager.trackTerminal(id, () => abort.abort());
       try {
-        const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(path === "worktree/create" ? 165_000 : 75_000)]) });
+        const response = await fetch(target, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(path === "worktree/create" ? 165_000 : 75_000)]) });
         const etag = response.headers.get("etag");
-        return new Response(response.status === 304 ? null : await response.arrayBuffer(), { status: response.status, headers: {
+        let body = response.status === 304 ? null : await response.arrayBuffer();
+        if (watchedPrompt && response.ok && body) {
+          const answer = JSON.parse(new TextDecoder().decode(body)) as { prompt?: InteractivePrompt | null };
+          if (answer.prompt?.plan_file !== undefined) {
+            // the body is the plan file's text and the screen's is not in the answer: the card keeps
+            // its question and options, without a body
+            const { plan_file: _planFile, ...card } = answer.prompt;
+            body = new TextEncoder().encode(JSON.stringify({ ...answer, prompt: { ...card, body: null } })).buffer as ArrayBuffer;
+          }
+        }
+        return new Response(body, { status: response.status, headers: {
           "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", ...(etag ? { etag } : {}),
         } });
       } catch (error) { return transportFailure(id, path, error); }

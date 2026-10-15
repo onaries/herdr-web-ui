@@ -86,16 +86,19 @@ export function isLoopbackBind(hostname: string): boolean {
 }
 
 /**
- * Is the server answering on an address beyond this PC while no access token is set and no
+ * Is the server answering beyond this PC and its tailnet while no access token is set and no
  * device has ever been paired? Every client that can reach that address is let in as `open`
  * (see `decideAccess`), so this is the state a warning belongs to — told to whoever already
  * got in, never used to change a default.
  *
  * `hostname` is the address the server is bound to, not the one the request arrived on: a
- * loopback bind with an unset token is unreachable from the network however it is addressed.
+ * loopback bind is local, and a Tailscale-only bind is reachable only within the tailnet.
  */
 export function lanExposed(input: { hostname: string; tokenConfigured: boolean; gated: boolean }): boolean {
-  return !isLoopbackBind(input.hostname) && !input.tokenConfigured && !input.gated;
+  const address = input.hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  const family = isIP(address);
+  const tailnet = family === 4 ? tailnetIpv4.check(address, "ipv4") : family === 6 && tailnetIpv6.check(address, "ipv6");
+  return !isLoopbackBind(input.hostname) && !tailnet && !input.tokenConfigured && !input.gated;
 }
 
 /** Headers a proxy adds and a browser or CLI on this PC has no reason to send; a Tailscale login is stated by a proxy too. */

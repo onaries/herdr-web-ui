@@ -1,5 +1,5 @@
 import { type CSSProperties, type DragEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, Ellipsis, FolderOpen, Link, Lock, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
@@ -703,10 +703,12 @@ export function App() {
     try {
       await signOut();
     } catch {
-      /* the cookie may still be set: the health answer decides whether the gate shows */
+      throw new Error(t("Could not sign out. Try again."));
+    } finally {
+      // The response may have been lost after the cookie was cleared.
+      await loadHealth();
     }
-    await loadHealth();
-  }, [loadHealth]);
+  }, [loadHealth, t]);
 
   const selectedMachineRef = useRef(selectedMachineId);
   selectedMachineRef.current = selectedMachineId;
@@ -1201,6 +1203,7 @@ export function App() {
       },
       setView,
       toggleView: () => { setView(view === "chat" ? "terminal" : "chat"); setDrawerOpen(false); },
+      focusInput: () => paneControls.current?.focusInput(),
       scrollPage: (direction) => paneControls.current?.scrollPage(direction),
       openNewSession: () => {
         setDrawerOpen(false);
@@ -1252,7 +1255,7 @@ export function App() {
         else setSidebarCollapsed((collapsed) => !collapsed);
       },
       toggleTheme: () => updateSettings({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
-      lock: canSignOut ? () => void lock() : null,
+      lock: canSignOut ? lock : null,
       enableNotifications: bellVisible && bell.run === enableNotifications ? () => void enableNotifications() : null,
       refresh: () => void load(),
       openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
@@ -1445,11 +1448,6 @@ export function App() {
             <span className="conn-text">{connWord}</span>
           </span>
           {!targetHerdr && <span className="pill pill-offline">{t("herdr offline")}</span>}
-          {canSignOut && (
-            <button type="button" className="icon-button lock-button header-desktop-only" aria-label={t("Sign out")} title={t("Sign out")} onClick={() => void lock()}>
-              <Lock />
-            </button>
-          )}
           <span className="header-more">
             <button
               type="button"
@@ -1517,6 +1515,7 @@ export function App() {
             const machineId = active ? selectedMachineId : split.other.machineId;
             const paneId = active ? selectedPaneId : split.other.paneId;
             const machine = active ? selectedMachine : otherMachine;
+            const herdr = active ? targetHerdr : otherHerdr;
             const pane = active ? selectedPane : otherPane;
             const workspace = active ? selectedWorkspace : otherWorkspace;
             const slotSnapshot = active ? snapshot : otherMachine?.snapshot ?? null;
@@ -1583,11 +1582,12 @@ export function App() {
                   <PaneCanvas key={machineId} snapshot={slotSnapshot} pane={pane} selectedPaneId={paneId} onSelect={onSelect} onChanged={actions.refresh} actionsRef={active ? paneActionsRef : undefined}
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal
-                        onOpenDiff={openDiff}
+                         onOpenDiff={openDiff}
                         title={item ? displayPaneTitle(item) : active ? selectedTitle : null}
                         // Wait for the roster before attaching: the loading placeholder is replaced
                         // by the keyed tile, and must never claim the pane on a throwaway connection.
                         paneId={item?.restore_error ? null : item?.pane_id ?? null}
+                        mirrored={herdr ? herdr.terminal_attach === false || herdr.terminal_mirror === true : null}
                         restoreError={item?.restore_error ?? null}
                         agent={item?.agent ?? null}
                         agentStatus={item?.agent_status}

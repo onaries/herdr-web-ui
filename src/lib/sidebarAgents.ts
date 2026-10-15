@@ -103,37 +103,16 @@ export interface AgentContextParts {
   machineName: string | null;
   workspaceLabel: string;
   tabName: string | null;
-  /** the row sits under a head that names its PC and workspace, so the line leaves them to it */
-  grouped?: boolean;
-  /** the row's live name already fills its line */
-  named?: boolean;
 }
 
 /** An agent row's second line: who it is, then where it runs, without repeating a word the row already says. */
-export function agentContext({ agentLabel, title, markAgent, machineName, workspaceLabel, tabName, grouped = false, named = false }: AgentContextParts): string[] {
+export function agentContext({ agentLabel, title, markAgent, machineName, workspaceLabel, tabName }: AgentContextParts): string[] {
   const agent = nonblank(agentLabel);
   const tab = nonblank(tabName);
-  const parts = [
+  return [
     agent && agent !== title.trim() && agent.toLowerCase() !== markAgent?.toLowerCase() ? agent : null,
-    grouped ? null : nonblank(machineName),
-    grouped ? null : workspaceLabel,
+    nonblank(machineName),
+    workspaceLabel,
     tab && tab !== workspaceLabel ? tab : null,
   ].filter((part): part is string => Boolean(part));
-  // a row in a card would be left with no second line: it says its kind, even one its mark or title says
-  return grouped && !named && parts.length === 0 && agent ? [agent] : parts;
-}
-
-/**
- * Rows gathered by `keyOf`, each group at its first row's place. In herdr's order a workspace's
- * agents already sit together, so the Agents list's workspace groups keep that order.
- */
-export function groupRows<T>(rows: readonly T[], keyOf: (row: T) => string): Array<{ key: string; rows: T[] }> {
-  const groups = new Map<string, T[]>();
-  for (const row of rows) {
-    const key = keyOf(row);
-    const group = groups.get(key);
-    if (group) group.push(row);
-    else groups.set(key, [row]);
-  }
-  return [...groups].map(([key, members]) => ({ key, rows: members }));
 }

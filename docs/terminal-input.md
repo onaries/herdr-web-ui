@@ -52,7 +52,8 @@ Control sequences are left out, never saved for later execution, and not counted
 answers to a program (cursor position, focus, mouse) arrive the same way. Send transmits the held
 text alone, without an Enter typed meanwhile. The draft holds 1,024 characters; text past that is
 left out whole and the notice says some input was left out, also when nothing else is held. No
-draft is replayed on reconnect. The chat Send button preserves an active composition. The input-line
+draft is replayed on reconnect. The chat message box's Send, tapped during composition,
+finishes the word the same way, with the same notes, and sends the box as shown. The input-line
 Send tapped during composition finishes the word itself (a blur and refocus inside the tap, which
 ends the composition in Chrome and keeps the keyboard up) and sends the committed line, read from
 the draft; "Finishing the word…" shows only while the word is still open after the tap. A keyboard

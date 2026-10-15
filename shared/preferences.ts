@@ -7,7 +7,7 @@
  * which the server lays over what it holds, so a setting nobody changed stays each device's own.
  */
 export const SHARED_SETTING_KEYS = [
-  "theme", "palette", "language", "sidebarRows", "agentOrder", "agentCards", "agentPins", "agentMarks", "autoSendQueued",
+  "theme", "palette", "language", "sidebarRows", "agentOrder", "agentMarks", "autoSendQueued",
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
   "usageGlance", "usageOrder", "usageHidden",
 ] as const;
@@ -18,7 +18,7 @@ export interface SharedPreferences {
   revision: number;
   /** only the settings some browser has shared: one nobody changed is absent, and stays each device's own */
   settings: Partial<Record<SharedSettingKey, unknown>>;
-  /** sidebar pin keys (`machine:pane`), in their order; absent until a browser first shares its pins */
+  /** sidebar pin keys (`machine:pane` for an agent, `machine:workspace:id` for a workspace), in their order; absent until a browser first shares its pins */
   pins?: string[];
 }
 

@@ -63,6 +63,12 @@
   overflow-wrap: anywhere;
 }
 
+/* "View plan" sits at the header's end, beside the title */
+.prompt-card-plan-file {
+  margin-inline-start: auto;
+  flex: none;
+}
+
 /* a form of several questions: a chip per question, answered ones checked, the one asked now in
    the accent; the chips name the questions, so the card's title only says where this one stands */
 .prompt-card-steps {

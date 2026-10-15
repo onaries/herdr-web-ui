@@ -12,6 +12,24 @@ export const STATUS_WORD: Readonly<Record<KnownStatus, string>> = {
   unknown: "—",
 };
 
+/** herdr's two status indicator sets, its `[ui] status_indicators` ("dots" is herdr's default). */
+export type HerdrIndicators = "dots" | "symbols";
+/** The sidebar's state marks: this app's own (the default), or one of herdr's sets. */
+export type StatusIndicators = "classic" | HerdrIndicators;
+
+/**
+ * The glyph herdr's TUI draws for each state (its client/shell.rs `status_icon`). BG is not a herdr
+ * state: it takes RUN's glyph, held still.
+ */
+const INDICATOR_GLYPH: Readonly<Record<HerdrIndicators, Readonly<Record<KnownStatus, string>>>> = {
+  dots: { idle: "\u25CB", working: "\u25CF", blocked: "\u25CF", done: "\u25CF", waiting: "\u25CF", unknown: "\u00B7" },
+  symbols: { idle: "\u25CB", working: "\u25D0", blocked: "\u00D7", done: "\u2713", waiting: "\u25D0", unknown: "\u00B7" },
+};
+
+export function indicatorGlyph(status: KnownStatus, style: HerdrIndicators): string {
+  return INDICATOR_GLYPH[style][status];
+}
+
 const KNOWN: Readonly<Record<string, KnownStatus>> = { idle: "idle", working: "working", blocked: "blocked", done: "done", waiting: "waiting" };
 
 /** herdr's AgentStatus is open-ended; the UI knows its states and files the rest under unknown. */

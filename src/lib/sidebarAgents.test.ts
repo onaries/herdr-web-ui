@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentInfo, HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { agentContext, agentTabName, groupRows, paneMark, sidebarAgents, workspaceAgentLabels } from "./sidebarAgents.ts";
+import { agentContext, agentTabName, paneMark, sidebarAgents, workspaceAgentLabels } from "./sidebarAgents.ts";
 
 function workspace(id: string): WorkspaceInfo {
   return { workspace_id: id, active_tab_id: `${id}:t1`, label: id, number: 1, tab_count: 1, pane_count: 1, focused: false, agent_status: "idle" };
@@ -127,50 +127,6 @@ describe("agentContext", () => {
     expect(agentContext({ ...base, markAgent: "claude", tabName: "Review" })).toEqual(["checkout-api", "Review"]);
     expect(agentContext({ ...base, agentLabel: "Claude", markAgent: "claude" })).toEqual(["checkout-api"]);
     expect(agentContext({ ...base, agentLabel: "reviewer-bot", markAgent: "claude" })).toEqual(["reviewer-bot", "checkout-api"]);
-  });
-
-  it("leaves the PC and workspace to a group's head, and still does not repeat the workspace as its tab", () => {
-    const grouped = { ...base, machineName: "workstation", grouped: true };
-    expect(agentContext(grouped)).toEqual(["claude"]);
-    expect(agentContext({ ...grouped, tabName: "Review" })).toEqual(["claude", "Review"]);
-    expect(agentContext({ ...grouped, tabName: "checkout-api" })).toEqual(["claude"]);
-    expect(agentContext({ ...grouped, title: "claude" })).toEqual(["claude"]);
-  });
-
-  it("says the kind its mark draws when a card would leave the row no second line", () => {
-    const grouped = { ...base, markAgent: "claude", grouped: true };
-    expect(agentContext(grouped)).toEqual(["claude"]);
-    expect(agentContext({ ...grouped, tabName: "Review" })).toEqual(["Review"]);
-    expect(agentContext({ ...grouped, named: true })).toEqual([]);
-    expect(agentContext({ ...grouped, title: "claude" })).toEqual(["claude"]);
-    expect(agentContext({ ...base, markAgent: "claude" })).toEqual(["checkout-api"]);
-  });
-});
-
-describe("groupRows", () => {
-  it("puts each workspace's agents in one group, in herdr's order whatever order the panes come in", () => {
-    const panes = [
-      pane("api-review", { workspace_id: "api", tab_id: "api:t2", agent: "codex" }),
-      pane("web", { workspace_id: "web", tab_id: "web:t1", agent: "claude" }),
-      pane("api-main", { workspace_id: "api", tab_id: "api:t1", agent: "claude" }),
-      pane("api-tests", { workspace_id: "api", tab_id: "api:t1", agent: "pi" }),
-    ];
-    const rows = sidebarAgents({
-      ...snapshot(panes),
-      workspaces: [workspace("api"), workspace("web")],
-      tabs: [tab("api:t1", "api"), tab("api:t2", "api"), tab("web:t1", "web")],
-    });
-    const groups = groupRows(rows, (row) => row.workspace.workspace_id);
-    expect(groups.map(({ key, rows }) => [key, rows.map((row) => row.pane.pane_id)])).toEqual([
-      ["api", ["api-main", "api-tests", "api-review"]],
-      ["web", ["web"]],
-    ]);
-  });
-
-  it("keeps each group at its first row's place and the rows' order within it", () => {
-    const groups = groupRows(["a1", "b1", "a2", "c1", "b2"], (row) => row[0]!);
-    expect(groups).toEqual([{ key: "a", rows: ["a1", "a2"] }, { key: "b", rows: ["b1", "b2"] }, { key: "c", rows: ["c1"] }]);
-    expect(groupRows([], String)).toEqual([]);
   });
 });
 

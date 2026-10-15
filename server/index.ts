@@ -37,7 +37,8 @@ import { freeAgentName } from "./agent-name.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
-import { fileResponse, locateFile, crossSiteFileRead } from "./file-view.ts";
+import { claudeSessionTempDir } from "./claude-store.ts";
+import { fileResponse, locateFile, locateFileInFolder, crossSiteFileRead } from "./file-view.ts";
 import { repoDiffResponse } from "./repo-diff.ts";
 import {
   agentManifests,
@@ -259,6 +260,16 @@ async function paneContext(paneId: string): Promise<{ agent: string | null; cwd:
   const cwd = pane.foreground_cwd ?? pane.cwd;
   if (!cwd) throw new HerdrError("cwd_not_found", `pane ${paneId} has no working directory`);
   return { agent: pane.agent ?? pane.agent_session?.agent ?? null, cwd };
+}
+
+/** The temp folder of the Claude Code session in a pane, or null when the pane runs none or it has none. */
+async function claudeTempFolder(paneId: string): Promise<string | null> {
+  try {
+    const pane = await paneGet(paneId);
+    if ((pane.agent ?? pane.agent_session?.agent) !== "claude") return null;
+    const session = await claudePaneSession(pane);
+    return session === null ? null : await claudeSessionTempDir(session.path);
+  } catch { return null; /* herdr busy or the pane gone: the path stays not found */ }
 }
 
 type AgentPayload = { kind?: unknown; name?: unknown; args?: unknown };
@@ -1130,7 +1141,8 @@ export function createServer(
     snapshot: sessionSnapshot,
     onChange: (paneId, derived, background, turn, rest) => omoChanged(paneId, derived, background, turn, rest),
     // herdr called it `claude` or `pi` until now: what it finished under that name is its own
-    onFound: (paneId) => completions.adopt(paneId, "omo", OMO_ALIASES),
+    // a wait another agent left is not OmO's; one OmO held before it was missed a while goes on
+    onFound: (paneId, again) => { completions.adopt(paneId, "omo", OMO_ALIASES); if (!again) waits.forget(paneId); },
   });
   const omoSnapshot = () => readOmoSnapshot(sessionSnapshot, omo);
   /** GJC panes get their status from gjc's own transcript: herdr's `working` can be a provider child's (server/gjc-status.ts) */
@@ -1649,8 +1661,15 @@ export function createServer(
     // A turn that ended in an error is at rest, not finished; an answer after it is a finish (#687)
     const status = turn ? completions.observe(paneId, derived, "omo", rest) : completions.current(paneId) ?? completions.observe(paneId, derived, "omo");
     if (turn) { pending.status(paneId, status); drainPending(paneId); }
+    // a turn that ended while tasks its session started still run waits on them, as a Claude
+    // pane's does (background-wait.ts): BG, not DONE, and a finish alerted once the work is over.
+    // The count first: a turn that ends in the same read as its tasks were counted is held at once.
+    // No time limit: the count drops a task whose host died, and a task's end wakes OmO
+    const held = waits.waiting(paneId);
+    waits.running(paneId, background, null, false);
+    if (turn) waits.status(paneId, status);
     broadcastAll(paneStatus(paneId, status, { background_tasks: background }));
-    if (turn) push.onStatus(paneId, status).catch(logPushError);
+    if (turn || waits.waiting(paneId) !== held) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
   }
 
   /**
@@ -1717,7 +1736,9 @@ export function createServer(
       if (machines) machines.localAgents(named); else bridgeAgents!.status(named);
       // herdr says `claude/idle` for an OmO pane whatever it does, and a provider child's work for
       // a GJC one while its transcript is tracked: their own status stands, and no Claude turn waits there
-      if (omo.tracks(paneId) || gjc.tracks(paneId)) {
+      // (an OmO pane's wait on its background tasks is omoChanged's)
+      if (omo.tracks(paneId)) return;
+      if (gjc.tracks(paneId)) {
         waits.forget(paneId);
         return;
       }
@@ -1904,7 +1925,7 @@ export function createServer(
           // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC
           bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : pathname.endsWith("/worktree/create") ? 180 : 80);
           const deviceId = access.level === "full" ? access.device?.id : undefined;
-          const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined, preferences);
+          const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined, preferences, readOnly);
           response.headers.set("cache-control", "no-store");
           return response;
         }
@@ -2044,7 +2065,13 @@ export function createServer(
         if (paneId) {
           try { cwd = (await paneContext(paneId)).cwd; } catch { /* an absolute path still opens */ }
         }
-        const found = locateFile(url.searchParams.get("path") ?? "", cwd);
+        const path = url.searchParams.get("path") ?? "";
+        let found = locateFile(path, cwd);
+        // a Claude Code pane names the files it keeps outside the project (`scratchpad/…`) relative to its session's temp folder
+        if (found === null && paneId && cwd !== null && !isAbsolute(path.trim()) && !path.trim().startsWith("~")) {
+          const folder = await claudeTempFolder(paneId);
+          if (folder !== null) found = locateFileInFolder(path, folder);
+        }
         if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
         // several files end in that name: the viewer lists them to choose from
         if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
@@ -2813,7 +2840,7 @@ export function createServer(
 
       if (pathname.startsWith("/api/pane/prompt")) {
         try {
-          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome });
+          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, claudeTranscript: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null, readOnly });
           if (response) return response;
         } catch (error) {
           return errorResponse(error);
@@ -3632,7 +3659,7 @@ if (import.meta.main) {
   if (process.env["HERDR_WEB_MANAGED"] === "1") process.on("disconnect", shutdown);
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
   if (!isLoopbackBind(instance.hostname)) {
-    if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "") {
+    if (lanExposed({ hostname: instance.hostname, tokenConfigured: (process.env["HERDR_WEB_TOKEN"] ?? "") !== "", gated: false })) {
       console.error(
         `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
       );

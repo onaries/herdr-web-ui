@@ -52,6 +52,12 @@
   --status-done-tint: rgba(147, 195, 107, 0.14);
   --danger-tint: rgba(255, 123, 112, 0.12);
   --danger-text: #ffd9d4;
+  /* herdr's TUI state colors, from its default theme (Catppuccin Mocha; Latte in light) */
+  --indicator-working: #f9e2af;
+  --indicator-blocked: #f38ba8;
+  --indicator-done: #94e2d5;
+  --indicator-idle: #a6e3a1;
+  --indicator-unknown: #6c7086;
   /* a note that the view is partial (a file cut short, code left plain): warning yellow */
   --notice: #e8c55c;
 
@@ -243,6 +249,11 @@
   --status-blocked-tint: rgba(168, 35, 35, 0.12);
   --status-done-tint: rgba(47, 99, 23, 0.12);
   --danger-tint: rgba(168, 35, 35, 0.1);
+  --indicator-working: #df8e1d;
+  --indicator-blocked: #d20f39;
+  --indicator-done: #179299;
+  --indicator-idle: #40a02b;
+  --indicator-unknown: #9ca0b0;
   --danger-text: #8f1d1d;
   --notice: #7a5a00;
   --scrim: rgba(40, 32, 22, 0.35);
@@ -1551,9 +1562,8 @@ button {
     display: inline-flex;
   }
 
-  /* drawer mode: the collapse toggle has nothing to collapse, and sign out is in the palette */
-  .sidebar-toggle,
-  .lock-button {
+  /* drawer mode: the collapse toggle has nothing to collapse */
+  .sidebar-toggle {
     display: none;
   }
 

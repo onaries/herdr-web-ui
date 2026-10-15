@@ -163,6 +163,23 @@ describe("isReservedShortcutKey", () => {
 });
 
 
+describe("focus pane input", () => {
+  it("uses a terminal-safe default on both platform families", () => {
+    expect(matchShortcut(keyEvent("E", { metaKey: true }), true)).toBe("focus-input");
+    expect(matchShortcut(keyEvent("e", { ctrlKey: true }), false)).toBe("focus-input");
+    expect(matchShortcut(keyEvent("e", { ctrlKey: true, shiftKey: false }), false)).toBeNull();
+    expect(matchShortcut(keyEvent("E", { metaKey: true, isComposing: true }), true)).toBeNull();
+  });
+  it("can be reassigned or disabled with the existing settings", () => {
+    const custom = sanitizeShortcutOverrides({ "focus-input": "g" });
+    expect(custom["focus-input"]).toBe("g");
+    expect(matchShortcut(keyEvent("G", { metaKey: true }), true, custom)).toBe("focus-input");
+    expect(matchShortcut(keyEvent("E", { metaKey: true }), true, custom)).toBeNull();
+    expect(matchShortcut(keyEvent("E", { metaKey: true }), true, { "focus-input": null })).toBeNull();
+    expect(shortcutDisplayKeys("focus-input", {})).toEqual(["Mod", "Shift", "E"]);
+  });
+});
+
 it("pages the selected pane with fixed Mod+Shift bindings, remapping and disabling", () => {
   for (const apple of [true, false]) {
     const press = (key: string, overrides = {}) => matchShortcut(keyEvent(key, { metaKey: apple, ctrlKey: !apple }), apple, overrides);
@@ -181,4 +198,22 @@ it("pages the selected pane with fixed Mod+Shift bindings, remapping and disabli
   expect(shortcutDisplayKeys("scroll-down", {})).toEqual(["Mod", "Shift", "PageDown"]);
   expect(shortcutConflict("palette", ["PageUp"], {})).toBe(true);
   expect(sanitizeShortcutOverrides({ "scroll-up": "PageDown", "scroll-down": "PageUp", find: "PageUp", settings: "Home" })).toEqual({ "scroll-up": "PageDown", "scroll-down": "PageUp", find: "PageUp" });
+});
+
+describe("new tab and split pane", () => {
+  it("have no key until one is chosen in Settings, and then work like any other binding", () => {
+    for (const id of ["new-tab", "split-right", "split-down"] as const) {
+      expect(shortcutKeys(id, {})).toEqual([]);
+      expect(shortcutDisplayKeys(id, {})).toEqual([]);
+    }
+    expect(matchShortcut(keyEvent("t", { ctrlKey: true }), false)).toBeNull();
+    const overrides = sanitizeShortcutOverrides({ "new-tab": "y", "split-right": "l", "split-down": "h" });
+    expect(overrides).toEqual({ "new-tab": "y", "split-right": "l", "split-down": "h" });
+    expect(matchShortcut(keyEvent("Y", { ctrlKey: true }), false, overrides)).toBe("new-tab");
+    expect(matchShortcut(keyEvent("l", { metaKey: true }), true, overrides)).toBe("split-right");
+    expect(matchShortcut(keyEvent("h", { ctrlKey: true }), false, overrides)).toBe("split-down");
+    expect(shortcutDisplayKeys("new-tab", overrides)).toEqual(["Mod", "Shift", "Y"]);
+    expect(shortcutConflict("split-down", ["y"], overrides)).toBe(true);
+    expect(shortcutConflict("new-tab", ["k"], {})).toBe(true);
+  });
 });

@@ -1,10 +1,12 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OmoRun, OmoRunNode, OmoTask } from "../shared/protocol.ts";
+import { OMO_RUNNING, omoStateDir, type OmoStateOptions } from "./omo-state-dir.ts";
 
 /**
  * The background tasks one OmO session started, for the status line's list. OmO keeps one record
- * per `task` child in `<cwd>/.omo/senpi-task/tasks/st_*.json` and rewrites it as the child runs;
+ * per `task` child in the resolved senpi-task state's `tasks/st_*.json` and rewrites it as the child runs;
+ * populated legacy project stores win over the agent directory's `projects/<key>` store;
  * the parent is `parent_session_id`, the session id in the parent's file name. A record left
  * `running` by a host process that is gone reads as lost, as OmO itself would mark it. The
  * record also holds the child's prompt (`spawn_spec`) and its answer: neither leaves the server.
@@ -21,7 +23,6 @@ const MAX_TASK_FILES = 50_000;
 
 const RECENT_MS = 24 * 60 * 60 * 1000;
 const RECENT_LIMIT = 10;
-const RUNNING = new Set(["running", "queued", "pending", "starting"]);
 const ENDED = new Set(["completed", "failed", "cancelled", "lost"]);
 
 type Row = Record<string, unknown>;
@@ -42,7 +43,7 @@ function task(record: Row): OmoTask | null {
   const id = text(record["task_id"]);
   const raw = record["status"];
   if (id === null || typeof raw !== "string") return null;
-  const status = RUNNING.has(raw) ? "running" : ENDED.has(raw) ? raw as OmoTask["status"] : null;
+  const status = OMO_RUNNING.has(raw) ? "running" : raw === "error" ? "failed" : raw === "interrupted" ? "lost" : ENDED.has(raw) ? raw as OmoTask["status"] : null;
   if (status === null) return null;
   const stats = row(record["run_stats"]);
   return {
@@ -60,10 +61,10 @@ function task(record: Row): OmoTask | null {
 }
 
 /** Running tasks first (oldest first), then up to ten that ended in the last day (newest first). */
-export function omoTasks(cwd: string, sessionId: string, alive: (pid: number) => boolean, now = Date.now()): OmoTask[] {
-  const dir = join(cwd, ".omo", "senpi-task", "tasks");
+export function omoTasks(cwd: string, sessionId: string, alive: (pid: number) => boolean, now = Date.now(), options: OmoStateOptions = {}): OmoTask[] {
+  let dir: string;
   let names: string[];
-  try { names = readdirSync(dir); } catch { return []; }
+  try { dir = join(omoStateDir(cwd, options), "tasks"); names = readdirSync(dir); } catch { return []; }
   const running: OmoTask[] = [];
   const ended: OmoTask[] = [];
   const newest = names.filter((name) => name.startsWith("st_") && name.endsWith(".json")).sort().reverse().slice(0, MAX_TASK_FILES);
@@ -104,7 +105,7 @@ export function omoTasks(cwd: string, sessionId: string, alive: (pid: number) =>
 
 /**
  * The workflows (DAG runs) the session started: OmO checkpoints each run to
- * `<cwd>/.omo/senpi-task/dag/runs/dag_*.json` (`parentSessionId`, nodes with `state`, `waves`),
+ * `dag/runs/dag_*.json` under the same resolved state directory (`parentSessionId`, nodes with `state`, `waves`),
  * rewriting the whole file at each step. The files carry every node's prompt and output, a
  * megabyte or more each, and the folder keeps every run of every session there. So: a file
  * untouched for a day is not opened (OmO left it, or a run it never finished); the newest come
@@ -160,10 +161,10 @@ function parseRun(record: Row): OmoRun | null {
 }
 
 /** Workflows still going first (oldest first), then up to five that ended in the last day (newest first). */
-export function omoRuns(cwd: string, sessionId: string, now = Date.now()): OmoRun[] {
-  const dir = join(cwd, ".omo", "senpi-task", "dag", "runs");
+export function omoRuns(cwd: string, sessionId: string, now = Date.now(), options: OmoStateOptions = {}): OmoRun[] {
+  let dir: string;
   let names: string[];
-  try { names = readdirSync(dir); } catch { return []; }
+  try { dir = join(omoStateDir(cwd, options), "dag", "runs"); names = readdirSync(dir); } catch { return []; }
   const recent: { path: string; key: string; size: number; mtime: number }[] = [];
   for (const name of names.slice(0, 10_000)) {
     if (!name.startsWith("dag_") || !name.endsWith(".json")) continue;

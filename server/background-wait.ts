@@ -20,6 +20,8 @@ interface Pane {
   /** when the last of them ended while the pane was at rest */
   endedAt: number | null;
   waiting: boolean;
+  /** held at most WAIT_LIMIT_MS: false for an OmO pane, whose count drops what its dead host left */
+  capped: boolean;
 }
 
 /**
@@ -34,6 +36,11 @@ interface Pane {
  * shared/notify-policy.ts), so a turn that goes on is one turn, alerted once when it ends. Work
  * that ended before the turn did holds nothing. The limit starts at the first rest after the
  * person's prompt, not at each automatic resume. A resting baseline starts no hold.
+ *
+ * An OmO pane is held the same way (index.ts `omoChanged`), on the count of its session's pending
+ * and running tasks: OmO's records name the session, not the turn, that started a task. It is held
+ * as long as one runs, with no WAIT_LIMIT_MS: a task whose host process died is not counted
+ * (omo-status.ts), and OmO wakes the session when a task ends.
  */
 export class BackgroundWait {
   private readonly panes = new Map<string, Pane>();
@@ -61,8 +68,9 @@ export class BackgroundWait {
   }
 
   /** How many of the pane's running subagents and commands its turn started. True when that changed whether it waits. */
-  running(paneId: string, turnRunning: number, promptAt: number | null = null): boolean {
+  running(paneId: string, turnRunning: number, promptAt: number | null = null, capped = true): boolean {
     const pane = this.pane(paneId);
+    pane.capped = capped;
     const newPrompt = promptAt !== null && promptAt !== pane.promptAt;
     if (newPrompt) {
       pane.promptAt = promptAt;
@@ -99,16 +107,17 @@ export class BackgroundWait {
 
   private pane(paneId: string): Pane {
     let pane = this.panes.get(paneId);
-    if (!pane) this.panes.set(paneId, pane = { statusSeen: false, busy: false, rests: [], promptAt: null, turnRunning: 0, endedAt: null, waiting: false });
+    if (!pane) this.panes.set(paneId, pane = { statusSeen: false, busy: false, rests: [], promptAt: null, turnRunning: 0, endedAt: null, waiting: false, capped: true });
     return pane;
   }
 
   private settle(pane: Pane): boolean {
     const now = this.now();
+    const limit = pane.capped ? this.limits.limit : Infinity;
     // Keep one expired rest: deleting all of them would renew an old prompt's budget on resume.
-    while (pane.rests.length > 1 && now - pane.rests[1]! >= this.limits.limit) pane.rests.shift();
+    while (pane.rests.length > 1 && now - pane.rests[1]! >= limit) pane.rests.shift();
     const restAt = pane.rests.find((at) => pane.promptAt === null || at >= pane.promptAt);
-    const waiting = !pane.busy && restAt !== undefined && now - restAt < this.limits.limit
+    const waiting = !pane.busy && restAt !== undefined && now - restAt < limit
       && (pane.turnRunning > 0 || (pane.endedAt !== null && now - pane.endedAt < this.limits.grace));
     const changed = waiting !== pane.waiting;
     pane.waiting = waiting;

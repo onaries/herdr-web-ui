@@ -153,6 +153,12 @@ try {
       }
       if ("prompt" in value && window.fitCase.suggestion !== undefined) value.suggestion = window.fitCase.suggestion;
       if (Array.isArray(value.features) && !window.fitCase.pending) value.features = value.features.filter((feature) => feature !== "pending-input");
+      if (Array.isArray(value.commands) && !value.commands.some((command) => command.name === "delegate")) value.commands.push(
+        { name: "delegate", description: "Delegate a task", source: "skill", ...(window.fitCase.agent === "codex" ? { trigger: "$" } : {}) },
+        { name: "template-creator", description: "Create a reusable template", source: "skill", ...(window.fitCase.agent === "codex" ? { trigger: "$" } : {}) },
+        { name: "deploy", description: "Deploy a project", source: "project" },
+        { name: "plugin:deploy", description: "Deploy through a plugin", source: "plugin" }
+      );
       if (window.fitCase.weeklyOnly && value.id === "codex" && Array.isArray(value.windows)) value.windows = value.windows.filter((limit) => limit.kind !== "session");
       if (Array.isArray(value.turns) && value.metadata) value.metadata = { model: window.fitCase.model, reasoning_effort: window.fitCase.effort, ...(window.fitCase.ring ? { context: { used: window.fitCase.contextUsed ?? 151000, window: 272000 } } : {}) };
       if (Array.isArray(value.turns) && window.fitCase.stream) {
@@ -230,8 +236,10 @@ try {
       await withCard(browser, 390, { status: "idle", model: "gpt-5.6" }, async (page) => {
         const box = page.getByRole("textbox", { name: "Message", exact: true });
         const button = page.getByRole("button", { name: "Send message", exact: true });
-        await box.fill("한글 전송");
-        await box.dispatchEvent("compositionstart", { data: "송" });
+        await box.tap();
+        await box.fill("한글 전");
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send("Input.imeSetComposition", { text: "송", selectionStart: 1, selectionEnd: 1 });
         await box.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, keyCode: 229 });
         assert.equal(await box.inputValue(), "한글 전송", "IME confirmation Enter does not send the draft");
         const submitted = page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "", undefined, { timeout: 5_000 });
@@ -240,7 +248,7 @@ try {
         const conversation = await page.evaluate(async (paneId) => (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
         assert.ok(conversation.turns.some((turn: { role: string; parts: { kind: string; text?: string }[] }) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === "한글 전송")), "touch sends the full visible Korean draft");
         assert.equal(await box.evaluate((node) => document.activeElement === node), true, "touch Send keeps the keyboard focused");
-        await box.dispatchEvent("compositionend", { data: "송" });
+        await cdp.detach();
         await box.fill("Keyboard still sends");
         const entered = page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "", undefined, { timeout: 5_000 });
         await box.press("Enter");
@@ -473,6 +481,70 @@ try {
       });
       console.log("PASS prompt updates preserve a focused, internally scrolled draft and its mid-text caret at 390 and 1440px");
 
+      for (const agent of ["claude", "codex", "pi"] as const) for (const width of [320, 1280]) await withCard(browser, width, { agent, model: "gpt-5.6", status: "idle" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const menu = page.getByRole("listbox", { name: "Slash commands", exact: true });
+        await box.fill("/");
+        await menu.getByRole("option").filter({ hasText: "/clear" }).waitFor();
+        for (const text of ["a/b", "http://", "see https://example.test/path", "run tests then /clear"]) {
+          await box.fill(text);
+          await menu.waitFor({ state: "hidden" });
+        }
+        for (const text of ["run tests then /", "run tests\n/", "run tests\t/"]) {
+          await box.fill(text);
+          if (agent === "pi") { await menu.waitFor({ state: "hidden" }); continue; }
+          await menu.getByRole("option").first().waitFor();
+          const prefix = agent === "codex" ? "$" : "/";
+          assert.deepEqual(await menu.locator(".menu-item-main").allTextContents(), [prefix + "delegate", prefix + "template-creator"]);
+        }
+        if (agent !== "pi") {
+          await box.fill("run tests then /del afterwards");
+          for (let i = 0; i < 11; i++) await box.press("ArrowLeft");
+          assert.equal(await box.evaluate((node: HTMLTextAreaElement) => node.selectionStart), 19);
+          await menu.getByRole("option").first().waitFor();
+          assert.equal(await menu.evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight;
+          }), true, "the picker fits the viewport");
+          if (process.env.UI_EVIDENCE_DIR) {
+            mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+            await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `slash-${agent}-${width}.png`), fullPage: true });
+          }
+          // A committing IME Enter belongs to the input method, even while a skill is offered.
+          await box.evaluate((node) => node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true })));
+          assert.equal(await box.inputValue(), "run tests then /del afterwards");
+          await box.press("Tab");
+          const expected = `run tests then ${agent === "codex" ? "$" : "/"}delegate afterwards`;
+          assert.equal(await box.inputValue(), expected);
+          assert.equal(await box.evaluate((node: HTMLTextAreaElement) => node.selectionStart), 25);
+          await page.keyboard.type("next");
+          assert.equal(await box.inputValue(), expected.slice(0, 25) + "next" + expected.slice(25));
+          await box.fill("run tests then /del");
+          await menu.getByRole("option").first().waitFor();
+          await menu.getByRole("option").first().click();
+          assert.equal(await box.inputValue(), `run tests then ${agent === "codex" ? "$" : "/"}delegate `);
+          if (agent === "codex") {
+            await box.fill("use $del");
+            await menu.getByRole("option").first().waitFor();
+            await box.press("Enter");
+            assert.equal(await box.inputValue(), "use $delegate ");
+            await box.fill("look at $tmp");
+            await menu.waitFor({ state: "hidden" });
+          }
+          const prefix = agent === "codex" ? "$" : "/";
+          for (const text of [prefix + "tmp", "look\n" + prefix + "tmp", "use " + prefix + "creator"]) {
+            await box.fill(text);
+            await menu.getByRole("option").filter({ hasText: prefix + "template-creator" }).waitFor();
+          }
+        }
+        await box.fill("see @src");
+        await page.getByRole("listbox", { name: "Files", exact: true }).waitFor();
+        await box.fill("look at /tmp");
+        await box.press("Enter");
+        await page.getByText("look at /tmp", { exact: true }).waitFor();
+        assert.equal(await box.inputValue(), "", "Enter sends a path verbatim instead of accepting a fuzzy skill");
+        console.log(`PASS skill completion at word boundaries (${agent}, ${width}px)`);
+      });
       // One primary control across agents: Stop with an empty working draft, Send with text.
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);
@@ -644,6 +716,81 @@ try {
         assert.equal(await box.inputValue(), "a draft that stays", "nothing was sent");
       });
       console.log("PASS pressing Send keeps focus in the message box");
+
+      // With focus kept, the tap does not end a composition (Gboard composes every word, a Korean
+      // keyboard the open syllable): Send finishes the word itself and sends the box as shown.
+      await withCard(browser, 390, { status: "idle", model: "claude-opus-5-5" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const holds = (value: string, label: string) => box.evaluate((node: HTMLTextAreaElement, value) => new Promise<void>((resolve, reject) => {
+          const deadline = performance.now() + 5_000;
+          const check = () => node.value === value ? resolve() : performance.now() > deadline ? reject(new Error(`value ${JSON.stringify(node.value)}`)) : requestAnimationFrame(check);
+          check();
+        }), value).catch((error) => { throw new Error(`${label}: ${error}`); });
+        await box.tap();
+        await box.fill("hello ");
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send("Input.imeSetComposition", { text: "안", selectionStart: 1, selectionEnd: 1 });
+        await holds("hello 안", "the syllable is composing");
+        await page.getByRole("button", { name: "Send message", exact: true }).tap();
+        await holds("", "Send during a composition sends the message");
+        assert.equal(await box.evaluate((node) => node === document.activeElement), true, "the message box keeps focus");
+        await cdp.send("Input.imeSetComposition", { text: "나", selectionStart: 1, selectionEnd: 1 });
+        await cdp.send("Input.insertText", { text: "나" });
+        await holds("나", "the next syllable starts in an empty box");
+        await cdp.detach();
+      });
+      console.log("PASS Send tapped mid-composition finishes the word and sends");
+
+      // A keyboard that does not commit inside the tap leaves it waiting for the word. A drop inside
+      // that wait withdraws it: the commit after a quick reconnect sends nothing on the new connection.
+      await withCard(browser, 390, { status: "idle", model: "claude-opus-5-5" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await box.tap();
+        await box.fill("dropped while composing ");
+        await page.evaluate(() => {
+          // the keyboard keeps composing through the tap's blur, and the tap's 300 ms deadline is held,
+          // so only the drop can withdraw the tap, however long the reconnect takes
+          document.querySelector<HTMLTextAreaElement>(".composer-text")!.blur = () => {};
+          const later = window.setTimeout;
+          window.setTimeout = ((callback: TimerHandler, ms?: number, ...args: unknown[]) => ms !== undefined && ms >= 280 && ms <= 300 ? 0 : later(callback, ms, ...args)) as typeof window.setTimeout;
+        });
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send("Input.imeSetComposition", { text: "안", selectionStart: 1, selectionEnd: 1 });
+        await page.getByRole("button", { name: "Send message", exact: true }).tap();
+        const note = page.locator(".composer-note");
+        await note.filter({ hasText: "Finishing the word…" }).waitFor({ timeout: 5_000 });
+        // drop the connection and wait, a frame at a time, until it went offline and came back
+        await page.evaluate(() => new Promise<void>((resolve, reject) => {
+          const fixture = window as unknown as { fitSocket: WebSocket };
+          const dropped = fixture.fitSocket;
+          const offline = () => document.querySelector(".composer-status")?.hasAttribute("data-offline") === true;
+          const deadline = performance.now() + 10_000;
+          let sawOffline = false;
+          const check = () => {
+            sawOffline ||= offline();
+            if (sawOffline && !offline() && fixture.fitSocket !== dropped && fixture.fitSocket.readyState === WebSocket.OPEN) return resolve();
+            if (performance.now() > deadline) return reject(new Error(`reconnect: sawOffline ${sawOffline}`));
+            requestAnimationFrame(check);
+          };
+          dropped.close();
+          check();
+        }));
+        // count the submits on the new connection, then let the keyboard commit the word
+        await page.evaluate(() => {
+          const fixture = window as unknown as { fitSocket: WebSocket; fitSubmits: number };
+          fixture.fitSubmits = 0;
+          const send = fixture.fitSocket.send.bind(fixture.fitSocket);
+          fixture.fitSocket.send = (raw) => { if (typeof raw === "string" && JSON.parse(raw).type === "submit") fixture.fitSubmits += 1; send(raw); };
+        });
+        await cdp.send("Input.insertText", { text: "안" });
+        // the committed word's send runs a task after compositionend: wait one task and a frame past it
+        await page.evaluate(() => new Promise((resolve) => setTimeout(() => requestAnimationFrame(resolve))));
+        assert.equal(await page.evaluate(() => (window as unknown as { fitSubmits: number }).fitSubmits), 0, "nothing is submitted on the new connection");
+        assert.equal(await box.inputValue(), "dropped while composing 안", "the message stays in the box");
+        assert.equal(await note.textContent(), "Not sent: the terminal is disconnected.");
+        await cdp.detach();
+      });
+      console.log("PASS a drop while Send waits for the word withdraws it; the reconnect sends nothing");
 
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
       // box grows and shrinks with it, while a height chosen with the grip stays chosen.

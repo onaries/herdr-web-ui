@@ -569,6 +569,10 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     assert.equal((await unzoomed).status(), 200);
     await tabSheet.waitFor({ state: "detached" });
     await touchMenu.tap();
+    await tabSheet.waitFor();
+    // The HTTP acknowledgement can precede the unzoomed browser snapshot. While the menu
+    // still offers Unzoom, App redirects a sibling pick back to the zoomed pane.
+    await unzoom.waitFor({ state: "hidden" });
     await tabSheet.getByRole("button", { name: "canvas-second", exact: true }).tap();
     await currentPane(page, second);
     await frame(page, second).waitFor({ state: "visible" });

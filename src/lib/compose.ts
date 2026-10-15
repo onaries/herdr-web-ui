@@ -224,14 +224,15 @@ export function agentDisplayLabel(agent: string | null): string {
  * tried against each word of the name before it falls back to a substring, a run of letters in
  * order (`brst`), and the description.
  */
-function slashMatchTier(command: SlashCommand, needle: string): number | null {
+function slashMatchTier(command: SlashCommand, needle: string, prefixOnly: boolean): number | null {
   if (needle === "") return 0;
   const name = command.name.toLocaleLowerCase();
   if (name.startsWith(needle)) return 0;
   const first = name.indexOf(needle);
   for (let position = first; position >= 0; position = name.indexOf(needle, position + 1)) {
-    if (position === 0 || /[:\-_./]/u.test(name[position - 1]!)) return 1;
+    if ((prefixOnly ? /[:-]/u : /[:\-_./]/u).test(name[position - 1]!)) return 1;
   }
+  if (prefixOnly) return null;
   if (first >= 0) return 2;
   let at = 0;
   for (const letter of name) {
@@ -244,16 +245,18 @@ function slashMatchTier(command: SlashCommand, needle: string): number | null {
 /**
  * Filter commands by what was typed - prefix first, then a word of the name, a substring, letters
  * in order, the description - and within a match kind prefer the commands the user selects most.
+ * Away from line starts, `prefixOnly` excludes fuzzy matches that could rewrite paths such as `/tmp`.
  */
 export function rankSlashCommands(
   commands: readonly SlashCommand[],
   query: string,
   usage: Readonly<Partial<Record<string, number>>>,
+  prefixOnly = false,
 ): SlashCommand[] {
   const needle = query.toLocaleLowerCase();
   const ranked: { command: SlashCommand; tier: number }[] = [];
   for (const command of commands) {
-    const tier = slashMatchTier(command, needle);
+    const tier = slashMatchTier(command, needle, prefixOnly);
     if (tier !== null) ranked.push({ command, tier });
   }
   return ranked

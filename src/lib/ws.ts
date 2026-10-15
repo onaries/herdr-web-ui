@@ -102,6 +102,7 @@ export class HerdrSocket {
   private readonly url: string;
   private readonly handlers = new Set<Handler>();
   private readonly disconnectHandlers = new Set<() => void>();
+  private readonly beforeReplayHandlers = new Set<() => void>();
   private snapshotKnown = false;
   private readonly outputSeen = new Set<string>();
   private readonly inputReady = new Set<string>();
@@ -286,6 +287,8 @@ export class HerdrSocket {
       this.rawSend({ type: "role", mode: this.mode });
       // a new connection is a new client to the server: it has to hear again whether the page is in use
       if (this.presence !== null) this.rawSend({ type: "presence", active: this.presence });
+      // Mounted panes decide whether a new connection may acquire an attach before any replay.
+      for (const handler of this.beforeReplayHandlers) handler();
       for (const [paneId, state] of this.attached) {
         state.releaseSizeOwed = !state.keepSize;
         this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows, flow_control: "ack", ...(state.keepSize ? { keep_size: true } : {}) });
@@ -631,6 +634,11 @@ export class HerdrSocket {
     return () => { this.disconnectHandlers.delete(handler); };
   }
 
+  onBeforeReplay(handler: () => void): () => void {
+    this.beforeReplayHandlers.add(handler);
+    return () => { this.beforeReplayHandlers.delete(handler); };
+  }
+
   attach(paneId: string, cols: number, rows: number, keepSize = false): void {
     this.outputSeen.delete(paneId);
     this.inputReady.delete(paneId);
@@ -689,11 +697,16 @@ export class HerdrSocket {
    * a reconnect's snapshot. False when the server cannot (no "watch" in its snapshot): the tab stays paused.
    */
   watch(paneId: string, cols: number, rows: number): boolean {
-    if (this.snapshotKnown && !this.features.has("watch")) return false;
+    if (!this.canWatch()) return false;
     this.watched.set(paneId, { cols, rows });
     // before the snapshot, the snapshot handler sends it
     if (this.connected && this.snapshotKnown) this.rawSend({ type: "watch", pane_id: paneId, cols, rows });
     return true;
+  }
+
+  /** Before the snapshot, a watch waits for capability discovery rather than acquiring an attach. */
+  canWatch(): boolean {
+    return !this.snapshotKnown || this.features.has("watch");
   }
 
   unwatch(paneId: string): void {
@@ -934,5 +947,6 @@ export class HerdrSocket {
     this.settleSubmits(DISCONNECTED);
     this.handlers.clear();
     this.disconnectHandlers.clear();
+    this.beforeReplayHandlers.clear();
   }
 }

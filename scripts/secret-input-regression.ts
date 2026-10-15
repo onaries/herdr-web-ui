@@ -61,6 +61,10 @@ process.stdin.on("data", chunk => {
     await field.waitFor();
     assert.equal(await field.getAttribute("type"), "password");
     assert.equal(await page.locator(".terminal-input").count(), 0);
+    await page.locator(".pane-frame.is-current").focus();
+    await page.keyboard.press("ControlOrMeta+Shift+E");
+    assert.equal(await field.evaluate(node => node === document.activeElement), true, "focus prefers the mounted masked-input field");
+    assert.deepEqual(sent, [], "focusing masked input does not send a secret or terminal input");
     await field.fill("fixture-secret");
     assert.equal(await field.evaluate((element) => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }))), false);
     assert.equal(await page.locator("body").innerText().then((text) => text.includes("fixture-secret")), false);

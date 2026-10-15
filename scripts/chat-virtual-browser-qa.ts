@@ -16,10 +16,8 @@ let activePage: Page | undefined;
 let revision = 0;
 let epoch = 1;
 let holdOlder = false;
-let failOlder = false;
 let olderReads = 0;
 let wholeReads = 0;
-let searchPrefix = "";
 let newestStart = 0;
 let beginsAtOrigin = false;
 let slideReads = 0;
@@ -27,7 +25,7 @@ const WHOLE_OUTPUT = `FULL TOOL OUTPUT\n${"detail ".repeat(250)}\nFULL OUTPUT EN
 const olderEvents = new EventTarget();
 const olderReleases: Array<() => void> = [];
 function turn(index: number, machine: string): ConversationTurn {
-  const text = `${index === 123 ? searchPrefix : ""}${machine} E${epoch} ROW-${index}\n\n${"Variable height paragraph. ".repeat(Math.abs(index) % 5 + 1)}${index === 999 ? `\n\nREVISION-${revision}` : ""}${index === 123 ? "\n\nNEEDLE one\n\nNEEDLE two" : ""}`;
+  const text = `${machine} E${epoch} ROW-${index}\n\n${"Variable height paragraph. ".repeat(Math.abs(index) % 5 + 1)}${index === 999 ? `\n\nREVISION-${revision}` : ""}`;
   const parts: ConversationTurn["parts"] = [{ kind: "text", text }];
   if (index === 497) parts.unshift({ kind: "tool", name: "Read", summary: "fixture tool", input: "{}", output: "preview only", output_ref: "fixture-output", output_size: WHOLE_OUTPUT.length });
   return {
@@ -77,6 +75,35 @@ async function visibleMessage(page: Page, text: string) {
     });
   }, text);
 }
+/** Scrolls the list until the row whose first line is `text` is mounted, then centers it; above the loaded rows it scrolls to the top, which loads an older page. */
+async function reveal(page: Page, text: string) {
+  const target = Number(/ROW-(-?\d+)$/.exec(text)?.[1]);
+  const deadline = Date.now() + 15_000;
+  let last: unknown = null;
+  while (Date.now() < deadline) {
+    const found = await page.locator(".chat-view").evaluate((node, { text, target }) => {
+      const hit = [...node.querySelectorAll("p")].find((p) => p.textContent === text);
+      if (hit) { hit.scrollIntoView({ block: "center" }); return true; }
+      // rows in view only: a pinned (selected or focused) row stays mounted anywhere in the list
+      const view = node.getBoundingClientRect();
+      const shown = [...node.querySelectorAll("p")].filter((p) => {
+        const box = p.getBoundingClientRect();
+        return box.bottom > view.top && box.top < view.bottom;
+      }).map((p) => Number(/ROW-(-?\d+)$/.exec(p.textContent ?? "")?.[1])).filter(Number.isFinite);
+      if (!shown.length) { node.scrollTop -= node.clientHeight / 2; return false; }
+      const low = Math.min(...shown), high = Math.max(...shown);
+      // step by rows, damped so it never jumps past the target
+      const rowHeight = node.clientHeight / Math.max(1, high - low + 1);
+      const rows = target < low ? target - low : target - high;
+      node.scrollTop = Math.max(0, node.scrollTop + Math.sign(rows) * Math.max(rowHeight, Math.abs(rows) * rowHeight * 0.7));
+      return { low, high, top: node.scrollTop };
+    }, { text, target });
+    if (found === true) return visibleMessage(page, text);
+    last = found;
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  }
+  throw new Error(`Row never mounted: ${text} ${JSON.stringify(last)}`);
+}
 async function selectionState(page: Page) {
   return page.evaluate(() => {
     const selection = getSelection();
@@ -114,7 +141,6 @@ try {
       const page = Number(url.searchParams.get("before")?.split(":")[1] ?? 0);
       if (older) {
         olderReads++;
-        if (failOlder) return Response.json({ error: { code: "unavailable", message: "fixture older read refused" } }, { status: 503 });
       }
       if (older && holdOlder) await new Promise<void>((resolve) => {
         olderReleases.push(resolve);
@@ -130,7 +156,7 @@ try {
   } });
   browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   for (const [width, theme] of [[1440, "dark"], [1440, "light"], [390, "dark"], [390, "light"]] as const) {
-    revision = 0; epoch = 1; holdOlder = false; failOlder = false; olderReads = 0; wholeReads = 0; searchPrefix = "";
+    revision = 0; epoch = 1; holdOlder = false; olderReads = 0; wholeReads = 0;
     newestStart = 0; beginsAtOrigin = false; slideReads = 0;
     const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, locale: "en-US" });
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -267,40 +293,11 @@ try {
     assert.ok((await metrics(page)).mounted < 80);
     console.log(`PASS ${width} ${theme}: native drag selection and real copy survive eviction and streaming; pins release`);
 
-    await page.getByRole("button", { name: "Find in messages", exact: true }).click();
-    const search = page.getByRole("searchbox", { name: "Find in messages" });
-    await search.fill("local E1 ROW-123");
-    const match = page.locator("[data-chat-match]");
-    await match.filter({ hasText: "local E1 ROW-123" }).waitFor();
-    await visibleMessage(page, "local E1 ROW-123");
+    await reveal(page, "local E1 ROW-123");
     assert.ok((await metrics(page)).mounted < 80);
-    await search.fill("NEEDLE");
-    await page.getByRole("button", { name: "Next match", exact: true }).click();
-    assert.equal(await page.locator(".find-bar-count").textContent(), "2 of 2");
-    // Enter on a button presses that button; only the field's Enter steps to the next match
-    await page.getByRole("button", { name: "Previous match", exact: true }).press("Enter");
-    assert.equal(await page.locator(".find-bar-count").textContent(), "1 of 2", "Enter on Previous match goes back");
-    await search.press("Enter");
-    assert.equal(await page.locator(".find-bar-count").textContent(), "2 of 2", "Enter in the field goes forward");
-    searchPrefix = "PREFIX-CHANGE\n\n";
-    await update(page);
-    await page.getByText("PREFIX-CHANGE", { exact: true }).waitFor();
-    assert.equal(await page.locator(".find-bar-count").textContent(), "2 of 2", "source offsets changing do not move the chosen occurrence to another match");
-    await search.fill("local E1 ROW--40");
-    await page.getByRole("button", { name: "Search earlier messages" }).click();
-    await match.filter({ hasText: "local E1 ROW--40" }).waitFor();
-    await visibleMessage(page, "local E1 ROW--40");
-    await shot(page, `search-${width}-${theme}`);
-    await page.keyboard.press("Escape");
-    const findButton = page.getByRole("button", { name: "Find in messages", exact: true });
-    await findButton.waitFor();
-    assert.ok(await findButton.evaluate((button) => document.activeElement === button), "closing search restores focus");
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+f" : "Control+f");
-    await search.waitFor();
-    await page.getByRole("button", { name: "Close search", exact: true }).press("Enter");
-    await findButton.waitFor();
-    await visibleMessage(page, "local E1 ROW--40");
-    console.log(`PASS ${width} ${theme}: source Find reaches an offscreen row and an unloaded older page; shortcut and close focus work`);
+    await reveal(page, "local E1 ROW--40");
+    await shot(page, `reveal-${width}-${theme}`);
+    console.log(`PASS ${width} ${theme}: an offscreen row and an unloaded older page are reached by scrolling`);
 
     const boundarySelection = await page.evaluate(() => {
       const header = document.querySelector(".chat-virtual-header");
@@ -319,10 +316,7 @@ try {
     await page.evaluate(() => getSelection()?.removeAllRanges());
     await page.waitForFunction(() => document.querySelector(".chat-view")?.getAttribute("data-chat-pinned") === "0");
 
-    await findButton.click();
-    await search.fill("local E1 ROW-497");
-    await match.filter({ hasText: "local E1 ROW-497" }).waitFor();
-    await page.keyboard.press("Escape");
+    await reveal(page, "local E1 ROW-497");
     const work = page.locator("[data-chat-row]").filter({ hasText: "local E1 ROW-497" });
     await work.locator(".work-block-head").click();
     await work.locator(".work-row-head").click();
@@ -349,51 +343,21 @@ try {
     await page.waitForFunction(() => ![...document.querySelectorAll("[data-chat-row]")].some((row) => row.textContent?.includes("local E1 ROW-497")));
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.evaluate((height) => window.chatQa.resize(height), width === 390 ? 844 : 900);
-    await findButton.click();
-    await search.fill("FULL OUTPUT END");
-    await match.filter({ hasText: "local E1 ROW-497" }).waitFor();
-    await page.keyboard.press("Escape");
+    await reveal(page, "local E1 ROW-497");
     assert.equal(await work.locator(".work-block-head").getAttribute("aria-expanded"), "true");
     assert.equal(await work.locator(".work-row-head").getAttribute("aria-expanded"), "true");
     assert.equal(await work.locator(".chat-tool-io.is-whole").textContent(), WHOLE_OUTPUT);
     assert.equal(wholeReads, 1, "restored output is not fetched again");
     await shot(page, `restored-work-${width}-${theme}`);
-    console.log(`PASS ${width} ${theme}: outside-row selection, focused row, disclosures and whole-output search survive eviction`);
+    console.log(`PASS ${width} ${theme}: outside-row selection, focused row, disclosures and the whole output survive eviction`);
 
     await page.reload();
     await page.getByText("REVISION-102", { exact: true }).waitFor();
     await settleBottom(page);
-    await findButton.click();
-    await search.fill("MISSING-SENTINEL");
-    holdOlder = true;
-    const beforeCancel = olderReads;
-    const searchStarted = new Promise<void>((resolve, reject) => {
-      const received = () => { clearTimeout(timer); resolve(); };
-      const timer = setTimeout(() => { olderEvents.removeEventListener("requested", received); reject(new Error("Held search request missing")); }, 10_000);
-      olderEvents.addEventListener("requested", received, { once: true });
-    });
-    await page.getByRole("button", { name: "Search earlier messages" }).click();
-    await searchStarted;
-    await page.getByRole("button", { name: "Cancel search" }).click();
-    const cancelledPage = page.waitForResponse((response) => new URL(response.url()).searchParams.has("before"));
-    holdOlder = false;
-    olderReleases.splice(0).forEach((release) => release());
-    await (await cancelledPage).finished();
-    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>(".chat-find-options .btn")?.disabled === false);
-    assert.equal(olderReads, beforeCancel + 1, "cancel stops further history reads after the in-flight page");
-    failOlder = true;
-    await page.getByRole("button", { name: "Search earlier messages" }).click();
-    await page.locator(".chat-find [role=alert]").waitFor();
-    failOlder = false;
-    await search.fill("local E1 ROW--40");
-    await page.getByRole("button", { name: "Search earlier messages" }).click();
-    await match.filter({ hasText: "local E1 ROW--40" }).waitFor();
-    await page.keyboard.press("Escape");
     await page.evaluate(() => window.chatQa.machine("remote"));
     await page.getByText("remote E1 ROW-999", { exact: true }).waitFor();
-    assert.equal(await page.locator(".chat-find").count(), 0);
     assert.ok((await metrics(page)).keys.every((key) => key?.includes('"remote"')), "same-pane remote rows have a separate identity scope");
-    console.log(`PASS ${width} ${theme}: earlier search cancels and retries; another PC does not inherit search or rows`);
+    console.log(`PASS ${width} ${theme}: another PC does not inherit rows`);
     const remoteRow = page.locator("[data-chat-row]").filter({ hasText: "remote E1 ROW-999" });
     await remoteRow.evaluate((row) => {
       const range = document.createRange(); range.selectNodeContents(row);
@@ -410,10 +374,7 @@ try {
       newestStart = 0; beginsAtOrigin = origin; epoch = 1;
       await page.reload();
       await settleBottom(page);
-      await findButton.click();
-      await search.fill("local E1 ROW-497");
-      await match.filter({ hasText: "local E1 ROW-497" }).waitFor();
-      await page.keyboard.press("Escape");
+      await reveal(page, "local E1 ROW-497");
       const retained = page.locator("[data-chat-row]").filter({ hasText: "local E1 ROW-497" });
       await retained.locator(".work-block-head").click();
       await retained.locator(".work-row-head").click();
@@ -443,7 +404,7 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log("chat virtual: initial, streaming, manual follow and source search OK");
+  console.log("chat virtual: initial, streaming, manual follow and row restoration OK");
 } catch (error) {
   if (evidence && activePage && !activePage.isClosed()) {
     try { await activePage.screenshot({ path: join(evidence, "chat-virtual-failed.png") }); }

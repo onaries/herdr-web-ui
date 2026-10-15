@@ -29,7 +29,6 @@ import { composerDrafts } from "../lib/composerDraft.ts";
 import { appendQuote, formatTerminalQuote } from "../lib/terminalQuote.ts";
 import { matchHerdrWidths } from "../lib/terminalWidths.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
-import { PaneAwayContext } from "../lib/paneAwayContext.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { KeyBar } from "./KeyBar.tsx";
 import { TerminalInput } from "./TerminalInput.tsx";
@@ -76,6 +75,8 @@ export interface PaneTerminalProps {
   onOpenDiff?: (target: import("../lib/repoDiff.ts").RepoDiffTarget) => void;
   /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
+  /** null while the PC identity loads, before the first attach's fixed-grid frame arrives. */
+  mirrored?: boolean | null;
   /**
    * herdr's reason it could not restore the selected pane (0.9.3+): the pane has no
    * terminal to attach, so App passes a null paneId and the placeholder says why.
@@ -143,6 +144,7 @@ const heldRowNotes = new Map<string, { owner: string; id: string; text: string }
 
 export function PaneTerminal({
   paneId,
+  mirrored = false,
   restoreError = null,
   agent: reportedAgent = null,
   title = null,
@@ -191,7 +193,6 @@ export function PaneTerminal({
   const shown = useContext(PaneShownContext);
   const shownRef = useRef(shown); shownRef.current = shown;
   const sizesPty = (): boolean => presentedRef.current && shownRef.current;
-  const awayReleased = useContext(PaneAwayContext);
   const { answerPanePrompt, uploadPaneImage } = useMachineApi();
   const uploadFileRef = useRef(uploadPaneImage);
   uploadFileRef.current = uploadPaneImage;
@@ -279,6 +280,7 @@ export function PaneTerminal({
   const observeRef = useRef(false);
   // a mirrored pane (no terminal attach on its PC): the grid is the pane's own in herdr, adopted like an observer's
   const fixedGridRef = useRef(false);
+  const mirroredRef = useRef(mirrored); mirroredRef.current = mirrored;
   // the pty's grid as the server last said it for this pane (pane-geometry), whoever set it
   const sharedGridRef = useRef<{ cols: number; rows: number } | null>(null);
   // takes the pty back to this grid when another device left it at its own (the effect below sets it)
@@ -293,8 +295,8 @@ export function PaneTerminal({
   const watchingRef = useRef(false);
   const [watching, setWatchingState] = useState(false);
   const setWatching = useCallback((next: boolean) => { watchingRef.current = next; setWatchingState(next); }, []);
-  // the mount effect's watch, for the pane switch: a released tab moving on to the next pane watches that one
-  const watchRef = useRef<(pane: string) => void>(() => {});
+  // the mount effect's initial-attach decision, also used for a replacement pane
+  const deferAttachRef = useRef<(pane: string) => boolean>(() => false);
   // the mount effect's release, for the queue below: a tab that kept its pane for a message lets go once it went
   const releaseRef = useRef<() => void>(() => {});
   const presentationRef = useRef<() => void>(() => {});
@@ -1074,6 +1076,7 @@ export function PaneTerminal({
     pendingEpochRef.current = session.epoch;
     socketRef.current = socket;
     let outputGeneration = 0;
+    let deferredAttach = false;
     const off = session.on((message, sent) => {
       onServerMessageRef.current?.(message);
       pendingScopeRef.current = session.scope;
@@ -1088,6 +1091,9 @@ export function PaneTerminal({
         setEnded(false);
         term.options.disableStdin = observeRef.current || heldRef.current;
       }
+      // A provisional watch must not strand an initial/reconnected pane on an older bridge.
+      // An ordinary opt-in release still keeps its existing paused fallback.
+      if (message.type === "snapshot" && deferredAttach && !socket.canWatch()) resume();
       if (message.type === "pending-messages" && sent) {
         redrawGreeting();
         onChatSuggestion(message.pane_id, null);
@@ -1717,7 +1723,7 @@ export function PaneTerminal({
     const release = (): void => {
       cancelLeave();
       const current = paneRef.current;
-      if (!current || embedded || fixedGridRef.current) return;
+      if (!current || embedded || mirroredRef.current || fixedGridRef.current) return;
       if (cachedRef.current && releasedRef.current) {
         if (watchingRef.current) { socket.unwatch(current); setWatching(false); }
         // Caching stops the watch, but does not turn an away release into a cache-only release.
@@ -1731,9 +1737,6 @@ export function PaneTerminal({
       }
       socket.detach(current);
       // The server's detach receipt holds pending input on this still-live PC connection.
-      // Only an actual release marks the canvas. A queue-held pane never transfers that
-      // ownership or skips the next pane's normal initial attach/release delay.
-      if (!cachedRef.current && awayReleased) awayReleased.current = true;
       setReleased(true);
       cachedReleaseRef.current = cachedRef.current;
       if (!cachedRef.current) watch(current);
@@ -1749,8 +1752,27 @@ export function PaneTerminal({
       modifyOtherKeysRef.current = 0;
       setWatching(socket.watch(pane, term.cols, term.rows));
     };
+    // keep_size prevents resizing an existing attach, but a fresh sidecar still sizes the pane.
+    // The client cannot distinguish those cases atomically, so both watch until the user returns.
+    const deferAttach = (pane: string): boolean => {
+      deferredAttach = false;
+      if (inUse() || embedded || mirroredRef.current || fixedGridRef.current || queueWaits(pane) || !socket.canWatch()) return false;
+      cancelLeave();
+      deferredAttach = true;
+      setReleased(true);
+      cachedReleaseRef.current = false;
+      // The local roster can arrive before /api/health identifies a mirror. Wait for that
+      // identity rather than briefly starting an observer on a PC with no attach sidecar.
+      if (!cachedRef.current && mirroredRef.current !== null) watch(pane);
+      return true;
+    };
+    deferAttachRef.current = deferAttach;
+    const offBeforeReplay = socket.onBeforeReplay(() => {
+      const pane = paneRef.current;
+      if (!pane || releasedRef.current) return;
+      if (deferAttach(pane)) socket.detach(pane);
+    });
     releaseRef.current = () => { if (queueHeld) release(); };
-    watchRef.current = watch;
     // a window resized while watched: the view is drawn for a grid, so it starts again at the new one
     const onWatchedResize = term.onResize(({ cols, rows }) => {
       const current = paneRef.current;
@@ -1760,6 +1782,7 @@ export function PaneTerminal({
     });
     const resume = (): void => {
       if (!presentedRef.current) return;
+      deferredAttach = false;
       setReleased(false);
       const current = paneRef.current;
       if (!current) return;
@@ -1795,8 +1818,8 @@ export function PaneTerminal({
       socket.attach(current, term.cols, term.rows, chatViewRef.current || away || !shownRef.current || keyboardHeld);
       if (away) leave();
     };
-    // out of use, a reconnect attaches at the size the pane has instead of taking it
-    // (keepSize, as under the chat lens), until the tab lets go of the pane
+    // Existing attaches keep their grid while away. New connections watch instead, except
+    // for queued input, mirrors, embedded pages and bridges without watch support.
     const leave = (): void => {
       if (cachedRef.current) { release(); return; }
       const current = paneRef.current;
@@ -1824,7 +1847,6 @@ export function PaneTerminal({
     reattachRef.current = reattach;
     const back = (): void => {
       if (!presentedRef.current) return;
-      if (inUse() && awayReleased) awayReleased.current = false;
       cancelLeave();
       // A pane that kept its attach while put away (a queued message, a mirror) stopped because its
       // frozen page sent no ACKs, not because this device is too slow: coming back attaches again,
@@ -1836,7 +1858,10 @@ export function PaneTerminal({
     presentationRef.current = () => {
       if (cachedRef.current) release();
       else if (presentedRef.current && releasedRef.current) {
-        if (cachedReleaseRef.current || inUse()) back();
+        if (inUse() || mirroredRef.current) back();
+        else if ((cachedReleaseRef.current || deferredAttach && !watchingRef.current) && paneRef.current) {
+          if (!deferAttach(paneRef.current)) back();
+        }
         else if (paneRef.current && !watchingRef.current) watch(paneRef.current);
       }
     };
@@ -1850,6 +1875,8 @@ export function PaneTerminal({
         if (hiddenOnTouch()) release();
       }
     };
+    // A restored mobile page can be visible and focused without another focus/visibility event.
+    const onPageShow = (): void => { if (inUse()) back(); };
     // Another device can size the pty while this window keeps its focus (a phone used beside a
     // PC left in front): no focus event comes back here, so a click or key in this terminal
     // takes the pane back to this window's grid.
@@ -1870,7 +1897,8 @@ export function PaneTerminal({
       // an IME's first key comes before compositionstart, with isComposing still false (keyCode 229)
       if (event instanceof KeyboardEvent && (event.repeat || event.isComposing || event.keyCode === 229 || composingRef.current || compositionCommitPendingRef.current)) return;
       if (event instanceof PointerEvent && event.button !== 0) return;
-      reassertIfStale();
+      if (releasedRef.current) back();
+      else reassertIfStale();
     };
     // a click or a tap is the user here, whatever the window says about its focus
     const onPointer = (event: PointerEvent): void => {
@@ -1878,6 +1906,7 @@ export function PaneTerminal({
       else reclaim(event);
     };
     window.addEventListener("focus", back);
+    window.addEventListener("pageshow", onPageShow);
     window.addEventListener("blur", leave);
     window.addEventListener("pointerdown", onPointer, { capture: true });
     window.addEventListener("keydown", reclaim, { capture: true });
@@ -1912,9 +1941,11 @@ export function PaneTerminal({
       reattachRef.current = () => {};
       keyboardHoldsRef.current = () => false;
       fittedRef.current = () => {};
-      watchRef.current = () => {};
+      deferAttachRef.current = () => false;
+      offBeforeReplay();
       onWatchedResize.dispose();
       window.removeEventListener("focus", back);
+      window.removeEventListener("pageshow", onPageShow);
       window.removeEventListener("blur", leave);
       window.removeEventListener("pointerdown", onPointer, { capture: true });
       window.removeEventListener("keydown", reclaim, { capture: true });
@@ -2100,18 +2131,10 @@ export function PaneTerminal({
       }
       // Keep connection proof until the server confirms the detach as held.
     };
-    // A fresh keyed terminal inherits a prior release only within this PC's canvas and
-    // while the browser remains away. Initial inactive loads still attach with keep_size
-    // and get their normal release delay; no queued input or connection state is inherited.
-    // a phone put away releases whatever the setting (#748), so its replacement inherits that too
-    const releasing = releaseAwayRef.current || (coarseRef.current && document.visibilityState === "hidden");
-    if (awayReleased && (inUse() || !releasing)) awayReleased.current = false;
-    if (releasing && !inUse() && awayReleased?.current) setReleased(true);
-    // A tab that let go watches its replacement until the user returns.
-    if (releasedRef.current) {
-      watchRef.current(paneId);
-      return leavePane;
-    }
+    // A fresh background pane must not acquire size ownership even with the release setting off.
+    // This also covers a replacement pane: no prior release or input ownership is inherited.
+    setReleased(false);
+    if (deferAttachRef.current(paneId)) return leavePane;
     // under the keyboard (a pane picked while typing) the fit waits for it to go, and the attach adopts
     // the pane's size meanwhile
     const held = keyboardHoldsRef.current(true);
@@ -2123,8 +2146,7 @@ export function PaneTerminal({
         /* not laid out yet; the ResizeObserver will follow up */
       }
     }
-    // out of use (the pane closed in herdr and the app moved on to the next one, or a reload behind
-    // another app), the attach adopts the pane's size; the refit takes it once the user is here
+    // A pane exempt from watching still asks to keep an existing attachment's size while away.
     const away = !inUse();
     socket.attach(paneId, term.cols, term.rows, chatViewRef.current || away || !shownRef.current || held);
     // no blur or hidden comes for a tab already out of use: it lets go of this pane after a moment too
@@ -2137,7 +2159,7 @@ export function PaneTerminal({
 
   // the message the tab kept its pane for has gone (or was held): out of use, it lets go now
   useEffect(() => { releaseRef.current(); }, [pending]);
-  useEffect(() => { presentationRef.current(); }, [cached, presented]);
+  useEffect(() => { presentationRef.current(); }, [cached, presented, mirrored]);
 
 
   // A sibling already mounted in the split canvas becomes the keyboard target only on an
@@ -2592,6 +2614,15 @@ export function PaneTerminal({
   useLayoutEffect(() => {
     if (!controls || !active || !paneId) return;
     const current: PaneControls = {
+      focusInput: () => {
+        if (!activeRef.current || !presentedRef.current || modalOpen() || observeRef.current) return;
+        const stack = stackRef.current;
+        const secret = stack?.querySelector<HTMLInputElement>(".secret-input input");
+        if (secret) { secret.focus({ preventScroll: true }); return; }
+        const input = stack?.querySelector<HTMLTextAreaElement>(chatViewRef.current ? ".composer-text" : ".terminal-input-text");
+        if (input) input.focus({ preventScroll: true });
+        else if (!chatViewRef.current && !heldRef.current && !endedRef.current) termRef.current?.focus();
+      },
       scrollPage: (direction) => {
         if (activeRef.current && presentedRef.current && !modalOpen()) pageScroll.current?.(direction);
       },

@@ -144,6 +144,23 @@ try {
   assert.ok((await paneScrollInfo(paneId))!.offset_from_bottom > 100, "paging reaches the top of native history");
   await pageToEdge(-1);
 
+  // The jump button: absent at the bottom, shown above it, and a click returns to the bottom without
+  // taking the terminal's focus or sending input to the program.
+  const jump = page.getByRole("button", { name: "Jump to bottom", exact: true });
+  assert.equal(await jump.count(), 0, "no jump button at the native bottom");
+  await pageToEdge(1);
+  await jump.waitFor();
+  const jumpBox = (await jump.boundingBox())!, gridBox = (await page.locator(".pane-terminal").boundingBox())!;
+  assert.ok(jumpBox.x + jumpBox.width <= gridBox.x + gridBox.width && jumpBox.y + jumpBox.height <= gridBox.y + gridBox.height,
+    "the jump button sits inside the grid's bottom-right corner");
+  await page.locator(".xterm-helper-textarea").evaluate((node: HTMLTextAreaElement) => node.focus());
+  const inputsBeforeJump = terminalInput.length;
+  await jump.click();
+  await until(async () => (await paneScrollInfo(paneId))!.offset_from_bottom === 0, "the jump button returns to the native bottom");
+  await jump.waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.className), "xterm-helper-textarea", "the jump button leaves focus in the terminal");
+  assert.equal(terminalInput.length, inputsBeforeJump, "the jump button sends no input to the program");
+
   // The metrics poll: a quiet pane at the bottom backs off, output brings it back, and a view scrolled
   // up into history keeps reading every second, since growing history there may send no output.
   const metricsReads: number[] = [];
@@ -330,7 +347,7 @@ try {
   assert.deepEqual(errors, []);
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "terminal-viewport.png") });
   await context.close();
-  console.log("PASS no history scrollbar, full-width grid, native paging, search highlights, wide cells, non-jumping refresh and old bridge compatibility");
+  console.log("PASS no history scrollbar, full-width grid, native paging, jump to bottom, search highlights, wide cells, non-jumping refresh and old bridge compatibility");
 } finally {
   await browser.close(); server.stop();
   if (workspace) await workspaceClose(workspace).catch(() => {});

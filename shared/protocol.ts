@@ -1016,6 +1016,8 @@ export interface InteractivePrompt {
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;
+  /** Claude's plan file behind a plan card, whose whole text is then the body: opened in the file viewer */
+  plan_file?: string;
 }
 
 export interface InteractivePromptStep {

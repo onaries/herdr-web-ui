@@ -797,6 +797,65 @@ it("watches a pane it let go of only on a server that can, again after a reconne
   client.close();
 });
 
+it("lets a pane replace a background reconnect's attach with a watch before replay", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  let socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["watch"]));
+  client.attach("w1:p1", 140, 40);
+  client.attach("w1:p2", 100, 30);
+  const off = client.onBeforeReplay(() => {
+    client.detach("w1:p1");
+    client.watch("w1:p1", 140, 40);
+  });
+  try {
+    socket.disconnect();
+    client.connect();
+    socket = FakeSocket.last;
+    socket.open();
+    expect(socket.sent.filter((frame) => frame.type === "attach").map((frame) => frame.pane_id)).toEqual(["w1:p2"]);
+    expect(socket.sent.filter((frame) => frame.type === "watch")).toEqual([]);
+    socket.receive(snapshot(["watch"]));
+    expect(socket.sent.filter((frame) => frame.type === "watch")).toEqual([
+      { type: "watch", pane_id: "w1:p1", cols: 140, rows: 40 },
+    ]);
+    client.resize("w1:p1", 80, 24, true);
+    expect(socket.sent.filter((frame) => frame.type === "resize")).toEqual([]);
+    off();
+    client.unwatch("w1:p1");
+    client.attach("w1:p1", 140, 40);
+    socket.disconnect();
+    client.connect();
+    socket = FakeSocket.last;
+    socket.open();
+    expect(socket.sent.filter((frame) => frame.type === "attach").map((frame) => frame.pane_id)).toEqual(["w1:p2", "w1:p1"]);
+  } finally { off(); client.close(); }
+});
+
+it("discovers watch support anew before each connection's attach replay", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  const capabilities: boolean[] = [];
+  client.onBeforeReplay(() => capabilities.push(client.canWatch()));
+  try {
+    client.connect();
+    let socket = FakeSocket.last;
+    socket.open();
+    expect(client.canWatch()).toBe(true);
+    socket.receive(snapshot([]));
+    expect(client.canWatch()).toBe(false);
+    expect(client.watch("w1:p1", 100, 30)).toBe(false);
+    socket.disconnect();
+    client.connect();
+    socket = FakeSocket.last;
+    socket.open();
+    expect(client.canWatch()).toBe(true);
+    socket.receive(snapshot(["watch"]));
+    expect(client.canWatch()).toBe(true);
+    expect(capabilities).toEqual([true, true]);
+  } finally { client.close(); }
+});
+
 it("waits for capabilities when output precedes snapshot, and supports old bridges", () => {
   for (const features of [["input-ready"], []]) {
     const client = new HerdrSocket("ws://test/ws"); client.connect();

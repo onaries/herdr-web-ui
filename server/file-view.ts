@@ -72,6 +72,19 @@ export function locateFile(input: string, cwd: string | null): { info: FileInfo 
   return found.length > 1 ? { candidates: found } : null;
 }
 
+/** A relative fallback stays in its own folder, including after following symlinks. */
+export function locateFileInFolder(input: string, folder: string): ReturnType<typeof locateFile> {
+  const relative = input.trim();
+  if (isAbsolute(relative) || relative.startsWith("~") || !resolve(folder, relative).startsWith(resolve(folder) + sep)) return null;
+  const found = locateFile(relative, folder);
+  if (found === null) return null;
+  try {
+    const root = realpathSync(folder) + sep;
+    const paths = "info" in found ? [found.info.path] : found.candidates;
+    return paths.every((path) => realpathSync(path).startsWith(root)) ? found : null;
+  } catch { return null; /* a missing or unreadable target is not a fallback */ }
+}
+
 /** What the viewer needs to know about a file, or null when it is not a readable file. */
 export function fileInfo(path: string): FileInfo | null {
   let stat;

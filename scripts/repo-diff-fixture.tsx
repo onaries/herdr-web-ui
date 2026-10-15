@@ -5,6 +5,7 @@ import "../src/styles.css";
 import { FilesDialog } from "../src/components/FilesDialog.tsx";
 import { FileViewer } from "../src/components/FileViewer.tsx";
 import { RepoDiffViewer } from "../src/components/RepoDiffViewer.tsx";
+import { ChatDiffContext, TurnChangedFiles } from "../src/components/TurnChangedFiles.tsx";
 import { MachineContext } from "../src/lib/machineContext.tsx";
 import { SettingsProvider, useSettings, type Settings } from "../src/lib/settings.ts";
 import { useFileViewer } from "../src/lib/useFileViewer.ts";
@@ -22,6 +23,11 @@ function Fixture() {
   window.repoDiffQA = { openFiles: (machine, paneId, directory) => setFiles({ machine, paneId, directory }), closeFiles: () => setFiles(null), settings: update };
   return <main>
     <button type="button" id="outside">Outside</button>
+    {files && <MachineContext.Provider value={files.machine}>
+      <ChatDiffContext.Provider value={{ openDiff, cwd: files.directory }}>
+        <TurnChangedFiles paneId={files.paneId} parts={[{ kind: "tool", name: "Edit", input: JSON.stringify({ file_path: "backend/server/test_out_work.py" }), output: "", summary: "Edited file" }]} />
+      </ChatDiffContext.Provider>
+    </MachineContext.Provider>}
     {files && <MachineContext.Provider value={files.machine}>
       <FilesDialog start={files.directory} paneId={files.paneId} viewing={file !== null || diff !== null}
         onOpenFile={(path) => openFile({ path, paneId: files.paneId, machineId: files.machine })}

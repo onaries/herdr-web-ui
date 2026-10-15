@@ -21,18 +21,28 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+async function waitForProcess(paneId: string, marker: string) {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const info = await herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId });
+    const processes = info.process_info?.foreground_processes ?? [];
+    // the stand-in itself, by its path: the shell's own startup processes come and go before it
+    const process = processes.find((process) => process.argv?.includes(marker));
+    if (process) return { process, processes };
+    if (Date.now() >= deadline) {
+      throw new Error(`test process ${marker} did not appear in pane ${paneId}; last process info: ${JSON.stringify(info)}`);
+    }
+    await Bun.sleep(50);
+  }
+}
+
 async function launch(command: string, marker: string): Promise<string> {
   const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omo-binding" });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${command}\n` });
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>("pane.process_info", { pane_id: paneId });
-    // the stand-in itself, by its path: the shell's own startup processes come and go before it
-    if (info.process_info?.foreground_processes?.some((process) => process.argv?.includes(marker))) return paneId;
-    await Bun.sleep(50);
-  }
-  throw new Error("test omo process did not start");
+  await waitForProcess(paneId, marker);
+  return paneId;
 }
 const pane = (id?: string) => launch(`${process.execPath} ${script}${id ? ` --session-id ${id}` : ""}`, script);
 const read = async (paneId: string) => omoTranscriptForPane(paneId, root, (await sessionSnapshot()).panes, root);
@@ -113,8 +123,8 @@ it("starts omo through the pane's shell and waits until omo is its foreground pr
 
 // omo keeps no descriptor on its session file; it publishes a holder record instead
 const hold = async (paneId: string, id: string, store = dir, marker = script) => {
-  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: paneId });
-  const pid = info.process_info!.foreground_processes!.find((process) => process.argv?.includes(marker))!.pid;
+  // A later process-info snapshot can omit the launcher even after launch() observed it.
+  const { process: { pid } } = await waitForProcess(paneId, marker);
   const holders = join(store, "session-holders", encodeURIComponent(id));
   mkdirSync(holders, { recursive: true });
   writeFileSync(join(holders, `${pid}.json`), JSON.stringify({ pid, bootAtMs: 0, processStartedAtMs: Math.floor(processStartedAt(pid)! / 1000) * 1000, cwd: root }));
@@ -237,11 +247,7 @@ it.skipIf(process.platform !== "linux")("recognizes a custom launcher only by ve
   writeFileSync(written, JSON.stringify({ type: "session", id: "custom-pending", cwd: root, timestamp: new Date().toISOString() }) + "\n");
   expect(await omoTranscriptForPane(paneId, root, (await sessionSnapshot()).panes, root)).toBe(realpathSync(written));
   const snapshot = await sessionSnapshot();
-  const info = await herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId });
-  const processes = info.process_info?.foreground_processes ?? [];
-  const custom = processes.find((process) => process.argv?.includes(launcher));
-  expect(custom).toBeDefined();
-  if (!custom) throw new Error("custom launcher process missing");
+  const { process: custom, processes } = await waitForProcess(paneId, launcher);
   expect(readlinkSync(`/proc/${custom.pid}/cwd`)).toBe(root);
   // Older process-info responses omit cwd; both pane directory fields can be stale.
   const withoutCwd = { process_info: { foreground_processes: processes.map(({ pid, argv }) => ({ pid, argv })) } };

@@ -55,6 +55,7 @@ export type DictationLanguage = "auto" | (typeof DICTATION_LANGUAGES)[number];
 /** the lens a pane opens in until it is switched there: auto is chat for an agent on a touch screen, else terminal */
 export type DefaultView = "auto" | "chat" | "terminal";
 import { sanitizeShortcutOverrides, type ShortcutOverrides } from "./shortcutBindings.ts";
+import type { StatusIndicators } from "./status.ts";
 
 export interface Settings {
   terminalInputMode: "auto" | "line" | "direct";
@@ -69,14 +70,10 @@ export interface Settings {
   sidebarRows: SidebarRows;
   /** The Agents list's order. Activity is display-only: herdr's own order never changes. */
   agentOrder: AgentOrder;
-  /** In the Workspaces order, each workspace's agents sit in a card under its name. */
-  agentCards: boolean;
-  /** Each agent row carries a star that keeps it on top of the Agents list. */
-  agentPins: boolean;
-  /** a DONE opened here since it finished reads as ready, as herdr's own view would make it (per browser and PC) */
-  quietOpenedDone: boolean;
   /** Agent logos: brand colors, or without color, so a list of one agent is not a stripe of tiles */
   agentMarks: AgentMarks;
+  /** the sidebar's state marks: this app's own, or herdr's dots or symbols, as its `[ui] status_indicators` (lib/status.ts) */
+  statusIndicators: StatusIndicators;
   /** the chrome color family, keyed as data-palette in src/styles.css */
   palette: Palette;
   /** System theme only: the palette drawn while the OS is light, and while it is dark (see paletteFor) */
@@ -179,10 +176,8 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     density: settings.density,
     sidebarRows: settings.sidebarRows,
     agentOrder: settings.agentOrder,
-    agentCards: settings.agentCards,
-    agentPins: settings.agentPins,
-    quietOpenedDone: settings.quietOpenedDone,
     agentMarks: settings.agentMarks,
+    statusIndicators: settings.statusIndicators,
     palette: settings.palette,
     paletteLight: settings.paletteLight,
     paletteDark: settings.paletteDark,
@@ -233,16 +228,16 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
  * must be placed here, or the build fails; when in doubt it is the device's.
  */
 export const SETTING_SCOPE = {
-  theme: "shared", palette: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared", agentCards: "shared",
-  agentPins: "shared", agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
+  theme: "shared", palette: "shared", language: "shared", sidebarRows: "shared", agentOrder: "shared",
+  agentMarks: "shared", autoSendQueued: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device",
   terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", density: "device",
-  quietOpenedDone: "device", terminalFontSize: "device",
+  terminalFontSize: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   chatFontSize: "device", chatFontFamily: "device", uiFontSize: "device", chatWidth: "device", enterSends: "device",
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
-  paletteLight: "device", paletteDark: "device",
+  paletteLight: "device", paletteDark: "device", statusIndicators: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does.
   wrapCode: "device", markdownWidth: "device", diffStyle: "device",
@@ -262,10 +257,8 @@ export const DEFAULT_SETTINGS: Settings = {
   density: "comfortable",
   sidebarRows: "two",
   agentOrder: "workspace",
-  agentCards: false,
-  agentPins: false,
-  quietOpenedDone: false,
   agentMarks: "color",
+  statusIndicators: "classic",
   palette: "amber",
   paletteLight: "amber",
   paletteDark: "amber",
@@ -429,10 +422,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,
     agentOrder: record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
-    agentCards: record["agentCards"] === true,
-    agentPins: record["agentPins"] === true,
-    quietOpenedDone: record["quietOpenedDone"] === true,
     agentMarks: record["agentMarks"] === "color" || record["agentMarks"] === "mono" ? record["agentMarks"] : DEFAULT_SETTINGS.agentMarks,
+    statusIndicators: record["statusIndicators"] === "classic" || record["statusIndicators"] === "dots" || record["statusIndicators"] === "symbols" ? record["statusIndicators"] : DEFAULT_SETTINGS.statusIndicators,
     palette,
     // a record from before the pair starts both from its one palette, so System mode looks as it did
     paletteLight: PALETTES.find((name) => name === record["paletteLight"]) ?? palette,

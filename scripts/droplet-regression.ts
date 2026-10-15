@@ -8,7 +8,7 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
 /**
  * In-app alerts on a phone-sized page: real herdr status changes reach the open app, which
  * drops a card for a pane other than the open one (and none for the open one). A tap opens
- * that pane; a flick up puts one away; one left alone goes by itself.
+ * that pane; a flick up or its close button puts one away; one left alone goes by itself.
  */
 export async function checkDroplet(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-droplet-"));
@@ -103,6 +103,15 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     await droplet.waitFor({ state: "detached", timeout: 2_000 });
     assert.equal(await selected(), otherPane, "a flick up opens nothing");
     console.log("PASS a flick up puts an in-app alert away");
+
+    // its close button puts it away, and opens nothing
+    await report(openPane, "idle");
+    await block(openPane);
+    await card.waitFor({ state: "visible", timeout: 5_000 });
+    await page.locator(".droplet-close").tap();
+    await droplet.waitFor({ state: "detached", timeout: 2_000 });
+    assert.equal(await selected(), otherPane, "the close button opens nothing");
+    console.log("PASS the close button puts an in-app alert away");
 
     // left alone, it goes by itself
     await report(openPane, "idle");

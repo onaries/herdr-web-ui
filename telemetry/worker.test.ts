@@ -15,10 +15,8 @@ const settings: TelemetrySettings = {
   density: "comfortable",
   sidebarRows: "two",
   agentOrder: "activity",
-  agentCards: true,
-  agentPins: false,
-  quietOpenedDone: true,
   agentMarks: "mono",
+  statusIndicators: "symbols",
   palette: "catppuccin",
   paletteLight: "amber",
   paletteDark: "catppuccin",
@@ -118,11 +116,14 @@ describe("telemetry receiver", () => {
     const { env, rows } = fakeDb();
     const invalidSettings = [
       { ...settings, theme: "user-selected theme" },
+      { ...settings, statusIndicators: "unknown" },
       { ...settings, terminalWheelSpeed: 11 },
       { ...settings, chatFontSize: "16px" },
+      // the Turkish UI language was removed before any release sent a snapshot
+      { ...settings, language: "tr" },
       { ...settings, account: { accountId: "acct-private-42", email: "person@example.com" } },
       { ...settings, fontFamily: { value: "D2Coding" } },
-      Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "agentCards")),
+      Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "agentOrder")),
     ];
     for (const bad of invalidSettings) {
       expect(readEvent({ ...event, settings: bad }, now)).toBeNull();
@@ -191,15 +192,15 @@ describe("telemetry receiver", () => {
       const env = sqlite(db);
       const ids = ["11111111-2222-4333-8444-555555555555", "22222222-3333-4444-8555-666666666666", "33333333-4444-4555-8666-777777777777"];
       // The last non-null snapshot wins, even if a later event has no snapshot; the third install never reports one.
-      await send(env, { ...event, install_id: ids[0], version: "0.4.1", previous_version: "0.4.0", settings: { ...settings, theme: "light", density: "compact", agentCards: true } });
+      await send(env, { ...event, install_id: ids[0], version: "0.4.1", previous_version: "0.4.0", settings: { ...settings, theme: "light", density: "compact", wrapCode: true } });
       await send(env, { ...event, install_id: ids[0], version: "0.4.3", previous_version: "0.4.2", settings: null });
-      await send(env, { ...event, install_id: ids[1], settings: { ...settings, theme: "dark", density: "comfortable", agentCards: false } });
+      await send(env, { ...event, install_id: ids[1], settings: { ...settings, theme: "dark", density: "comfortable", wrapCode: false } });
       await send(env, { ...event, install_id: ids[2] });
       const query = /-- values of every setting[\s\S]*?\n(WITH[\s\S]+?;)/.exec(readme)![1]!;
       const values = db.query(query).all().map((row) => Object.values(row as object));
       expect(values).toContainEqual(["theme", "text", "light", 1]);
       expect(values).toContainEqual(["theme", "text", "dark", 1]);
-      expect(values).toContainEqual(["agentCards", "true", 1, 1]);
+      expect(values).toContainEqual(["wrapCode", "true", 1, 1]);
       expect(values).not.toContainEqual(["theme", "text", "dark", 2]);
       const themeQuery = /-- a focused distribution using json_extract[\s\S]*?\n(WITH[\s\S]+?;)/.exec(readme)![1]!;
       const themes = db.query(themeQuery).all().map((row) => Object.values(row as object));

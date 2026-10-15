@@ -49,7 +49,7 @@ describe("preferences sync", () => {
   });
 
   it("leaves a value this browser cannot read, and does not send its own back", () => {
-    const taken = takePreferences(base(DEFAULT_SETTINGS, null), { settings: DEFAULT_SETTINGS, pins: [] }, { revision: 1, settings: { theme: "purple", agentCards: "yes", palette: "catppuccin" } }, null);
+    const taken = takePreferences(base(DEFAULT_SETTINGS, null), { settings: DEFAULT_SETTINGS, pins: [] }, { revision: 1, settings: { theme: "purple", agentMarks: "yes", palette: "catppuccin" } }, null);
     expect(taken.patch).toEqual({ palette: "catppuccin" });
     expect(preferencesChange(taken.base, { settings: { ...DEFAULT_SETTINGS, palette: "catppuccin" }, pins: [] })).toBeNull();
   });
