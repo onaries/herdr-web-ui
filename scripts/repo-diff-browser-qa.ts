@@ -114,6 +114,7 @@ function fixtures(): { main: string; detached: string; plain: string } {
 const repos = fixtures();
 const workspace = join(root, "workspace");
 mkdirSync(workspace);
+writeFileSync(join(root, "external.log"), "external file content\n");
 git(workspace, "init", "-q", "-b", "main");
 const backend = join(workspace, "backend");
 mkdirSync(join(backend, "server"), { recursive: true });
@@ -145,7 +146,8 @@ async function api(request: Request, url: URL): Promise<Response | null> {
   const fs = /^\/api\/(?:machines\/([^/]+)\/)?fs\/(stat|file)$/.exec(url.pathname);
   if (fs) {
     requests.push(url.pathname);
-    const path = url.searchParams.get("path") ?? "";
+    const input = url.searchParams.get("path") ?? "";
+    const path = resolve(panes.get(url.searchParams.get("pane_id") ?? "") ?? root, input);
     let size: number;
     try { size = statSync(path).size; } catch { return Response.json({ error: { code: "not_found", message: "No readable file at this path." } }, { status: 404 }); }
     if (fs[2] === "stat") return Response.json({ path, name: path.split("/").pop(), kind: "text", size, mime: "text/plain", modified: "2026-01-01T00:00:00Z" });
@@ -241,7 +243,7 @@ async function note(page: Page): Promise<string> {
   return (await text.textContent()) ?? "";
 }
 async function shot(page: Page, name: string): Promise<void> {
-  if (evidence) await page.screenshot({ path: join(evidence, `repo-diff-${name}.png`) });
+  if (evidence) await page.screenshot({ path: join(evidence, `repo-diff-${name}.png`), animations: "disabled" });
 }
 /** The text the rows `from`..`to` (indexes into the unified rows) hold, selected natively. */
 async function selectRows(page: Page, from: number, to: number): Promise<string> {
@@ -578,6 +580,27 @@ try {
     await closeFiles(page);
     assert.deepEqual(errors, [], `${label}: nested repository navigation has no errors`);
     console.log(`PASS ${label}: chat file opens the owning nested repository's diff`);
+    for (const path of ["../external.log", `${workspace}/../external.log`]) {
+      await page.evaluate((directory) => window.repoDiffQA.openFiles("local", "pane-nested", directory), workspace);
+      await page.evaluate((path) => [...document.querySelectorAll<HTMLButtonElement>(".turn-changed-files button")].find((button) => button.textContent === path)?.click(), path);
+      const viewer = page.getByRole("dialog", { name: "external.log", exact: true });
+      await viewer.waitFor();
+      assert.match(await viewer.textContent() ?? "", /external file content/, `${label}: the external file's contents are readable`);
+      await shot(page, `external-turn-${path.startsWith("/") ? "absolute" : "relative"}-${width}-${theme}`);
+      await page.keyboard.press("Escape");
+      await viewer.waitFor({ state: "detached" });
+      await closeFiles(page);
+    }
+    assert.deepEqual(errors, [], `${label}: external file navigation has no errors`);
+    console.log(`PASS ${label}: relative and absolute turn files outside the repository open in the file viewer`);
+    await page.evaluate((directory) => window.repoDiffQA.openFiles("local", "pane-plain", directory), repos.plain);
+    await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".turn-changed-files button")].find((button) => button.textContent === "../external.log")?.click());
+    await page.getByRole("dialog", { name: "external.log", exact: true }).waitFor();
+    assert.match(await page.getByRole("dialog", { name: "external.log", exact: true }).textContent() ?? "", /external file content/, `${label}: a turn file also opens when the pane has no repository`);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "external.log", exact: true }).waitFor({ state: "detached" });
+    await closeFiles(page);
+    assert.deepEqual(errors, [], `${label}: a non-repository pane opens its file without errors`);
     await context.close();
   }
 
@@ -597,6 +620,15 @@ try {
     await page.getByRole("dialog", { name: "money.ts", exact: true }).waitFor();
     assert.deepEqual(requests.filter((path) => path.includes("/workspace/diff/")), ["/api/machines/remote-fixture/workspace/diff/files", "/api/machines/remote-fixture/workspace/diff/file"], `remote diff requests: ${requests.join(", ")}`);
     assert.ok(requests.some((path) => path === "/api/machines/remote-fixture/fs/stat"), `remote file requests: ${requests.join(", ")}`);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "money.ts", exact: true }).waitFor({ state: "detached" });
+    await closeDiff(page);
+    await closeFiles(page);
+    await page.evaluate((directory) => window.repoDiffQA.openFiles("remote-fixture", "pane-nested", directory), workspace);
+    requests.length = 0;
+    await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".turn-changed-files button")].find((button) => button.textContent === "../external.log")?.click());
+    await page.getByRole("dialog", { name: "external.log", exact: true }).getByText("external file content", { exact: true }).waitFor();
+    assert.ok(requests.some((path) => path === "/api/machines/remote-fixture/fs/file"), "the external file is read from the owning remote PC");
     await context.close();
     console.log("PASS a remote PC's changes and files read through its bridge");
   }

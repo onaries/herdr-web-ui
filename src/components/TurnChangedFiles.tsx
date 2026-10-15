@@ -3,7 +3,7 @@ import type { ConversationPart } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { ApiError } from "../lib/api.ts";
-import { pathParts } from "../lib/filePaths.ts";
+import { OpenFileContext, pathParts } from "../lib/filePaths.ts";
 import { diffErrorMessage, type RepoDiffTarget } from "../lib/repoDiff.ts";
 import { repositoryTurnPath, turnChangedFiles } from "../lib/turnChangedFiles.ts";
 import "./TurnChangedFiles.css";
@@ -17,6 +17,7 @@ export const ChatDiffContext = createContext<{
 export function TurnChangedFiles({ paneId, parts }: { paneId: string; parts: readonly ConversationPart[] }) {
   const t = useT();
   const context = useContext(ChatDiffContext);
+  const openFile = useContext(OpenFileContext);
   const machineId = useMachineId();
   const { fetchRepoDiffFiles } = useMachineApi();
   const [opening, setOpening] = useState<string | null>(null);
@@ -32,7 +33,8 @@ export function TurnChangedFiles({ paneId, parts }: { paneId: string; parts: rea
       let list = await fetchRepoDiffFiles(query);
       let relative = repositoryTurnPath({ path, cwd: context.cwd, root: list.repository.root });
       if (relative === null) {
-        setError(t("This file is outside the pane's repository."));
+        if (openFile !== null) openFile(path);
+        else setError(t("This file is outside the pane's repository."));
         return;
       }
       let file = list.files.find((item) => item.path === relative || item.old_path === relative);
@@ -54,6 +56,10 @@ export function TurnChangedFiles({ paneId, parts }: { paneId: string; parts: rea
       }
       context.openDiff({ ...query, machineId, directory: list.repository.root, path: file?.path ?? relative, oldPath: file?.old_path ?? null });
     } catch (cause) {
+      if (cause instanceof ApiError && cause.code === "not_a_repository" && openFile !== null) {
+        openFile(path);
+        return;
+      }
       setError(diffErrorMessage(t, cause));
     } finally {
       setOpening(null);

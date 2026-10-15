@@ -837,6 +837,8 @@ One set for both themes: the card is island black wherever it shows.
   the routes in the app's words.
 - A file edited in a chat turn opens the working-tree comparison of the repository that owns
   that file, including a nested repository or submodule below the pane's workspace.
+  A path outside that repository, or a pane without a repository, opens the current file in
+  the existing file viewer on the same PC, resolved relative to the original pane.
 
 ### Header context and connection
 - A selected pane shows agent mark + title (`--fs-md`), then on the same line the crumb

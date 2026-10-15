@@ -7,6 +7,7 @@ import { FileViewer } from "../src/components/FileViewer.tsx";
 import { RepoDiffViewer } from "../src/components/RepoDiffViewer.tsx";
 import { ChatDiffContext, TurnChangedFiles } from "../src/components/TurnChangedFiles.tsx";
 import { MachineContext } from "../src/lib/machineContext.tsx";
+import { OpenFileContext } from "../src/lib/filePaths.ts";
 import { SettingsProvider, useSettings, type Settings } from "../src/lib/settings.ts";
 import { useFileViewer } from "../src/lib/useFileViewer.ts";
 import { useRepoDiffViewer } from "../src/lib/useRepoDiffViewer.ts";
@@ -24,9 +25,11 @@ function Fixture() {
   return <main>
     <button type="button" id="outside">Outside</button>
     {files && <MachineContext.Provider value={files.machine}>
+      <OpenFileContext.Provider value={(path) => openFile({ path, paneId: files.paneId, machineId: files.machine })}>
       <ChatDiffContext.Provider value={{ openDiff, cwd: files.directory }}>
-        <TurnChangedFiles paneId={files.paneId} parts={[{ kind: "tool", name: "Edit", input: JSON.stringify({ file_path: "backend/server/test_out_work.py" }), output: "", summary: "Edited file" }]} />
+        <TurnChangedFiles paneId={files.paneId} parts={["backend/server/test_out_work.py", "../external.log", `${files.directory}/../external.log`].map((path) => ({ kind: "tool", name: "Edit", input: JSON.stringify({ file_path: path }), output: "", summary: "Edited file" }))} />
       </ChatDiffContext.Provider>
+      </OpenFileContext.Provider>
     </MachineContext.Provider>}
     {files && <MachineContext.Provider value={files.machine}>
       <FilesDialog start={files.directory} paneId={files.paneId} viewing={file !== null || diff !== null}
