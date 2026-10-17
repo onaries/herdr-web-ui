@@ -1,0 +1,30 @@
+[IMPORTANT: The user has invoked the "probe-bundle" skill bundle, loading 2 skills together. Treat every skill below as active guidance for this turn.]
+
+Bundle: probe-bundle
+Skills loaded: probe-skill, probe-skill-two
+
+User instruction: hello
+
+[Loaded as part of the "probe-bundle" skill bundle.]
+
+---
+name: probe-skill
+description: Probe skill for herdr-web-ui fixtures.
+---
+
+Reply with the single word PROBED.
+
+[Skill directory: /tmp/ulw-allagent.Oyfi/tmp-3/hermes-home/skills/probe-skill]
+Resolve any relative paths in this skill (e.g. `scripts/foo.js`, `templates/config.yaml`) against that directory, then run them with the terminal tool using the absolute path.
+
+[Loaded as part of the "probe-bundle" skill bundle.]
+
+---
+name: probe-skill-two
+description: Second probe skill for herdr-web-ui fixtures.
+---
+
+Reply with the single word BUNDLED.
+
+[Skill directory: /tmp/ulw-allagent.Oyfi/tmp-3/hermes-home/skills/probe-skill-two]
+Resolve any relative paths in this skill (e.g. `scripts/foo.js`, `templates/config.yaml`) against that directory, then run them with the terminal tool using the absolute path.

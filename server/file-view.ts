@@ -1,6 +1,6 @@
-import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 import type { FileInfo, FileKind } from "../shared/protocol.ts";
 import { filesNamed } from "./files.ts";
@@ -53,18 +53,52 @@ function kindOf(mime: string, path: string): FileKind {
   }
 }
 
+const MAX_NAME_MATCHES = 10;
+
+/** The same visible name may be stored composed or decomposed, one folder at a time. */
+function pathsByName(path: string): string[] {
+  if (!/[^\x00-\x7f]/.test(path)) return [];
+  const root = parse(path).root;
+  let paths = [root];
+  for (const part of path.slice(root.length).split(sep).filter(Boolean)) {
+    const next: string[] = [];
+    for (const dir of paths) {
+      const exact = join(dir, part);
+      if (existsSync(exact)) {
+        next.push(exact);
+        continue;
+      }
+      if (!/[^\x00-\x7f]/.test(part)) continue;
+      try {
+        for (const name of readdirSync(dir)) {
+          if (name.normalize("NFC") === part.normalize("NFC")) next.push(join(dir, name));
+        }
+      } catch { /* an unreadable folder has no matches */ }
+    }
+    paths = next.sort().slice(0, MAX_NAME_MATCHES);
+    if (paths.length === 0) return [];
+  }
+  return paths;
+}
+
 /**
  * The file a path means: as written, or — for a relative path that is not there — the one
  * file under the pane's folder whose path ends in it (agents often name `demo.mp4` without
  * `docs/screenshots/`). Several such files come back as candidates to choose from.
  */
-export function locateFile(input: string, cwd: string | null): { info: FileInfo } | { candidates: string[] } | null {
+export function locateFile(input: string, cwd: string | null, anyForm = false): { info: FileInfo } | { candidates: string[] } | null {
   const path = resolveFilePath(input, cwd);
-  const info = path === null ? null : fileInfo(path);
+  const info = anyForm || path === null ? null : fileInfo(path);
   if (info !== null) return { info };
+  if (anyForm && path !== null) {
+    const matches = pathsByName(path).map(fileInfo).filter((match) => match !== null);
+    if (matches.length === 1) return { info: matches[0]! };
+    if (matches.length > 1) return { candidates: matches.map((match) => match.path) };
+  }
   const relative = input.trim();
   if (cwd === null || relative === "" || isAbsolute(relative) || relative.startsWith("~") || relative.startsWith("../")) return null;
-  const found = filesNamed(cwd, relative).map((match) => resolve(cwd, match));
+  if (anyForm && !/[^\x00-\x7f]/.test(relative)) return null;
+  const found = filesNamed(cwd, relative, 10, anyForm).map((match) => resolve(cwd, match));
   if (found.length === 1) {
     const only = fileInfo(found[0]!);
     return only === null ? null : { info: only };
@@ -73,16 +107,33 @@ export function locateFile(input: string, cwd: string | null): { info: FileInfo 
 }
 
 /** A relative fallback stays in its own folder, including after following symlinks. */
-export function locateFileInFolder(input: string, folder: string): ReturnType<typeof locateFile> {
+export function locateFileInFolder(input: string, folder: string, anyForm = false): ReturnType<typeof locateFile> {
   const relative = input.trim();
   if (isAbsolute(relative) || relative.startsWith("~") || !resolve(folder, relative).startsWith(resolve(folder) + sep)) return null;
-  const found = locateFile(relative, folder);
+  const found = locateFile(relative, folder, anyForm);
   if (found === null) return null;
   try {
     const root = realpathSync(folder) + sep;
     const paths = "info" in found ? [found.info.path] : found.candidates;
     return paths.every((path) => realpathSync(path).startsWith(root)) ? found : null;
   } catch { return null; /* a missing or unreadable target is not a fallback */ }
+}
+
+/** Try every exact place before opening a name stored in another form. */
+export async function findFile(input: string, cwd: string | null, scratchFolder: () => Promise<string | null>): Promise<ReturnType<typeof locateFile>> {
+  const exact = locateFile(input, cwd);
+  if (exact !== null) return exact;
+  let folder: string | null = null;
+  if (cwd !== null && !isAbsolute(input.trim()) && !input.trim().startsWith("~")) {
+    folder = await scratchFolder();
+    if (folder !== null) {
+      const scratch = locateFileInFolder(input, folder);
+      if (scratch !== null) return scratch;
+    }
+  }
+  const found = locateFile(input, cwd, true);
+  if (found !== null) return found;
+  return folder === null ? null : locateFileInFolder(input, folder, true);
 }
 
 /** What the viewer needs to know about a file, or null when it is not a readable file. */

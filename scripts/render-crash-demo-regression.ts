@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
 import { chromePath } from "./chrome-path.ts";
 
 // A render error never blanks the app. The lane's demo build has its test hooks on, so
@@ -60,7 +61,7 @@ let port = 0;
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"'));
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, `<script src="./demo-transport.js"></script>${DEMO_FILE_PREVIEW_SCRIPT}\n    <script type="module"`));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     if (!path.startsWith("/herdr-web-ui/demo/app/")) return new Response("not found", { status: 404 });
@@ -183,7 +184,7 @@ try {
       // as Settings is, so Close is the control under the pointer
       {
         const { page, close } = await open(browser, `${pane}&file=README.md&crash=settings`);
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
         await page.keyboard.press("Control+Shift+Comma");
         const dialog = page.getByRole("dialog", { name: "Settings" });
         await dialog.getByRole("alert").filter({ hasText: "Settings can't be shown." }).waitFor();
@@ -194,7 +195,7 @@ try {
         assert.equal(onTop, true, "the notice is drawn over the file preview");
         await closeButton.click();
         await dialog.waitFor({ state: "detached" });
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
         await close();
       }
 

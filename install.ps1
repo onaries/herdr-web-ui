@@ -113,6 +113,32 @@ if ($server.running) {
         throw "The app did not start within 25 seconds.$why`nSee: herdr plugin log list"
     }
     Write-Host ($status | Where-Object { $_ -match '^running ' })
+    $origin = [regex]::Match(($status | Where-Object { $_ -match '^running ' } | Select-Object -First 1), '^running (\S+)').Groups[1].Value
+    $opened = $false
+    if ($newInstall -and $origin -match '^https?://(127\.0\.0\.1|localhost)(:\d+)?(?:/|$)' -and
+        -not $env:CI -and -not $env:HERDR_WEB_NO_OPEN -and -not $env:SSH_CONNECTION -and
+        [Environment]::UserInteractive) {
+        try {
+            Start-Process $origin
+            $opened = $true
+            Write-Host "herdr web ui: opened $origin in your browser: click Install in the address bar to add the app"
+        } catch { }
+    }
+    if ($newInstall -and -not $opened) {
+        if ($env:SSH_CONNECTION) {
+            $port = [regex]::Match($origin, ':(\d+)(?:/|$)').Groups[1].Value
+            if (-not $port) {
+                $scheme = [regex]::Match($origin, '^https?://').Value
+                $port = if ($scheme -eq 'https://') { '443' } else { '80' }
+            }
+            Write-Host "herdr web ui: from your own computer, run: ssh -L ${port}:127.0.0.1:${port} <this-pc>, then open http://127.0.0.1:${port} and click Install in the address bar"
+            Write-Host 'herdr web ui: Phone setup in herdr shows the Tailscale address when there is one'
+        } elseif ($origin -match '^https?://(127\.0\.0\.1|localhost)(:\d+)?(?:/|$)') {
+            Write-Host "herdr web ui: open $origin in your browser and click Install in the address bar"
+        } else {
+            Write-Host "herdr web ui: open $origin in your browser"
+        }
+    }
 } else { Write-Host 'herdr web ui: starts with herdr. Open a new terminal and run: herdr' }
 Write-Host 'herdr web ui: open Phone setup in herdr for phone access.'
 

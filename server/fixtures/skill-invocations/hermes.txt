@@ -1,0 +1,13 @@
+[IMPORTANT: The user has invoked the "probe-skill" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]
+
+---
+name: probe-skill
+description: Probe skill for herdr-web-ui fixtures.
+---
+
+Reply with the single word PROBED.
+
+[Skill directory: /tmp/ulw-allagent.Oyfi/tmp-3/hermes-home/skills/probe-skill]
+Resolve any relative paths in this skill (e.g. `scripts/foo.js`, `templates/config.yaml`) against that directory, then run them with the terminal tool using the absolute path.
+
+The user has provided the following instruction alongside the skill invocation: hello

@@ -36,6 +36,11 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
 - Screenshots and recordings come from the demo or a test session, never the user's live one.
 
 ## Maintainer workflow
+- A session that changes code, in any harness, stops at an open PR: only the maintainer's merge
+  pass merges, unless the maintainer asks that session to merge. One session that edits files per
+  worktree; read-only sessions may share it.
+- Everything written to git and GitHub (commits, branches, PRs, reviews, issues, changelog
+  fragments) is in English.
 - Never push a `v*` tag by hand: installed updaters act on tags alone.
 - Required checks: Fast checks, Integration and browser, Native Windows install. Resolve review
   threads before merging (branch protection does not enforce it).

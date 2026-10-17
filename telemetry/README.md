@@ -1,6 +1,7 @@
 # Telemetry receiver
 
-The Cloudflare Worker that receives the app's anonymous install and update counts. What the app
+The Cloudflare Worker that receives the app's anonymous install and update counts and its daily
+active message. What the app
 sends and when is in [the guide](../docs/guide.md#anonymous-usage-counts); the sender is
 `server/telemetry.ts`.
 
@@ -12,6 +13,11 @@ contains only allowlisted enums, booleans and bounded numbers, never raw user-en
 account identifiers. It adds the country the request came from: the two characters Cloudflare
 works out from the sender's address (`request.cf.country`, such as `KR`), and nothing finer (no
 city, region or network; a request Cloudflare marks as Tor or unknown is stored with no country).
+A second table, `active`, holds one row per install and UTC day the app was opened in a browser
+(`POST /v1/active`): the day, the random install ID, the version, the OS, the CPU architecture, how
+the app was installed, the country, and `harnesses`, a JSON array of the kinds of coding agents
+running that day, from the fixed list `TELEMETRY_HARNESSES` in `shared/telemetry.ts` (any other
+agent is `other`). A later message for the same day replaces the version and the harnesses.
 The Worker itself never reads the sender's address or any header other than the content type, and
 Workers Logs are off (`wrangler.toml`), so no request log keeps the address either.
 
@@ -42,6 +48,12 @@ Then add `settings` to any existing database that does not have it:
 bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "ALTER TABLE events ADD COLUMN settings TEXT"
 ```
 
+Create the `active` table on an existing database too:
+
+```sh
+bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "CREATE TABLE IF NOT EXISTS active (day TEXT NOT NULL, install_id TEXT NOT NULL, version TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, install_method TEXT NOT NULL CHECK (install_method IN ('plugin','managed','source')), country TEXT, harnesses TEXT NOT NULL CHECK (json_valid(harnesses)), PRIMARY KEY (day, install_id)); CREATE INDEX IF NOT EXISTS active_day ON active (day);"
+```
+
 These ALTERs preserve historical rows; their newly added `settings` value remains `NULL` and is
 not inferred from old data. After the database is ready, deploy the Worker and then release the
 app version that sends snapshots:
@@ -68,8 +80,19 @@ bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "<query>"
 ```sql
 -- new installs per week
 SELECT strftime('%Y-%W', day) AS week, COUNT(*) FROM events WHERE event = 'install' GROUP BY week ORDER BY week;
--- installs that updated in the last 30 days: the closest thing to active installs
-SELECT COUNT(DISTINCT install_id) FROM events WHERE event = 'update' AND day >= date('now', '-30 days');
+-- daily active installs (DAU)
+SELECT day, COUNT(*) FROM active GROUP BY day ORDER BY day;
+-- weekly active installs (WAU), the last 7 days including today
+SELECT COUNT(DISTINCT install_id) FROM active WHERE day >= date('now', '-6 days');
+-- monthly active installs (MAU), the last 30 days including today
+SELECT COUNT(DISTINCT install_id) FROM active WHERE day >= date('now', '-29 days');
+-- active installs per calendar month
+SELECT strftime('%Y-%m', day) AS month, COUNT(DISTINCT install_id) FROM active GROUP BY month ORDER BY month;
+-- installs running each kind of agent in the last 30 days
+SELECT harness.value AS harness, COUNT(DISTINCT active.install_id) AS installs
+FROM active CROSS JOIN json_each(active.harnesses) AS harness
+WHERE active.day >= date('now', '-29 days')
+GROUP BY harness.value ORDER BY installs DESC, harness;
 -- installs per version they last reported
 SELECT version, COUNT(*) FROM (SELECT install_id, MAX(version) AS version FROM events GROUP BY install_id) GROUP BY version ORDER BY version;
 -- OS, architecture and install method

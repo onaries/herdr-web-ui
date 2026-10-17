@@ -36,5 +36,11 @@ export function useRepoDiffViewer() {
     } else setViewing(null);
   }, []);
 
-  return { viewing, openDiff, closeDiff };
+  /** Hand the current entry to another viewer without traversing back to the list. */
+  const releaseDiff = useCallback(() => {
+    window.history.replaceState(diffTargetState(window.history.state, null), "");
+    setViewing(null);
+  }, []);
+
+  return { viewing, openDiff, closeDiff, releaseDiff };
 }

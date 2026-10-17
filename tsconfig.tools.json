@@ -5,6 +5,7 @@
   },
   "files": [
     "scripts/check.ts",
+    "scripts/cliproxy-settings-regression.ts",
     "scripts/build-site.ts",
     "scripts/ci-lanes.ts",
     "scripts/ci-tests.ts",

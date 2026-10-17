@@ -133,7 +133,7 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
     <div className="devices-panel">
       {auth?.via !== undefined && <p className={auth.via === "open" ? "settings-hint devices-open" : "settings-description"}>{t(VIA[auth.via])}</p>}
       {auth?.via === "open" && <>
-        <p className="settings-hint devices-open">{t("Pairing the first device enables app-level access restrictions, even behind proxy authentication. Other browsers need a paired device or an access token.")}</p>
+        <p className="settings-hint">{t("Pairing a device turns on the app's own sign-in, on top of any proxy sign-in: other browsers then need pairing or the access token. If your proxy already signs people in, set HERDR_WEB_TOKEN and have the proxy send it instead.")}</p>
         <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()} disabled={pairingSelf}>{t("Pair this device now")}</button></div>
       </>}
       <p className="settings-description">{t("A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.")}</p>

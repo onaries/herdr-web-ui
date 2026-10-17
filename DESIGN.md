@@ -120,6 +120,12 @@ CSS tokens verbatim for each resolved theme and palette (`settings.test.ts` chec
 | Cursor | `--term-cursor` | `#f0a830` | `#8c5000` | `cursor` |
 | Selection | `--term-selection` | `#4a3d26` | `#f0d9ae` | `selectionBackground` |
 
+Programs pick their own colors for one background, so xterm keeps a cell's text at 4.5:1 or more
+against the cell's background (`minimumContrastRatio`, WCAG AA): a foreground below it moves toward
+black or white. Dim text needs half that ratio, and box-drawing, block and powerline glyphs keep the
+program's color so borders and bars still meet the background. Claude Code's default dark theme draws its question titles in `#ffffff`,
+which a light palette's terminal shows at 1.04 to 1.13:1.
+
 ### Syntax highlighting
 
 Code in the chat and in the file viewer is colored by `--syntax-*` tokens. Four follow the
@@ -234,7 +240,7 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
 - `palette`: `amber`, `charcoal` or `catppuccin`; default `amber`. A removed palette (`report`,
   `lilac`, `forest`) loads as `amber`.
 - `density`: `comfortable` or `compact`; default `comfortable`.
-- `sidebarRows`: `one` or `two`; default `two`.
+- `sidebarRows`: `one` or `two`; default `one`.
 - Terminal font size is independent: default `13px`, clamped to `10–22px`.
   During a two-finger pinch the font follows the fingers live and a badge above the grid shows the
   size in pixels; the grid refits locally and the shared pty resizes once when a finger lifts.
@@ -334,6 +340,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--sidebar-w` | `320px` | `300px` | Sidebar/drawer; the default while the user has not dragged the sidebar's edge |
 | `--control-h` | `34px` | `32px` | Buttons and fields |
 | `--touch-target` | `40px` | — | Coarse-pointer minimum |
+| `--touch-target-header` | `44px` | — | The phone header's controls (`<=768px`) |
 | `--keybar-h` | `48px` | — | Terminal key bar |
 | `--row-h` | `56px` | `44px` | Palette, worktree, device and background-task list rows; chat and composer list height caps |
 | `--chip-h` | `20px` | `18px` | Badge/pill height |
@@ -388,7 +395,8 @@ One set for both themes: the card is island black wherever it shows.
   iPhone home screen app reports a visual viewport shorter than the screen without a keyboard.
 - The header is one line at every width. Anatomy, left to right: mobile drawer toggle / desktop
   sidebar toggle and the command palette (`.header-side`); the flexible context, agent mark and
-  title then the PC › workspace › folder crumb; segmented Chat/Terminal switch; the connection
+  title then the PC › workspace › folder crumb; segmented Chat/Terminal switch; from `769px` a
+  hairline and the Files button (`.header-files-button`); the connection
   chip while the bridge is not live (herdr version in its tooltip), the offline pill, sign out and
   the More menu (`⋯`). Theme lives in Settings and the palette; the herdr version is also read
   in Settings.
@@ -442,6 +450,8 @@ One set for both themes: the card is island black wherever it shows.
 - One `aria-pressed="true"` option receives hover fill and strong text; the group itself is an
   elevated, bordered `--radius-md` track.
 - Used for Chat/Terminal, theme and density. It is not a generic tab list.
+- The header's Chat/Terminal switch from `769px` drops the track and the glyphs: two words, the
+  chosen one on the hover fill. At `<=768px` it keeps the track; at `<=560px` it is glyphs only.
 
 ### Keyboard hint (`.kbd`)
 - An inline mono keycap: `18px` high, strong bottom edge, `--radius-sm`, `--fs-2xs`.
@@ -464,6 +474,8 @@ One set for both themes: the card is island black wherever it shows.
   whole screen, so a sheet and its text field sit above the keyboard, and the sheet drops its
   safe-area padding.
 - Escape, explicit close and scrim click close dialogs; first meaningful control receives focus.
+  Initial focus is placed in the opening commit, before paint, so a menu restoring the terminal
+  cannot leave the first Escape or typed key going to the pane beneath the dialog.
 - A confirm (`.confirm-dialog`, `alertdialog`, 420px) asks before something that cannot be undone:
   Cancel has the focus, Tab stays between the two buttons, the danger action sits at the right,
   and a failure shows inside it. A no gives the focus back to what opened it. A refusal the owner
@@ -507,10 +519,9 @@ One set for both themes: the card is island black wherever it shows.
 - Close follows herdr's `ui.confirm_close`: a workspace close, or a pane close that takes its
   workspace with it, asks in a confirm first. A busy pane also asks before it stops. After a
   confirmed close, focus lands on the header's workspace-list toggle.
-- Tab and pane menus follow herdr's target scopes. A tab's menu contains New tab, Rename tab
-  and Close tab, plus Move tab left/right when a neighbouring position exists and no move is pending.
-  The `⋯` that touch and narrow layouts draw beside the selected tab leaves New tab out (the
-  strip's `+` sits beside it) and also carries the open pane's actions, less Split and Zoom: a
+- Tab and pane menus follow herdr's target scopes. A tab's menu contains New tab with agent…, Rename
+  tab and Close tab, plus Move tab left/right when a neighbouring position exists and no move is pending.
+  The `⋯` that touch and narrow layouts draw beside the selected tab holds the same tab actions and also carries the open pane's actions, less Split and Zoom: a
   phone shows one pane at a time. The pane's own context menu carries pane actions; it opens at the pointer
   without changing which pane is focused. The pane header's ellipsis opens the same menu on touch.
 
@@ -549,7 +560,7 @@ One set for both themes: the card is island black wherever it shows.
 - Every row sits on one grid, built from existing tokens as `--side-*` aliases on `.sidebar-shell`:
   a `--control-h` leading cell, the title, and a `--control-h` trailing status cell, the same two
   columns as the header zone's buttons above the list. One-line rows and section heads are
-  `--control-h` tall, agent rows `--control-h` + `--space-3`; fills use `--radius-md`.
+  `--control-h` tall, two-line agent rows `--control-h` + `--space-3`; fills use `--radius-md`.
   Hover is `color-mix(in srgb, var(--bg-hover) 50%, var(--bg-panel))`, only where a pointer hovers;
   selection is `--bg-hover`; keyboard focus draws the ring inside the row and no fill. No rule
   separates sections: `--space-4` and a dim `--fs-sm` head do.
@@ -608,17 +619,19 @@ One set for both themes: the card is island black wherever it shows.
 - The Agents list is flat and every row names its own place. Pinned agents (pinned from a row's
   menu) stand first, in the order they were pinned, in a card (a `--hairline` `--border` edge,
   `--radius-lg`, `--space-1` padding, no fill, so hover and selection read inside it as elsewhere),
-  each with a `--space-3` `--accent` pin after its title; the rest follow `--space-2` below in the
+  with no mark of their own (the card says so); the rest follow `--space-2` below in the
   chosen order. The Agents head is the only head (the pinned list is labelled **Pinned** for screen
   readers); without pins there is no card. Pins are shared with the other browsers of the server.
-- Appearance's **Sidebar rows** is **Two lines** by default; on **One line** a workspace row is
-  its name. Two lines draws the row as the roster did before it was one line, on an agent row's
-  height and type: the title of the pane the row opens, and under it in `--text-dim` `--fs-xs` the place,
-  "workspace · folder" with no name said twice (`taskRowLines`, lib/paneName.ts). A shell titled
-  by its folder leads with the workspace instead; a linked worktree is placed by its branch,
-  then its own workspace name. The folder, the mark, the status cell, the menu and the fold
-  count stay where they are, and the menu and rename still act on the workspace. The choice
-  is per device and applies at once.
+- Appearance's **Sidebar rows** is **One line** by default: a workspace row is its name, and an
+  agent row is one line on a workspace row's height, its dim place after the title (the title keeps
+  its width first, the place takes what is left with an ellipsis). Two lines draws the row as the
+  roster did before it was one line, on an agent row's height and type: the title of the pane the
+  row opens, and under it in `--text-dim` `--fs-xs` the place, "workspace · folder" with no name
+  said twice (`taskRowLines`, lib/paneName.ts). A shell titled by its folder leads with the
+  workspace instead; a linked worktree is placed by its branch, then its own workspace name. The
+  folder, the mark, the status cell, the menu and the fold count stay where they are, and the menu
+  and rename still act on the workspace. The choice is shared with the other browsers of the server
+  and applies at once.
 - Appearance's **Agents order** is **Workspaces** by default: the Agents list in herdr's
   workspace, tab and pane order. **Activity** pins a blocked agent on top and orders the rest by
   their most recent state change (herdr's `state_change_seq`, read from the snapshot's `agents`),
@@ -629,6 +642,14 @@ One set for both themes: the card is island black wherever it shows.
   shell shows the terminal glyph, and a linked worktree without an agent the branch glyph. The
   mark never stands for another pane's agent; the row's tooltip lists every agent in the
   workspace. A custom worktree workspace name follows the branch on the same line in dim text.
+  On One line, as in herdr's own sidebar, a top-level git workspace (a repository, or a worktree
+  whose repository is not open) says its branch under its name in `--text-dim` `--fs-xs`, on a
+  two-line row's height (`--side-row-2`); an indented worktree, whose name already comes from its
+  branch, and a folder outside git stay one line. The branch is read with the worktree inventory
+  (`useWorktreeBranches`), a repository without worktrees and a git workspace herdr has not marked
+  included. As herdr draws its tree, each indented worktree hangs from its repository's folder on
+  a `--hairline` `--border-strong` branch in the indent: a tee for each but the last, an elbow for
+  the last.
   Selection uses a neutral rounded fill; workspace rows have no amber rail or separate reorder
   gutter. Drag the row itself, or press `Alt+↑/↓` while its selector is focused, to reorder it.
   On a touch screen (`pointer: coarse`) the browser's drag is off: a long press (400ms, still
@@ -642,10 +663,14 @@ One set for both themes: the card is island black wherever it shows.
   next or previous group with its worktrees, and a worktree moves among its siblings only.
 - A workspace is pinned from its row menu (**Pin workspace** / **Unpin workspace**, first in the
   menu), as Paseo pins a chat: pinned workspaces leave their place and stand first in their PC's
-  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`) with the same
-  `--accent` pin after the name. A pinned repository's workspace brings its worktrees; a pinned
-  worktree leaves its repository's group, which stays. Pinned rows are not dragged and `Alt+↑/↓`
-  does not move them; the rest reorder among the rows they show. The pins are the Agents list's
+  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`), with no mark
+  of their own either. A pinned repository's workspace stands alone in the card; its unpinned
+  worktrees stay as standalone rows at the group's position, in their order. They are not dragged
+  or moved away from their repository; unpinning the head restores the group. A pinned worktree
+  leaves its repository's group, which stays. Dragging, touch long-press and `Alt+↑/↓` reorder
+  pinned rows inside their card by changing pin order, not herdr's workspace order or the position
+  of their unpinned worktrees. Neither list accepts a drop from the other; the rest reorder
+  through herdr among their movable rows. The pins are the Agents list's
   shared list (a workspace's key is `machine:workspace:id`), so other browsers of the server see them.
 - A title that is a working directory written out (`/home/me/dev/api`, `~/dev/api`, `C:\work\api`)
   shows as its last folder, here, in the header, the palette and every alert; the full path stays
@@ -704,22 +729,24 @@ One set for both themes: the card is island black wherever it shows.
 - Submit calls `POST /api/workspace/create`; the server performs `workspace.create` and, when an
   agent was chosen, `agent.start` in its root pane. Pending and partial agent-start failure are
   explicit before the created pane opens.
-- As **New tab** (from a row's `⋯` menu, the strip's `+` or the palette),
+- As **New tab** (from a row's `⋯` menu, the tab menu's New tab with agent… or the palette),
   the same dialog is titled `New tab · <workspace>`, shows the workspace's folder as a fact in a
   dashed box (`.new-session-folder`: a worktree's checkout, else the folder of the pane in front)
   instead of asking for one, and its name is the tab's (optional; the placeholder is the number
   herdr gives it). Submit calls `POST /api/tab/create` with the same agent launch.
 
 ### Tab strip and pane canvas
-- The tab strip is shown even for one pane, as herdr's TUI shows its single tab and `+`.
+- The tab strip is shown even for one pane, as herdr's TUI shows its single tab and `+`. The `+`
+  is herdr's own new tab: it calls `POST /api/tab/create` with no agent at once, in the workspace's
+  folder, and opens the new shell pane unless another pane was opened meanwhile; a refusal shows
+  in the strip. An agent tab comes from the tab menu's New tab with agent…, which opens the dialog.
   Tabs retain their names, status dots, active underline, keyboard navigation, rename field and
   close confirmation. A right-click opens tab actions at the pointer, including Move tab left/right
   when a neighbouring position exists. Desktop tabs have no close or dropdown buttons. Touch and narrow layouts show a `⋯` beside
   the selected tab for a trimmed menu; Shift+F10 or the menu key opens the full tab menu from a focused tab.
   Pane actions are not tab actions. Up to 768px, where a split tab shows one pane at a time, the
   tab's menu lists the tab's panes first, the open one marked current, over a hairline.
-  Its touch menu omits New tab (the strip's `+` opens it). Only at these narrow widths does it
-  omit Split and Zoom pane; Unzoom pane stays available whenever the tab is zoomed.
+  Only at these narrow widths does it omit Split and Zoom pane; Unzoom pane stays available whenever the tab is zoomed.
 - Mouse dragging previews an accent insertion line, with edge scrolling for an overflowing strip.
   The snapshot's tab order is authoritative: a tab's stable `number` is not its place. A drop calls
   `tab.move` with an insertion boundary before removal, within that workspace and PC. The visible
@@ -850,14 +877,17 @@ One set for both themes: the card is island black wherever it shows.
 
 ### Header context and connection
 - A selected pane shows agent mark + title (`--fs-md`), then on the same line the crumb
-  PC › workspace › folder (`--fs-xs`, `--text-dim`). The folder shows as its last name, and only
-  when the title, the PC or the workspace does not already say it (`lib/headerCrumb.ts`). The
+  PC › workspace › folder (`--fs-xs`, `--text-dim`); with one PC registered the PC is left out, as
+  the sidebar leaves it out. The folder shows as its last name, and only
+  when the title, the workspace or the PC name shown on the line does not already say it
+  (`lib/headerCrumb.ts`, which also owns the one-PC rule). The
   title may shorten with an ellipsis; the crumb never does: when it does not fit whole beside the
   whole title it is not drawn, and the title has the row. The full path is in the context's
   tooltip and at the top of the More menu. With no selection, the brand fills the context slot.
 - The More menu (`.header-more-button`, the `RowMenu` popover, a bottom sheet at `<=640px`) opens
   with the location on two lines, "PC › workspace" then the full path in mono, and holds
-  **Browse files** and **Alerts**, each under the condition its own button had. New tab stays
+  **Find in terminal**, **Browse files** (at `<=768px` only: from `769px` Files is the header's own
+  button), **Copy link** and **Alerts**, each under the condition its own button had. New tab stays
   on the tab strip's `+`; Command palette is not in More. The Alerts item says
   this device's state in words after its label ("On in the app", "On in this tab", "On, pushed to
   this device", "Off on this device") and switches it: it is a `menuitemcheckbox` with
@@ -865,6 +895,9 @@ One set for both themes: the card is island black wherever it shows.
   More button carries a `--dot-size` `--accent` dot and its name says "alerts are off": the dot
   marks the state that needs a look, never "on".
 - The segmented Chat/Terminal view switch lives in the header. There is no floating view-toggle pill.
+  Files is an action, not a third lens: it opens the Files dialog and never joins the switch.
+- At `<=768px` the drawer toggle, the lens buttons and More are `--touch-target-header` squares
+  (the switch's track loses its inset so the `--header-h` bar holds them).
 - Connection is one quiet chip, drawn only while the bridge is not live: a pulsing dot plus the
   written reconnecting/disconnected state. Below `900px` it keeps only its dot; the word stays as
   its accessible text and in its tooltip. While live the chip takes no room and stays in the
@@ -937,7 +970,27 @@ One set for both themes: the card is island black wherever it shows.
   with HTML enabled; local images still pass through the file endpoint's image-size check.
   The page has an h1 and no Close or new-tab action; the dialog keeps its focus trap and sheet swipe.
   Actions use the existing header icon-button primitive, labels and focus states. On a phone the
-  name and Close occupy the first row, with actions below; a reader page has no Close.
+  header is one row: the name cut inside its stem, Show source and Copy, a **More** (Ellipsis)
+  menu holding new tab, raw and download, then Close; the size and folder are left out there unless
+  a partial-view notice is among them. A reader page has no Close.
+  Docked beside the pane (from 980px, `aside.file-panel`) the viewer is a split of the workspace on
+  `--bg` behind one `--border` hairline, not a raised card, and its chrome is two thin rows on
+  hairlines (t3code's file surface subheader, paseo's file panel bar): a header of
+  `--control-h` + `--space-2` with the file's glyph (`FileGlyph`), its name at `--fs-sm`
+  `--fw-medium` cut inside its stem, then the actions as `--control-h` − 6px ghost buttons in one
+  run (popup, new tab, raw, download, copy, Close), never stacked; and a toolbar of `--control-h` −
+  `--space-1` carrying the meta line (size or partial-view notice, folder) and, at its end, the
+  file's view modes as a compact segmented control (**Preview | Source** for Markdown in place of
+  Show source, **Page | Source** for HTML) whose chosen segment is the row's one `--bg-hover` fill.
+  The content fills the panel edge to edge (no inset, radius or frame around a page, PDF or
+  video; code and Markdown keep their `--space-3` inset). The panel's left edge is an unseen
+  `--space-2` grip that draws a 2px `--accent` seam under the pointer, while held and on focus.
+  Under 300px (a 980px window with the sidebar at its widest) the header keeps the name, the
+  popup toggle and Close alone. The panel is its pane's (its paths are read from the pane's
+  folder): selecting another pane or PC closes it (a file in the popup too), and the move takes the
+  file's history entry over, so Back returns to the pane the file was open on, without the file.
+  Closed from inside itself (Close file, Escape) the panel gives the focus back to what opened the
+  file, as the dialog does; a focus already elsewhere (the composer, a sidebar row) stays there.
   A link keeps `--accent` and a file chip reads in `--text-strong` with a dotted underline; both
   underlines are `--text-dim` at rest and both take the accent on hover and focus-visible.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its
@@ -1371,7 +1424,8 @@ One set for both themes: the card is island black wherever it shows.
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
 - Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family; then
-  **Composer**: Enter sends; then **Quick replies**; then **File viewer**: wrap long
+  **Composer**: Enter sends, send queued messages automatically, and on a touch screen the suggestion
+  chip (off by default); then **Quick replies**; then **File viewer**: wrap long
   lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (the phone address,
@@ -1417,12 +1471,45 @@ One set for both themes: the card is island black wherever it shows.
   **herdr** section opens with
   **Running herdr X.Y.Z**; where herdr cannot be updated from here (Windows, an older server) the
   section is that line alone, from the health check.
-- Subscription usage: the on switch with one description, then (when on) Used / Remaining,
-  Weekly / Session and, under an **Accounts** caption, one card of accounts (`.usage-accounts`):
-  one `--touch-target` row per account
-  (mark, name, dim ellipsized email, then 28px move-up, move-down and eye controls in fixed columns;
-  a move that cannot happen keeps its column but is not shown). A hidden account's row fades and
-  its eye closes; it stays listed so it can be shown again.
+- Subscription usage keeps its meter preferences first, then an **Accounts** header with a dim total
+  count and one **Add account** button (Plus + label). With meters off, one note follows it without
+  provider placeholders; the configured hub connection remains available. With meters on, provider cards are ordered Claude,
+  Codex, then the remaining reported providers; headings show mark, name and dim account count.
+  Each row has email/name, then dim source (**This PC** or **Hub**), known plan and written
+  sign-in status with an existing status-token dot, without badge pills. Within-provider reorder
+  and visibility controls stay in fixed columns; hidden rows remain listed but fade. Empty lists
+  show one dim sentence.
+- The global Add opens the shared `.modal` (a bottom sheet at 640px and below), with the existing
+  focus trap, Escape/close and return focus. Its small stepper leads through provider (Claude, Codex,
+  Cursor, GitHub Copilot, Grok, Antigravity, OpenCode, then Hub, in server discovery order),
+  method, and authentication; Back preserves the provider context. The provider step uses two equal
+  columns above 640px to fit eight choices without expanding the existing modal width, and a single
+  column on phones. The existing bounded `.modal-body` alone scrolls inside the sheet; its header
+  and Back/Close remain fixed. No grid reordering: keyboard and reading order match the server.
+  Use **Hub** in labels and source metadata; name CLIProxyAPI only in the picker description,
+  **Import accounts from CLIProxyAPI**. Descriptions stay short across all four languages.
+  Only Claude/Codex offer the hub method and a named credential home. Other providers have no
+  name field or disabled hub choice. PATH discovery replaces unavailable local actions with a
+  named CLI installation hint. Single-home sign-in reads local account metadata without querying
+  upstream usage, warns about an existing account and requires Continue; the POST independently
+  refuses an unconfirmed replacement. Antigravity offers app sign-in guidance
+  instead of an unverified standalone login command. OpenCode explains which subscriptions
+  supply plan limits. Local sign-in uses a new native terminal tab on the connection server's local PC
+  without moving native focus. It uses in-app pane selection and the existing canonical link writer,
+  not a page reload, even when another PC was selected. Hub OAuth
+  keeps the synchronous popup, bounded waiting, Cancel and redirect-paste form. Closing account setup
+  cancels a pending hub sign-in; changing the UI language does not cancel it. The hub connection
+  step has a labeled URL and DOM-only password, Connect, then Connected and Done; an account count
+  is fetched only when plan limits are enabled. Connection save/edit/remove never requests usage
+  while that opt-in is off.
+- A configured hub is one compact connection row below Accounts, including with meters off: network
+  icon, Hub label, dim URL/status and ghost Edit/Remove actions. Editing reopens the hub step
+  with its URL filled and key blank. Remove uses `.confirm-dialog`, with Cancel initially focused
+  and the danger action on the right, before deleting the saved management key. An unconfigured hub renders nothing. No dedicated Usage sources
+  section, new tokens or decorative motion. References: Paseo's global account picker/provider counts
+  and t3code's inline authentication metadata/compact hub row; their pixels are not copied.
+  An unreadable hub configuration leaves the hub unconfigured without blocking server startup;
+  its fixed diagnostic is logged and returned by the hub status endpoint, never its saved key.
 
 ### Terminal host, key bar and drawer
 - A browser page restored while visible and focused refits and reasserts its terminal grid,

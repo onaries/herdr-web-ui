@@ -142,6 +142,33 @@ export function renameManifest(manifest: string, name: string): string {
   return JSON.stringify({ ...JSON.parse(manifest), name, short_name: name }, null, 2);
 }
 
+/**
+ * The manifest with the app's own absolute id as a related application. Chromium's
+ * getInstalledRelatedApps() matches `platform: "webapp"` entries by absolute id only, so a tab
+ * in the browser can find the installed copy of the same origin. The origin differs per PC and
+ * per proxy, so it is added per request, never written into public/manifest.webmanifest.
+ */
+export function relateManifest(text: string, origin: string): string {
+  return JSON.stringify({ ...JSON.parse(text), related_applications: [{ platform: "webapp", id: `${origin}/` }] }, null, 2);
+}
+
+/** What /manifest.webmanifest answers: renamed under HERDR_WEB_APP_NAME, then related to its origin. */
+export function manifestBody(text: string, origin: string): string {
+  const name = appName();
+  return relateManifest(name ? renameManifest(text, name) : text, origin);
+}
+
+/**
+ * The origin a browser used to reach this request: the scheme from X-Forwarded-Proto when a
+ * proxy states one (http or https), else the request URL's, and the host from the Host header.
+ */
+export function requestOrigin(request: Request): string {
+  const url = new URL(request.url);
+  const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  const scheme = forwarded === "http" || forwarded === "https" ? forwarded : url.protocol.slice(0, -1);
+  return `${scheme}://${request.headers.get("host") ?? url.host}`;
+}
+
 const APPLE_TITLE = /(<meta name="apple-mobile-web-app-title" content=")[^"]*(")/;
 
 /** The shell under another name: an iOS home-screen install takes its label from this meta. */
@@ -151,7 +178,8 @@ export function renameShell(html: string, name: string): string {
 }
 
 /** The file as built, or the manifest and the shell under HERDR_WEB_APP_NAME. */
-async function body(file: BunFile, kind: "manifest" | "shell" | null): Promise<BunFile | string> {
+async function body(file: BunFile, kind: "manifest" | "shell" | null, origin?: string): Promise<BunFile | string> {
+  if (kind === "manifest" && origin !== undefined) return manifestBody(await file.text(), origin);
   const name = appName();
   if (!name || !kind) return file;
   return kind === "manifest" ? renameManifest(await file.text(), name) : renameShell(await file.text(), name);
@@ -171,7 +199,8 @@ function encodings(header: string | null | undefined): Array<"br" | "gzip" | "id
   return (["br", "gzip", "identity"] as const).filter(coding => weight(coding) > 0).sort((a, b) => weight(b) - weight(a));
 }
 
-export async function serveStatic(pathname: string, acceptEncoding?: string | null): Promise<Response> {
+/** `origin` is what requestOrigin answers; a caller that has no request (a QA script) may leave it out. */
+export async function serveStatic(pathname: string, acceptEncoding?: string | null, origin?: string): Promise<Response> {
   const indexPath = join(DIST_DIR, "index.html");
   if (!existsSync(indexPath)) {
     return new Response(
@@ -196,7 +225,7 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
         return new Response(null, { status: 406, headers: { vary: "Accept-Encoding", ...cspHeader() } });
       }
       const kind = pathname === "/manifest.webmanifest" ? "manifest" : candidate === indexPath ? "shell" : null;
-      return new Response(await body(file, kind), {
+      return new Response(await body(file, kind, origin), {
         headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader() },
       });
     }

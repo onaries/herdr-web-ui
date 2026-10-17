@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import { devinUserText } from "./skill-invocations/devin.ts";
 
 const MAX_NODES = 5000;
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -166,7 +167,8 @@ export function devinConversation(sessionId: string, cwd: string, options: Devin
       // Devin 3000.11.3 stores reasoning as { thinking, signature }
       const thinking = text(typeof message.thinking === "string" ? message.thinking : record(message.thinking).thinking);
       if (role === "assistant" && thinking) parts.push({ kind: "thinking", text: thinking });
-      if (text(message.content)) parts.push({ kind: "text", text: text(message.content) });
+      const content = role === "user" ? text(devinUserText(text(message.content), meta)) : text(message.content);
+      if (content) parts.push({ kind: "text", text: content });
       if (role === "assistant" && Array.isArray(message.tool_calls)) for (const rawCall of message.tool_calls) {
         const call = record(rawCall);
         if (!text(call.name)) continue;

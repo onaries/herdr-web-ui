@@ -1,7 +1,7 @@
 /** Shared native-record rules keep paging, rendering and on-demand results consistent. */
 import type { ConversationPart, ConversationTurn, OmoTaskResult } from "../shared/protocol.ts";
 import type { SubagentDetail, TaskNotification } from "./claude-subagents.ts";
-import { skillInvocationPrompt } from "./skill-activity.ts";
+import { skillInvocationPrompt, skillPromptMessage } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 
 type Row = Record<string, unknown>;
@@ -266,6 +266,11 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
     if (entry === null || typeof entry !== "object") continue;
     if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); continue; }
     const timestamp = (entry as { timestamp?: string }).timestamp;
+    const skillPrompt = skillPromptMessage(entry);
+    if (skillPrompt !== null) {
+      turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: skillPrompt.request }, ...skillPrompt.skills.map((skill) => ({ kind: "skill" as const, skill }))] });
+      continue;
+    }
     const notice = piNotice(entry);
     if (notice !== null) {
       turns.push({ role: "user", ts: timestamp ?? null, parts: [notice] });

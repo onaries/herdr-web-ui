@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { createCodexTranscriptParser, parseCodexTranscript } from "./codex.ts";
 import { parseClaudeTranscript } from "./conversation.ts";
 import { parseOmpTranscript } from "./transcript-records.ts";
-import { codexReadCall, codexReadSkills, selectedSkill, skillInvocationPrompt } from "./skill-activity.ts";
+import { codexReadCall, codexReadSkills, hermesSkillPrompt, selectedSkill, skillInvocationPrompt, skillPromptMessage } from "./skill-activity.ts";
+import { parseHermesRows } from "./hermes.ts";
 import { turnSkills } from "../src/lib/skillActivity.ts";
 import type { SkillActivity } from "../shared/protocol.ts";
 import { splitTurn, workFailed, workSummary } from "../src/lib/workBlocks.ts";
@@ -150,4 +151,87 @@ test("the skill stays on its message wherever the transcript is cut: parsed apar
 test("a standalone .md skill (pi --skill review.md) is a skill too", () => {
   const text = invoked("review", "/home/u/skills/review.md");
   expect(skillInvocationPrompt(text)).toEqual({ skills: [{ name: "review", path: "/home/u/skills/review.md", evidence: "instructions", status: "loaded" }], request: "" });
+});
+
+for (const agent of ["omp", "gjc"]) {
+  test(`${agent}'s recorded skill-prompt becomes one user invocation without a notice`, async () => {
+    const fixture = await Bun.file(new URL(`./fixtures/skill-invocations/${agent}.jsonl`, import.meta.url)).text();
+    const turns = parseOmpTranscript(fixture);
+    const users = turns.filter((turn) => turn.role === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0]?.parts).toEqual([
+      { kind: "text", text: "/skill:probe-skill hello" },
+      { kind: "skill", skill: { name: "probe-skill", path: expect.stringMatching(/\/probe-skill\/SKILL\.md$/), evidence: "instructions", status: "loaded" } },
+    ]);
+    expect(turns.flatMap((turn) => turn.parts).filter((part) => part.kind === "notice")).toEqual([]);
+  });
+}
+
+test("a skill-prompt without args still records its invocation", () => {
+  expect(skillPromptMessage({ type: "custom_message", customType: "skill-prompt", details: { name: "probe-skill" } })).toEqual({
+    request: "/skill:probe-skill",
+    skills: [{ name: "probe-skill", evidence: "instructions", status: "loaded" }],
+  });
+});
+
+test("unmatched custom messages retain their existing notice", () => {
+  const turns = parseOmpTranscript(lines([{ type: "custom_message", customType: "background-job", content: "<system-notice>done</system-notice>", display: true }]));
+  expect(turns[0]?.parts).toEqual([{ kind: "notice", text: "done", source: "background-job" }]);
+});
+
+test("malformed skill details leave the recorded content as a notice", () => {
+  const turns = parseOmpTranscript(lines([{ type: "custom_message", customType: "skill-prompt", content: "unmatched", details: { name: "bad\nname" } }]));
+  expect(turns[0]?.parts).toEqual([{ kind: "notice", text: "unmatched", source: "skill-prompt" }]);
+});
+
+for (const [fixture, request, names] of [
+  ["hermes", "/probe-skill hello", ["probe-skill"]],
+  ["hermes-bundle", "/probe-bundle hello", ["probe-skill", "probe-skill-two"]],
+] as const) {
+  test(`${fixture}'s scaffold becomes the user command and loaded skill parts`, async () => {
+    const content = await Bun.file(new URL(`./fixtures/skill-invocations/${fixture}.txt`, import.meta.url)).text();
+    const parsed = hermesSkillPrompt(content);
+    expect(parsed?.request).toBe(request);
+    expect(parsed?.skills.map((skill) => skill.name)).toEqual([...names]);
+    const turns = parseHermesRows([{ id: 1, role: "user", content, tool_call_id: null, tool_calls: null, tool_name: null, reasoning: null, timestamp: 1 }]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.parts).toEqual([
+      { kind: "text", text: request },
+      ...names.map((name) => ({ kind: "skill" as const, skill: { name, path: expect.stringMatching(new RegExp(`/${name}/SKILL\\.md$`)), evidence: "instructions" as const, status: "loaded" as const } })),
+    ]);
+  });
+
+  test(`${fixture} keeps body instruction markers out of the user command`, async () => {
+    const content = await Bun.file(new URL(`./fixtures/skill-invocations/${fixture}.txt`, import.meta.url)).text();
+    const withBodyMarker = content.replace("\n[Skill directory:", "\n\nThe user has provided the following instruction alongside the skill invocation: body-only\n\nUser instruction: body-only\n[Skill directory:");
+    expect(hermesSkillPrompt(withBodyMarker)?.request).toBe(request);
+  });
+
+  test(`${fixture} without a user instruction still parses a body that quotes the instruction marker`, async () => {
+    const content = await Bun.file(new URL(`./fixtures/skill-invocations/${fixture}.txt`, import.meta.url)).text();
+    const bare = content.replace("\n\nThe user has provided the following instruction alongside the skill invocation: hello", "").replace("\n\nUser instruction: hello", "");
+    const quoted = bare.replace("\n[Skill directory:", "\n\nThe user has provided the following instruction alongside the skill invocation: body-only\n[Skill directory:");
+    expect(hermesSkillPrompt(quoted)?.request).toBe(request.replace(" hello", ""));
+  });
+
+  test(`${fixture} without a user instruction keeps only the command`, async () => {
+    const content = await Bun.file(new URL(`./fixtures/skill-invocations/${fixture}.txt`, import.meta.url)).text();
+    const withoutInstruction = content.replace("\n\nThe user has provided the following instruction alongside the skill invocation: hello", "").replace("\n\nUser instruction: hello", "");
+    expect(hermesSkillPrompt(withoutInstruction)?.request).toBe(request.replace(" hello", ""));
+  });
+}
+
+test("Hermes leaves unmatched and incomplete scaffolds raw", () => {
+  const content = '[IMPORTANT: The user has invoked the "probe-skill" skill';
+  expect(hermesSkillPrompt(content)).toBeNull();
+  const turns = parseHermesRows([{ id: 1, role: "user", content, tool_call_id: null, tool_calls: null, tool_name: null, reasoning: null, timestamp: 1 }]);
+  expect(turns[0]?.parts).toEqual([{ kind: "text", text: content }]);
+});
+
+test("Hermes leaves a bundle with a missing loaded skill raw", async () => {
+  const fixture = await Bun.file(new URL("./fixtures/skill-invocations/hermes-bundle.txt", import.meta.url)).text();
+  const content = fixture.slice(0, fixture.lastIndexOf('\n\n[Loaded as part of the "probe-bundle" skill bundle.]'));
+  expect(hermesSkillPrompt(content)).toBeNull();
+  const turns = parseHermesRows([{ id: 1, role: "user", content, tool_call_id: null, tool_calls: null, tool_name: null, reasoning: null, timestamp: 1 }]);
+  expect(turns[0]?.parts).toEqual([{ kind: "text", text: content }]);
 });

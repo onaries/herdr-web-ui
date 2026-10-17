@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { crossSiteFileRead, fileInfo, fileResponse, locateFileInFolder, resolveFilePath } from "./file-view.ts";
+import * as fileView from "./file-view.ts";
+import { crossSiteFileRead, fileInfo, fileResponse, locateFile, locateFileInFolder, resolveFilePath } from "./file-view.ts";
+import { clearFileCache, filesNamed } from "./files.ts";
 
 describe("file view", () => {
   const roots: string[] = [];
@@ -140,7 +142,175 @@ describe("file view", () => {
 
 describe("locateFile", () => {
   const roots: string[] = [];
-  afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+  afterEach(() => {
+    clearFileCache();
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+  const temp = () => { const root = mkdtempSync(join(tmpdir(), "herdr-locate-")); roots.push(root); return root; };
+
+  it("(a) opens an NFD name from absolute and relative NFC paths", async () => {
+    const root = temp();
+    const path = join(root, "문서.md".normalize("NFD"));
+    writeFileSync(path, "# nfd");
+    const distinguishes = !existsSync(join(root, "문서.md"));
+    for (const found of [
+      locateFile(join(root, "문서.md".normalize("NFC")), null, true),
+      locateFile("문서.md", root, true),
+      await fileView.findFile("문서.md", root, async () => null),
+    ]) {
+      expect(found).not.toBeNull();
+      if (found === null || !("info" in found)) throw new Error("expected one file");
+      expect(found.info.name.normalize("NFC")).toBe("문서.md");
+      expect(readFileSync(found.info.path, "utf8")).toBe("# nfd");
+      if (distinguishes) expect(found.info.path).toBe(path);
+    }
+    if (distinguishes) expect(locateFile("문서.md", root)).toBeNull();
+  });
+
+  it("(b) opens a path whose folder and filename use different forms", async () => {
+    const root = temp();
+    const folder = join(root, "회의자료".normalize("NFD"));
+    mkdirSync(folder);
+    const path = join(folder, "메모.md");
+    writeFileSync(path, "mixed");
+    const requested = join(root, "회의자료", "메모.md");
+    for (const found of [
+      locateFile(requested, null, true),
+      await fileView.findFile(requested, null, async () => null),
+    ]) {
+      expect(found).not.toBeNull();
+      if (found === null || !("info" in found)) throw new Error("expected one file");
+      expect(found.info.name.normalize("NFC")).toBe("메모.md");
+      expect(readFileSync(found.info.path, "utf8")).toBe("mixed");
+      if (!existsSync(requested)) expect(found.info.path).toBe(path);
+    }
+  });
+
+  it("(c) opens a decomposed accented Latin name", async () => {
+    const root = temp();
+    writeFileSync(join(root, "café.txt".normalize("NFD")), "cafe");
+    const found = await fileView.findFile(join(root, "café.txt"), null, async () => null);
+    expect(found).not.toBeNull();
+    if (found === null || !("info" in found)) throw new Error("expected one file");
+    expect(found.info.name.normalize("NFC")).toBe("café.txt");
+    expect(readFileSync(found.info.path, "utf8")).toBe("cafe");
+  });
+
+  it("(d) lists sorted candidates when several forms match without an exact hit", async () => {
+    const root = temp();
+    const first = join(root, "가".normalize("NFD") + "나".normalize("NFD") + ".md");
+    const second = join(root, "가".normalize("NFD") + "나.md");
+    writeFileSync(first, "first");
+    const distinguishes = !existsSync(second);
+    if (distinguishes) writeFileSync(second, "second");
+    const found = await fileView.findFile(join(root, "가나.md"), null, async () => null);
+    if (distinguishes) expect(found).toEqual({ candidates: [first, second].sort() });
+    else {
+      expect(found).not.toBeNull();
+      if (found === null || !("info" in found)) throw new Error("expected one file");
+      expect(found.info.name.normalize("NFC")).toBe("가나.md");
+      expect(readFileSync(found.info.path, "utf8")).toBe("first");
+    }
+  });
+
+  it("(e) keeps exact files and directories ahead of form variants", async () => {
+    const root = temp();
+    const path = join(root, "문서.md");
+    writeFileSync(path, "exact");
+    const variant = join(root, "문서.md".normalize("NFD"));
+    const distinguishes = !existsSync(variant);
+    if (distinguishes) writeFileSync(variant, "variant");
+    expect(await fileView.findFile(path, null, async () => null)).toMatchObject({ info: { path } });
+    rmSync(path);
+    mkdirSync(path);
+    expect(await fileView.findFile(path, null, async () => null)).toBeNull();
+    expect(locateFile(path, null, true)).toBeNull();
+  });
+
+  it("(f) resolves scratch names across forms without allowing symlink escapes", () => {
+    const root = temp();
+    const folder = join(root, "scratch");
+    mkdirSync(folder);
+    const outside = join(root, "outside.txt");
+    writeFileSync(outside, "outside");
+    symlinkSync(outside, join(folder, "링크.txt".normalize("NFD")));
+    expect(locateFileInFolder("링크.txt", folder, true)).toBeNull();
+    const path = join(folder, "문서.md".normalize("NFD"));
+    writeFileSync(path, "inside");
+    const found = locateFileInFolder("문서.md", folder, true);
+    expect(found).not.toBeNull();
+    if (found === null || !("info" in found)) throw new Error("expected one file");
+    expect(found.info.name.normalize("NFC")).toBe("문서.md");
+    expect(readFileSync(found.info.path, "utf8")).toBe("inside");
+    if (!existsSync(join(folder, "문서.md"))) expect(locateFileInFolder("문서.md", folder)).toBeNull();
+  });
+
+  it("(g) returns null for missing ASCII names even beneath a non-ASCII folder", async () => {
+    const root = temp();
+    mkdirSync(join(root, "자료".normalize("NFD")));
+    for (const path of [join(root, "missing.txt"), join(root, "자료", "missing.txt")]) {
+      expect(locateFile(path, null, true)).toBeNull();
+      expect(await fileView.findFile(path, null, async () => null)).toBeNull();
+    }
+  });
+
+  it("(h) opens an exact suffix before a form variant at the pane root", async () => {
+    const root = temp();
+    mkdirSync(join(root, "docs"));
+    const path = join(root, "docs", "문서.md");
+    writeFileSync(path, "exact suffix");
+    writeFileSync(join(root, "문서.md".normalize("NFD")), "variant");
+    const distinguishes = !existsSync(join(root, "문서.md"));
+    const found = await fileView.findFile("문서.md", root, async () => null);
+    expect(found).toMatchObject({ info: { path: distinguishes ? path : join(root, "문서.md") } });
+  });
+
+  it("(i) keeps a unique exact suffix unambiguous while any-form suffixes include both", async () => {
+    const root = temp();
+    mkdirSync(join(root, "a"));
+    mkdirSync(join(root, "b"));
+    const exact = join(root, "a", "메모.md");
+    const variant = "메모.md".normalize("NFD");
+    writeFileSync(exact, "exact");
+    writeFileSync(join(root, "b", variant), "variant");
+    const distinguishes = !existsSync(join(root, "b", "메모.md"));
+    const found = await fileView.findFile("메모.md", root, async () => null);
+    if (distinguishes) {
+      expect(found).toMatchObject({ info: { path: exact } });
+      expect(filesNamed(root, "메모.md")).toEqual(["a/메모.md"]);
+    } else {
+      expect(found).not.toBeNull();
+    }
+    const matches = filesNamed(root, "메모.md", 10, true).sort();
+    if (distinguishes) expect(matches).toEqual(["a/메모.md", `b/${variant}`].sort());
+    else expect(matches.map((path) => path.normalize("NFC"))).toEqual(["a/메모.md", "b/메모.md"]);
+  });
+
+  it("(j) tries exact scratch files before any-form pane files and reuses the scratch lookup", async () => {
+    const root = temp();
+    const cwd = join(root, "pane");
+    const scratch = join(root, "scratch");
+    mkdirSync(cwd);
+    mkdirSync(scratch);
+    const panePath = join(cwd, "메모.md".normalize("NFD"));
+    const scratchPath = join(scratch, "메모.md");
+    writeFileSync(panePath, "pane");
+    writeFileSync(scratchPath, "scratch");
+    const distinguishes = !existsSync(join(cwd, "메모.md"));
+    let calls = 0;
+    const scratchFolder = async () => { calls += 1; return scratch; };
+    expect(await fileView.findFile("메모.md", cwd, scratchFolder)).toMatchObject({
+      info: { path: distinguishes ? scratchPath : join(cwd, "메모.md") },
+    });
+    expect(calls).toBe(distinguishes ? 1 : 0);
+    rmSync(scratchPath);
+    clearFileCache();
+    calls = 0;
+    const found = await fileView.findFile("메모.md", cwd, scratchFolder);
+    expect(found).toMatchObject({ info: { path: distinguishes ? panePath : join(cwd, "메모.md") } });
+    expect(calls).toBe(distinguishes ? 1 : 0);
+    expect(await fileView.findFile("메모.md", cwd, async () => null)).toEqual(found);
+  });
 
   it("refuses parent traversal outside the Claude scratch fallback folder", () => {
     const root = mkdtempSync(join(tmpdir(), "herdr-locate-")); roots.push(root);

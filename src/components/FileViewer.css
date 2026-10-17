@@ -114,6 +114,52 @@
 
 .file-viewer-group { gap: var(--space-1); }
 
+/* a phone's More menu (new tab, raw, download): a small list under its button, inside the viewer */
+.file-viewer-more {
+  display: none;
+  position: relative;
+}
+
+.file-viewer-more-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: max-content;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+
+.file-viewer-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+}
+
+.file-viewer-more-item:focus-visible { background: var(--bg-hover); }
+
+@media (hover: hover) {
+  .file-viewer-more-item:hover { background: var(--bg-hover); }
+}
+
+.file-viewer-more-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
 /* an "on" toggle (Show source) carries the accent on its glyph */
 .file-viewer-action[aria-pressed="true"] {
   background: var(--bg-hover);
@@ -247,28 +293,30 @@
 .file-viewer-markdown-readable { max-width: var(--chat-w); }
 
 /*
- * On a narrow screen two or more actions leave the name and its notes no room. The name and Close
- * keep the first row, so Close stays in its corner for every file; the actions take the second,
- * under Close, where they are on a wider screen.
+ * On a narrow screen the header is one row, so the file keeps the screen: the name (cut inside its
+ * stem) gives way to the actions and Close beside it. The size and folder are left out there; a
+ * partial-view notice is not, since it says the file is not all shown.
  */
 @media (max-width: 600px) {
   .file-viewer-header-stacked {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "title close" "actions actions";
-    row-gap: var(--space-2);
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "title actions close";
+    align-items: center;
+    column-gap: var(--space-1);
   }
 
   .file-viewer-header-stacked .file-viewer-title { grid-area: title; }
-  /* in the corner, however many lines the name's block takes */
-  .file-viewer-header-stacked .file-viewer-close {
-    grid-area: close;
-    align-self: start;
-  }
+  .file-viewer-header-stacked .file-viewer-meta:not(:has(.file-viewer-notice)) { display: none; }
+  .file-viewer-header-stacked .file-viewer-close { grid-area: close; }
   .file-viewer-header-stacked .file-viewer-actions {
     grid-area: actions;
-    justify-content: flex-end;
+    gap: 0;
   }
+  .file-viewer-header-stacked .file-viewer-group { gap: 0; }
+  /* new tab, raw and download move into More, so the name keeps room beside Show source and Copy */
+  .file-viewer-header-stacked .file-viewer-wide { display: none; }
+  .file-viewer-header-stacked .file-viewer-more { display: block; }
 
   /* the reader's page: a reload line (ChunkFailureNotice) above the document when a part failed to load */
 .file-reader-frame {
@@ -285,7 +333,8 @@
 }
 
 .file-reader-header {
-    grid-template-areas: "title title" "actions actions";
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "title actions";
   }
 }
 
@@ -328,6 +377,171 @@
   .file-viewer-media { max-height: max(0px, calc(var(--app-height, 100dvh) - 120px)); }
   .file-viewer-pdf { height: max(0px, calc(var(--app-height, 100dvh) - 120px)); }
   .file-viewer-page { height: max(0px, calc(var(--app-height, 100dvh) - 170px)); }
+}
+
+/*
+ * Docked (a wide window): the viewer is a column beside the pane, not a dialog over it. Its width
+ * is the app's (--file-panel-shown-w, styles.css), dragged from its left edge; the viewer fills
+ * it, and media, PDFs and pages fill its height rather than a share of the window's. It is a
+ * split of the workspace, on the pane's own background behind one hairline, not a raised card.
+ */
+.file-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: var(--file-panel-shown-w, min(42vw, 560px));
+  flex: 0 0 var(--file-panel-shown-w, min(42vw, 560px));
+  min-width: 0;
+  min-height: 0;
+  border-left: var(--hairline) solid var(--border);
+  background: var(--bg);
+  /* the header yields by the panel's width, not the window's */
+  container: file-panel / inline-size;
+}
+
+.file-viewer-docked {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * The docked header is one row, a little over the control height, on a hairline (t3code's file
+ * surface subheader): the file's glyph and name, then its actions as small ghost buttons. It
+ * never stacks: the panel is never as narrow as a phone.
+ */
+.file-viewer-header-docked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--control-h) + var(--space-2));
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.file-viewer-glyph {
+  flex: none;
+  width: calc(var(--icon-size) - 2px);
+  height: calc(var(--icon-size) - 2px);
+  color: var(--text-dim);
+}
+
+/* the name, small and medium: it is a row's title, not a dialog's */
+.file-viewer-name {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-tight);
+}
+
+/* one run of ghost buttons, Close at its end */
+.file-viewer-header-docked .file-viewer-actions { gap: var(--space-1); }
+
+.file-viewer-header-docked .file-viewer-action {
+  width: calc(var(--control-h) - 6px);
+  height: calc(var(--control-h) - 6px);
+  border-radius: var(--radius-sm);
+}
+
+.file-viewer-header-docked .file-viewer-action svg {
+  width: calc(var(--icon-size) - 2px);
+  height: calc(var(--icon-size) - 2px);
+}
+
+/* The narrowest panel (a 980px window with the sidebar at its widest, 320px kept for the pane) has
+   no row for every action. The name keeps its type and the ways out stay, the popup and Close; the
+   file's own actions (new tab, raw, download, copy) wait for a wider panel, as does the glyph. */
+@container file-panel (max-width: 300px) {
+  .file-viewer-header-docked .file-viewer-glyph,
+  .file-viewer-header-docked .file-viewer-actions > :not(:first-child) { display: none; }
+}
+
+/*
+ * The toolbar under it, thinner, on its own hairline (paseo's file panel bar): the meta (size,
+ * folder, a partial view's notice) whispers on the left and the file's view modes sit on the right.
+ */
+.file-viewer-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: calc(var(--control-h) - var(--space-1));
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.file-viewer-toolbar .file-viewer-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* the modes, compact: the track is the toolbar itself inside a hairline, so the one chosen
+   segment is the only filled thing in the row and reads at a glance */
+.file-viewer-toolbar .file-viewer-modes {
+  align-self: center;
+  margin: 0;
+  padding: 1px;
+  background: transparent;
+}
+
+.file-viewer-toolbar .file-viewer-modes > button {
+  height: calc(var(--control-h) - var(--space-4));
+  padding: 0 var(--space-2);
+  font-size: var(--fs-xs);
+}
+
+@media (hover: hover) {
+  .file-viewer-toolbar .file-viewer-modes > button:hover { color: var(--text-strong); }
+}
+
+/* the content fills the panel edge to edge; text keeps its own small inset */
+.file-viewer-docked .file-viewer-body { padding: 0; }
+
+.file-viewer-docked .file-viewer-media {
+  max-height: 100%;
+  border-radius: 0;
+}
+
+/* a video takes the panel's width, as a player does; a picture keeps its own size under it */
+.file-viewer-docked video.file-viewer-media { width: 100%; }
+
+.file-viewer-docked .file-viewer-pdf,
+.file-viewer-docked .file-viewer-page {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  border-radius: 0;
+}
+
+.file-viewer-docked .file-viewer-audio { width: min(calc(100% - var(--space-6)), 480px); }
+
+.file-viewer-docked .file-viewer-markdown { padding: var(--space-3); }
+
+.file-viewer-docked .file-viewer-select-source {
+  border: 0;
+  border-radius: 0;
+}
+
+.file-viewer-docked .file-viewer-note,
+.file-viewer-docked .file-viewer-choices { padding-inline: var(--space-3); }
+
+/* a touch screen wide enough for the panel keeps its targets */
+@media (pointer: coarse) {
+  .file-viewer-header-docked .file-viewer-action {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+
+  .file-viewer-toolbar .file-viewer-modes > button { height: calc(var(--control-h) - 6px); }
 }
 
 .file-viewer-choices ul {

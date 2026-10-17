@@ -10,8 +10,10 @@
  */
 
 import type { AgentStatus, SlashCommand } from "../../shared/protocol.ts";
+import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { knownStatus, STATUS_WORD } from "./status.ts";
 import { t } from "./i18n.ts";
+import type { ActiveTrigger } from "./mentions.ts";
 
 /** This cap keeps one composer message inside a single WS frame. */
 export const MAX_COMPOSER_CHARS = 20_000;
@@ -242,6 +244,54 @@ function slashMatchTier(command: SlashCommand, needle: string, prefixOnly: boole
     if (at === needle.length) return 3;
   }
   return needle.length >= 2 && command.description.toLocaleLowerCase().includes(needle) ? 4 : null;
+}
+
+/** Commands the agent can invoke at this position, before query ranking. */
+export function commandsForTrigger(commands: readonly SlashCommand[], agent: string | null, trigger: ActiveTrigger): SlashCommand[] {
+  const syntax = skillSyntax(agent);
+  const prefix = trigger.prefix ?? "/";
+  return commands.filter((command) => {
+    if (trigger.start === 0) {
+      return syntax.skillTriggers.length > 1
+        ? prefix === "/" || command.source === "skill"
+        : (command.trigger ?? "/") === prefix;
+    }
+    if (command.source !== "skill" || !syntax.inline.includes(prefix)) return false;
+    if (agent === "codex") return command.trigger === "$";
+    if (agent === "claude") return command.trigger === undefined;
+    if (agent === "omp") return command.name.startsWith("skill:");
+    return true;
+  });
+}
+
+/**
+ * A menu row's description down to its first sentence: a skill's goes on to say when to use it
+ * and when not, which is for the agent, and on a phone it ran to five lines a row. A full stop
+ * ends a sentence only before a capital (or a letter with no case) or as `\u3002`, so `e.g. foo`
+ * and `v1.2` keep their text.
+ */
+export function briefDescription(description: string): string {
+  const text = description.trim();
+  const end = /[.!?](?=\s+[\p{Lu}\p{Lo}"'(])|\u3002/u.exec(text);
+  return (end ? text.slice(0, end.index) : text).replace(/(?<!\.)[.\u3002]$/u, "");
+}
+
+/**
+ * Where a bare `/` or `$` lists a command: a skill under where it comes from, yours before the
+ * project's, then the ones without a known origin, the agent's own and its plugins'.
+ */
+export const COMMAND_GROUPS = ["builtin", "user", "project", "skill-user", "skill-project", "skill", "skill-bundled", "skill-plugin", "plugin"] as const;
+export type CommandGroup = (typeof COMMAND_GROUPS)[number];
+
+export function commandGroup(command: SlashCommand): CommandGroup {
+  if (command.source === "skill" && command.origin !== undefined) return `skill-${command.origin}`;
+  return command.source;
+}
+
+/** Multi-trigger skills use the typed prefix; others use the command's wire trigger. */
+export function slashCommandReplacement(command: SlashCommand, agent: string | null, trigger: ActiveTrigger): string {
+  const prefix = skillSyntax(agent).skillTriggers.length > 1 ? trigger.prefix ?? "/" : command.trigger ?? "/";
+  return `${prefix}${command.name} `;
 }
 
 /**

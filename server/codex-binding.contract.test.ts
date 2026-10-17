@@ -171,6 +171,44 @@ it("reads a literal short first answer through the conversation endpoint (regres
   }
 });
 
+it("reads a short first exchange beside another Codex pane through the conversation endpoint", async () => {
+  const cwd = join(root, "short-greeting");
+  mkdirSync(cwd);
+  const id = "01a0c7a1-56d9-7e20-9f08-f7a2d973bd43";
+  const path = join(codexHome, "sessions", `rollout-2026-10-14T00-00-00-${id}.jsonl`);
+  const prompt = "hello";
+  const reply = "Hello! What would you like to work on?";
+  writeFileSync(path, [
+    { type: "session_meta", payload: { id, cwd } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: reply }] } },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  const screen = join(cwd, "screen.txt");
+  writeFileSync(screen, `OpenAI Codex (v0.162.1)\n\n• Model changed to gpt-5\n\n› ${prompt}\n\n• ${reply}\n\n› \nSHORT_SCREEN_READY\n`);
+  const opened = workspaces.length;
+  const paneId = await pane("short-first", `SCREEN_FILE=${screen} ${join(root, "bin", "codex")}`, cwd);
+  const peer = join(cwd, "peer.txt");
+  writeFileSync(peer, "OpenAI Codex (v0.162.1)\n› Other task\n• A different conversation.\n› \n");
+  const peerId = await pane("short-peer", `SCREEN_FILE=${peer} ${join(root, "bin", "codex")}`, cwd);
+  const db = new Database(join(codexHome, "state_5.sqlite"));
+  const created = Math.ceil(Date.now() / 1000) + 2;
+  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?, 'cli', ?)").run(id, path, cwd, created, created, prompt);
+  db.close();
+  try {
+    await onScreen(paneId, "SHORT_SCREEN_READY");
+    // a blank peer screen rightly blocks a short match, so wait until it shows its own exchange
+    await onScreen(peerId, "A different conversation.");
+    const conversation = await read(paneId);
+    expect(conversation.source).toBe("codex-transcript"); // regression
+    expect(lastAnswer(conversation)).toBe(reply);
+  } finally {
+    const db = new Database(join(codexHome, "state_5.sqlite"));
+    db.query("DELETE FROM threads WHERE id = ?").run(id);
+    db.close();
+    for (const workspace of workspaces.splice(opened)) await workspaceClose(workspace);
+  }
+});
+
 it("reads the thread a Codex TUI was resumed on while none of its answers is on screen, until a newer thread begins", async () => {
   const paneId = await pane("resumed", `${join(root, "bin", "codex")} resume ${threads.resumed}`);
   const conversation = await read(paneId);

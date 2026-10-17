@@ -1,4 +1,64 @@
 {
+  "0.4.11": {
+    "en": {
+      "fixed": [
+        "With Claude Code 2.1.301, /effort from Chat shows its card again.",
+        "Claude's plan card finds its plan file again, with View plan, on recent Claude Code.",
+        "Under a light theme, white text from Claude Code stays readable in the terminal.",
+        "A connection that keeps dropping no longer retries four times a second.",
+        "Codex's folder trust question shows as a card when Codex starts in a new folder."
+      ]
+    },
+    "ko": {
+      "fixed": [
+        "Claude Code 2.1.301에서 채팅의 /effort 카드가 다시 뜹니다.",
+        "최신 Claude Code에서도 계획 카드가 계획 파일을 다시 찾고 '계획 보기'가 보입니다.",
+        "라이트 테마에서도 Claude Code의 흰 글자가 터미널에서 읽힙니다.",
+        "연결이 계속 끊길 때 1초에 네 번씩 재접속하지 않습니다.",
+        "Codex를 새 폴더에서 시작할 때 폴더 신뢰 질문이 카드로 뜹니다."
+      ]
+    },
+    "ja": {
+      "fixed": [
+        "Claude Code 2.1.301 で、チャットの /effort カードが再び表示されます。",
+        "最新の Claude Code でも計画カードが計画ファイルを見つけ、「計画を表示」が出ます。",
+        "ライトテーマでも Claude Code の白い文字がターミナルで読めます。",
+        "接続が切れ続けるとき、1 秒に 4 回再接続しなくなりました。",
+        "Codex を新しいフォルダーで起動したとき、フォルダー信頼の質問がカードで出ます。"
+      ]
+    },
+    "zh": {
+      "fixed": [
+        "在 Claude Code 2.1.301 中，聊天里的 /effort 卡片重新出现。",
+        "在最新的 Claude Code 中，计划卡片能重新找到计划文件，并显示“查看计划”。",
+        "浅色主题下，Claude Code 的白色文字在终端中也清晰可读。",
+        "连接反复断开时，不再每秒重连四次。",
+        "在新文件夹中启动 Codex 时，文件夹信任问题会以卡片显示。"
+      ]
+    }
+  },
+  "0.4.10": {
+    "en": {
+      "improved": [
+        "Phones and tablets hide the suggestion chip by default; Settings → Chat turns it on."
+      ]
+    },
+    "ko": {
+      "improved": [
+        "휴대폰과 태블릿에서 입력창 위 제안 칩은 기본으로 꺼집니다. 설정 → 채팅에서 켤 수 있습니다."
+      ]
+    },
+    "ja": {
+      "improved": [
+        "スマートフォンとタブレットでは入力欄の上の提案チップが既定でオフです。設定 → チャットでオンにできます。"
+      ]
+    },
+    "zh": {
+      "improved": [
+        "手机和平板上输入框上方的建议标签默认关闭，可在设置 → 聊天中打开。"
+      ]
+    }
+  },
   "0.4.9": {
     "en": {
       "new": [

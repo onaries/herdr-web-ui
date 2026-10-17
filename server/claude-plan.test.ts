@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudePlanFile } from "./claude-plan.ts";
@@ -30,6 +30,14 @@ describe("claudePlanFile", () => {
   it("takes the last slug when the session's slug changed", async () => {
     const { transcript } = store(["old-slug", "new-slug"], { "plans/old-slug.md": "old", "plans/new-slug.md": "new" });
     expect((await claudePlanFile(transcript))?.text).toBe("new");
+  });
+
+  it("finds the slug behind the large lines that carry none", async () => {
+    // recent Claude Code versions write request lines of 70 to 145 KB, without the slug
+    const { transcript } = store(["mellow-purring-pike"], { "plans/mellow-purring-pike.md": "# Plan\n" });
+    const request = JSON.stringify({ type: "api-request", sessionId: SESSION, body: "x".repeat(100 * 1024) });
+    appendFileSync(transcript, `${request}\n${request}\n${request}\n`);
+    expect((await claudePlanFile(transcript))?.text).toBe("# Plan\n");
   });
 
   it("is null without a slug, a plan file or any text in it", async () => {

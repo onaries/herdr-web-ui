@@ -80,4 +80,10 @@ describe("repository diff history entry", () => {
     expect(diffTargetFromState({ "herdr-web-ui:repo-diff": { ...target, paneId: 7 } })).toBeNull();
     expect(diffTargetFromState({ "herdr-web-ui:repo-diff": { ...target, path: undefined } })).toBeNull();
   });
+
+  it("releases only the diff when another viewer takes its entry", () => {
+    const state = diffTargetState({ marker: "kept" }, target);
+    expect(diffTargetState(state, null)).toEqual({ marker: "kept" });
+    expect(diffTargetFromState(state)).toEqual(target);
+  });
 });

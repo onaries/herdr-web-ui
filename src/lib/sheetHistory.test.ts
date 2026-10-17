@@ -43,7 +43,7 @@ const settled = async () => { await new Promise((resolve) => setTimeout(resolve,
 
 const h = fake.window.history;
 /** RowMenu's effect, without React: the hook's enter on mount and leave on unmount (sheetHistory exports them for this) */
-const { enterSheet, leaveSheet } = await import("./sheetHistory.ts");
+const { enterSheet, leaveSheet, sheetSteppedOff } = await import("./sheetHistory.ts");
 const hooks = { enter: (onBack: () => void): (() => void) => { const id = enterSheet(onBack, null); return () => leaveSheet(id); } };
 
 afterAll(() => {
@@ -154,5 +154,18 @@ describe("a phone's sheet in the history", () => {
     expect(closed).toBe(1); expect(fake.at()).toBe(start);
     leaveSecond(); await settled();
     expect(fake.at()).toBe(start);
+  });
+
+  it("tells the app a closed sheet's own step off its entry from a Back", async () => {
+    // the app's Back listens after this module, as App's effect does
+    const seen: boolean[] = [];
+    fake.window.addEventListener("popstate", () => { seen.push(sheetSteppedOff()); });
+    // an item that opened a pane the roster does not list yet: nothing wrote the address, so the sheet steps back
+    const leave = hooks.enter(() => {});
+    leave(); await settled();
+    expect(seen).toEqual([true]);
+    hooks.enter(() => {});
+    h.back(); await settled();
+    expect(seen).toEqual([true, false]);
   });
 });

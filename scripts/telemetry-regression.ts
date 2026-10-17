@@ -1,11 +1,12 @@
 /** The real telemetry UI and local API, with a fixture-only transport. Run after `bun run build`. */
+import "./test-herdr.ts"; // a herdr session of its own: the server never reads the user's
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, BrowserContext } from "playwright-core";
-import { NOTICE_VERSION, type TelemetryChange, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
+import { NOTICE_VERSION, type TelemetryActive, type TelemetryChange, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
 import { createServer } from "../server/index.ts";
 import { Telemetry } from "../server/telemetry.ts";
 import { UsageService } from "../server/usage.ts";
@@ -113,7 +114,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     });
 
     await page.goto(origin);
-    const notice = page.locator(".update-notice").filter({ hasText: "herdr web ui sends anonymous install and update counts" }).first();
+    const notice = page.locator(".update-notice").filter({ hasText: "herdr web ui sends anonymous usage counts" }).first();
     await notice.waitFor({ state: "visible" });
     await until(async () => (await statusAt(origin)).notice_seen, "the visible notice is reacknowledged");
     assert.ok(changes.some((change) => change.notice_seen === true && change.notice_version === NOTICE_VERSION), "the browser acknowledges exactly the current notice version");
@@ -130,7 +131,8 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     await openSettingsPage(page, "About");
     const telemetrySection = dialog.locator(".settings-telemetry");
     await telemetrySection.locator("summary").click();
-    const preview = telemetrySection.locator("pre.update-output");
+    const previews = telemetrySection.locator("pre.update-output");
+    const preview = previews.first();
     await preview.waitFor({ state: "visible" });
     const previewText = await preview.innerText();
     const event = JSON.parse(previewText) as TelemetryEvent;
@@ -147,6 +149,13 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     for (const marker of privateMarkers) {
       assert.equal(previewText.includes(marker), false, `the preview omits private fixture value ${marker}`);
     }
+    // the daily active message, previewed next to the install/update event exactly as it would be sent
+    assert.equal(await previews.count(), 2, "the About preview shows the install/update event and the active message");
+    const activePreview = previews.nth(1);
+    await activePreview.waitFor({ state: "visible" });
+    const active = JSON.parse(await activePreview.innerText()) as TelemetryActive;
+    assert.equal(active.event, "active", "the second preview is the daily active message");
+    assert.ok(Array.isArray(active.harnesses), "the active preview carries a harnesses array");
 
     await openSettingsPage(page, "Appearance");
     const palette = page.locator("#settings-palette");
@@ -167,7 +176,7 @@ export async function checkTelemetrySettings(browser: Browser): Promise<void> {
     assert.equal(await notice.getByRole("button").count(), 2, "the line offers What is sent and Dismiss, nothing else");
     const rows = await notice.locator("span").evaluate((span) => span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight));
     assert.ok(rows < 1.5, `the sentence stays on one row (${rows} rows)`);
-    await telemetrySection.getByRole("switch", { name: "Send install and update counts", exact: true }).click();
+    await telemetrySection.getByRole("switch", { name: "Send anonymous usage counts", exact: true }).click();
     await until(async () => !(await statusAt(origin)).enabled, "the Settings switch cancels the pending event");
     await dialog.getByRole("button", { name: "Close settings", exact: true }).click();
     await notice.getByRole("button", { name: "Dismiss", exact: true }).click();

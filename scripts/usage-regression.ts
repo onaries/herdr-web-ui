@@ -72,7 +72,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     assert.equal(await page.locator(".usage-chip").count(), 3);
     assert.equal(await page.locator(".usage-more").textContent(), "+4");
     assert.match(await strip.getAttribute("aria-label") ?? "",
-      /^Subscription usage: Claude · me@example\.com 63%, Codex · me@work\.example 91%, Codex · me@example\.com 30%, Cursor 20%, Copilot · me 0%, Grok 0%, Antigravity —$/);
+      /^Subscription usage: Claude · me@example\.com 63%, Codex · me@work\.example 91%, Codex · me@example\.com 30%, Cursor 20%, GitHub Copilot · me 0%, Grok 0%, Antigravity —$/);
     assert.equal(await page.locator(".usage-chip").nth(1).evaluate((chip) => chip.classList.contains("is-high")), true);
     assert.equal(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth), true, "the chips fit beside Settings");
     const [settings, meters] = await Promise.all([page.locator(".sidebar-footer-row .sidebar-footer-action").boundingBox(), strip.boundingBox()]);
@@ -103,13 +103,13 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await openSettingsPage(page, "Subscription usage");
     await page.getByRole("button", { name: "Remaining", exact: true }).click();
     await page.getByRole("switch", { name: "Show Codex · me@work.example", exact: true }).click();
-    await page.getByRole("button", { name: "Move Cursor up", exact: true }).click();
+    await page.getByRole("button", { name: "Move Codex · me@example.com up", exact: true }).click();
     await page.keyboard.press("Escape");
     assert.equal(await strip.getAttribute("aria-label"),
-      "Subscription usage: Claude · me@example.com 37% left, Cursor 80% left, Codex · me@example.com 70% left, Copilot · me 100% left, Grok 100% left, Antigravity —");
-    assert.deepEqual(await page.locator(".usage-chip-value").allTextContents(), ["37%", "80%", "70%"]);
+      "Subscription usage: Claude · me@example.com 37% left, Codex · me@example.com 70% left, Cursor 80% left, GitHub Copilot · me 100% left, Grok 100% left, Antigravity —");
+    assert.deepEqual(await page.locator(".usage-chip-value").allTextContents(), ["37%", "70%", "80%"]);
     await strip.click();
-    assert.deepEqual((await names()).slice(0, 3), ["Claude · me@example.com", "Cursor", "Codex · me@example.com"], "a hidden account is left out of the popover too");
+    assert.deepEqual((await names()).slice(0, 3), ["Claude · me@example.com", "Codex · me@example.com", "Cursor"], "a hidden account is left out of the popover too");
     assert.equal(await popover.locator(".usage-provider").count(), 6);
     assert.equal(await popover.locator(".usage-row-value").first().textContent(), "58% left");
     if (process.env.UI_EVIDENCE_DIR) await page.locator(".sidebar-shell").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-popover-left.png") });
@@ -122,7 +122,7 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     // the session instead of the week: an account without one keeps the limit it has
     await page.locator('.segmented[aria-label="Limit shown"]').getByRole("button", { name: "Session", exact: true }).click();
     await page.keyboard.press("Escape");
-    assert.match(await strip.getAttribute("aria-label") ?? "", /^Subscription usage: Claude · me@example.com 58% left, Cursor 80% left, Codex · me@example.com 70% left,/);
+    assert.match(await strip.getAttribute("aria-label") ?? "", /^Subscription usage: Claude · me@example.com 58% left, Codex · me@example.com 70% left, Cursor 80% left,/);
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}") as { usageHidden?: string[]; usageCount?: string; usageGlance?: string });
     assert.deepEqual([stored.usageHidden, stored.usageCount, stored.usageGlance], [["codex:work"], "left", "session"]);
 
@@ -131,6 +131,8 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await openSettingsPage(page, "Subscription usage");
     await toggle.click();
     await strip.waitFor({ state: "detached" });
+    assert.equal(await page.locator(".usage-accounts-intro .settings-note").count(), 1);
+    assert.equal(await page.locator(".usage-provider").count(), 0, "disabled meters leave no provider placeholders");
     // a request Settings made before the switch can still be on its way here, so the count is of
     // the reloaded page's own requests, not of what arrives after the reload
     await context.setExtraHTTPHeaders({ [RELOADED]: "1" });
@@ -164,9 +166,9 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
     await openSettingsPage(page, "Subscription usage");
     const accounts = page.locator(".usage-accounts");
-    await accounts.scrollIntoViewIfNeeded();
+    await accounts.first().scrollIntoViewIfNeeded();
     assert.equal(await accounts.locator(".usage-accounts-row").count(), 7);
-    assert.equal(await accounts.evaluate((card) => [...card.querySelectorAll(".usage-accounts-row")].every((row) => row.scrollWidth <= row.clientWidth)), true, "each account row fits the phone");
+    assert.equal(await accounts.evaluateAll((cards) => cards.every((card) => [...card.querySelectorAll(".usage-accounts-row")].every((row) => row.scrollWidth <= row.clientWidth))), true, "each account row fits the phone");
     if (process.env.UI_EVIDENCE_DIR) {
       await page.getByRole("tabpanel", { name: "Subscription usage", exact: true }).screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-settings-phone.png") });
     }
@@ -174,4 +176,29 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await phone.close();
   }
   console.log("PASS plan meters beside Settings: accounts, order, hiding, used or left, overflow, popover, refresh, Escape, off switch and phone fit");
+}
+
+if (import.meta.main) {
+  await import("./test-herdr.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { chromium } = await import("playwright-core");
+  const { chromePath } = await import("./chrome-path.ts");
+  const { createServer } = await import("../server/index.ts");
+  const { UsageService } = await import("../server/usage.ts");
+  const root = mkdtempSync(join(tmpdir(), "herdr-usage-meters-"));
+  let server: ReturnType<typeof createServer> | undefined;
+  let browser: Browser | undefined;
+  try {
+    server = createServer({
+      port: 0, hostname: "127.0.0.1", token: "", stateDir: root,
+      usage: new UsageService(undefined, []),
+    });
+    browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
+    await checkUsageMeters(browser, `http://127.0.0.1:${server.port}`);
+  } finally {
+    await browser?.close();
+    server?.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
 }

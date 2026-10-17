@@ -3,7 +3,9 @@
  * notice in the app; nothing is sent before that notice was shown (and a grace period after it,
  * server/telemetry.ts NOTICE_GRACE_MS), and nothing between an install and an update. An event
  * also carries the browser's latest allowlisted settings snapshot; no raw user-entered values or
- * account identifiers are included.
+ * account identifiers are included. Once per UTC day a browser visits, a separate active message
+ * (POST /v1/active on the receiver) names the install and the kinds of coding agents running, from
+ * TELEMETRY_HARNESSES only.
  *
  *  GET  /api/telemetry  -> TelemetryStatus, no-store
  *  POST /api/telemetry  { enabled?: boolean, notice_seen?: true, notice_version?: number, settings?: TelemetrySettings } -> TelemetryStatus
@@ -18,9 +20,10 @@ export type TelemetryEventName = "install" | "update";
 
 /**
  * The notice's wording as a number: an install that saw an older one sees the notice again, and
- * sends nothing until it has (3: events now carry an allowlisted settings snapshot).
+ * sends nothing until it has (3: events now carry an allowlisted settings snapshot; 4: a daily
+ * active message with the harness kinds).
  */
-export const NOTICE_VERSION = 3;
+export const NOTICE_VERSION = 4;
 
 /**
  * Current setting values safe to report. Only finite enums, booleans and bounded numbers are
@@ -49,6 +52,7 @@ export interface TelemetrySettings {
   chatWidth: "narrow" | "default" | "wide" | "full";
   enterSends: boolean;
   autoSendQueued: boolean;
+  suggestionChip: boolean;
   showThinking: boolean;
   keepScreenOn: boolean;
   language: "system" | "en" | "zh" | "ja" | "ko";
@@ -118,6 +122,7 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   chatWidth: oneOf(["narrow", "default", "wide", "full"]),
   enterSends: booleanValue,
   autoSendQueued: booleanValue,
+  suggestionChip: booleanValue,
   showThinking: booleanValue,
   keepScreenOn: booleanValue,
   language: oneOf(["system", "en", "zh", "ja", "ko"]),
@@ -175,6 +180,43 @@ export function telemetrySettings(value: unknown): TelemetrySettings | null {
 }
 export type InstallMethod = "plugin" | "managed" | "source";
 
+/** Harness kinds an active message may name: the supported agents (shared/supported-agents.ts) and "other". A literal list, not an import, so the Worker's copy only changes with a deploy. */
+export const TELEMETRY_HARNESSES = ["agy", "claude", "codex", "devin", "gjc", "grok", "hermes", "omo", "omp", "opencode", "other", "pi"] as const;
+export type TelemetryHarness = typeof TELEMETRY_HARNESSES[number];
+
+/** The harness a pane's herdr agent counts as: null for no agent, "other" for one not in the list. */
+export function harnessOf(agent: string | null | undefined): TelemetryHarness | null {
+  if (!agent) return null;
+  return agent !== "other" && (TELEMETRY_HARNESSES as readonly string[]).includes(agent) ? agent as TelemetryHarness : "other";
+}
+
+/** A sorted, duplicate-free array of TELEMETRY_HARNESSES values, or null. Empty is valid. */
+export function telemetryHarnesses(value: unknown): TelemetryHarness[] | null {
+  if (!Array.isArray(value)) return null;
+  const clean: TelemetryHarness[] = [];
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string" || !(TELEMETRY_HARNESSES as readonly string[]).includes(item)) return null;
+    if (index > 0 && !(value[index - 1] < item)) return null;
+    clean.push(item as TelemetryHarness);
+  }
+  return clean;
+}
+
+/** One install's activity for one UTC day, exactly as sent to /v1/active. `day` is the UTC date (YYYY-MM-DD) of the browser visit, not of delivery. */
+export interface TelemetryActive {
+  event: "active";
+  day: string;
+  install_id: string;
+  version: string;
+  os: string;
+  arch: string;
+  install_method: InstallMethod;
+  harnesses: TelemetryHarness[];
+}
+
+/** How many days back a late delivery may still name: the visit day and the two before the receiver's today. */
+export const ACTIVE_LATE_DAYS = 2;
+
 /**
  * One event, exactly as it is sent. The receiver keeps these fields, the day and the country the
  * request came from (two characters, worked out by its host); no IP, no address.
@@ -204,4 +246,6 @@ export interface TelemetryStatus {
   notice_seen: boolean;
   /** what the next event would be, as it would be sent; null when there is nothing left to send for this version */
   next: TelemetryEvent | null;
+  /** the active message today's visits send, as it would be sent; harnesses seen so far today (empty and day = today before a visit) */
+  active: TelemetryActive;
 }

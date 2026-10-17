@@ -828,6 +828,12 @@
   display: contents;
 }
 
+/* where a skill comes from: yours in the accent; the project's, the agent's own and a plugin's
+   dimmed like any other icon */
+.composer-menu .menu-item[data-origin="user"] svg {
+  color: var(--accent);
+}
+
 .composer-menu .menu-item {
   width: 100%;
   text-align: left;
@@ -854,6 +860,9 @@
   margin-left: auto;
   flex: 0 1 auto;
   min-width: 0;
+  /* a row's one sentence keeps to the right half of a wide menu, cut short there, so the names
+     read as one column instead of each being pushed against its description */
+  max-width: 55%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1022,12 +1031,17 @@
     row-gap: 0;
   }
 
+  /* a row's description is one sentence already: one line under the name, cut if it must */
   .composer-menu .menu-item-hint {
     flex: 1 1 100%;
     margin-left: 0;
-    white-space: normal;
-    text-overflow: clip;
+    max-width: none;
     line-height: 1.35;
+  }
+
+  /* under the icon, not under the row's left edge */
+  .composer-menu .menu-item[data-origin] .menu-item-hint {
+    padding-left: calc(16px + var(--space-2));
   }
 }
 

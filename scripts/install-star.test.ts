@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,10 +21,14 @@ const STAND_INS: Record<string, string> = {
   "plugin list") [ ! -e "$SCRATCH/installed" ] || echo "devswha.herdr-web-ui 0.0.0" ;;
   "plugin list --json") printf '{"result":{"plugins":[{"plugin_id":"devswha.herdr-web-ui","plugin_root":"%s"}]}}\\n' "$SCRATCH/plugin" ;;
   "plugin install "*) : > "$SCRATCH/installed"; echo "Installed devswha.herdr-web-ui" ;;
-  "status server --json") echo '{"running":false}' ;;
+  "status server --json") if [ -e "$SCRATCH/running" ]; then echo '{"running":true}'; else echo '{"running":false}'; fi ;;
+  "plugin action invoke "*) ;;
   *) echo "unexpected herdr $*" >&2; exit 1 ;;
 esac`,
   node: `echo v22.0.0`,
+  // a desktop's openers, which only write down what they were asked to open (renamed into place: a reader never sees half a line)
+  "xdg-open": `echo "$*" > "$SCRATCH/open.tmp" && mv "$SCRATCH/open.tmp" "$SCRATCH/open.calls"`,
+  open: `echo "$*" > "$SCRATCH/open.tmp" && mv "$SCRATCH/open.tmp" "$SCRATCH/open.calls"`,
   gh: `echo "$*" >> "$SCRATCH/gh.calls"
 mode=$(cat "$SCRATCH/gh.mode")
 [ "$mode" != hangs ] || exec sleep 60
@@ -56,20 +60,53 @@ class Pc {
     const bin = join(this.scratch, "bin");
     mkdirSync(bin);
     mkdirSync(join(this.scratch, "plugin", "scripts"), { recursive: true });
-    writeFileSync(join(this.scratch, "plugin", "scripts", "plugin.ts"), `if (process.argv[2] === "phone") console.log("the phone step");\n`);
-    for (const tool of ["sh", "bash", "cat", "uname", "ldd", "grep", "curl", "git", "tar", "awk", "sed", "mktemp", "rm", "sleep", "perl"]) {
+    writeFileSync(join(this.scratch, "plugin", "scripts", "plugin.ts"), `import { existsSync } from "node:fs";\nif (process.argv[2] === "phone") console.log("the phone step");\nif (process.argv[2] === "status" && existsSync(process.env.SCRATCH + "/running")) console.log("running http://127.0.0.1:7317 (pid 1234)");\n`);
+    for (const tool of ["sh", "bash", "cat", "uname", "ldd", "grep", "curl", "git", "tar", "awk", "sed", "mktemp", "rm", "sleep", "perl", "mv"]) {
       if (tool === "perl" && options.perl === false) continue;
       const real = Bun.which(tool);
       if (real) symlinkSync(real, join(bin, tool));
     }
     symlinkSync(process.execPath, join(bin, "bun"));
-    for (const name of gh ? ["herdr", "node", "gh"] : ["herdr", "node"]) {
+    for (const name of gh ? ["herdr", "node", "xdg-open", "open", "gh"] : ["herdr", "node", "xdg-open", "open"]) {
       writeFileSync(join(bin, name), `#!/bin/sh\n${STAND_INS[name]!}\n`);
       chmodSync(join(bin, name), 0o755);
     }
     if (gh) writeFileSync(join(this.scratch, "gh.mode"), gh);
   }
 
+  /** herdr is running, so the app starts and says where it is */
+  running(): this { writeFileSync(join(this.scratch, "running"), ""); return this; }
+  /**
+   * What the browser opener was asked to open, or null when it never was.
+   */
+  async opened(wait: boolean): Promise<string | null> {
+    const calls = join(this.scratch, "open.calls");
+    const readCalls = (): string | null => {
+      if (!existsSync(calls)) return null;
+      const value = readFileSync(calls, "utf8").trim();
+      return value || null;
+    };
+    const existing = readCalls();
+    // The script backgrounds the opener only when it opens.
+    if (existing !== null || !wait) return existing;
+
+    let finish!: (value: string | null) => void;
+    const result = new Promise<string | null>((resolve) => { finish = resolve; });
+    const watcher = watch(this.scratch, (_event, filename) => {
+      if (filename?.toString() !== "open.calls") return;
+      const value = readCalls();
+      if (value !== null) finish(value);
+    });
+    const timer = setTimeout(() => finish(null), 5_000);
+    try {
+      const afterWatch = readCalls();
+      if (afterWatch !== null) finish(afterWatch);
+      return await result;
+    } finally {
+      watcher.close();
+      clearTimeout(timer);
+    }
+  }
   /** the plugin is there already: this run is a rerun */
   installed(): this { writeFileSync(join(this.scratch, "installed"), ""); return this; }
   ghCalls(): string[] {
@@ -124,6 +161,18 @@ class Pc {
 }
 const pcs: string[] = [];
 afterAll(() => { for (const scratch of pcs) rmSync(scratch, { recursive: true, force: true }); });
+
+it("extracts only the URL from a PID-bearing Windows status line", () => {
+  // Exercise the installer's actual pattern, whose regex syntax is shared by .NET and JavaScript.
+  const installer = readFileSync(join(ROOT, "install.ps1"), "utf8");
+  const assignment = installer.split("\n").find((line) => line.trimStart().startsWith("$origin = "));
+  const pattern = /, '([^']+)'\)\.Groups\[1\]\.Value$/.exec(assignment ?? "")?.[1];
+  if (pattern === undefined) throw new Error("Windows installer origin pattern not found");
+
+  const origin = new RegExp(pattern).exec("running http://127.0.0.1:7317 (pid 1234)")?.[1];
+
+  expect(origin).toBe("http://127.0.0.1:7317");
+});
 
 // install.sh is the Linux and macOS installer: Windows has install.ps1 and scripts/windows-install.test.ps1
 describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
@@ -190,6 +239,59 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     // 10 seconds for gh, 2 more before it is killed
     expect(Date.now() - started).toBeLessThan(20_000);
   }, 30_000);
+});
+
+// the browser: opened once, after a first install, on a desktop that has someone at it
+describe.skipIf(platform() === "win32")("install.sh and the browser", () => {
+  it.concurrent("opens the app after a new install on a desktop", async () => {
+    const pc = new Pc().running();
+    const { out, exitCode } = await pc.unattended({ DISPLAY: ":0" });
+    expect(exitCode).toBe(0);
+    expect(out).toContain("opened http://127.0.0.1:7317 in your browser");
+    expect(await pc.opened(true)).toBe("http://127.0.0.1:7317");
+  });
+
+  it.concurrent("does not open it again on a rerun", async () => {
+    const pc = new Pc().running().installed();
+    const { out, exitCode } = await pc.unattended({ DISPLAY: ":0" });
+    expect(exitCode).toBe(0);
+    expect(out).not.toContain("in your browser");
+    expect(await pc.opened(false)).toBeNull();
+  });
+
+  it.concurrent("over SSH opens nothing and gives the tunnel", async () => {
+    const pc = new Pc().running();
+    const { out, exitCode } = await pc.unattended({ DISPLAY: ":0", SSH_CONNECTION: "10.0.0.2 50000 10.0.0.3 22" });
+    expect(exitCode).toBe(0);
+    expect(out).toContain("ssh -L 7317:127.0.0.1:7317");
+    expect(await pc.opened(false)).toBeNull();
+  });
+
+  for (const [name, env] of [["HERDR_WEB_NO_OPEN", { HERDR_WEB_NO_OPEN: "1" }], ["CI", { CI: "1" }]] as const) {
+    it.concurrent(`opens nothing with ${name} set, and says where the app is`, async () => {
+      const pc = new Pc().running();
+      const { out, exitCode } = await pc.unattended({ DISPLAY: ":0", ...env });
+      expect(exitCode).toBe(0);
+      expect(out).toContain("open http://127.0.0.1:7317 in your browser");
+      expect(await pc.opened(false)).toBeNull();
+    });
+  }
+
+  it.concurrent("opens nothing on a PC with no display and no BROWSER", async () => {
+    const pc = new Pc().running();
+    const { out, exitCode } = await pc.unattended();
+    expect(exitCode).toBe(0);
+    expect(out).toContain("open http://127.0.0.1:7317 in your browser");
+    expect(await pc.opened(false)).toBeNull();
+  });
+
+  it.concurrent("opens nothing, and says nothing of it, when the app is not running", async () => {
+    const pc = new Pc();
+    const { out, exitCode } = await pc.unattended({ DISPLAY: ":0" });
+    expect(exitCode).toBe(0);
+    expect(out).not.toContain("in your browser");
+    expect(await pc.opened(false)).toBeNull();
+  });
 });
 
 // script(1) as util-linux has it; macOS's takes other arguments

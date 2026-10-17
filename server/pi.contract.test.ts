@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createServer } from "./index.ts";
 import { forgetPiModels } from "./pi-models.ts";
@@ -79,6 +79,42 @@ const read = async (target = paneId): Promise<ConversationResponse> => {
   expect(response.status).toBe(200);
   return await response.json() as ConversationResponse;
 };
+
+
+it.skipIf(process.platform !== "linux")("serves a fresh Pi session in its pane-owned profile before its first message", async () => {
+  const profileDir = join(root, "fictional-pi-profile");
+  const profileSessions = join(profileDir, "sessions");
+  mkdirSync(profileSessions, { recursive: true });
+  const profileBin = join(root, "profile-bin");
+  mkdirSync(profileBin, { recursive: true });
+  const profilePi = join(profileBin, "pi");
+  writeFileSync(profilePi, `#!/bin/bash\nexport PI_CODING_AGENT_DIR='${profileDir}'\nexec -a pi /bin/sleep 600\n`);
+  chmodSync(profilePi, 0o755);
+
+  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-pi-custom-profile" });
+  workspaces.push(created.workspace.workspace_id);
+  const target = created.root_pane.pane_id;
+  await herdrRpc("pane.send_text", { pane_id: target, text: `${profilePi}\n` });
+  for (const deadline = Date.now() + 10_000;;) {
+    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === target);
+    if (pane?.agent === "pi") break;
+    if (Date.now() > deadline) throw new Error("custom-profile Pi fixture was not detected");
+    await Bun.sleep(50);
+  }
+  await herdrRpc("pane.report_agent", { pane_id: target, source: "herdr:pi", agent: "pi", state: "idle", seq: nextSeq() });
+  const fresh = join(profileSessions, `--${root.replaceAll("/", "-")}--`, "2026-10-16_fresh.jsonl");
+  await reportSession(fresh, target);
+
+  const beforeMessage = await read(target);
+  expect(beforeMessage).toMatchObject({ source: "pi-transcript", turns: [], cursor: null, history_id: "unwritten:2026-10-16_fresh" });
+
+  mkdirSync(dirname(fresh), { recursive: true });
+  writeFileSync(fresh, turns("Synthetic new profile session", "First response in the profile session"));
+  const afterMessage = await read(target);
+  expect(afterMessage.source).toBe("pi-transcript");
+  expect(afterMessage.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+  expect(afterMessage.turns[0]!.parts).toEqual([{ kind: "text", text: "Synthetic new profile session" }]);
+});
 
 it("serves a pi pane's native transcript over HTTP", async () => {
   writeFileSync(transcript, turns("Check chat", "Answer one"));

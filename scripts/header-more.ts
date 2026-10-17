@@ -1,6 +1,6 @@
 /**
- * The header's More menu, for the browser scripts: Browse files and Alerts are among its
- * items. It is a popover on a desktop and
+ * The header's More menu, for the browser scripts: Alerts is among its items, and Browse files
+ * at 768px and below (wider, Files is the header's own button). It is a popover on a desktop and
  * a bottom sheet at 640px and below (RowMenu), so an item is found in either.
  */
 import type { Locator, Page } from "playwright-core";

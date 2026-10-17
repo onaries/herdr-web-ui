@@ -1,5 +1,6 @@
+/// <reference types="bun" />
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type CDPSession, type Page } from "playwright-core";
@@ -23,17 +24,87 @@ const centerOf = async (page: Page, id: string) => {
 const touch = (cdp: CDPSession, type: "touchStart" | "touchMove" | "touchEnd", point?: { x: number; y: number }) =>
   cdp.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [{ x: point.x, y: point.y }] : [] });
 
-/** a finger from `from` to `to` in small steps, after resting `holdMs` */
+/** A finger moves after the row lifts, or immediately for a quick scroll stroke. */
 async function stroke(page: Page, cdp: CDPSession, from: { x: number; y: number }, to: { x: number; y: number }, holdMs: number, during?: () => Promise<void>): Promise<void> {
   await touch(cdp, "touchStart", from);
-  if (holdMs > 0) await page.waitForTimeout(holdMs);
+  if (holdMs > 0) await page.locator(".workspace.is-lifted").waitFor({ timeout: 5_000 });
   const steps = 12;
   for (let step = 1; step <= steps; step += 1) {
     await touch(cdp, "touchMove", { x: Math.round(from.x + (to.x - from.x) * step / steps), y: Math.round(from.y + (to.y - from.y) * step / steps) });
-    await page.waitForTimeout(16);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   }
   await during?.();
   await touch(cdp, "touchEnd");
+}
+
+const pinnedRows = (page: Page) => page.locator(".workspace-list-pinned > .workspace-group").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.workspace));
+
+/** Both input methods change saved pins, never the transport's workspace roster. */
+async function checkPinned(page: Page, cdp?: CDPSession): Promise<void> {
+  const before = await topRows(page);
+  const ids = before.slice(0, 2);
+  assert.equal(ids.length, 2);
+  const child = await page.evaluate(async (workspaceId) => {
+    const response = await fetch("/api/worktree/create", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId, branch: "pinned-reorder-child" }),
+    });
+    if (!response.ok) throw new Error(`create demo worktree: ${response.status}`);
+    return (await response.json() as { workspace_id: string }).workspace_id;
+  }, ids[0]);
+  await page.locator(`.worktree-children .workspace-group[data-workspace="${child}"]`).waitFor();
+  const serverBefore = await serverOrder(page);
+  const row = (id: string) => page.locator(`.workspace-group[data-workspace="${id}"] > .workspace-header .workspace-select`);
+  for (const id of ids) {
+    if (cdp) await page.locator(`.workspace-group[data-workspace="${id}"] > .workspace-header .row-menu-toggle`).click();
+    else await row(id!).click({ button: "right" });
+    await page.getByRole(cdp ? "button" : "menuitem", { name: "Pin workspace", exact: true }).click();
+  }
+  assert.deepEqual(await pinnedRows(page), ids);
+  const restRows = () => page.locator(".machine-workspaces .sidebar-list > .workspace-list:not(.workspace-list-pinned) > .workspace-group").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.workspace));
+  const restBefore = await restRows();
+  const drag = async (source: string, target: string) => {
+    if (cdp) await stroke(page, cdp, await centerOf(page, source), await centerOf(page, target), 1);
+    else await row(source).dragTo(row(target));
+  };
+  await drag(ids[0]!, ids[1]!);
+  const expected = [ids[1], ids[0]];
+  assert.deepEqual(await pinnedRows(page), expected, "drag changes the pinned card order");
+  assert.equal(await page.locator(".workspace-list-pinned .worktree-children").count(), 0, "pinned repository rows do not carry their worktrees into the card");
+  const childRow = row(child);
+  assert.equal(await childRow.evaluate((element) => element.closest(".sidebar-pinned, .worktree-children") === null), true, "the unpinned worktree stands alone outside the card");
+  assert.equal(await childRow.getAttribute("draggable"), "false", "the unpinned worktree stays fixed");
+  assert.deepEqual(await restRows(), restBefore, "reordering the pinned repository leaves its worktree at the original rest-list position");
+  await row(ids[0]!).focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  assert.deepEqual(await pinnedRows(page), ids, "Alt+Up reorders pinned rows within the card");
+  await page.keyboard.press("Alt+ArrowDown");
+  assert.deepEqual(await pinnedRows(page), expected, "Alt+Down restores the pinned order");
+  await childRow.focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  assert.deepEqual(await restRows(), restBefore, "Alt+Down cannot move the repository's unpinned worktree");
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]") as string[]);
+  assert.deepEqual(stored.filter((key) => key.includes(":workspace:")).map((key) => key.split(":workspace:")[1]), expected, "the pin list holds the new order");
+  const unpinned = before[2]!;
+  await drag(ids[0]!, unpinned);
+  await drag(unpinned, ids[0]!);
+  assert.deepEqual(await pinnedRows(page), expected, "neither direction crosses the pin boundary");
+  await drag(ids[0]!, child);
+  assert.deepEqual(await pinnedRows(page), expected, "dropping onto the repository's own worktree cannot cross the card edge");
+  assert.deepEqual(await restRows(), restBefore, "cross-card drops leave the rest list unchanged");
+  assert.deepEqual(await serverOrder(page), serverBefore, "pinned drags never move herdr workspaces");
+  const evidence = process.env["UI_EVIDENCE_DIR"];
+  if (evidence) {
+    mkdirSync(evidence, { recursive: true });
+    await page.screenshot({ path: join(evidence, `pinned-reorder-${cdp ? "phone" : "desktop"}.png`) });
+  }
+  await page.reload();
+  await page.locator(".conn-live").waitFor({ state: "attached" });
+  const toggle = page.locator('button[aria-controls="workspace-drawer"]');
+  if (cdp && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  await page.locator(".workspace-list-pinned").waitFor();
+  assert.deepEqual(await pinnedRows(page), expected, "pin order survives reload");
+  console.log(`PASS ${cdp ? "touch long press" : "desktop drag"} and Alt+Up/Down reorder saved pins within the card, keep unpinned worktrees fixed outside, preserve herdr order and survive reload`);
 }
 
 try {
@@ -67,7 +138,6 @@ try {
       await page.locator(".conn-live").waitFor({ state: "attached" });
       await page.locator('button[aria-controls="workspace-drawer"]').click();
       await page.locator(".machine-workspaces .workspace-group").first().waitFor();
-      await page.waitForTimeout(500);
       const cdp = await context.newCDPSession(page);
 
       assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), true, "the phone context has a coarse pointer");
@@ -82,7 +152,6 @@ try {
       await stroke(page, cdp, await centerOf(page, before[0]!), await centerOf(page, before[2]!), 0, async () => {
         assert.equal(await page.locator(".workspace.is-lifted").count(), 0, "a stroke that moves at once lifts nothing");
       });
-      await page.waitForTimeout(300);
       assert.deepEqual(await topRows(page), before, "a quick stroke moves nothing");
 
       // a long press lifts the first row; dragged past the third and let go, it lands after it
@@ -120,8 +189,17 @@ try {
       assert.deepEqual((await serverOrder(page)).filter((id) => before.includes(id)), stepped, "herdr got the keyboard move");
       console.log("PASS the touch menu keeps workspace scope and Alt+Up still moves a workspace one step");
 
+      await checkPinned(page, cdp);
       assert.deepEqual(errors, []);
       await context.close();
+      const desktop = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: "en-US" });
+      await desktop.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+      const desktopPage = await desktop.newPage();
+      await desktopPage.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/`);
+      await desktopPage.locator(".conn-live").waitFor({ state: "attached" });
+      await desktopPage.locator(".machine-workspaces .workspace-group").first().waitFor();
+      await checkPinned(desktopPage);
+      await desktop.close();
     } finally {
       await browser.close();
     }

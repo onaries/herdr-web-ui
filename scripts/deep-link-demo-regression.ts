@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
 import { chromePath } from "./chrome-path.ts";
 
 // Deep links (lib/deepLink.ts) on the unmodified app over the demo's fixture transport: an
@@ -45,7 +46,7 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
-  writeFileSync(index, html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"'));
+  writeFileSync(index, html.replace(/<script type="module"/, `<script src="./demo-transport.js"></script>${DEMO_FILE_PREVIEW_SCRIPT}\n    <script type="module"`));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     if (!path.startsWith("/herdr-web-ui/demo/app/")) return new Response("not found", { status: 404 });
@@ -237,28 +238,31 @@ try {
       });
       console.log("PASS a link to a Settings group scrolls to and focuses it, and another page drops it from the address");
 
-      // a link to a file opens it over its pane; closing the viewer takes it off the address
+      // a link to a file opens it beside its pane (a panel from 980px); closing the viewer takes it off the address
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&file=README.md`, async (page) => {
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
+        assert.equal(await page.locator(".modal.file-viewer, .file-viewer-scrim").count(), 0, "a wide window docks the file, no dialog");
         await waitQuery(page, "file", "README.md");
+        // the pane beside the panel keeps its own Escape: the panel's is pressed from inside it
+        await page.locator("aside.file-panel").getByRole("button", { name: "Close file", exact: true }).focus();
         await page.keyboard.press("Escape");
-        await page.locator(".modal.file-viewer").waitFor({ state: "detached" });
+        await page.locator("aside.file-panel").waitFor({ state: "detached" });
         await waitQuery(page, "file", null);
         await waitQuery(page, "pane", INFRA);
       });
       // a reload restores the viewer from its own entry; Back then closes it for good
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&file=README.md`, async (page) => {
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
         await page.reload();
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
         await page.goBack();
-        await page.locator(".modal.file-viewer").waitFor({ state: "detached" });
+        await page.locator("aside.file-panel").waitFor({ state: "detached" });
         for (const deadline = Date.now() + 1_500; Date.now() < deadline;) {
-          assert.equal(await page.locator(".modal.file-viewer").count(), 0, "the linked file does not open again after Back closed it");
+          assert.equal(await page.locator(".file-viewer").count(), 0, "the linked file does not open again after Back closed it");
           await page.waitForTimeout(100);
         }
       });
-      console.log("PASS a link to a file opens it over its pane, and closing the viewer takes it off the address");
+      console.log("PASS a link to a file opens it beside its pane, and closing the viewer takes it off the address");
 
       // Copy link puts the address on the clipboard and says so
       await withPage(browser, `?ws=${wsOf(DOCS)}&pane=${encodeURIComponent(DOCS)}`, async (page) => {

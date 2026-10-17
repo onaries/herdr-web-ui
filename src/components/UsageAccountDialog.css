@@ -1,0 +1,19 @@
+.usage-account-dialog .modal-body, .account-step-content, .account-choices, .account-auth-form { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.account-auth-form .input { width: 100%; min-width: 0; }
+.account-steps { display: flex; align-items: center; gap: var(--space-3); padding: 0; margin: 0; list-style: none; color: var(--text-dim); font-size: var(--fs-xs); }
+.account-steps li + li::before { content: "/"; margin-inline-end: var(--space-3); }
+.account-steps [aria-current="step"] { color: var(--text-strong); font-weight: var(--fw-medium); }
+.account-choices { gap: var(--space-2); }
+.account-provider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 640px) {
+  .account-provider-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.account-choice { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--touch-target); padding: var(--space-4); text-align: start; background: var(--bg-input); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); color: var(--text-strong); }
+.account-choice > svg, .account-choice > .agent-mark { flex-shrink: 0; }
+.account-choice > span { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.account-choice:hover:not(:disabled) { background: var(--bg-hover); }
+.account-choice:disabled { color: var(--text-dim); cursor: default; }
+.account-error { color: var(--status-blocked); }
+.usage-hub-login, .usage-hub-login form { display: flex; flex-direction: column; gap: var(--space-4); }
+.usage-hub-login .input { width: 100%; min-width: 0; }
+.usage-hub-login a { color: var(--accent); }

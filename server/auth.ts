@@ -73,6 +73,12 @@ export function isAuthenticated(request: Request, token: string): boolean {
   if (token === "") return true;
   const cookie = parseCookies(request.headers.get("cookie")).get(TOKEN_COOKIE);
   if (cookie !== undefined && matches(cookie, token)) return true;
+  return bearerMatches(request, token);
+}
+
+/** The token came in an `Authorization` header: a proxy or a script sends it with every request, so signing out cannot take it away. */
+export function bearerMatches(request: Request, token: string): boolean {
+  if (token === "") return false;
   const authorization = request.headers.get("authorization") ?? "";
   if (authorization.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX) return false;
   return matches(authorization.slice(BEARER_PREFIX.length), token);

@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SkillActivity } from "../shared/protocol.ts";
+import { opencodeSkillInvocation } from "./skill-invocations/opencode.ts";
 import { trimOutput } from "./tool-output.ts";
 import { MAX_TURNS, toolSummary } from "./transcript-records.ts";
 
@@ -128,7 +129,9 @@ export function opencodeRecord(id: string, type: string, data: Row): OpencodeRec
   const time = record(data.time);
   if (type === "user") {
     const images = rowImages(type, data).map((image, index): ConversationPart => ({ kind: "image", media_type: image.media_type, ref: `opencode:${id}:${index}` }));
-    const prompt = text(record(data.metadata).displayText) ?? text(data.text);
+    const display = text(record(data.metadata).displayText);
+    const raw = text(data.text);
+    const prompt = display ?? (raw === null ? null : opencodeSkillInvocation(raw));
     // a skill the prompt mentions (`@name`) is loaded with it: the chip says so, the text keeps the mention
     const skills = (Array.isArray(data.skills) ? data.skills : []).map(record).flatMap((skill): ConversationPart[] => {
       const name = skillName(skill.name) ?? skillName(skill.id);

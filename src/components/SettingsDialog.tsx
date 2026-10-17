@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Check, ChevronRight, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -21,13 +21,11 @@ import type { UpdatesModel } from "../lib/updates.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
 import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
-import type { AgentIntegration, HealthAuth, PluginActions, ProviderUsage, RemoteAccess } from "../../shared/protocol.ts";
+import type { AgentIntegration, HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { loadIntegrations, outcomeFor, type IntegrationsResult } from "../lib/integrations.ts";
 import type { VoiceStatus } from "../../shared/voice.ts";
 import { dictationLocale, VOICE_CONFIG_EVENT } from "../lib/voice.ts";
-import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "../lib/usage.ts";
-import { AgentMark } from "./AgentMark.tsx";
 import { DevicesPanel } from "./DevicesPanel.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { PhonePanel } from "./PhonePanel.tsx";
@@ -37,6 +35,7 @@ import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
+import { UsageSettings } from "./UsageSettings.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
@@ -54,6 +53,8 @@ export interface SettingsDialogProps {
   /** the page shown, for the address; null while a phone shows its list of pages */
   onPage?: (page: string | null) => void;
   onClose: () => void;
+  /** Account login runs on this server's PC, even while another PC is selected. */
+  onUsageLogin: (paneId: string) => void;
   actions: AppActions;
   updates: UpdatesModel;
   /** how this browser got in, from the last health check */
@@ -333,6 +334,11 @@ function ChatPage() {
         <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
           <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
         </SettingsRow>
+        {touch && (
+          <SettingsRow label={t("Suggestion chip")} description={t("A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.")}>
+            <Toggle label={t("Suggestion chip")} checked={settings.suggestionChip} onChange={(suggestionChip) => update({ suggestionChip })} />
+          </SettingsRow>
+        )}
       </SettingsGroup>
 
       <SettingsGroup title={t("Quick replies")} section="quick-replies">
@@ -553,75 +559,6 @@ function VoicePage() {
           </p>
         </div>
       </SettingsGroup>
-    </>
-  );
-}
-
-/**
- * The accounts the plan meters know, in the strip's order: each row names the account and
- * carries its move up / move down and show / hide controls.
- */
-function UsageAccounts({ providers }: { providers: readonly ProviderUsage[] }) {
-  const { settings, update } = useSettings();
-  const t = useT();
-  const ordered = orderProviders(providers, settings.usageOrder);
-  const keys = ordered.map((usage) => usage.key);
-  const move = (key: string, by: -1 | 1) => update({ usageOrder: moveInOrder(keys, settings.usageOrder, key, by) });
-  return (
-    <SettingsGroup title={t("Accounts")} className="usage-accounts" section="accounts">
-      <ol aria-label={t("Accounts")}>
-        {ordered.map((usage, index) => {
-          const name = usageName(usage);
-          const hidden = settings.usageHidden.includes(usage.key);
-          return (
-            <li key={usage.key} className={`usage-accounts-row${hidden ? " is-hidden" : ""}`}>
-              <AgentMark agent={PROVIDER_MARK[usage.id]} size={16} />
-              <span className="usage-accounts-name">{PROVIDER_NAME[usage.id]}</span>
-              <span className="usage-accounts-account" title={usage.account ?? undefined}>{usage.account}</span>
-              <span className="usage-accounts-actions">
-                <button type="button" className="icon-button" aria-label={t("Move {name} up", { name })} title={t("Move {name} up", { name })} disabled={index === 0} onClick={() => move(usage.key, -1)}><ChevronUp aria-hidden="true" /></button>
-                <button type="button" className="icon-button" aria-label={t("Move {name} down", { name })} title={t("Move {name} down", { name })} disabled={index === ordered.length - 1} onClick={() => move(usage.key, 1)}><ChevronDown aria-hidden="true" /></button>
-                <button
-                  type="button"
-                  className="icon-button usage-accounts-visibility"
-                  role="switch"
-                  aria-checked={!hidden}
-                  aria-label={t("Show {name}", { name })}
-                  title={t("Show {name}", { name })}
-                  onClick={() => update({ usageHidden: hidden ? settings.usageHidden.filter((key) => key !== usage.key) : [...settings.usageHidden, usage.key] })}
-                >
-                  {hidden ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                </button>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </SettingsGroup>
-  );
-}
-
-function UsagePage() {
-  const { settings, update } = useSettings();
-  const t = useT();
-  // the accounts to order and hide: the same report the meters show, from the server's cache
-  const usage = useUsage(settings.showUsage);
-  return (
-    <>
-      <SettingsGroup>
-        <SettingsRow label={t("Show plan limits")} description={t("Beside Settings, how much of each plan the AI tools on the server's PC have used. Turning it on sends their sign-ins to each provider's usage endpoint; they are never refreshed here.")}>
-          <Toggle label={t("Show plan limits")} checked={settings.showUsage} onChange={(showUsage) => update({ showUsage })} />
-        </SettingsRow>
-        {settings.showUsage && <>
-          <SettingsRow label={t("Meters show")}>
-            <Segmented label={t("Meters show")} value={settings.usageCount} onChange={(usageCount) => update({ usageCount })} options={[{ value: "used", label: t("Used") }, { value: "left", label: t("Remaining") }]} />
-          </SettingsRow>
-          <SettingsRow label={t("Limit shown")} description={t("The limit each chip shows. Session is the short one, 5 hours on Claude and Codex. A plan without the chosen limit shows the one closest to running out.")} wide>
-            <Segmented label={t("Limit shown")} value={settings.usageGlance} onChange={(usageGlance) => update({ usageGlance })} options={[{ value: "week", label: t("Weekly") }, { value: "session", label: t("Session") }]} />
-          </SettingsRow>
-        </>}
-      </SettingsGroup>
-      {settings.showUsage && usage.report && usage.report.providers.length > 0 && <UsageAccounts providers={usage.report.providers} />}
     </>
   );
 }
@@ -963,7 +900,7 @@ function SettingsCrash({ onClose, overPreview }: { onClose: () => void; overPrev
   );
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, actions, updates, auth, herdrVersion, onEnableNotifications, overPreview = false }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, actions, updates, auth, herdrVersion, onEnableNotifications, overPreview = false }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   // opened by Forward, the dialog shows what that entry of the history showed
@@ -1072,7 +1009,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
       case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} />;
       case "voice": return <VoicePage />;
-      case "usage": return <UsagePage />;
+      case "usage": return <UsageSettings onLocalLogin={onUsageLogin} />;
       case "shortcuts": return <ShortcutsPage />;
       case "devices": return <DevicesPage auth={auth} onSignOut={actions.lock} />;
       case "remote": return <RemotePcsPage actions={actions} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;

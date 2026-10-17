@@ -188,6 +188,8 @@
   position: fixed;
   z-index: var(--z-popover);
   overflow-y: auto;
+  /* a scroll that reaches the list's end stays in it: moving the sheet under it would close the list */
+  overscroll-behavior: contain;
 }
 
 /* aria-selected is the chosen agent (bold); the keyboard/pointer row is data-active and carries

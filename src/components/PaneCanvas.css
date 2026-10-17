@@ -40,7 +40,8 @@
 .pane-frame-body { flex: 1; min-width: 0; min-height: 0; position: relative; }
 /* A lone pane's head floats over the terminal's top right corner, where a full-screen program may
    draw a control of its own (Claude Code's diff panel close): only its ellipsis takes a press */
-.pane-frame.is-single > .pane-frame-head { position: absolute; right: 0; top: 0; z-index: var(--z-banner); background: transparent; pointer-events: none; }
+/* The phone's glass header overlaps this canvas; keep the pane's menu below it. */
+.pane-frame.is-single > .pane-frame-head { position: absolute; right: 0; top: var(--header-over, 0px); z-index: var(--z-banner); background: transparent; pointer-events: none; }
 .pane-frame.is-single .pane-frame-title { display: none; }
 /* A mouse uses right-click; keyboard users reveal the ellipsis by tabbing to it. A screen that
    also takes touch keeps it, since a finger has no right-click there. */

@@ -2,12 +2,12 @@
  * conversation records belong in chat; developer prompts and terminal chrome do not. */
 import { Database } from "bun:sqlite";
 import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
 import type { ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { patchFiles, patchText } from "../shared/patch.ts";
-import { processStartedAt } from "./process-start.ts";
+import { processStartedAt, processStartUpperBound } from "./process-start.ts";
 import { codexImageParts } from "./codex-images.ts";
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
@@ -991,7 +991,7 @@ function matchingCodexExchanges(screen: string, candidates: readonly CodexFirstE
   if (shown === null) return [];
   const prompt = normalizePrompt(shown.user);
   const answer = normalizePrompt(shown.assistant);
-  if (normalizeDisplay(prompt).length < 8 || normalizeDisplay(answer).length < answerFloor) return [];
+  if (prompt === "" || normalizeDisplay(answer).length < answerFloor) return [];
   const matches: { candidate: CodexFirstExchangeCandidate; index: number }[] = [];
   for (const candidate of candidates) {
     for (const [index, exchange] of codexExchanges(candidate.text).entries()) {
@@ -1022,7 +1022,7 @@ export function matchCodexFirstExchange(
   const storedPrompt = normalizePrompt(match.candidate.firstUserMessage ?? "");
   const shown = displayedFirstExchange(screen);
   if (match.index !== 0 || first === undefined || shown === null
-    || normalizeDisplay(storedPrompt).length < 8
+    || storedPrompt === ""
     || normalizePrompt(first.user) !== storedPrompt
     || normalizePrompt(first.assistant) !== normalizePrompt(shown.assistant)
     || typeof match.candidate.createdAtMs !== "number"
@@ -1201,9 +1201,54 @@ interface CodexThreadRow {
 
 const SHORT_THREAD_LIMIT = 32;
 const SHORT_ROLLOUT_LIMIT = 1024 * 1024;
+/** How far a rollout was validated: `offset` bytes of whole lines; `dead` once a line can never pass. */
+interface ShortScan { offset: number; retained: number; text: string; dead: boolean }
+
+// A chat polls every 2 s and nothing binds a short match. Rollouts only grow, so an unchanged
+// one is not read again and a grown one is read from where the last read stopped.
+const shortScans = new Map<string, { ino: number; size: number; mtimeMs: number; scan: ShortScan }>();
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+
+/** Validate every record, retaining only messages: tool output cannot identify a conversation. */
+async function scanShortText(path: string, size: number, from: ShortScan): Promise<ShortScan> {
+  const fd = await open(path, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let { offset, retained, text } = from;
+  let carry = Buffer.alloc(0), position = offset;
+  const dead = (): ShortScan => ({ offset, retained, text, dead: true });
+  try {
+    while (position < size) {
+      const { bytesRead: length } = await fd.read(buffer, 0, Math.min(buffer.length, size - position), position);
+      if (length === 0) break;
+      position += length;
+      carry = Buffer.concat([carry, buffer.subarray(0, length)]);
+      let start = 0, newline: number;
+      while ((newline = carry.indexOf(10, start)) >= 0) {
+        if (newline - start > SHORT_ROLLOUT_LIMIT) return dead();
+        let line: string, entry: Record<string, unknown>;
+        try {
+          line = strictUtf8.decode(carry.subarray(start, newline));
+          entry = record(JSON.parse(line));
+        } catch { return dead(); }
+        const payload = record(entry.payload);
+        if (entry.type === "response_item" && payload.type === "message"
+          || entry.type === "event_msg" && (payload.type === "user_message" || payload.type === "agent_message")) {
+          retained += newline - start + 1;
+          if (retained > SHORT_ROLLOUT_LIMIT) return dead();
+          text += line + "\n";
+        }
+        offset += newline - start + 1;
+        start = newline + 1;
+      }
+      carry = carry.subarray(start);
+      if (carry.length > SHORT_ROLLOUT_LIMIT) return dead();
+    }
+    return { offset, retained, text, dead: false };
+  } finally { await fd.close(); }
+}
 
 /** Short matching needs every competing exchange, so incomplete or unsafe rows disable it. */
-function safeShortThreads(rows: readonly CodexThreadRow[], home: string): CodexFirstExchangeCandidate[] | null {
+async function safeShortThreads(rows: readonly CodexThreadRow[], home: string): Promise<CodexFirstExchangeCandidate[] | null> {
   if (rows.length === 0 || rows.length > SHORT_THREAD_LIMIT) return null;
   const candidates: CodexFirstExchangeCandidate[] = [];
   for (const row of rows) {
@@ -1212,17 +1257,26 @@ function safeShortThreads(rows: readonly CodexThreadRow[], home: string): CodexF
     try {
       const stat = statSync(path);
       const header = rolloutHeader(path);
-      if (!stat.isFile() || stat.size <= 0 || stat.size > SHORT_ROLLOUT_LIMIT || header === null
+      if (!stat.isFile() || stat.size <= 0 || header === null
         || Object.keys(record(header.history_base)).length > 0) return null;
-      const text = readRange(path, 0, stat.size);
-      const after = statSync(path);
-      if (Buffer.byteLength(text, "utf8") !== stat.size
-        || after.size !== stat.size || after.ino !== stat.ino || after.mtimeMs !== stat.mtimeMs
-        || !text.endsWith("\n")) return null;
-      const lines = text.slice(0, -1).split(/\r?\n/);
-      if (lines.length === 0 || lines.some((line) => {
-        try { JSON.parse(line); return false; } catch { return true; }
-      })) return null;
+      const cached = shortScans.get(path);
+      const sameFile = cached !== undefined && cached.ino === stat.ino;
+      let scan: ShortScan;
+      if (sameFile && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+        scan = cached.scan;
+      } else {
+        const grown = sameFile && stat.size > cached.size;
+        scan = grown && cached.scan.dead ? cached.scan
+          : await scanShortText(path, stat.size, grown ? cached.scan : { offset: 0, retained: 0, text: "", dead: false });
+        const after = statSync(path);
+        if (after.size !== stat.size || after.ino !== stat.ino || after.mtimeMs !== stat.mtimeMs) return null;
+        shortScans.delete(path);
+        shortScans.set(path, { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, scan });
+        if (shortScans.size > 128) shortScans.delete(shortScans.keys().next().value!);
+      }
+      // a line still being written leaves the rollout unread to its end
+      if (scan.dead || scan.offset !== stat.size) return null;
+      const text = scan.text;
       const exchanges = codexExchanges(text);
       const stored = normalizePrompt(row.firstUserMessage ?? "");
       if (stored !== "" && (exchanges[0] === undefined || normalizePrompt(exchanges[0].user) !== stored)) return null;
@@ -1239,23 +1293,21 @@ function safeShortThreads(rows: readonly CodexThreadRow[], home: string): CodexF
 
 /**
  * The prompt is not ownership evidence on its own. Require its submitted answer,
- * compare older conversations too, and decline while another same-directory Codex
- * pane could own the thread. No weak binding or cached peer claim survives a poll.
+ * compare older conversations and other same-directory panes too. A peer showing the
+ * same exchange leaves ownership ambiguous. No weak binding survives a poll.
  */
 async function shortThreadFromProcess(
   paneId: string, cwd: string, home: string, screen: string,
   processes: readonly { pid: number }[], panes?: HerdrPane[],
 ): Promise<string | null> {
-  const starts = processes.map(({ pid }) => processStartedAt(pid));
+  const starts = processes.map(({ pid }) => processStartUpperBound(pid));
   if (starts.length === 0 || starts.some((start) => start === null || !Number.isFinite(start))) return null;
-  const startedAt = Math.min(...starts as number[]);
-  const notBefore = startedAt + 1000;
+  const notBefore = Math.min(...starts as number[]);
   let db: Database | undefined;
   try {
     const peers = panes ?? (await sessionSnapshot()).panes;
     if (peers.some((pane) => pane.pane_id !== paneId
-      && (pane.agent ?? pane.agent_session?.agent) === "codex"
-      && (pane.cwd == null || sameDirectory(pane.cwd, cwd)))) return null;
+      && (pane.agent ?? pane.agent_session?.agent) === "codex" && pane.cwd == null)) return null;
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     const columns = new Set(db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('threads')").all().map((column) => column.name));
     if (!columns.has("first_user_message") || !columns.has("source")) return null;
@@ -1267,13 +1319,28 @@ async function shortThreadFromProcess(
        FROM threads WHERE ${where} AND archived = 0 AND agent_role IS NULL${interactive(db)} LIMIT 33`,
     ).all(...params);
     if (rows.length > SHORT_THREAD_LIMIT || rows.some((row) => !Number.isFinite(row.createdAtMs))) return null;
-    // Process starts are only estimated to second precision; require a full second of margin.
+    // Only a thread created after this process's start bound may be its new first exchange.
     const begun = rows.filter((row) => row.createdAtMs >= notBefore);
     if (begun.length !== 1) return null;
-    const candidates = safeShortThreads(rows, home);
+    const candidates = await safeShortThreads(rows, home);
     if (candidates === null) return null;
     const path = matchCodexFirstExchange(screen, candidates, notBefore);
-    return path !== null && theirs([path], paneId).length === 1 ? path : null;
+    if (path === null || theirs([path], paneId).length !== 1) return null;
+    const peerScreens = await Promise.all(codexPeersIn(peers, paneId, cwd).map((peer) =>
+      paneRead({ paneId: peer.pane_id, source: "recent", lines: 400, stripAnsi: true })));
+    const own = candidates.filter((candidate) => candidate.path === path);
+    for (const peer of peerScreens) {
+      // Headerless exchanges can disprove ownership, but never establish it.
+      const screens = peer.text.includes("OpenAI Codex (v") ? [peer.text]
+        : peer.text.split(/(?=^›[ \t]+)/m).map((text) => `OpenAI Codex (v\n${text}`);
+      if (screens.some((text) => matchingCodexExchanges(text, own, 1).length > 0)) return null;
+      // A missing header is unknown, not evidence of a different conversation.
+      if (displayedFirstExchange(peer.text) === null) {
+        const matched = matchCodexTranscript(peer.text, candidates);
+        if (matched === null || matched === path) return null;
+      }
+    }
+    return path;
   } catch { return null; }
   finally { db?.close(); }
 }

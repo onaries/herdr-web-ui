@@ -130,6 +130,7 @@
       .cmd { display: inline-flex; align-items: stretch; max-width: 100%; margin-top: 32px; border: 1px solid var(--line2); background: color-mix(in srgb, var(--panel) 92%, transparent); }
       .cmd code { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 16px; color: var(--ink); font-size: 14px; overflow-x: auto; white-space: nowrap; }
       .cmd code::before { content: "$"; color: var(--spot); }
+      .cmd.ps code::before { content: ">"; }
       .copy { flex: none; padding: 0 16px; border: 0; border-left: 1px solid var(--line2); background: none; color: var(--faint); cursor: pointer; }
       .copy:hover, .copy.is-done { color: var(--spot); }
       .hero-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 32px; margin-top: 22px; }
@@ -292,10 +293,12 @@
       .end { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 40px clamp(32px, 5vw, 80px); align-items: center; margin-top: clamp(48px, 6vw, 80px); padding: clamp(48px, 6vw, 88px) var(--gut); border-top: 1px solid var(--line); }
       .end h2 { color: var(--ink); font-family: var(--disp); font-weight: 900; font-size: clamp(42px, 5vw, 72px); line-height: 0.95; letter-spacing: -0.05em; }
       .end > div > p { margin-top: 22px; max-width: 32em; font-size: 15.5px; color: var(--faint); }
+      .end > div > p:not(.after) code { color: var(--dim); font-size: 0.88em; }
       .end .after { max-width: none; margin-top: 16px; font-family: var(--mono); font-size: 12px; line-height: 1.8; color: var(--faint); }
       .end .after code { color: var(--dim); }
       .end .after a { color: var(--spot); }
       .end .after a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+      .end .after + .cmd { margin-top: 8px; }
       .end figure img { width: 100%; border: 1px solid var(--line2); }
       .end figcaption { margin-top: 10px; font-size: 13.5px; color: var(--faint); }
       @media (max-width: 900px) { .end { grid-template-columns: minmax(0, 1fr); } }
@@ -615,7 +618,7 @@
           </div>
           <div class="qa">
             <dt>Does my code or conversation leave my machine?</dt>
-            <dd>Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and Settings → About → Anonymous usage counts shows what is sent and turns it off. The agents’ own model connections depend on their configuration. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">Data flow and access →</a></dd>
+            <dd>Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed, each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored) and once a day the app is opened (with the kinds of coding agents running), and Settings → About → Anonymous usage counts shows what is sent and turns it off. The agents’ own model connections depend on their configuration. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">Data flow and access →</a></dd>
           </div>
           <div class="qa">
             <dt>Does it work on Windows?</dt>
@@ -631,10 +634,11 @@
       <section class="end" id="install" aria-labelledby="install-title">
         <div>
           <h2 id="install-title">Take herdr with you.</h2>
-          <p>Linux (x64, arm64) or macOS. It installs what is missing (herdr 0.9.0+, Bun 1.4+, Node 18+) for your user, then the app as a herdr plugin. With Tailscale running, it ends on a QR code for your phone.</p>
+          <p>Linux (x64, arm64) or macOS. It installs what is missing (herdr 0.9.0+, Bun 1.4+, Node 18+) for your user, then the app as a herdr plugin. On a desktop it opens the app at <code>http://127.0.0.1:7317</code>, where Install in the address bar adds it to your computer; with Tailscale running, it ends on a QR code for your phone.</p>
           <div class="cmd"><code>curl -fsSL https://herdrweb.dev/install.sh | sh</code><button type="button" class="copy caps" data-copy="curl -fsSL https://herdrweb.dev/install.sh | sh">Copy</button></div>
-          <p class="after">Windows x64, in PowerShell: <code>irm https://herdrweb.dev/install.ps1 | iex</code><br />It needs Git for Windows, and terminals there use the <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/remote-pcs.md#windows-pcs">screen mirror</a>.</p>
-          <p class="after">Have herdr, Bun and Node already? <code>herdr plugin install devswha/herdr-web-ui</code><br />Then open <code>http://localhost:7317</code>. It starts with herdr from then on.<br /><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#quick-start">run it from a checkout</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">INSTALL.md for a coding agent</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">access and safety →</a></p>
+          <p class="after">Windows x64, in PowerShell. It needs Git for Windows and opens the app the same way; terminals there use the <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/remote-pcs.md#windows-pcs">screen mirror</a>.</p>
+          <div class="cmd ps"><code>irm https://herdrweb.dev/install.ps1 | iex</code><button type="button" class="copy caps" data-copy="irm https://herdrweb.dev/install.ps1 | iex">Copy</button></div>
+          <p class="after">Have herdr, Bun and Node already? <code>herdr plugin install devswha/herdr-web-ui</code><br />Then open <code>http://127.0.0.1:7317</code>, where Install in the address bar adds the app. It starts with herdr from then on.<br /><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#quick-start">run it from a checkout</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">INSTALL.md for a coding agent</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">access and safety →</a></p>
         </div>
         <figure>
           <img src="assets/install.png" width="2264" height="1580" loading="lazy" decoding="async" alt="Installer output: Bun, Node and the herdr plugin install, then tailscale serve publishes the app and a QR code for the phone appears." />
@@ -674,6 +678,16 @@
             applyMode(button.dataset.mode);
             try { localStorage.setItem("herdr-web-ui-site-mode", button.dataset.mode); } catch {}
           });
+        }
+
+        // a Windows visitor sees the PowerShell command first; without JS, or elsewhere, the page keeps curl
+        if (/Windows/.test(navigator.userAgent) || navigator.userAgentData?.platform === "Windows") {
+          const hero = document.querySelector(".hero .cmd");
+          const command = "irm https://herdrweb.dev/install.ps1 | iex";
+          hero.classList.add("ps");
+          hero.querySelector("code").textContent = command;
+          hero.querySelector(".copy").dataset.copy = command;
+          document.querySelector(".hero-meta p").innerHTML = 'Windows x64 · PowerShell · herdr 0.9.0+ · MIT — <a href="#install">Linux and macOS, plugin only, or from a checkout →</a>';
         }
 
         for (const button of document.querySelectorAll(".copy")) {

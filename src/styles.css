@@ -154,6 +154,8 @@
   --sidebar-w: 320px;
   --control-h: 34px;
   --touch-target: 40px;
+  /* the phone header's controls: the bar (--header-h) holds them */
+  --touch-target-header: 44px;
   --keybar-h: 48px;
   --row-h: 56px;
   --chip-h: 20px;
@@ -565,6 +567,9 @@ button {
   /* the sidebar column's width: the one the user dragged its edge to (--sidebar-user-w, written
      by App), else the density's; never more than half the window */
   --sidebar-shown-w: min(var(--sidebar-user-w, var(--sidebar-w)), 50vw);
+  /* the docked file panel's width (FileViewer.css): the one its edge was dragged to (--file-panel-user-w,
+     written by App), else min(42vw, 560px). The panel yields first to leave 320px for the pane. */
+  --file-panel-shown-w: min(max(320px, min(var(--file-panel-user-w, min(42vw, 560px)), 60vw)), calc(100vw - var(--sidebar-shown-w) - 320px));
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -608,6 +613,10 @@ button {
 
 .app.sidebar-collapsed .sidebar {
   display: none;
+}
+
+.app.sidebar-collapsed {
+  --sidebar-shown-w: 0px;
 }
 
 .scrim {
@@ -825,6 +834,27 @@ button {
   flex: 0 0 auto;
 }
 
+/* From 769px the lens switch is its two words and nothing around them: no track, no glyphs, the
+   chosen lens on the hover fill. Files follows it as an action of its own, after a hairline. */
+@media (min-width: 769px) {
+  .app-header .view-switch {
+    padding: 0;
+    background: transparent;
+    border-color: transparent;
+  }
+
+  .app-header .view-switch > button svg {
+    display: none;
+  }
+}
+
+.header-divider {
+  flex: 0 0 auto;
+  width: var(--hairline);
+  height: var(--chip-h);
+  background: var(--border);
+}
+
 /* the workspace-list toggle and the palette: in the bar below 769px and beside a collapsed
    sidebar, the sidebar's own top row otherwise (further down) */
 .header-side {
@@ -973,6 +1003,29 @@ button {
     padding: env(safe-area-inset-top, 0px) var(--space-3) 0 calc(var(--space-3) + env(safe-area-inset-left, 0px));
     border-right: var(--hairline) solid var(--border);
     background: var(--bg-panel);
+  }
+}
+
+/* Installed desktop app with the title bar folded away (manifest display_override): the header
+   takes the title bar's place, so it drags the window and leaves room for the window controls
+   Chrome draws over its left (macOS) or right edge. */
+@media (display-mode: window-controls-overlay) {
+  .app-header {
+    -webkit-app-region: drag;
+    app-region: drag;
+    padding-left: calc(var(--space-3) + env(titlebar-area-x, 0px));
+    padding-right: calc(var(--space-3) + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  }
+
+  .app-header :is(button, a, input, select, textarea, [tabindex]) {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
+@media (display-mode: window-controls-overlay) and (min-width: 769px) {
+  .app:not(.sidebar-collapsed) .header-side {
+    padding-left: calc(var(--space-3) + env(titlebar-area-x, 0px));
   }
 }
 
@@ -1642,6 +1695,24 @@ button {
 /* just above phone width the lens labels would squeeze the pane title to a glyph: icons only */
 @media (max-width: 560px) {
   .view-switch .header-desktop-only { display: none; }
+}
+
+/* phones: every header control is a full thumb target, the lens buttons too (the track loses
+   its inset so the bar still holds them) */
+@media (max-width: 768px) {
+  .app-header .icon-button {
+    width: var(--touch-target-header);
+    height: var(--touch-target-header);
+  }
+
+  .app-header .view-switch {
+    padding: 0;
+  }
+
+  .app-header .view-switch > button {
+    min-width: var(--touch-target-header);
+    height: var(--touch-target-header);
+  }
 }
 
 /* ---------- phone: an app, not a page ---------- */

@@ -2,7 +2,7 @@ import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEff
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
-import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
+import { ApiError, authenticate, createTab, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
@@ -18,6 +18,7 @@ import { usePreferencesSync } from "./lib/preferencesSync.ts";
 import { TabStrip } from "./components/TabStrip.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { loadedOnSettingsEntry, onSettingsHistory, recordSettings, settingsEntry } from "./lib/settingsHistory.ts";
+import { sheetSteppedOff } from "./lib/sheetHistory.ts";
 import { fileFromLink, isNavigation, linkSearch, linksSomewhere, NAV_KEY, readLink, resolveLink, slugOf, type AppLink, type CreateDraft, type LinkNote } from "./lib/deepLink.ts";
 import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
@@ -26,6 +27,9 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
+import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
+import { FILE_PANEL_DOCK_QUERY, storedFilePanelWidth } from "./lib/filePanelWidth.ts";
+import { filePresentation, type FilePresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
@@ -63,6 +67,7 @@ import { FileViewer } from "./components/FileViewer.tsx";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { useFileViewer } from "./lib/useFileViewer.ts";
+import { useFocusReturn } from "./lib/useFocusTrap.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
 import { useT } from "./lib/i18n.ts";
 import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
@@ -230,7 +235,8 @@ export function App() {
   /** the code a scanned QR brought along (`?pair=CODE`), taken off the address at once */
   const [pairCode] = useState(() => takePairCode());
   const [auth, setAuth] = useState<HealthAuth | null>(null);
-  const canSignOut = auth?.authenticated === true && (auth.via === "token" || auth.via === "device");
+  // a token a proxy sends with every request comes back right after signing out: signing out is the proxy's
+  const canSignOut = auth?.authenticated === true && (auth.via === "device" || (auth.via === "token" && auth.bearer !== true));
   // a device that is in only because nothing is paired yet still pairs from the QR code's address
   const pairedFromAddress = useRef(false);
   useEffect(() => {
@@ -319,6 +325,8 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => initialLink?.sidebar === "hidden");
   // the width the sidebar's edge was dragged to on this device; null is the density's own
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
+  const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
+  const [filePanelWidth, setFilePanelWidth] = useState(storedFilePanelWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
   // Explicit lens choices stay authoritative in this page even when storage cannot be written.
   const [viewPicks, setViewPicks] = useState<ReadonlyMap<string, PaneView>>(() => new Map());
@@ -374,12 +382,48 @@ export function App() {
   const paneActionsRef = useRef<((target: HerdrPane) => RowMenuItem[]) | null>(null);
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
-  const { viewing, openFile, closeFile } = useFileViewer();
-  const viewFile = useCallback((path: string) => {
-    openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
-  }, [openFile, selectedPaneId, selectedMachineId]);
+  const { viewing, openFile, closeFile, setPresentation, releaseFile } = useFileViewer();
   // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
-  const { viewing: diffViewing, openDiff, closeDiff } = useRepoDiffViewer();
+  const { viewing: diffViewing, openDiff, closeDiff, releaseDiff } = useRepoDiffViewer();
+  const presentation = viewing?.presentation ?? filePresentation(viewing?.path ?? "");
+  const fileDocked = filePanelAvailable && presentation === "panel";
+  useEffect(() => {
+    if (viewing !== null && fileDocked) setFilesOpen(false);
+  }, [viewing, fileDocked]);
+  // the panel is no dialog, so no trap gives the focus back when it closes: what opened the file
+  // (a link in the chat, a row of Files) gets it, as it does from the popup
+  useFocusReturn(viewing !== null && fileDocked);
+  // a collapse (below) whose two steps back have not landed: a second click on Show beside the
+  // pane, or the kind correction in the same moment, must not queue two steps more and the file twice
+  const collapsing = useRef(false);
+  // a collapse whose step back never lands must not lock the toggle once the file and diff are gone
+  useEffect(() => { if (viewing === null && diffViewing === null) collapsing.current = false; }, [viewing, diffViewing]);
+  const presentFile = useCallback((next: FilePresentation) => {
+    if (collapsing.current) return;
+    if (next === "panel" && filePanelAvailable && diffViewing !== null && viewing !== null) {
+      // Collapse the stacked diff and popup to one panel entry. Pushing from their opener
+      // also discards the old forward entries, so Forward cannot resurrect the popup or diff.
+      const preview = { ...viewing, presentation: next };
+      collapsing.current = true;
+      window.addEventListener("popstate", () => {
+        collapsing.current = false;
+        releaseDiff();
+        openFile(preview);
+      }, { once: true });
+      window.history.go(-2);
+    } else setPresentation(next);
+  }, [filePanelAvailable, diffViewing, viewing, releaseDiff, openFile, setPresentation]);
+  const reportFileKind = useCallback((presentation: FilePresentation) => {
+    if (viewing !== null && viewing.presentation === undefined && presentation !== filePresentation(viewing.path)) presentFile(presentation);
+  }, [viewing, presentFile]);
+  const toggleFilePresentation = filePanelAvailable && viewing !== null
+    ? () => presentFile(fileDocked ? "popup" : "panel")
+    : undefined;
+  const viewFile = useCallback((path: string) => {
+    // the Files dialog would cover the docked panel the file opens in
+    if (filePanelAvailable && filePresentation(path) === "panel") setFilesOpen(false);
+    openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
+  }, [openFile, selectedPaneId, selectedMachineId, filePanelAvailable]);
   // a link to Settings opens it on its page, for that first opening alone
   const [settingsOpen, setSettingsOpen] = useState(() => initialLink?.settings != null);
   const [settingsLinkPage, setSettingsLinkPage] = useState<string | null>(() => initialLink?.settings ?? null);
@@ -602,6 +646,7 @@ export function App() {
         });
       }
       if (message.type === "pane-exited") {
+        if (machine.id === "local") window.dispatchEvent(new Event("herdr-usage-changed"));
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
         const worked = endedTurn(turnStartRef.current, lastTurnRef.current, paneStorageId(machine.id, message.pane_id), Date.now());
         if (pane && dropletAllows(alertsRef.current, "done", worked)) {
@@ -1072,6 +1117,13 @@ export function App() {
   const linkWorkspaceId = selectedPane?.workspace_id ?? (selectedPaneId === null ? null : undefined);
   const linkSlug = slugOf(selectedWorkspace?.label) || null;
   const linkFile = viewing && viewing.machineId === selectedMachineId && (viewing.paneId === null || viewing.paneId === selectedPaneId) ? viewing.path : null;
+  // the file is its pane's (its paths are read from the pane's folder): another pane or PC
+  // selected leaves it behind, and the move takes the file's entry over (below), so Back returns
+  // to the pane the file was open on, without the file
+  const fileLeft = viewing !== null && linkFile === null;
+  useEffect(() => {
+    if (fileLeft) releaseFile();
+  }, [fileLeft, releaseFile]);
   useEffect(() => {
     if (locked !== false || machines.length === 0 || snapshot === null || linkWorkspaceId === undefined || !linkLanded) return;
     const link: AppLink = {
@@ -1088,9 +1140,12 @@ export function App() {
     // Back and Forward land where the address already says: nothing to write
     if (search === window.location.search) return;
     const url = `${window.location.pathname}${search}${window.location.hash}`;
-    if (previous !== null && !popped && !autoSelected && !settingsOpen && !newSessionOpen && isNavigation(previous, link)) window.history.pushState({ [NAV_KEY]: true }, "", url);
-    else window.history.replaceState(window.history.state, "", url);
-  }, [locked, machines.length, snapshot, linkLanded, selectedMachineId, selectedPaneId, linkWorkspaceId, linkSlug, linkFile, view, settingsOpen, settingsPage, settingsLinkPage, settingsLinkSection, newSessionOpen, newTab, newFields, wideScreen, sidebarCollapsed, autoSelected]);
+    if (previous !== null && !popped && !autoSelected && !settingsOpen && !newSessionOpen && isNavigation(previous, link)) {
+      // a move that leaves the open file behind takes the file's entry: no entry is left between
+      if (fileLeft) window.history.replaceState({ [NAV_KEY]: true }, "", url);
+      else window.history.pushState({ [NAV_KEY]: true }, "", url);
+    } else window.history.replaceState(window.history.state, "", url);
+  }, [locked, machines.length, snapshot, linkLanded, selectedMachineId, selectedPaneId, linkWorkspaceId, linkSlug, linkFile, fileLeft, view, settingsOpen, settingsPage, settingsLinkPage, settingsLinkSection, newSessionOpen, newTab, newFields, wideScreen, sidebarCollapsed, autoSelected]);
 
 
   // a file a link named opens over its pane once the pane is shown, as the chat's file links do
@@ -1109,6 +1164,9 @@ export function App() {
   useEffect(() => {
     const onPop = (event: PopStateEvent): void => {
       if (settingsEntry(event.state) !== null) return;
+      // a phone's sheet closing itself steps off its entry: not a Back, and what its item opened (a
+      // worktree's shell, before the roster lists it) is written over the address once it is listed
+      if (sheetSteppedOff()) return;
       const link = readLink(window.location.search);
       // before the PCs are in, nothing can say the entry's PC is still set up: it waits as a link
       // opened with the page does, settled against its roster or answered with a note once they are
@@ -1176,12 +1234,30 @@ export function App() {
   const alertsOffDot = bellVisible && !bell.on;
   const connWord = t(connected ? "live" : outputStopped ? "disconnected" : "reconnecting");
   const crumb = selectedPane && selectedTitle !== null
-    ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
+    ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
     : null;
 
   useEffect(() => {
     document.title = selectedTitle ? `${selectedTitle} · herdr` : APP_TITLE;
   }, [selectedTitle]);
+
+  // A new tab's workspace: the named one, else the selected pane's. Its folder is the workspace's:
+  // a worktree's checkout, else where the pane in front (the selected one, else the one herdr has
+  // in front, else the first) is. Read from refs, so the actions keep no stale roster.
+  const newTabTarget = (target?: { machineId: string; workspaceId: string }) => {
+    const machineId = target?.machineId ?? selectionRef.current.machineId;
+    const roster = machinesRef.current.find((m) => m.id === machineId)?.snapshot;
+    // pane ids repeat across PCs: the selected pane counts only on the PC the tab is for
+    const selectedPaneId = selectionRef.current.machineId === machineId ? selectionRef.current.paneId : null;
+    const workspaceId = target?.workspaceId ?? roster?.panes.find((pane) => pane.pane_id === selectedPaneId)?.workspace_id;
+    const workspace = roster?.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+    if (!roster || !workspace) return null;
+    const panes = roster.panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
+    const inFront = panes.find((pane) => pane.pane_id === selectedPaneId)
+      ?? panes.find((pane) => pane.pane_id === roster.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
+      ?? panes[0];
+    return { machineId, workspace, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null };
+  };
 
   const actions = useMemo<AppActions>(
     () => ({
@@ -1205,23 +1281,22 @@ export function App() {
         setNewSessionOpen(true);
       },
       openNewTab: (target) => {
-        const machineId = target?.machineId ?? selectionRef.current.machineId;
-        const roster = machinesRef.current.find((m) => m.id === machineId)?.snapshot;
-        // pane ids repeat across PCs: the selected pane counts only on the PC the tab is for
-        const selectedPaneId = selectionRef.current.machineId === machineId ? selectionRef.current.paneId : null;
-        const workspaceId = target?.workspaceId ?? roster?.panes.find((pane) => pane.pane_id === selectedPaneId)?.workspace_id;
-        const workspace = roster?.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
-        if (!roster || !workspace) return;
-        // the tab's folder is the workspace's: a worktree's checkout, else where the pane in
-        // front (the selected one, else the one herdr has in front, else the first) is
-        const panes = roster.panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
-        const inFront = panes.find((pane) => pane.pane_id === selectedPaneId)
-          ?? panes.find((pane) => pane.pane_id === roster.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
-          ?? panes[0];
+        const found = newTabTarget(target);
+        if (!found) return;
+        const { machineId, workspace, cwd } = found;
         setDrawerOpen(false);
         setNewSessionMachineId(machineId);
-        setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null, number: workspace.tab_count + 1 });
+        setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd, number: workspace.tab_count + 1 });
         setNewSessionOpen(true);
+      },
+      openTerminalTab: async (target) => {
+        const found = newTabTarget(target);
+        if (!found) return;
+        const asked = selectionRef.current;
+        const created = await createTab({ workspace_id: found.workspace.workspace_id, cwd: found.cwd, label: null, agent: null }, found.machineId);
+        void load();
+        // what the user went to while herdr answered is theirs to keep
+        if (selectionStill(asked, selectionRef.current)) selectTargetRef.current(found.machineId, created.pane_id);
       },
       openPalette,
       agentStarted: (machineId, paneId) => lenses.startedAgent(paneStorageId(machineId, paneId), window.matchMedia?.("(pointer: coarse)").matches === true),
@@ -1321,7 +1396,8 @@ export function App() {
 
   const moreItems: RowMenuItem[] = [
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
-    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
+    // from 769px Files has its own button beside the lens switch; a phone keeps it here
+    ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
@@ -1360,7 +1436,10 @@ export function App() {
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
   return (
-    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
+    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null && filePanelWidth === null ? undefined : {
+      ...(sidebarWidth === null ? {} : { "--sidebar-user-w": `${sidebarWidth}px` }),
+      ...(filePanelWidth === null ? {} : { "--file-panel-user-w": `${filePanelWidth}px` }),
+    } as CSSProperties}>
       <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}`}>
         {/* is-zoned tells this header from the connecting shell's, which has no zones to draw.
             .header-side is the sidebar's own top row from 769px (styles.css); below that its
@@ -1403,7 +1482,8 @@ export function App() {
               <span className="context-title-text">{selectedTitle}</span>
             </div>
             <div className="context-sub">
-              <span className="machine-context-name">{crumb.machine}</span><span className="context-sep" aria-hidden="true">›</span>
+              {/* one PC needs no name: the sidebar leaves it out too, and More still says it */}
+              {crumb.showMachine && <><span className="machine-context-name">{crumb.machine}</span><span className="context-sep" aria-hidden="true">›</span></>}
               <span>{crumb.workspace}</span>
               {crumb.folder !== null && (
                 <>
@@ -1428,6 +1508,15 @@ export function App() {
               {!terminalAttach && <span className="pill pill-soon">{t("soon")}</span>}
             </button>
           </div>
+        )}
+        {selectedPane && wideScreen && (
+          <>
+            {/* opens Files, it is no third lens: set apart from the switch by a hairline */}
+            <span className="header-divider" aria-hidden="true" />
+            <button type="button" className="icon-button header-files-button" aria-label={t("Browse files")} title={t("Browse files")} onClick={() => setFilesOpen(true)}>
+              <FolderOpen />
+            </button>
+          </>
         )}
         <div className="header-meta">
           {/* speaks only while the bridge is not live; live, it stays in the document for a screen
@@ -1566,6 +1655,7 @@ export function App() {
                 {slotSnapshot && pane && workspace && (
                   <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect}
                     onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
+                    onNewTerminal={() => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
                     paneActions={active ? (paneId) => {
                       const target = snapshot?.panes.find((item) => item.pane_id === paneId);
                       if (!target || !paneActionsRef.current) return [];
@@ -1628,6 +1718,10 @@ export function App() {
         </div>
         </div>
         </OpenFileContext.Provider>
+        {/* last in the row: the file beside the pane (from 980px), the pane column shrinks and its terminal refits */}
+        {viewing !== null && fileDocked && <MachineContext.Provider value={viewing.machineId}>
+          <FileViewer key={viewing.path} docked panelStart={<FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} />} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
+        </MachineContext.Provider>}
       </div>
 
       <MachineContext.Provider value={newSessionMachineId}><NewSessionDialog
@@ -1655,18 +1749,25 @@ export function App() {
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null || diffViewing !== null} />
+      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={(viewing !== null && !fileDocked) || diffViewing !== null} />
       {filesOpen && selectedPane && (
-        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={viewing !== null || diffViewing !== null} onOpenFile={viewFile}
+        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={(viewing !== null && !fileDocked) || diffViewing !== null} onOpenFile={viewFile}
           onOpenDiff={(comparison, file) => openDiff({ machineId: selectedMachineId, paneId: selectedPane.pane_id, directory: selectedPane.foreground_cwd ?? selectedPane.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
           onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
           onClose={() => setFilesOpen(false)} />
       )}
       {diffViewing !== null && <MachineContext.Provider value={diffViewing.machineId}>
-        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null} />
+        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => {
+          const docked = filePanelAvailable && filePresentation(path) === "panel";
+          if (docked) {
+            setFilesOpen(false);
+            releaseDiff();
+          }
+          openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId }, docked);
+        }} keyboardActive={!settingsOpen && (viewing === null || fileDocked)} />
       </MachineContext.Provider>}
-      {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
+      {viewing !== null && !fileDocked && <MachineContext.Provider value={viewing.machineId}>
+        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
     </div></MachineContext.Provider></MachineSessionsProvider>

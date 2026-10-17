@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -140,32 +140,55 @@ describe("answers to omo's form of several questions", () => {
   });
 });
 
-describe("slash commands of a pane herdr names pi", () => {
+describe("slash commands follow the pane's process", () => {
   const opened: string[] = [];
   afterAll(async () => {
     for (const id of opened) await herdrRpc("workspace.close", { workspace_id: id }).catch(() => undefined);
   });
 
-  /** a pane herdr names `pi`, running a program of the given name that only waits */
-  async function waiting(program: string): Promise<string> {
-    const ready = join(root, `${program}.ready`);
+  /** A pane with any reported label, running a program of the given name that only waits. */
+  async function waiting(program: string, agent: string | null = "pi"): Promise<string> {
+    const ready = join(root, `${program}-${opened.length}.ready`);
     writeFileSync(join(root, "wait.js"), "require('node:fs').writeFileSync(process.argv[2], ''); setInterval(() => {}, 1000);");
-    copyFileSync(process.execPath, join(root, program));
+    if (!existsSync(join(root, program))) copyFileSync(process.execPath, join(root, program));
     chmodSync(join(root, program), 0o755);
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
       "workspace.create", { label: `herdr-web-ui-test-commands-${program}`, cwd: root, focus: false },
     );
     opened.push(created.workspace.workspace_id);
-    await herdrRpc("pane.send_text", { pane_id: created.root_pane.pane_id, text: `exec '${join(root, program)}' '${join(root, "wait.js")}' '${ready}'\n` });
-    for (let i = 0; i < 200 && !existsSync(ready); i++) await Bun.sleep(50);
-    expect(existsSync(ready)).toBe(true);
-    await herdrRpc("pane.report_agent", { pane_id: created.root_pane.pane_id, source: "manual", agent: "pi", state: "idle" });
+    const watcher = watch(root);
+    const started = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Program did not create ${ready}`)), 10_000);
+      watcher.on("change", () => {
+        if (existsSync(ready)) { clearTimeout(timeout); resolve(); }
+      });
+    });
+    try {
+      await herdrRpc("pane.send_text", { pane_id: created.root_pane.pane_id, text: `exec '${join(root, program)}' '${join(root, "wait.js")}' '${ready}'\n` });
+      await started;
+    } finally { watcher.close(); }
+    if (agent) await herdrRpc("pane.report_agent", { pane_id: created.root_pane.pane_id, source: "manual", agent, state: "idle" });
     return created.root_pane.pane_id;
   }
   const names = async (paneId: string) => ((await (await fetch(`${base()}/api/pane/commands?pane_id=${encodeURIComponent(paneId)}`)).json()) as { commands: { name: string }[] }).commands.map((command) => command.name);
 
-  it("offers pi's commands to pi, and none of them to an omo pane that waits under pi's name", async () => {
+  it("offers pi's commands to a pi process", async () => {
     expect(await names(await waiting("pi"))).toContain("scoped-models");
-    expect(await names(await waiting("omo"))).toEqual([]);
+  }, 30_000);
+
+  it.each(["pi", "claude", null])("offers omo commands with the reported label %j", async (agent) => {
+    const commands = await names(await waiting("omo", agent));
+    expect(commands).toContain("favorite-models");
+    expect(commands).toContain("compact");
+    expect(commands).not.toContain("tree");
+    expect(commands).not.toContain("config");
+  }, 30_000);
+
+  it("keeps Claude commands for a Claude process", async () => {
+    const commands = await names(await waiting("claude", "claude"));
+    // Claude's own list: /model (a picker the chat answers) stays, /config (a screen it cannot) is left out
+    expect(commands).toContain("model");
+    expect(commands).not.toContain("config");
+    expect(commands).not.toContain("favorite-models");
   }, 30_000);
 });

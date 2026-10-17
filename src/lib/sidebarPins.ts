@@ -4,6 +4,8 @@
  * old PC's pin; a workspace's key marks itself as one, after the PC.
  */
 
+import { placeBlock } from "./workspaceOrder.ts";
+
 const STORAGE_KEY = "herdr-web-ui:sidebar-agent-pins";
 
 export function sidebarPinKey(machineId: string, paneId: string): string {
@@ -26,6 +28,17 @@ export function isWorkspacePinKey(key: string): boolean {
 export function pinnedWorkspaceIds(keys: readonly string[], machineId: string): string[] {
   const prefix = workspacePinKey(machineId, "");
   return keys.flatMap((key) => key.startsWith(prefix) && key.length > prefix.length ? [key.slice(prefix.length)] : []);
+}
+
+/** Reorders only this PC's workspace pin slots, leaving agent and other PC pins where they were. */
+export function reorderWorkspacePins(keys: readonly string[], machineId: string, sourceId: string, targetId: string): string[] {
+  const ids = pinnedWorkspaceIds(keys, machineId);
+  if (sourceId === targetId || !ids.includes(sourceId) || !ids.includes(targetId)) return [...keys];
+  const order = placeBlock(ids, [sourceId], [targetId], ids.indexOf(sourceId) < ids.indexOf(targetId) ? "after" : "before");
+  const replacements = order.map((id) => workspacePinKey(machineId, id));
+  const own = new Set(ids.map((id) => workspacePinKey(machineId, id)));
+  let index = 0;
+  return keys.map((key) => own.has(key) ? replacements[index++]! : key);
 }
 
 /** This PC's workspace pins whose workspace is gone leave with a change of the user's; every other pin stays. */
@@ -100,27 +113,33 @@ export interface WorkspaceGroup<W> { workspace: W; children: W[] }
 
 /**
  * The workspace list's groups split by pins, as Paseo hoists a pinned chat out of its project: the
- * pinned ones first, in pin order, a pinned repository's workspace with its worktrees and a pinned
- * worktree alone; the rest in the source order. A pinned worktree leaves its group, which stays.
+ * pinned rows first, in pin order; the rest in the source order. A pinned worktree leaves its
+ * group, which stays. A pinned head leaves its unpinned worktrees as standalone rows in its place.
  */
 export function splitPinnedGroups<W>(groups: readonly WorkspaceGroup<W>[], pinnedIds: readonly string[], idOf: (workspace: W) => string): { pinned: WorkspaceGroup<W>[]; rest: WorkspaceGroup<W>[] } {
   const pinnedSet = new Set(pinnedIds);
   const strip = (group: WorkspaceGroup<W>): WorkspaceGroup<W> => ({ workspace: group.workspace, children: group.children.filter((child) => !pinnedSet.has(idOf(child))) });
   const byId = new Map<string, WorkspaceGroup<W>>();
   for (const group of groups) {
-    byId.set(idOf(group.workspace), strip(group));
+    byId.set(idOf(group.workspace), { workspace: group.workspace, children: [] });
     for (const child of group.children) byId.set(idOf(child), { workspace: child, children: [] });
   }
   const pinned = [...pinnedSet].flatMap((id) => {
     const group = byId.get(id);
     return group === undefined ? [] : [group];
   });
-  return { pinned, rest: groups.filter((group) => !pinnedSet.has(idOf(group.workspace))).map(strip) };
+  const rest = groups.flatMap((group) => pinnedSet.has(idOf(group.workspace))
+    ? strip(group).children.map((workspace) => ({ workspace, children: [] }))
+    : [strip(group)]);
+  return { pinned, rest };
 }
 
-/** The rows of the pinned groups, a pinned repository's worktrees too: none of them is reordered. */
-export function pinnedGroupIds<W>(pinned: readonly WorkspaceGroup<W>[], idOf: (workspace: W) => string): Set<string> {
-  return new Set(pinned.flatMap((group) => [group.workspace, ...group.children].map(idOf)));
+/** Pinned rows and their repository worktrees; only the unpinned worktrees stay fixed. */
+export function pinnedGroupIds<W>(groups: readonly WorkspaceGroup<W>[], pinnedIds: readonly string[], idOf: (workspace: W) => string): Set<string> {
+  const pinnedSet = new Set(pinnedIds);
+  return new Set(groups.flatMap((group) => pinnedSet.has(idOf(group.workspace))
+    ? [group.workspace, ...group.children].map(idOf)
+    : group.children.map(idOf).filter((id) => pinnedSet.has(id))));
 }
 
 /** Pinned rows in their saved order, and the other rows in the source roster order. */

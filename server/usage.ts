@@ -872,6 +872,8 @@ interface Search {
 }
 
 export class UsageService {
+  /** A local CLI login ended: rediscover sign-ins, preserving account rate-limit backoffs. */
+  invalidate(): void { this.searches.clear(); this.entries.clear(); }
   private readonly searches = new Map<UsageProviderId, Search>();
   /** by provider and source */
   private readonly entries = new Map<string, Entry>();
@@ -880,7 +882,8 @@ export class UsageService {
   private pending: Promise<UsageReport> | null = null;
   private pendingRefresh = false;
 
-  constructor(private readonly ctx: UsageContext = systemUsageContext(), private readonly providers: readonly UsageProvider[] = USAGE_PROVIDERS) {}
+  constructor(private readonly ctx: UsageContext = systemUsageContext(), private readonly providers: readonly UsageProvider[] = USAGE_PROVIDERS,
+    private readonly additional: (refresh: boolean) => Promise<readonly ProviderUsage[]> = async () => []) {}
 
   /**
    * `refresh` asks again sooner than FRESH_MS. Concurrent callers share one pass; a refresh that
@@ -912,7 +915,7 @@ export class UsageService {
       if (group.length < 2) continue;
       group.sort((a, b) => a.key.localeCompare(b.key)).forEach((usage, i) => byKey.set(usage.key, { ...usage, account: `#${i + 1}` }));
     }
-    return { providers: [...byKey.values()] };
+    return { providers: [...byKey.values(), ...await this.additional(refresh)] };
   }
 
   private async collectProvider(provider: UsageProvider, now: number, refresh: boolean): Promise<ProviderUsage[]> {

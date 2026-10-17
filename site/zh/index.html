@@ -132,6 +132,7 @@
       .cmd { display: inline-flex; align-items: stretch; max-width: 100%; margin-top: 32px; border: 1px solid var(--line2); background: color-mix(in srgb, var(--panel) 92%, transparent); }
       .cmd code { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 16px; color: var(--ink); font-size: 14px; overflow-x: auto; white-space: nowrap; }
       .cmd code::before { content: "$"; color: var(--spot); }
+      .cmd.ps code::before { content: ">"; }
       .copy { flex: none; padding: 0 16px; border: 0; border-left: 1px solid var(--line2); background: none; color: var(--faint); cursor: pointer; }
       .copy:hover, .copy.is-done { color: var(--spot); }
       .hero-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 32px; margin-top: 22px; }
@@ -294,10 +295,12 @@
       .end { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 40px clamp(32px, 5vw, 80px); align-items: center; margin-top: clamp(48px, 6vw, 80px); padding: clamp(48px, 6vw, 88px) var(--gut); border-top: 1px solid var(--line); }
       .end h2 { color: var(--ink); font-family: var(--disp); font-weight: 900; font-size: clamp(42px, 5vw, 72px); line-height: 0.95; letter-spacing: -0.05em; }
       .end > div > p { margin-top: 22px; max-width: 32em; font-size: 15.5px; color: var(--faint); }
+      .end > div > p:not(.after) code { color: var(--dim); font-size: 0.88em; }
       .end .after { max-width: none; margin-top: 16px; font-family: var(--mono); font-size: 12px; line-height: 1.8; color: var(--faint); }
       .end .after code { color: var(--dim); }
       .end .after a { color: var(--spot); }
       .end .after a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+      .end .after + .cmd { margin-top: 8px; }
       .end figure img { width: 100%; border: 1px solid var(--line2); }
       .end figcaption { margin-top: 10px; font-size: 13.5px; color: var(--faint); }
       @media (max-width: 900px) { .end { grid-template-columns: minmax(0, 1fr); } }
@@ -620,7 +623,7 @@
           </div>
           <div class="qa">
             <dt>我的代码或对话会离开我的电脑吗？</dt>
-            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。应用在安装时和每次更新时会发送一次匿名计数（版本、操作系统、安装方式和一个随机 ID，不保存 IP 地址），可在 Settings → About → Anonymous usage counts 中查看发送内容并关闭。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
+            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。应用在安装时、每次更新时，以及打开应用的当天每天一次（附带正在运行的编程智能体类型）会发送匿名计数（版本、操作系统、安装方式和一个随机 ID，不保存 IP 地址），可在 Settings → About → Anonymous usage counts 中查看发送内容并关闭。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
           </div>
           <div class="qa">
             <dt>支持 Windows 吗？</dt>
@@ -636,10 +639,11 @@
       <section class="end" id="install" aria-labelledby="install-title">
         <div>
           <h2 id="install-title">把 herdr 带在身边。</h2>
-          <p>支持 Linux（x64、arm64）或 macOS。安装程序会为当前用户补齐缺少的依赖（herdr 0.9.0+、Bun 1.4+、Node 18+），然后将应用安装为 herdr 插件。如果 Tailscale 正在运行，最后会显示供手机扫描的二维码。</p>
+          <p>支持 Linux（x64、arm64）或 macOS。安装程序会为当前用户补齐缺少的依赖（herdr 0.9.0+、Bun 1.4+、Node 18+），然后将应用安装为 herdr 插件。在桌面电脑上，它会在浏览器里打开应用 <code>http://127.0.0.1:7317</code>，点地址栏里的“安装”即可把它装到电脑上；如果 Tailscale 正在运行，最后会显示供手机扫描的二维码。</p>
           <div class="cmd"><code>curl -fsSL https://herdrweb.dev/install.sh | sh</code><button type="button" class="copy caps" data-copy="curl -fsSL https://herdrweb.dev/install.sh | sh">复制</button></div>
-          <p class="after">Windows x64 请在 PowerShell 中运行：<code>irm https://herdrweb.dev/install.ps1 | iex</code><br />需要 Git for Windows，Windows 上的终端使用<a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/remote-pcs.md#windows-pcs">屏幕镜像</a>。</p>
-          <p class="after">已经装好 herdr、Bun 和 Node？<code>herdr plugin install devswha/herdr-web-ui</code><br />然后打开 <code>http://localhost:7317</code>。之后它会随 herdr 一起启动。<br /><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#quick-start">从源码运行</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">给编程智能体的 INSTALL.md</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">访问与安全 →</a></p>
+          <p class="after">Windows x64 请在 PowerShell 中运行。需要 Git for Windows，同样会打开应用；Windows 上的终端使用<a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/remote-pcs.md#windows-pcs">屏幕镜像</a>。</p>
+          <div class="cmd ps"><code>irm https://herdrweb.dev/install.ps1 | iex</code><button type="button" class="copy caps" data-copy="irm https://herdrweb.dev/install.ps1 | iex">复制</button></div>
+          <p class="after">已经装好 herdr、Bun 和 Node？<code>herdr plugin install devswha/herdr-web-ui</code><br />然后打开 <code>http://127.0.0.1:7317</code>，点地址栏里的“安装”即可把应用装到电脑上。之后它会随 herdr 一起启动。<br /><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#quick-start">从源码运行</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">给编程智能体的 INSTALL.md</a> · <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">访问与安全 →</a></p>
         </div>
         <figure>
           <img src="../assets/install.png" width="2264" height="1580" loading="lazy" decoding="async" alt="安装程序输出：安装 Bun、Node 和 herdr 插件，然后通过 tailscale serve 提供应用访问地址，并显示供手机扫描的二维码。" />
@@ -679,6 +683,16 @@
             applyMode(button.dataset.mode);
             try { localStorage.setItem("herdr-web-ui-site-mode", button.dataset.mode); } catch {}
           });
+        }
+
+        // a Windows visitor sees the PowerShell command first; without JS, or elsewhere, the page keeps curl
+        if (/Windows/.test(navigator.userAgent) || navigator.userAgentData?.platform === "Windows") {
+          const hero = document.querySelector(".hero .cmd");
+          const command = "irm https://herdrweb.dev/install.ps1 | iex";
+          hero.classList.add("ps");
+          hero.querySelector("code").textContent = command;
+          hero.querySelector(".copy").dataset.copy = command;
+          document.querySelector(".hero-meta p").innerHTML = 'Windows x64 · PowerShell · herdr 0.9.0+ · MIT — <a href="#install">Linux、macOS、只装插件，或从源码运行 →</a>';
         }
 
         for (const button of document.querySelectorAll(".copy")) {

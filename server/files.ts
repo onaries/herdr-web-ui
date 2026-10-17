@@ -62,6 +62,12 @@ function subsequence(path: string, query: string): boolean {
 function score(path: string, query: string): number {
   if (!query) return 1;
   const lower = path.toLowerCase();
+  const original = scoreLower(lower, query);
+  if (original >= 0 || !(/[^\x00-\x7f]/.test(path) || /[^\x00-\x7f]/.test(query))) return original;
+  return scoreLower(path.normalize("NFC").toLowerCase(), query.normalize("NFC"));
+}
+
+function scoreLower(lower: string, query: string): number {
   const name = lower.slice(lower.lastIndexOf("/") + 1);
   const at = lower.indexOf(query);
   if (at >= 0) return 300 - at + (name.includes(query) ? 30 : 0);
@@ -88,15 +94,18 @@ const walked = new Map<string, { expires: number; files: string[] }>();
  * for a path an agent wrote without its folders. Walks the folder itself, since the git
  * inventory leaves out ignored files (build output, recordings), within the same bounds.
  */
-export function filesNamed(cwd: string, name: string, limit = 10): string[] {
-  const suffix = name.replace(/^\.\//, "");
+export function filesNamed(cwd: string, name: string, limit = 10, anyForm = false): string[] {
+  const suffix = anyForm ? name.replace(/^\.\//, "").normalize("NFC") : name.replace(/^\.\//, "");
   let hit = walked.get(cwd);
   if (!hit || hit.expires <= Date.now()) {
     hit = { expires: Date.now() + CACHE_MS, files: walkFiles(cwd) };
     walked.set(cwd, hit);
     if (walked.size > 16) walked.delete(walked.keys().next().value!);
   }
-  return hit.files.filter((path) => path === suffix || path.endsWith(`/${suffix}`)).slice(0, limit);
+  return hit.files.filter((path) => {
+    const compared = anyForm ? path.normalize("NFC") : path;
+    return compared === suffix || compared.endsWith(`/${suffix}`);
+  }).slice(0, limit);
 }
 
 export function clearFileCache(): void {

@@ -8,7 +8,7 @@ import type { ServerWebSocket } from "bun";
 import type { AgentKind, AgentRenameRequest, AgentStatus, ClientMessage, ClientRole, DirectoryCreated, HealthAuth, HerdrPane, IntegrationsResponse, PaneDirection, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanSummary, PluginActionsResponse, ReadFormat, ReadSource, ServerFeature, ServerMessage, SessionSnapshot, TabMoved } from "../shared/protocol.ts";
 import { alertStatus, paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { DEVICE_COOKIE, authClient, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { DEVICE_COOKIE, authClient, bearerMatches, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
@@ -16,11 +16,11 @@ import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
-import { serveStatic } from "./static.ts";
+import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { isMouseReport, sameAttachment } from "./input-guard.ts";
 import { startStatusCollector } from "./collector.ts";
-import { claudePanePid, claudePaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
+import { claudePanePid, claudePaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneProcessRoots, paneRunsOmo, toolOutput } from "./conversation.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import { ConversationMonitor } from "./conversation-monitor.ts";
@@ -38,7 +38,7 @@ import { launchedAgents } from "./launched-agents.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { createDirectory, listDirectories } from "./directories.ts";
 import { claudeSessionTempDir } from "./claude-store.ts";
-import { fileResponse, locateFile, locateFileInFolder, crossSiteFileRead } from "./file-view.ts";
+import { fileResponse, findFile, crossSiteFileRead } from "./file-view.ts";
 import { repoDiffResponse } from "./repo-diff.ts";
 import {
   agentManifests,
@@ -108,6 +108,9 @@ import { handleHerdrUpdateRequest, HerdrUpdater } from "./herdr-update.ts";
 import { handlePortalRequest, PortalService } from "./portal.ts";
 import { handleTelemetryRequest, Telemetry } from "./telemetry.ts";
 import { handleUsageRequest, UsageService } from "./usage.ts";
+import { CLIProxyService } from "./cliproxy.ts";
+import { CLIProxyRoutes } from "./cliproxy-routes.ts";
+import { UsageLoginService } from "./usage-login.ts";
 import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
@@ -124,6 +127,8 @@ const MAX_REPLAY_BYTES = 128 * 1024;
 const PLUGIN_PLATFORM = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
 /** How long POST /api/plugin/action waits for the command herdr started to end before it answers `running`. */
 const PLUGIN_ACTION_WAIT_MS = 5_000;
+/** a focus or reconnect re-reads the panes for the daily active message at most this often */
+const VISIT_READ_MS = 10 * 60_000;
 const livePaneIds = async (timeoutMs?: number): Promise<string[]> => (await sessionSnapshot(undefined, timeoutMs)).panes.map((pane) => pane.pane_id);
 /**
  * herdr's refusal of an attach while a read of the same terminal is in progress; it asks
@@ -468,6 +473,10 @@ export function createServer(
     telemetry?: Telemetry;
     /** plan limits of the AI subscriptions signed in here; tests pass one without real sign-ins */
     usage?: UsageService;
+    /** Tests supply an isolated proxy service, never a user's configured instance. */
+    cliProxy?: CLIProxyService;
+    /** Tests use a disposable credential home and stand-in CLI binaries. */
+    usageLogin?: UsageLoginService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
     machines?: boolean;
@@ -566,7 +575,10 @@ export function createServer(
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
   const preferences = new PreferenceStore(options.stateDir ?? defaultStateDir());
-  const usage = options.usage ?? new UsageService();
+  const cliProxy = options.cliProxy ?? new CLIProxyService(options.stateDir ?? defaultStateDir());
+  const cliProxyRoutes = new CLIProxyRoutes(cliProxy);
+  const usageLogin = options.usageLogin ?? new UsageLoginService();
+  const usage = options.usage ?? new UsageService(undefined, undefined, (refresh) => cliProxy.report(refresh));
   const voice = options.voice ?? new VoiceService({ stateDir: options.stateDir ?? defaultStateDir(), env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (HERDR_WEB_TAILSCALE_OWNER) */
   const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["HERDR_WEB_TAILSCALE_OWNER"]?.trim() || undefined;
@@ -1226,6 +1238,24 @@ export function createServer(
       }),
     };
   };
+  /**
+   * A browser visit for the daily active message: the call is made now so the visit's day is the
+   * trigger's, the panes are read after. Nothing is read while telemetry cannot send; a socket open
+   * passes the snapshot it fetches anyway, and other visits read the panes at most every
+   * VISIT_READ_MS (in between they still count the day, with the kinds already known).
+   */
+  let visitReadAt = -Infinity;
+  function countVisit(snapshot?: ReturnType<typeof clientSnapshot>): void {
+    const telemetry = options.telemetry;
+    if (!telemetry?.counting()) return;
+    let agents: Promise<(string | null)[]> | (string | null)[] = [];
+    if (snapshot || Date.now() - visitReadAt >= VISIT_READ_MS) {
+      visitReadAt = Date.now();
+      agents = (snapshot ?? clientSnapshot()).then((read) => read.panes.map((pane) => pane.agent ?? pane.agent_session?.agent ?? null));
+    }
+    void telemetry.active(agents)
+      .catch((error) => console.error(`telemetry: the visit was not counted (${error instanceof Error ? error.message : String(error)})`));
+  }
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
@@ -1832,6 +1862,7 @@ export function createServer(
       push.resync(panes.map((pane) => ({ ...pane, agent_status: alertStatus(settled(pane), waits.waiting(pane.pane_id)) })), newer);
     },
     onPaneEnded: (paneId) => {
+      if (usageLogin.ended(paneId)) usage.invalidate();
       holdPendingPane(paneId, { code: "pane_not_found", message: "The pane ended; its pending messages were not sent" });
       pending.forget(paneId);
       waits.forget(paneId);
@@ -2014,6 +2045,8 @@ export function createServer(
       if (pathname === "/api/preferences") return handlePreferencesRequest(request, preferences);
 
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
+      if (pathname === "/api/usage/login") { bunServer.timeout(request, 30); return usageLogin.handle(request); }
+      if (pathname === "/api/cliproxy" || pathname.startsWith("/api/cliproxy/")) { bunServer.timeout(request, 60); return cliProxyRoutes.handle(request); }
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
 
@@ -2032,7 +2065,7 @@ export function createServer(
 
       if (pathname === "/api/health") {
         const auth: HealthAuth = access.level === "full"
-          ? { required: false, authenticated: true, via: access.via, role: access.role }
+          ? { required: false, authenticated: true, via: access.via, role: access.role, ...(access.via === "token" && bearerMatches(request, token) ? { bearer: true as const } : {}) }
           : { required: true, authenticated, ...(authenticated ? {} : { reason: access.reason }) };
         // this server is open to the network with no token and nothing paired, told to a client
         // that got in and to nobody else: naming it to an anonymous caller would be
@@ -2101,12 +2134,7 @@ export function createServer(
           try { cwd = (await paneContext(paneId)).cwd; } catch { /* an absolute path still opens */ }
         }
         const path = url.searchParams.get("path") ?? "";
-        let found = locateFile(path, cwd);
-        // a Claude Code pane names the files it keeps outside the project (`scratchpad/…`) relative to its session's temp folder
-        if (found === null && paneId && cwd !== null && !isAbsolute(path.trim()) && !path.trim().startsWith("~")) {
-          const folder = await claudeTempFolder(paneId);
-          if (folder !== null) found = locateFileInFolder(path, folder);
-        }
+        const found = await findFile(path, cwd, () => paneId ? claudeTempFolder(paneId) : Promise.resolve(null));
         if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
         // several files end in that name: the viewer lists them to choose from
         if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
@@ -2525,9 +2553,9 @@ export function createServer(
         try {
           const context = await paneContext(paneId);
           if (pathname === "/api/pane/commands") {
-            // herdr names an omo pane `pi` while omo waits: pi's commands and templates are not omo's
-            const agent = context.agent === "pi" && await paneRunsOmo(paneId) ? "omo" : context.agent;
-            return jsonResponse({ commands: paneCommands(agent, context.cwd) });
+            const roots = await paneProcessRoots(paneId, context.agent);
+            const agent = roots.omo ? "omo" : context.agent;
+            return jsonResponse({ commands: paneCommands(agent, context.cwd, undefined, { ...roots.omo, environ: roots.environ }) });
           }
           const limitRaw = url.searchParams.get("limit");
           const limit = limitRaw === null ? 20 : Number(limitRaw);
@@ -2901,7 +2929,7 @@ export function createServer(
       }
 
       // static client - public even when the API is gated, so the login UI can load
-      return serveStatic(pathname, request.headers.get("accept-encoding"));
+      return serveStatic(pathname, request.headers.get("accept-encoding"), requestOrigin(request));
       })());
     },
 
@@ -2931,8 +2959,10 @@ export function createServer(
         }
         if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
+        const snapshot = clientSnapshot();
+        countVisit(snapshot);
         try {
-          send(client, { type: "snapshot", snapshot: await clientSnapshot(), features: SERVER_FEATURES });
+          send(client, { type: "snapshot", snapshot: await snapshot, features: SERVER_FEATURES });
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "snapshot_failed";
           send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
@@ -2943,8 +2973,10 @@ export function createServer(
         if (stopped || client.data.closing) return;
         // read here for a relayed connection too: alerts for every PC go out from this server
         const presence = presenceOf(raw);
-        if (presence === true) present.add(client);
-        else if (presence === false) present.delete(client);
+        if (presence === true) {
+          present.add(client);
+          if (!client.data.relay) countVisit();
+        } else if (presence === false) present.delete(client);
         if (client.data.relay) { client.data.relay.message(raw); return; }
         if (presence !== null) return;
         let message: ClientMessage;

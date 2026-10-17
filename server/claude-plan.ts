@@ -6,11 +6,14 @@ import { dirname, join } from "node:path";
  *
  * The screen shows only the part of a plan that fits the pane, and the `ExitPlanMode` call reaches
  * the transcript only with its answer (#211). The plan file is there in time: Claude writes it to
- * `<config dir>/plans/<slug>.md` before it asks, and every transcript line carries the session's
+ * `<config dir>/plans/<slug>.md` before it asks, and every message line carries the session's
  * `"slug"`. The transcript is `<config dir>/projects/<project>/<session>.jsonl`, so its config
  * dir, `CLAUDE_CONFIG_DIR` or not, is three levels up.
+ *
+ * The tail is 1 MB: recent Claude Code versions write request lines of 70 to 145 KB without the
+ * slug (`api-request`, `api-request-blob`), and the dialog can come after several of them.
  */
-const TAIL_BYTES = 64 * 1024;
+const TAIL_BYTES = 1024 * 1024;
 const SLUG_RE = /"slug":"([^"]*)"/g;
 const SAFE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

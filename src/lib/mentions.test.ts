@@ -44,6 +44,29 @@ describe("activeTrigger", () => {
     expect(activeTrigger("/go", -1)).toBeNull();
     expect(activeTrigger("/go", 4)).toBeNull();
   });
+
+  it("keeps namespaced slash and dollar queries active only when opted in", () => {
+    expect(activeTrigger("/skill:ul", 9, { namespaced: true }))
+      .toEqual({ kind: "slash", query: "skill:ul", start: 0, end: 9 });
+    expect(activeTrigger("$skill:mas", 10, { skills: true, namespaced: true }))
+      .toEqual({ kind: "slash", prefix: "$", query: "skill:mas", start: 0, end: 10 });
+    expect(activeTrigger("/skill:ul", 9)).toBeNull();
+    expect(activeTrigger("$skill:mas", 10, { skills: true })).toBeNull();
+    expect(activeTrigger("$skill:mas", 10, { namespaced: true })).toBeNull();
+  });
+
+  it("replaces the full namespaced token when the caret precedes its colon or suffix", () => {
+    for (const prefix of ["/", "$"] as const) {
+      const text = `use ${prefix}skill:mass-ulw, next`;
+      for (const caret of [7, 14]) {
+        const trigger = activeTrigger(text, caret, { skills: true, namespaced: true });
+        expect(trigger?.end).toBe(19);
+        if (trigger === null) throw new Error("Expected namespaced trigger");
+        expect(applyCompletion(text, trigger, `${prefix}skill:ultrawork `))
+          .toEqual({ text: `use ${prefix}skill:ultrawork, next`, caret: 20 });
+      }
+    }
+  });
 });
 
 describe("applyCompletion", () => {

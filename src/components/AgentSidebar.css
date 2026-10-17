@@ -79,7 +79,7 @@
   list-style: none;
 }
 
-/* Pinned agents stand first in a card (Sidebar.css), each with a pin; the Agents head stays the list's only head. */
+/* Pinned agents stand first in a card (Sidebar.css); the Agents head stays the list's only head. */
 
 /* The agent row selects its pane; its ⋯ (or a right-click) opens its pin menu. */
 /* The trailing padding keeps the state cell, which the row draws at its right edge after the ⋯, as
@@ -174,7 +174,6 @@
 
 .agent-item.is-selected .agent-title { color: var(--text-strong); }
 
-/* the title gives way to its pin, which follows it as a quiet mark */
 .agent-title-line {
   display: flex;
   align-items: center;
@@ -191,6 +190,23 @@
 .agent-name {
   color: var(--text);
   font-family: var(--font-mono);
+}
+
+/* Settings -> Sidebar rows -> One line: a workspace row's height, the place dim after the title.
+   The title keeps its width first; the place takes what is left and gives way with an ellipsis. */
+.agents-sidebar.is-one-line .agent-row { min-height: var(--side-row); }
+
+.agents-sidebar.is-one-line .agent-copy {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agents-sidebar.is-one-line .agent-title-line { flex: 0 1 auto; }
+
+.agents-sidebar.is-one-line .agent-context {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .agent-row-status {

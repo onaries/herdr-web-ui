@@ -26,6 +26,18 @@ export function isWebLink(uri: string): boolean {
   return /^https?:\/\//i.test(uri);
 }
 
+/**
+ * Opens an http(s) address in a new tab, as a chat link does: a link's own click, with no opener
+ * and no referrer. window.open with a features string (even "noopener") opens a popup window instead.
+ */
+export function openWebLink(uri: string): void {
+  const link = document.createElement("a");
+  link.href = uri;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.click();
+}
+
 /** Local file URIs are read by the existing server-side file viewer. */
 export function fileUriPath(uri: string): string | null {
   // a control character belongs to no path, and URL drops a trailing one before it can be seen

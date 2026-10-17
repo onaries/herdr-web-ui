@@ -11,6 +11,7 @@ import { answerVersion, ConversationNotStarted, ConversationUnavailable, type Co
 import { toolSummary } from "./transcript-records.ts";
 import { TOOL_OUTPUT_CHARS, trimOutput } from "./tool-output.ts";
 import { processStartedAt } from "./process-start.ts";
+import { hermesSkillPrompt } from "./skill-activity.ts";
 
 export interface HermesMessageRow {
   id: number;
@@ -641,10 +642,11 @@ export function parseHermesRows(rows: readonly HermesMessageRow[], identity?: st
 
       if (row.role === "user") {
         const text = typeof row.content === "string" ? row.content : "";
+        const invocation = hermesSkillPrompt(text);
         turns.push({
           role: "user",
           ts,
-          parts: [{ kind: "text", text }],
+          parts: [{ kind: "text", text: invocation?.request ?? text }, ...(invocation?.skills ?? []).map((skill) => ({ kind: "skill" as const, skill }))],
         });
       } else if (row.role === "assistant") {
         let turn = turns[turns.length - 1];

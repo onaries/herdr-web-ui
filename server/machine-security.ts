@@ -40,7 +40,12 @@ export function sameOrigin(request: Request): boolean {
   try {
     const expected = new URL(request.url);
     // Reverse proxies commonly terminate HTTPS; do not trust arbitrary forwarded hosts.
-    if (request.headers.get("x-forwarded-proto") === "https") expected.protocol = "https:";
+    // Traefik uses "wss" for a secure WebSocket upgrade, whose browser Origin is still https.
+    const proto = request.headers.get("x-forwarded-proto");
+    const websocket = request.method === "GET" && expected.pathname === "/ws"
+      && request.headers.get("upgrade")?.toLowerCase() === "websocket"
+      && request.headers.get("connection")?.split(",").some((part) => part.trim().toLowerCase() === "upgrade");
+    if (proto === "https" || (proto === "wss" && websocket)) expected.protocol = "https:";
     return new URL(origin).origin === expected.origin;
   } catch { return false; }
 }

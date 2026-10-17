@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, appendFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, appendFileSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
-import { defaultPiSessionDir, piTranscriptInStore, unwrittenSession } from "./pi.ts";
+import { defaultPiSessionDir, piTranscriptInStore, piTranscriptPath, unwrittenSession } from "./pi.ts";
 import { transcriptPage, piTranscriptImage } from "./conversation.ts";
 import type { ConversationTurn } from "../shared/protocol.ts";
 
@@ -304,4 +305,205 @@ describe("a pi tool result's images reach the chat", () => {
     // a claude ref is a uuid and index; a pi ref names a tool call. Neither reads the other's file.
     expect(piTranscriptImage(session("claude-shaped", [asked]), "pi:c1:0")).toBeNull();
   });
+});
+
+// The bridge must resolve a Pi profile from the process running in this pane; its own
+// environment belongs to the bridge and may name a different profile.
+it("reads a resumed transcript from this pane's Pi profile store", async () => {
+  const profile = join(root, "compound-profile");
+  const profileSessions = join(profile, "sessions");
+  mkdirSync(profileSessions, { recursive: true });
+  const customTranscript = join(profileSessions, "resumed-profile.jsonl");
+  writeFileSync(customTranscript, "{\"type\":\"session\"}\n");
+  const old = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = join(root, "bridge-default");
+  try {
+    const result = await piTranscriptPath("pi-profile-pane", undefined, {
+      agent: { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: customTranscript } } as never,
+      processes: [{ pid: 777, argv: ["/usr/bin/pi"] }],
+      environOf: () => [`PI_CODING_AGENT_DIR=${profile}`],
+      home: root,
+    });
+    expect(result).toEqual({ path: customTranscript });
+  } finally {
+    if (old === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = old;
+    rmSync(profile, { recursive: true, force: true });
+    rmSync(join(root, "bridge-default"), { recursive: true, force: true });
+  }
+});
+
+it("resolves profile and session-directory overrides from each pane's Pi process", async () => {
+  for (const name of ["profile-a", "profile-b"]) {
+    const profile = join(root, name);
+    const profileStore = join(profile, "sessions");
+    mkdirSync(profileStore, { recursive: true });
+    const target = join(profileStore, `${name}.jsonl`);
+    writeFileSync(target, "{\"type\":\"session\"}\n");
+    const agent = { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: target } } as never;
+    expect(await piTranscriptPath("pane", join(root, "bridge-default"), {
+      agent,
+      processes: [{ pid: name === "profile-a" ? 790 : 791, argv: [name === "profile-a" ? "pi.exe" : "bun", ...(name === "profile-a" ? [] : ["/opt/pi.cjs"])] }],
+      environOf: () => [`PI_CODING_AGENT_DIR=${profile}`],
+      home: root,
+    })).toEqual({ path: target });
+  }
+  const sessionDir = join(root, "direct-session-dir");
+  mkdirSync(sessionDir, { recursive: true });
+  const target = join(sessionDir, "explicit.jsonl");
+  writeFileSync(target, "{\"type\":\"session\"}\n");
+  expect(await piTranscriptPath("pane", join(root, "bridge-default"), {
+    agent: { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: target } } as never,
+    processes: [{ pid: 792, argv: ["/usr/bin/pi"] }],
+    environOf: () => [`PI_CODING_AGENT_SESSION_DIR=${sessionDir}`],
+    home: root,
+  })).toEqual({ path: target });
+});
+
+it("recognizes Pi's official npm bundle entry and renamed runtime argv", async () => {
+  const profile = join(root, "npm-profile");
+  const profileStore = join(profile, "sessions");
+  mkdirSync(profileStore, { recursive: true });
+  const target = join(profileStore, "npm.jsonl");
+  writeFileSync(target, "{\"type\":\"session\"}\n");
+  const agent = { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: target } } as never;
+  const officialEntry = "/home/test/.local/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
+  expect(await piTranscriptPath("pane", undefined, {
+    agent, processes: [{ pid: 810, argv: ["/usr/bin/node", officialEntry] }],
+    environOf: () => [`PI_CODING_AGENT_DIR=${profile}`], home: root,
+  })).toEqual({ path: target });
+  expect(await piTranscriptPath("pane", undefined, {
+    agent, processes: [{ pid: 811, argv: ["pi", "--offline"] }],
+    environOf: () => [`PI_CODING_AGENT_DIR=${profile}`], home: root,
+  })).toEqual({ path: target });
+  expect(await piTranscriptPath("pane", undefined, {
+    agent, processes: [{ pid: 812, argv: ["/usr/bin/pi"] }],
+    environOf: () => [`USERPROFILE=${root}`, "PI_CODING_AGENT_DIR=~/npm-profile"], home: join(root, "bridge-home"),
+  })).toEqual({ path: target });
+});
+
+it.skipIf(process.platform !== "linux")("recovers Pi argv and process HOME from a live PID when Herdr omits argv", async () => {
+  const processHome = join(root, "pane-home");
+  const profile = join(processHome, "custom-agent");
+  const profileStore = join(profile, "sessions");
+  mkdirSync(profileStore, { recursive: true });
+  const target = join(profileStore, "pid-profile.jsonl");
+  writeFileSync(target, "{\"type\":\"session\"}\n");
+  const bridgeHome = join(root, "bridge-home");
+  const child = Bun.spawn(["/bin/bash", "-c", "exec -a pi /bin/sleep 30"], {
+    cwd: root,
+    env: { HOME: processHome, PATH: "/usr/bin:/bin", PI_CODING_AGENT_DIR: "~/custom-agent" },
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  try {
+    for (const deadline = Date.now() + 2_000;;) {
+      try {
+        if (readFileSync(`/proc/${child.pid}/cmdline`, "utf8").startsWith(`pi\0`)) break;
+      } catch { /* wait until the isolated child has exec'd */ }
+      if (Date.now() > deadline) throw new Error("isolated Pi-shaped process did not exec");
+      await Bun.sleep(10);
+    }
+    const result = await piTranscriptPath("pane", join(bridgeHome, ".pi", "agent", "sessions"), {
+      agent: { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: target } } as never,
+      processes: [{ pid: child.pid, name: "pi", cwd: root }],
+      home: bridgeHome,
+    });
+    expect(result).toEqual({ path: target });
+  } finally {
+    child.kill();
+    await child.exited;
+  }
+});
+
+it("keeps a custom Pi profile scoped to its current process and canonical store", async () => {
+  const profile = join(root, "profile-identity");
+  const profileStore = join(profile, "sessions");
+  mkdirSync(profileStore, { recursive: true });
+  const target = join(profileStore, "active.jsonl");
+  writeFileSync(target, "{\"type\":\"session\"}\n");
+  const agent = { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: target } } as never;
+  const processes = [{ pid: 781, argv: ["pi"] }];
+  const environOf = () => [`PI_CODING_AGENT_DIR=${profile}`];
+  try {
+    const defaultSession = session("default-profile");
+    const defaultAgent = { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: defaultSession } } as never;
+    expect(await piTranscriptPath("pane", store, { agent: defaultAgent, processes, environOf: () => null, home: root })).toEqual({ path: defaultSession });
+    expect(await piTranscriptPath("pane", undefined, { agent, processes, environOf, home: root })).toEqual({ path: target });
+    const ompAgent = { agent: "pi", agent_session: { agent: "omp", source: "herdr:omp", kind: "path", value: target } } as never;
+    expect(await piTranscriptPath("pane", undefined, { agent: ompAgent, processes, environOf, home: root })).toBeNull();
+    expect(await piTranscriptPath("pane", undefined, { agent, processes: [{ pid: 782, argv: ["shell"] }], environOf, home: root })).toBeNull();
+    // If process environment cannot be read, the reported custom path does not match the default store.
+    expect(await piTranscriptPath("pane", join(root, "default-sessions"), { agent, processes, environOf: () => null, home: root })).toBeNull();
+    const otherProfile = join(root, "other-profile");
+    mkdirSync(join(otherProfile, "sessions"), { recursive: true });
+    expect(await piTranscriptPath("pane", undefined, {
+      agent,
+      processes: [{ pid: 781, argv: ["pi"] }, { pid: 783, argv: ["pi"] }],
+      environOf: (pid) => [`PI_CODING_AGENT_DIR=${pid === 781 ? profile : otherProfile}`],
+      home: root,
+    })).toBeNull();
+    if (canSymlink) {
+      const escaped = join(root, "escaped.jsonl");
+      writeFileSync(escaped, "{\"type\":\"session\"}\n");
+      const link = join(profileStore, "escape.jsonl");
+      symlinkSync(escaped, link);
+      const escapedAgent = { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: link } } as never;
+      expect(await piTranscriptPath("pane", undefined, { agent: escapedAgent, processes, environOf, home: root })).toBeNull();
+    }
+  } finally { rmSync(profile, { recursive: true, force: true }); }
+});
+
+it("keeps a fresh unmessaged session inside the pane's custom profile", async () => {
+  const profileStore = join(root, "fresh-profile", "sessions");
+  mkdirSync(profileStore, { recursive: true });
+  const reported = join(profileStore, "--fresh-project--", "fresh.jsonl");
+  const result = await piTranscriptPath("fresh-pi-pane", join(root, "bridge-default", "sessions"), {
+    agent: { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: reported } } as never,
+    processes: [{ pid: 799, argv: ["/usr/bin/pi"] }],
+    environOf: () => [`PI_CODING_AGENT_DIR=${dirname(profileStore)}`],
+    home: root,
+  });
+  expect(result).toEqual({ unwritten: { id: "fresh", path: join(realpathSync(profileStore), "--fresh-project--", "fresh.jsonl") } });
+});
+
+it("does not fall back to the bridge default when the pane names a custom Pi profile", async () => {
+  const defaultStore = join(root, "stale-default", "sessions");
+  mkdirSync(defaultStore, { recursive: true });
+  const stale = join(defaultStore, "stale.jsonl");
+  writeFileSync(stale, "{\"type\":\"session\"}\n");
+  const result = await piTranscriptPath("pane", defaultStore, {
+    agent: { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: stale } } as never,
+    processes: [{ pid: 800, argv: ["/usr/bin/pi"] }],
+    environOf: () => [`PI_CODING_AGENT_DIR=${join(root, "different-profile")}`],
+    home: root,
+  });
+  expect(result).toBeNull();
+});
+
+it("keeps native default-store reports when process argv is unavailable", async () => {
+  const target = session("unverified-process");
+  const customStore = join(root, "unverified-profile", "sessions");
+  mkdirSync(customStore, { recursive: true });
+  const customTarget = join(customStore, "custom.jsonl");
+  writeFileSync(customTarget, "{\"type\":\"session\"}\n");
+  const processInfo = [{ pid: 802, name: "pi" }];
+  const reported = (value: string) => ({ agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value } }) as never;
+  const options = { processes: processInfo, argvOf: () => null, environOf: () => null, home: root };
+  expect(await piTranscriptPath("pane", store, {
+    ...options, agent: reported(target),
+  })).toEqual({ path: target });
+  expect(await piTranscriptPath("pane", store, {
+    ...options, agent: reported(customTarget),
+  })).toBeNull();
+});
+
+it("rejects Pi session-dir command-line overrides it cannot verify", async () => {
+  const target = session("cli-session-dir");
+  expect(await piTranscriptPath("pane", store, {
+    agent: { agent: "pi", agent_session: { agent: "pi", source: "herdr:pi", kind: "path", value: target } } as never,
+    processes: [{ pid: 801, argv: ["/usr/bin/pi", "--session-dir", join(root, "other") ] }],
+    environOf: () => [],
+    home: root,
+  })).toBeNull();
 });

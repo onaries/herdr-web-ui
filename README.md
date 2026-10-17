@@ -111,7 +111,7 @@ Already have the prerequisites? Install just the plugin:
 herdr plugin install devswha/herdr-web-ui
 ```
 
-With herdr running, open **[localhost:7317](http://localhost:7317)**. Pick a pane or start an agent with **New workspace**. To use your phone, scan the installer's QR code and add the app to your home screen. [Quick start →](docs/guide.md#quick-start)
+With herdr running, open **[127.0.0.1:7317](http://127.0.0.1:7317)**. On a new install on a PC with a desktop, the installer opens it in your browser for you; click **Install** in the address bar to add the app. The installed app belongs to that exact address, so keep using `http://127.0.0.1:7317` rather than `localhost`. Set `HERDR_WEB_NO_OPEN=1` before running the installer to skip opening the browser. Pick a pane or start an agent with **New workspace**. To use your phone, scan the installer's QR code and add the app to your home screen. [Quick start →](docs/guide.md#quick-start)
 
 The server listens on `127.0.0.1` by default. For access from another device, see [phone setup](docs/guide.md#on-your-phone) and [access and safety](docs/guide.md#access-and-safety).
 
@@ -135,7 +135,7 @@ No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route 
 
 **Does my code or conversation leave my machine?**
 
-Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and **Settings → About → Anonymous usage counts** shows what is sent and turns it off. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
+Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed, each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored) and once a day the app is opened (with the kinds of coding agents running), and **Settings → About → Anonymous usage counts** shows what is sent and turns it off. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
 
 **Does it work on Windows?**
 

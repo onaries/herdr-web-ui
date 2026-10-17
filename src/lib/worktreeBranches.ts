@@ -33,12 +33,14 @@ export function worktreeWorkspaceSignature(workspaces: readonly WorkspaceInfo[])
     .map(([id, identity]) => [id, identity.repoKey, identity.checkoutPath]));
 }
 
-/** One authoritative inventory per repository, preferably through its main checkout. */
+/**
+ * One authoritative inventory per repository, preferably through its main checkout. Every
+ * repository is read, one without linked worktrees too: the sidebar names each one's branch.
+ */
 export function worktreeRepositories(workspaces: readonly WorkspaceInfo[]): WorktreeRepository[] {
-  const linkedRepositories = new Set(workspaces.flatMap((workspace) => workspace.worktree?.is_linked_worktree ? [workspace.worktree.repo_key] : []));
   const repositories = new Map<string, WorkspaceInfo>();
   for (const workspace of workspaces) {
-    if (!workspace.worktree || !linkedRepositories.has(workspace.worktree.repo_key)) continue;
+    if (!workspace.worktree) continue;
     const previous = repositories.get(workspace.worktree.repo_key);
     if (!previous || (previous.worktree?.is_linked_worktree && !workspace.worktree.is_linked_worktree)) {
       repositories.set(workspace.worktree.repo_key, workspace);
@@ -60,6 +62,8 @@ function matches(branch: StoredBranch, identity: CheckoutIdentity): boolean {
 export class WorkspaceBranchCache {
   private identities = new Map<string, CheckoutIdentity>();
   private records = new Map<string, StoredBranch>();
+  /** git workspaces herdr has not marked (no `worktree`), by workspace id */
+  private unmarked = new Map<string, WorkspaceBranch>();
   private signature = "";
   private revision = 0;
 
@@ -115,9 +119,33 @@ export class WorkspaceBranchCache {
     return true;
   }
 
-  /** Filter against this render's snapshot as well, before the reconciliation effect runs. */
-  branchesFor(workspaces: readonly WorkspaceInfo[]): ReadonlyMap<string, WorkspaceBranch> {
+  /** A git workspace herdr has not marked: the branch of the checkout it answered from. */
+  applyUnmarked(workspaceId: string, listing: WorktreeListing, generation: number): boolean {
+    if (generation !== this.revision) return false;
+    const source = normalizeCheckoutPath(listing.source.source_checkout_path);
+    const entry = listing.worktrees.find((candidate) => normalizeCheckoutPath(candidate.path) === source);
+    if (!entry) return this.unmarked.delete(workspaceId);
+    const before = this.unmarked.get(workspaceId);
+    const branch = { checkoutPath: source, branch: entry.branch ?? null, isDetached: entry.is_detached };
+    this.unmarked.set(workspaceId, branch);
+    return before?.branch !== branch.branch || before.isDetached !== branch.isDetached || before.checkoutPath !== branch.checkoutPath;
+  }
+
+  /** git refused an unmarked workspace (a 4xx): it is no checkout now, so its branch goes. */
+  forgetUnmarked(workspaceId: string, generation: number): boolean {
+    return generation === this.revision && this.unmarked.delete(workspaceId);
+  }
+
+  /**
+   * Filter against this render's snapshot as well, before the reconciliation effect runs.
+   * `unmarked`: the git workspaces herdr has not marked that are still known as such.
+   */
+  branchesFor(workspaces: readonly WorkspaceInfo[], unmarked: ReadonlySet<string> = new Set()): ReadonlyMap<string, WorkspaceBranch> {
     const branches = new Map<string, WorkspaceBranch>();
+    for (const workspace of workspaces) {
+      const branch = workspace.worktree ? undefined : unmarked.has(workspace.workspace_id) ? this.unmarked.get(workspace.workspace_id) : undefined;
+      if (branch) branches.set(workspace.workspace_id, branch);
+    }
     for (const [id, identity] of checkoutIdentities(workspaces)) {
       const branch = this.records.get(id);
       if (branch && matches(branch, identity)) branches.set(id, {

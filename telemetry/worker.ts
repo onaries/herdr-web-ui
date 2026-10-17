@@ -1,13 +1,15 @@
 /**
- * The receiver of herdr web ui's anonymous install and update counts (server/telemetry.ts).
- * A Cloudflare Worker over one D1 table. It never reads the visitor's address or any header
+ * The receiver of herdr web ui's anonymous install and update counts and daily active messages
+ * (server/telemetry.ts). A Cloudflare Worker over two D1 tables: /v1/events fills `events`, and
+ * /v1/active fills `active`, one row per install and UTC day, which a later message that day
+ * replaces (the harness kinds may grow). It never reads the visitor's address or any header
  * beyond the content type; of where a request came from it keeps the country Cloudflare names
  * and nothing finer. It keeps the day rather than the time, and stores each
  * (install, event, version) once, so a replayed event counts once. It stores only the app's
  * validated, allowlisted settings snapshot. Deploy: telemetry/README.md.
  */
 
-import { telemetrySettings, type TelemetrySettings } from "../shared/telemetry.ts";
+import { ACTIVE_LATE_DAYS, telemetryHarnesses, telemetrySettings, type TelemetryHarness, type TelemetrySettings } from "../shared/telemetry.ts";
 
 /** the part of Cloudflare's D1 binding this Worker uses */
 interface D1Statement { bind(...values: unknown[]): { run(): Promise<unknown> } }
@@ -24,6 +26,17 @@ export interface StoredEvent {
   install_method: "plugin" | "managed" | "source";
   /** complete validated snapshot, or null when the sender has not provided one */
   settings: TelemetrySettings | null;
+}
+
+export interface StoredActive {
+  /** the UTC day of the visit, as the message names it */
+  day: string;
+  install_id: string;
+  version: string;
+  os: string;
+  arch: string;
+  install_method: "plugin" | "managed" | "source";
+  harnesses: TelemetryHarness[];
 }
 
 const MAX_BODY_BYTES = 8192;
@@ -73,6 +86,33 @@ export function readEvent(body: unknown, now: Date): StoredEvent | null {
   };
 }
 
+const ACTIVE_KEYS = ["event", "day", "install_id", "version", "os", "arch", "install_method", "harnesses"];
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 86_400_000;
+
+/** the active message as it is stored, or null when the body is not one, or names a day outside [today - ACTIVE_LATE_DAYS, today] */
+export function readActive(body: unknown, now: Date): StoredActive | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const value = body as Record<string, unknown>;
+  const keys = Object.keys(value);
+  if (keys.length !== ACTIVE_KEYS.length || ACTIVE_KEYS.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return null;
+  const { event, day, install_id, version, os, arch, install_method } = value;
+  if (event !== "active") return null;
+  if (typeof day !== "string" || !DAY.test(day)) return null;
+  const date = new Date(day + "T00:00:00Z");
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== day) return null;
+  const today = now.toISOString().slice(0, 10);
+  const earliest = new Date(now.getTime() - ACTIVE_LATE_DAYS * DAY_MS).toISOString().slice(0, 10);
+  if (day < earliest || day > today) return null;
+  if (typeof install_id !== "string" || !UUID.test(install_id)) return null;
+  if (typeof version !== "string" || !VERSION.test(version)) return null;
+  if (typeof os !== "string" || !WORD.test(os) || typeof arch !== "string" || !WORD.test(arch)) return null;
+  if (typeof install_method !== "string" || !METHODS.has(install_method)) return null;
+  const harnesses = telemetryHarnesses(value["harnesses"]);
+  if (!harnesses) return null;
+  return { day, install_id, version, os, arch, install_method: install_method as StoredActive["install_method"], harnesses };
+}
+
 /** the body as text, or null as soon as it passes MAX_BODY_BYTES (without waiting for the rest) */
 async function readBody(request: Request): Promise<string | null> {
   if (!request.body) return "";
@@ -92,15 +132,29 @@ async function readBody(request: Request): Promise<string | null> {
   return new TextDecoder().decode(bytes);
 }
 
-export async function handle(request: Request, env: Env, now = new Date()): Promise<Response> {
-  const url = new URL(request.url);
-  if (url.pathname !== "/v1/events") return new Response(null, { status: 404 });
+/** the parsed JSON body of a POST, or the response refusing it */
+async function readJson(request: Request): Promise<{ body: unknown } | Response> {
   if (request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
   if (!request.headers.get("content-type")?.startsWith("application/json")) return new Response(null, { status: 415 });
   const text = await readBody(request);
   if (text === null) return new Response(null, { status: 413 });
-  let body: unknown;
-  try { body = JSON.parse(text); } catch { return new Response(null, { status: 400 }); }
+  try { return { body: JSON.parse(text) as unknown }; } catch { return new Response(null, { status: 400 }); }
+}
+
+export async function handle(request: Request, env: Env, now = new Date()): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname !== "/v1/events" && url.pathname !== "/v1/active") return new Response(null, { status: 404 });
+  const parsed = await readJson(request);
+  if (parsed instanceof Response) return parsed;
+  const { body } = parsed;
+  if (url.pathname === "/v1/active") {
+    const active = readActive(body, now);
+    if (!active) return new Response(null, { status: 400 });
+    await env.DB.prepare(
+      "INSERT INTO active (day, install_id, version, os, arch, install_method, country, harnesses) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (day, install_id) DO UPDATE SET version = excluded.version, os = excluded.os, arch = excluded.arch, install_method = excluded.install_method, country = COALESCE(excluded.country, active.country), harnesses = excluded.harnesses",
+    ).bind(active.day, active.install_id, active.version, active.os, active.arch, active.install_method, requestCountry(request), JSON.stringify(active.harnesses)).run();
+    return new Response(null, { status: 204 });
+  }
   const stored = readEvent(body, now);
   if (!stored) return new Response(null, { status: 400 });
   const settings = stored.settings === null ? null : JSON.stringify(stored.settings);

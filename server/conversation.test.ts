@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
+import * as fs from "node:fs";
 import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { MAX_TURNS, parseOmpTranscript } from "./transcript-records.ts";
 import { toolVerb } from "../src/lib/toolVerbs.ts";
@@ -14,7 +15,94 @@ import * as herdr from "./herdr/client.ts";
 import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
-import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+
+describe("omo skill roots", () => {
+  it("finds the bundled plugin from a Windows canonical launcher path", async () => {
+    const canonical = win32.join("C:\\Users\\demo", "node_modules", "omo-ai", "dist", "cli.js");
+    const directory = fs.statSync(import.meta.dir);
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
+      process_info: { foreground_processes: [{ pid: -1, argv: ["node", "/install/omo-ai/dist/cli.js"] }] },
+    });
+    const realpath = spyOn(fs, "realpathSync").mockReturnValue(canonical);
+    const stat = spyOn(fs, "statSync").mockReturnValue(directory);
+    try {
+      const roots = await paneProcessRoots("omo-windows-fixture", "pi");
+      expect(roots.omo?.pluginDir).toBe(win32.join(win32.dirname(win32.dirname(canonical)), "plugin"));
+    } finally {
+      stat.mockRestore();
+      realpath.mockRestore();
+      rpc.mockRestore();
+    }
+  });
+
+  it("keeps the agent directory already resolved by process identity when cwd is missing", async () => {
+    const agentDir = import.meta.dir;
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
+      process_info: { foreground_processes: [{ pid: -1, argv: ["omo"] }] },
+    });
+    const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue({ agentDir, heldIds: [], custom: false });
+    try {
+      expect((await paneProcessRoots("omo-cwd-fixture", "omo")).omo?.agentDir).toBe(agentDir);
+    } finally {
+      identity.mockRestore();
+      rpc.mockRestore();
+    }
+  });
+});
+
+describe("pane process roots", () => {
+  for (const agent of ["claude", "codex", "omp", "gjc", "pi", "opencode", "devin", "grok", "hermes", "agy"]) {
+    it(`reads ${agent}'s environment from its foreground executable`, async () => {
+      const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
+        process_info: { foreground_processes: [
+          { pid: 101, argv: ["sh", "-c", agent], cwd: "/shell" },
+          { pid: 102, argv: [`C:\\tools\\${agent}.exe`], cwd: "/agent" },
+        ] },
+      });
+      const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
+      const environ = spyOn(omo, "processEnviron").mockReturnValue(["AGENT_HOME=/fixture"]);
+      try {
+        expect(await paneProcessRoots("process-fixture", agent)).toEqual({
+          omo: null, environ: ["AGENT_HOME=/fixture"], pid: 102, cwd: "/agent",
+        });
+        expect(rpc).toHaveBeenCalledTimes(1);
+        expect(rpc).toHaveBeenCalledWith("pane.process_info", { pane_id: "process-fixture" });
+        expect(environ).toHaveBeenCalledWith(102);
+      } finally {
+        environ.mockRestore();
+        identity.mockRestore();
+        rpc.mockRestore();
+      }
+    });
+  }
+
+  it("matches a runtime launcher but never an agent name in unrelated arguments", async () => {
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
+      process_info: { foreground_processes: [
+        { pid: 101, argv: ["echo", "codex"] },
+        { pid: 102, argv: ["node", "/tools/codex.js"], cwd: "/repo" },
+      ] },
+    });
+    const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
+    const environ = spyOn(omo, "processEnviron").mockReturnValue(null);
+    try {
+      expect((await paneProcessRoots("runtime-fixture", "codex")).pid).toBe(102);
+      expect(await paneProcessRoots("runtime-fixture", "claude")).toEqual({ omo: null, environ: null, pid: null, cwd: null });
+    } finally {
+      environ.mockRestore();
+      identity.mockRestore();
+      rpc.mockRestore();
+    }
+  });
+
+  it("returns no process roots when the process probe fails", async () => {
+    const rpc = spyOn(herdr, "herdrRpc").mockRejectedValue(new Error("fixture unavailable"));
+    try {
+      expect(await paneProcessRoots("missing-fixture", "pi")).toEqual({ omo: null, environ: null, pid: null, cwd: null });
+    } finally { rpc.mockRestore(); }
+  });
+});
 
 let mockedPanes: HerdrPane[] = [];
 let mockedProcesses: { argv?: unknown }[] = [];
@@ -201,6 +289,16 @@ const lines = [
 ].join("\n");
 
 describe("parseClaudeTranscript", () => {
+  it("restores the recorded explicit skill invocation while hiding its meta body and compact echo", async () => {
+    const fixture = await Bun.file(join(import.meta.dir, "fixtures/skill-invocations/claude.jsonl")).text();
+    const compact = JSON.stringify({ type: "user", message: { content: "<command-message>compact</command-message>\n<command-name>/compact</command-name>\n<command-args></command-args>" } });
+    const users = parseClaudeTranscript(`${fixture}\n${compact}`).filter(({ role }) => role === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0]?.parts).toEqual([
+      { kind: "text", text: "/probe-skill hello" },
+      { kind: "skill", skill: { name: "probe-skill", evidence: "invocation", status: "requested" } },
+    ]);
+  });
   it("builds user and merged assistant turns with folded tool results", () => {
     const turns = parseClaudeTranscript(lines);
     expect(turns).toEqual([

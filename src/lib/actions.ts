@@ -30,6 +30,11 @@ export interface AppActions {
    * else the selected pane's. Nothing happens without a workspace to add the tab to.
    */
   openNewTab: (target?: { machineId: string; workspaceId: string }) => void;
+  /**
+   * A shell tab in the same workspace, at once and with no dialog, as herdr's own new tab: the
+   * new pane opens unless another one was opened meanwhile. Rejects with herdr's refusal.
+   */
+  openTerminalTab: (target?: { machineId: string; workspaceId: string }) => Promise<void>;
   /** the palette, blank or opened on `query` (a `>` prefix keeps the actions alone) */
   openPalette: (query?: string) => void;
   /** A pane this page started an agent in opens in an agent's lens, whatever its first snapshot says. */

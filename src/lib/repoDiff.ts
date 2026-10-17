@@ -129,6 +129,9 @@ export function diffTargetFromState(state: unknown): RepoDiffTarget | null {
   return { machineId, paneId: text("paneId"), directory: text("directory"), scope: scope as RepoDiffScope, base: text("base"), head: text("head"), path, oldPath: text("oldPath") };
 }
 
-export function diffTargetState(state: unknown, target: RepoDiffTarget): Record<string, unknown> {
-  return { ...(state !== null && typeof state === "object" ? state as Record<string, unknown> : {}), [HISTORY_KEY]: target };
+export function diffTargetState(state: unknown, target: RepoDiffTarget | null): Record<string, unknown> {
+  const next = { ...(state !== null && typeof state === "object" ? state as Record<string, unknown> : {}) };
+  if (target === null) delete next[HISTORY_KEY];
+  else next[HISTORY_KEY] = target;
+  return next;
 }

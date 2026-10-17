@@ -12,7 +12,7 @@ import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type I
 import { USAGE_PROVIDERS, UsageService } from "./usage.ts";
 import { VoiceService } from "./voice.ts";
 import { Telemetry } from "./telemetry.ts";
-import { NOTICE_VERSION, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
+import { NOTICE_VERSION, telemetryHarnesses, type TelemetryActive, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "../src/lib/settings.ts";
 import { HerdrSocket } from "../src/lib/ws.ts";
 import { herdrRpc, paneRead, ping, sessionSnapshot, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
@@ -545,6 +545,51 @@ describe("telemetry API", () => {
       const off = await post({ enabled: false });
       expect(await off.json() as TelemetryStatus).toMatchObject({ enabled: false });
     } finally { server.stop(); rmSync(state, { recursive: true, force: true }); }
+  });
+
+  it("counts a browser's websocket visit as one active message naming only allowed harness kinds", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-telemetry-active-"));
+    const posts: { url: string; body: TelemetryActive }[] = [];
+    let firstPost!: () => void;
+    const arrived = new Promise<void>((resolve) => { firstPost = resolve; });
+    const telemetry = new Telemetry({ stateDir: state, version: "9.9.9", env: {}, url: "http://receiver.invalid/v1/events", activeUrl: "http://receiver.invalid/v1/active", noticeGraceMs: 0,
+      fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+        posts.push({ url: String(url), body: JSON.parse(String(init?.body)) as TelemetryActive });
+        if (String(url).endsWith("/v1/active")) firstPost();
+        return new Response(null, { status: 204 });
+      }) as typeof fetch });
+    const server = createServer({ port: 0, stateDir: state, token: "", telemetry });
+    const url = `http://localhost:${server.port}/api/telemetry`;
+    const headers = { "content-type": "application/json", "x-herdr-update": "1", origin: new URL(url).origin };
+    const sockets: WebSocket[] = [];
+    const snapshot = (): Promise<void> => new Promise((resolve, reject) => {
+      const socket = new WebSocket(`ws://localhost:${server.port}/ws`);
+      sockets.push(socket);
+      const timer = setTimeout(() => reject(new Error("no snapshot frame")), 10_000);
+      socket.onerror = () => { clearTimeout(timer); reject(new Error("websocket error")); };
+      socket.onmessage = (event) => {
+        if ((JSON.parse(String(event.data)) as { type: string }).type !== "snapshot") return;
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+    try {
+      expect((await fetch(url, { method: "POST", headers, body: JSON.stringify({ notice_seen: true, notice_version: NOTICE_VERSION }) })).status).toBe(200);
+      await snapshot();
+      await Promise.race([arrived, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("no active message")), 10_000))]);
+      const active = posts.filter((post) => post.url.endsWith("/v1/active"));
+      expect(active).toHaveLength(1);
+      expect(active[0]!.body.event).toBe("active");
+      expect(telemetryHarnesses(active[0]!.body.harnesses)).toEqual(active[0]!.body.harnesses);
+      expect((await (await fetch(url)).json() as TelemetryStatus).active.harnesses).toEqual(active[0]!.body.harnesses);
+      await snapshot();
+      await telemetry.active([]);
+      expect(posts.filter((post) => post.url.endsWith("/v1/active"))).toHaveLength(1);
+    } finally {
+      for (const socket of sockets) socket.close();
+      server.stop();
+      rmSync(state, { recursive: true, force: true });
+    }
   });
 
   it("keeps telemetry behind the token gate", async () => {
@@ -3114,7 +3159,11 @@ describe("pairing and identity", () => {
     const at = (headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${secured.port}/api/health?scope=bridge`, { headers }).then((r) => r.json() as Promise<{ auth: HealthAuth }>).then((b) => b.auth);
     try {
       expect(await at()).toMatchObject({ authenticated: false, reason: "token_required" });
-      expect(await at({ authorization: "Bearer t0k3n" })).toMatchObject({ authenticated: true, via: "token" });
+      expect(await at({ authorization: "Bearer wrong" })).toEqual({ required: true, authenticated: false, reason: "token_required" });
+      expect(await at({ authorization: "Bearer t0k3n" })).toMatchObject({ authenticated: true, via: "token", bearer: true });
+      // a token held in the sign-in cookie is one signing out can clear
+      expect(await at({ cookie: "herdr_web_token=t0k3n" })).toEqual({ required: false, authenticated: true, via: "token", role: "drive" });
+      expect(await at({ cookie: "herdr_web_token=t0k3n", authorization: "Bearer wrong" })).toEqual({ required: false, authenticated: true, via: "token", role: "drive" });
       // another proxy on this PC can pass a visitor's copy of the login header on: the token is asked for anyway
       expect(await at(proxied(OWNER))).toMatchObject({ authenticated: false, reason: "token_required" });
       expect(await at(proxied("someone@example.com"))).toMatchObject({ authenticated: false, reason: "token_required" });

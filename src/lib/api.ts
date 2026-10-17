@@ -68,6 +68,21 @@ import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
 import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
+import type { UsageLoginAccounts, UsageLoginProvider, UsageLoginRequest, UsageLoginStarted } from "../../shared/usage-login.ts";
+
+export function fetchUsageLoginProviders(signal: AbortSignal): Promise<{ providers: readonly UsageLoginProvider[] }> {
+  return getJson("/api/usage/login", { signal });
+}
+
+export function fetchUsageLoginAccounts(provider: string, signal: AbortSignal): Promise<UsageLoginAccounts> {
+  return getJson(`/api/usage/login?provider=${encodeURIComponent(provider)}`, { signal });
+}
+
+export function startUsageLogin(request: UsageLoginRequest): Promise<UsageLoginStarted> {
+  return getJson<UsageLoginStarted>("/api/usage/login", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request), signal: AbortSignal.timeout(30_000),
+  });
+}
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
@@ -77,6 +92,11 @@ export function fetchRemoteAccess(): Promise<RemoteAccess> {
 /** The sidebar's plan meters; `refresh` asks the providers again instead of the server's recent answer. */
 export function fetchUsage(refresh = false): Promise<UsageReport> {
   return getJson<UsageReport>(refresh ? "/api/usage?refresh=1" : "/api/usage");
+}
+
+/** Local server's CLIProxyAPI controls; secrets are only ever sent, never read back. */
+export function cliProxyRequest<T>(path = "", init: RequestInit = {}): Promise<T> {
+  return getJson<T>(`/api/cliproxy${path}`, { ...init, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(60_000) });
 }
 
 export function fetchUpdateStatus(): Promise<UpdateStatus> {

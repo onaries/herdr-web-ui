@@ -7,8 +7,9 @@ import { useT } from "../lib/i18n.ts";
 import { SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
 
 /**
- * The one-time line about anonymous install and update counts. Showing it is what lets the
- * server send (shared/telemetry.ts), so it is recorded once it has been painted in a visible
+ * The one-time line about anonymous usage counts: the install and update events and the daily
+ * active message with the harness kinds (shared/telemetry.ts). Showing it is what lets the
+ * server send, so it is recorded once it has been painted in a visible
  * tab, and the server still waits a while before the first event so the switch behind What is sent
  * stops it. It stays one line on any width; Settings says what is sent in full.
  * Closing it only hides it in this tab.
@@ -73,7 +74,7 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
     return () => { recorded = true; cancelAnimationFrame(frame); document.removeEventListener("visibilitychange", onVisibility); };
   }, [shown]);
   if (!shown || closed) return null;
-  const text = t("herdr web ui sends anonymous install and update counts.");
+  const text = t("herdr web ui sends anonymous usage counts.");
   return <div className="update-notice is-line" role="status">
     <span title={text}>{text}</span>
     <button type="button" className="btn btn-ghost" onClick={() => { setClosed(true); onOpen(); }}>{t("What is sent")}</button>
@@ -81,7 +82,7 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
   </div>;
 }
 
-/** Settings → About: the switch and the event as it would be sent. Hidden on a server that sends none. */
+/** Settings → About: the switch and the messages as they would be sent. Hidden on a server that sends none. */
 export function TelemetryControls() {
   const t = useT();
   const { settings } = useSettings();
@@ -144,8 +145,8 @@ export function TelemetryControls() {
     <SettingsGroup title={t("Anonymous usage counts")} className="settings-telemetry" section="telemetry">
       {status.blocked_by_env
         ? <p className="settings-item settings-hint">{t("Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.")}</p>
-        : <SettingsRow label={t("Send install and update counts")} description={t("Once on install and once per update, with the last browser's app settings. Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.")}>
-          <Toggle label={t("Send install and update counts")} checked={status.enabled} onChange={toggle} disabled={saving} />
+        : <SettingsRow label={t("Send anonymous usage counts")} description={t("Once on install and once per update, with the last browser's app settings, and once a day you open the app, with the kinds of coding agents running in herdr (such as claude or codex). Custom fonts, shortcuts and replies are reported only as customization flags or counts, never their text. Account identifiers, terminal content and files are excluded. The receiver stores the country, not the IP address.")}>
+          <Toggle label={t("Send anonymous usage counts")} checked={status.enabled} onChange={toggle} disabled={saving} />
         </SettingsRow>}
       {error && <p className="settings-item settings-hint" role="alert">{error}</p>}
       <details className="settings-item">
@@ -153,6 +154,8 @@ export function TelemetryControls() {
         {status.next
           ? <pre className="update-output">{JSON.stringify(status.next, null, 2)}</pre>
           : <p className="settings-hint">{t("This version has already been counted. The next event is sent after an update.")}</p>}
+        <p className="settings-hint">{t("Once a day you open the app:")}</p>
+        <pre className="update-output">{JSON.stringify(status.active, null, 2)}</pre>
         <p className="settings-hint">{t("The receiver adds the country this message comes from (two letters, such as KR). It does not store the address.")}</p>
       </details>
     </SettingsGroup>

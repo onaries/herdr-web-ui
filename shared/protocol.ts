@@ -325,6 +325,22 @@ export interface UsageReport {
   readonly providers: readonly ProviderUsage[];
 }
 
+/** CLIProxyAPI management configuration: the management key never leaves the server. */
+export interface CLIProxyStatus {
+  readonly configured: boolean;
+  readonly url: string;
+  readonly ok: boolean;
+  readonly problem: string | null;
+}
+export type CLIProxyProvider = "claude" | "codex";
+export interface CLIProxyLogin {
+  readonly url: string;
+  readonly state: string;
+}
+export interface CLIProxyLoginStatus {
+  readonly status: "wait" | "ok" | "error";
+}
+
 /** How a request got in, when it did. */
 export type AccessVia = "local" | "tailscale" | "device" | "token" | "open";
 /** Why a request did not. */
@@ -337,6 +353,8 @@ export interface HealthAuth {
   readonly required: boolean;
   readonly authenticated: boolean;
   readonly via?: AccessVia;
+  /** with `via: "token"`: the token came in an `Authorization` header (a proxy sends it), so signing out of this browser would change nothing */
+  readonly bearer?: true;
   readonly role?: DeviceRole;
   readonly reason?: AccessRefusal;
 }
@@ -999,6 +1017,12 @@ export interface SlashCommand {
   source: "builtin" | "user" | "project" | "skill" | "plugin";
   /** `$`: typed as `$name` (Codex skills); otherwise `/name` */
   trigger?: "$";
+  /**
+   * where a skill comes from, for every agent: `user` is the person's own (the agent's own
+   * directory or ~/.agents/skills), `project` the checkout's, `bundled` ships with the agent,
+   * `plugin` comes with one of its plugins
+   */
+  origin?: "user" | "project" | "bundled" | "plugin";
 }
 
 /**

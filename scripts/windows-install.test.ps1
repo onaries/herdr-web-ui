@@ -5,6 +5,7 @@ $originalPath = $env:PATH
 $originalLocalAppData = $env:LOCALAPPDATA
 $originalUserProfile = $env:USERPROFILE
 $state = @{ installed = $false; installs = 0; uninstalls = 0; ref = ''; running = $true; started = $false; failInstall = $false; bunVersion = '1.4.2'; failBun = $false; windowsRelease = $true }
+$global:herdrInstallOpened = @()
 # gh is a stand-in .cmd, first on PATH: the installer runs gh as a process, and no real star is read or given.
 # mode.txt beside it is what it answers: starred, not, refuses (the star itself), upstream, signed-out, hangs or
 # lingering (it answers, and leaves a child holding its output; child.txt gets that child's PID).
@@ -14,6 +15,7 @@ $ghStandIn = Join-Path ([IO.Path]::GetTempPath()) "herdr-installer-gh-$PID"
 $pluginRoot = Join-Path ([IO.Path]::GetTempPath()) "herdr plugin with spaces $PID"
 $launcher = Join-Path $pluginRoot 'scripts\plugin.ps1'
 function Assert([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
+function Start-Process { $global:herdrInstallOpened += ($args -join ' ') }
 
 # Tool boundaries only: no downloads, installed plugins, processes or user settings are changed.
 function git {
@@ -26,7 +28,7 @@ function git {
 function bun {
     $global:LASTEXITCODE = 0
     if ($args[0] -eq '--version') { $state.bunVersion }
-    elseif ($args[-1] -eq 'status') { 'running http://127.0.0.1:7317'; 'config: none' }
+    elseif ($args[-1] -eq 'status') { 'running http://127.0.0.1:7317 (pid 1234)'; 'config: none' }
     else { throw "Unexpected Bun command: $args" }
 }
 function herdr {
@@ -158,6 +160,42 @@ exit /b 1
     & $installer -Ref ''
     Assert ($state.uninstalls -eq 1 -and $state.installs -eq $installs + 1 -and $state.started) 'A copy without Windows support must be replaced and started'
     Write-Host 'PASS native installer release selection, rerun, Bun bootstrap, explicit ref, stopped herdr, install failure and a copy without Windows support'
+
+    # Browser opening is covered through a stand-in; this harness never starts a real browser.
+    $savedCi = $env:CI; $savedNoOpen = $env:HERDR_WEB_NO_OPEN; $savedSsh = $env:SSH_CONNECTION
+    try {
+        Remove-Item Env:\CI, Env:\HERDR_WEB_NO_OPEN, Env:\SSH_CONNECTION -ErrorAction SilentlyContinue
+        $state.installed = $false; $state.running = $true; $global:herdrInstallOpened = @()
+        $freshOutput = & $installer -Ref 'test' 6>&1 | Out-String
+        Assert ($global:herdrInstallOpened.Count -eq 1 -and $global:herdrInstallOpened[0] -eq 'http://127.0.0.1:7317') 'A fresh install must open the loopback origin exactly once'
+        Assert ($freshOutput -match 'opened http://127\.0\.0\.1:7317.*click Install') 'A fresh install must explain where to click Install'
+
+        $global:herdrInstallOpened = @()
+        $rerunOutput = & $installer -Ref 'test' 6>&1 | Out-String
+        Assert ($global:herdrInstallOpened.Count -eq 0 -and $rerunOutput -notmatch 'opened ') 'A rerun must not open the app'
+
+        foreach ($gate in 'HERDR_WEB_NO_OPEN', 'CI', 'SSH_CONNECTION') {
+            $state.installed = $false; $global:herdrInstallOpened = @()
+            Set-Item "Env:$gate" '1'
+            $output = & $installer -Ref 'test' 6>&1 | Out-String
+            Assert ($global:herdrInstallOpened.Count -eq 0) "$gate must prevent opening"
+            if ($gate -eq 'SSH_CONNECTION') {
+                Assert ($output -match 'ssh -L 7317:127\.0\.0\.1:7317' -and $output -match 'Tailscale') 'SSH guidance must include the tunnel command and Tailscale pointer'
+            }
+            Remove-Item "Env:$gate" -ErrorAction SilentlyContinue
+        }
+        $state.installed = $false; $state.running = $false; $global:herdrInstallOpened = @()
+        $stoppedOutput = & $installer -Ref 'test' 6>&1 | Out-String
+        Assert ($global:herdrInstallOpened.Count -eq 0 -and $stoppedOutput -notmatch 'opened ') 'A fresh install must not open the app when herdr is stopped'
+        $state.running = $true
+        Write-Host 'PASS Windows app opening: fresh install, rerun, HERDR_WEB_NO_OPEN, SSH tunnel and Tailscale, and CI'
+    } finally {
+        foreach ($pair in @(@('CI', $savedCi), @('HERDR_WEB_NO_OPEN', $savedNoOpen), @('SSH_CONNECTION', $savedSsh))) {
+            if ($null -eq $pair[1]) { Remove-Item "Env:$($pair[0])" -ErrorAction SilentlyContinue }
+            else { Set-Item "Env:$($pair[0])" $pair[1] }
+        }
+        $global:herdrInstallOpened = @()
+    }
 
     # The star: mentioned once on a first install, asked only at a terminal, given only on "y".
     $mention = 'a GitHub star helps other herdr users find it'

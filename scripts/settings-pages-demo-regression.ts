@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
+import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 import { JA } from "../src/lib/i18n.ja.ts";
@@ -52,7 +53,7 @@ const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body:n
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    <script type="module"`));
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>${DEMO_FILE_PREVIEW_SCRIPT}\n    <script type="module"`));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     const prefix = "/herdr-web-ui/demo/app/";
@@ -424,24 +425,24 @@ try {
         assert.deepEqual(errors, []);
         console.log("PASS a window that changes width with Settings open keeps Back to the steps it shows");
 
-        // a link to a file and Settings opens the preview over Settings; a reload there closes
-        // Settings and keeps the file, and Back then steps out of both
+        // a link to a file and Settings opens the preview (a panel beside the pane at this width) under
+        // Settings; a reload there closes Settings and keeps the file, and Back then steps out of both
         const infra = panes.infra;
         await page.goto(`${url}?ws=${infra.split(":")[0]}&pane=${encodeURIComponent(infra)}&file=README.md&settings=about`);
         await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
         await historyHolds(page, "a link to a file and Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:file-preview"] !== undefined);
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
-        await page.locator(".modal.file-viewer").waitFor();
+        await page.locator("aside.file-panel .file-viewer").waitFor();
         await historyHolds(page, "the reload on a preview over Settings", () => {
           const address = new URLSearchParams(window.location.search);
           return address.get("file") === "README.md" && !address.has("settings") && (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined;
         });
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload on a preview over Settings closes Settings");
-        assert.equal(await page.locator(".modal.file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
+        assert.equal(await page.locator("aside.file-panel .file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
         await page.goBack();
-        await page.locator(".modal.file-viewer").waitFor({ state: "detached" });
+        await page.locator("aside.file-panel .file-viewer").waitFor({ state: "detached" });
         await historyHolds(page, "Back from the reloaded preview", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
         assert.equal(await page.locator(".settings-dialog").count(), 0, "Back from the reloaded preview does not reopen Settings");
         assert.deepEqual(errors, []);

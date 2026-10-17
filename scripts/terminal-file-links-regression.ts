@@ -55,7 +55,8 @@ try {
       await page.waitForFunction(() => document.querySelector(".xterm-cursor-pointer") !== null);
       await page.mouse.click(rowBox.x + cellWidth * 12.5, rowBox.y + rowBox.height / 2);
     }
-    await page.locator(".file-viewer").waitFor();
+    // a panel beside the terminal from 980px, a dialog over it on a phone
+    await page.locator(width === 1280 ? "aside.file-panel .file-viewer" : ".modal.file-viewer").waitFor();
     console.log(`VIEWER ${width}: ${await page.locator(".file-viewer").innerText()}`);
     await page.locator(".file-viewer-text").waitFor();
     assert.match(await page.locator(".file-viewer-text").innerText(), /localhost/);

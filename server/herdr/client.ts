@@ -300,12 +300,12 @@ export interface WorkspaceCreateResult {
 }
 
 export async function workspaceCreate(
-  options: { cwd?: string; label?: string },
+  options: { cwd?: string; label?: string; env?: Record<string, string> },
   socketPath?: string,
 ): Promise<WorkspaceCreateResult> {
   return herdrRpc(
     "workspace.create",
-    { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), focus: false },
+    { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), ...(options.env === undefined ? {} : { env: options.env }), focus: false },
     socketPath,
   );
 }
@@ -318,12 +318,12 @@ export interface TabCreateResult {
 
 /** Another tab in an existing workspace. Without `cwd` herdr uses the workspace's folder. */
 export async function tabCreate(
-  options: { workspaceId: string; cwd?: string; label?: string },
+  options: { workspaceId: string; cwd?: string; label?: string; env?: Record<string, string> },
   socketPath?: string,
 ): Promise<TabCreateResult> {
   return herdrRpc(
     "tab.create",
-    { workspace_id: options.workspaceId, ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), focus: false },
+    { workspace_id: options.workspaceId, ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), ...(options.env === undefined ? {} : { env: options.env }), focus: false },
     socketPath,
   );
 }

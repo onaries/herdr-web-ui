@@ -62,6 +62,56 @@ export function skillInvocationPrompt(text: string): { skills: SkillActivity[]; 
   return skill ? { skills: [skill], request: legacy![3]?.trim() ?? "" } : null;
 }
 
+/** omp and gjc keep the user's invocation in details, separate from the expanded body. */
+export function skillPromptMessage(value: unknown): { skills: SkillActivity[]; request: string } | null {
+  const entry = record(value);
+  if (entry.type !== "custom_message" || entry.customType !== "skill-prompt" || entry.display === false) return null;
+  const details = record(entry.details);
+  const name = label(details.name);
+  if (name === null || (details.args !== undefined && typeof details.args !== "string")) return null;
+  const skill: SkillActivity = { name, evidence: "instructions", status: "loaded" };
+  if (typeof details.path === "string") skill.path = details.path;
+  return { skills: [skill], request: `/skill:${name}${details.args ? ` ${details.args}` : ""}` };
+}
+
+/** Hermes puts a single skill's instruction last, but a bundle's instruction before its bodies. */
+export function hermesSkillPrompt(text: string): { skills: SkillActivity[]; request: string } | null {
+  const single = /^\[IMPORTANT: The user has invoked the "([^"\r\n]+)" skill, indicating they want you to follow its instructions\. The full skill content is loaded below\.\]\n\n/.exec(text);
+  const bundle = /^\[IMPORTANT: The user has invoked the "([^"\r\n]+)" skill bundle, loading (\d+) skills together\. Treat every skill below as active guidance for this turn\.\]\n\n/.exec(text);
+  const name = label(single?.[1] ?? bundle?.[1]);
+  if (name === null) return null;
+  const skills: SkillActivity[] = [];
+  let instruction = "";
+  if (single !== null) {
+    const marker = "\n\nThe user has provided the following instruction alongside the skill invocation: ";
+    // Hermes appends the instruction after the skill directory; the same words in a skill body are not one.
+    const last = text.lastIndexOf(marker);
+    const directoryLine = /\n\[Skill directory: ([^\r\n]+)\]\n/;
+    const index = last >= 0 && directoryLine.test(text.slice(0, last)) ? last : -1;
+    const directory = directoryLine.exec(index < 0 ? text : text.slice(0, index));
+    const skill = directory ? loadedSkill(name, `${directory[1]}/SKILL.md`) : null;
+    if (skill === null) return null;
+    skills.push(skill);
+    if (index >= 0) instruction = text.slice(index + marker.length).trim();
+  } else if (bundle !== null) {
+    const marker = `\n\n[Loaded as part of the "${name}" skill bundle.]\n\n`;
+    const blocks = text.slice(bundle[0].length).split(marker);
+    const header = blocks.shift() ?? "";
+    const metadata = /^Bundle: ([^\r\n]+)\nSkills loaded: ([^\r\n]+)(?:\n\nUser instruction: ([\s\S]*))?$/.exec(header);
+    if (metadata === null || metadata[1] !== name || blocks.length !== Number(bundle[2])) return null;
+    const names = metadata[2]?.split(", ") ?? [];
+    if (names.length !== blocks.length) return null;
+    for (const [index, body] of blocks.entries()) {
+      const directory = /\n\[Skill directory: ([^\r\n]+)\]\n/.exec(body);
+      const skill = directory ? loadedSkill(names[index], `${directory[1]}/SKILL.md`) : null;
+      if (skill === null) return null;
+      skills.push(skill);
+    }
+    instruction = metadata[3]?.trim() ?? "";
+  }
+  return { skills, request: `/${name}${instruction ? ` ${instruction}` : ""}` };
+}
+
 export function invokedSkill(name: string, input: Record<string, unknown>): SkillActivity | null {
   if (name !== "Skill") return null;
   const skill = label(input.skill);

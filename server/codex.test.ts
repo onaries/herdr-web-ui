@@ -786,6 +786,14 @@ describe("Codex submitted first exchange", () => {
     expect(matchCodexFirstExchange(screen, [row(), row("old", started - 60_000, "Other fixture", "Different answer")], started)).toBe("new");
   });
 
+  it("matches a short greeting only when the complete exchange is unique", () => {
+    const greeting = screen.replace(prompt, "hello");
+    const own = row("new", started, "hello");
+    expect(matchCodexFirstExchange(greeting, [own], started)).toBe("new");
+    expect(matchCodexFirstExchange(greeting, [own, row("old", started - 60_000, "hello")], started)).toBeNull();
+    expect(matchCodexFirstExchange(greeting.replace("hello", " "), [{ ...own, firstUserMessage: " " }], started)).toBeNull();
+  });
+
   it("requires exact prompt punctuation and the full answer", () => {
     for (const shown of [
       screen.replace(prompt, "Check-fixture"), screen.replace(prompt, "Check fixture again"),

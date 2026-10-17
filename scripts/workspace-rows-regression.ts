@@ -119,7 +119,9 @@ try {
     // Browser locale alone does not override the app's remembered language.
     // Preserve a language changed through Settings across subsequent reloads.
     if (!localStorage.getItem("herdr-web-ui:settings")) {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false }));
+      // Two lines: the task row (pane title over its place) is what this script reads; One line,
+      // the default, is ui-regression's sidebar-rows check
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, sidebarRows: "two" }));
       localStorage.setItem(legacyFoldKey, "1");
     }
     for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
@@ -195,7 +197,7 @@ try {
   await page.getByRole("tab", { name: "Tab 1", exact: true }).click({ button: "right" });
   const tabMenu = page.getByRole("menu", { name: "Tab 1", exact: true });
   await tabMenu.waitFor();
-  assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab", "Rename tab", "Close tab"]);
+  assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab with agent…", "Rename tab", "Close tab"]);
   await page.keyboard.press("Escape");
   await tabMenu.waitFor({ state: "detached" });
   assert.equal(await page.locator(".pane-frame:visible").count(), 2, "both split panes are visible");

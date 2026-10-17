@@ -22,7 +22,6 @@ import { build as viteBuild } from "vite";
 import { repoDiffResponse } from "../server/repo-diff.ts";
 import { serveStatic } from "../server/static.ts";
 import { buildDemoApp } from "./demo-build.ts";
-import { runMoreItem } from "./header-more.ts";
 
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
 process.env["GIT_CONFIG_NOSYSTEM"] = "1";
@@ -655,8 +654,8 @@ try {
     const missing: string[] = [];
     page.on("response", (response) => { if (response.status() === 404) missing.push(response.url()); });
     await page.goto(`http://127.0.0.1:${demoServer.port}/herdr-web-ui/demo/app/`);
-    await page.locator(".header-more-button").waitFor();
-    await runMoreItem(page, "Browse files");
+    // a computer's header opens Files from its own button (the More menu keeps it on a phone)
+    await page.locator(".header-files-button").click();
     await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
     await page.getByRole("button", { name: "Changes", exact: true }).click();
     const demoRows = await changeRows(page);
@@ -670,6 +669,7 @@ try {
     await openChange(page, "src/lib/idempotency.ts");
     assert.equal(await note(page), "No lines changed.", "a pure rename has no lines");
     await closeDiff(page);
+
     assert.deepEqual(missing, [], `no missing route in the demo: ${missing.join(", ")}`);
     await context.close();
     console.log("PASS the static demo lists its fixture's changes and draws a diff with no missing route");

@@ -1,12 +1,13 @@
 /**
  * Herdr's tab row, visible for a single tab too. Left-click selects; right-click opens
- * New tab / Rename / Close at the pointer. Pane actions belong to PaneCanvas.
+ * New tab with agent / Rename / Close at the pointer. The + opens a shell tab at once, as herdr's
+ * own new tab does. Pane actions belong to PaneCanvas.
  * A phone keeps an ellipsis on the selected tab as a touch entry to its trimmed menu. Where the
  * canvas shows a split tab's panes one at a time (SOLO_PANE_QUERY), that menu lists them first.
  * That menu also carries the open pane's actions, so a lone pane shows no ellipsis of its own.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, Terminal, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Ellipsis, Pencil, Plus, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
 
@@ -40,7 +41,10 @@ export interface TabStripProps {
   workspace: WorkspaceInfo;
   selectedPane: PaneInfo;
   onSelectPane: (paneId: string) => void;
+  /** the New tab dialog, where an agent is picked */
   onNewTab: () => void;
+  /** a shell tab in this workspace, with no dialog; rejects with herdr's refusal */
+  onNewTerminal: () => Promise<void>;
   /** the open pane's actions (PaneCanvas), offered in the touch menu */
   paneActions?: (paneId: string) => RowMenuItem[];
   /** the panel the tabs control: each half of a split view has its own (lib/split.ts) */
@@ -49,7 +53,7 @@ export interface TabStripProps {
   splitDrag?: boolean;
 }
 
-export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, paneActions, panelId = PANE_TABPANEL_ID, splitDrag = false }: TabStripProps) {
+export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, onNewTerminal, paneActions, panelId = PANE_TABPANEL_ID, splitDrag = false }: TabStripProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -332,17 +336,17 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
         current: pane.pane_id === selectedPane.pane_id, run: () => onSelectPane(pane.pane_id),
       })),
       paneItems,
-      tabActions(tab, touch),
+      tabActions(tab),
     ].filter((group) => group.length > 0);
     return groups.flatMap((group, at) => at === 0 ? group : group.map((item, index) => index === 0 ? { ...item, divider: true } : item));
   };
-  // the strip's + sits beside the ⋯, so its menu does not repeat New tab
-  const tabActions = (tab: HerdrTab, touch = false): RowMenuItem[] => [
+  // the strip's + opens a shell tab; the menu keeps the dialog, where an agent is picked
+  const tabActions = (tab: HerdrTab): RowMenuItem[] => [
     ...(!reorder.moving && tabs.findIndex((entry) => entry.tab_id === tab.tab_id) > 0
       ? [{ id: "move-left", label: t("Move tab left"), icon: ArrowLeft, run: () => reorder.moveAdjacent(tab.tab_id, -1) }] : []),
     ...(!reorder.moving && tabs.findIndex((entry) => entry.tab_id === tab.tab_id) < tabs.length - 1
       ? [{ id: "move-right", label: t("Move tab right"), icon: ArrowRight, run: () => reorder.moveAdjacent(tab.tab_id, 1) }] : []),
-    ...(touch ? [] : [{ id: "new-tab", label: t("New tab"), icon: Plus, run: onNewTab }]),
+    { id: "new-agent-tab", label: t("New tab with agent…"), icon: Bot, run: onNewTab },
     { id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => beginRename(tab) },
     { id: "close-tab", label: t("Close tab"), icon: X, danger: true, run: () => requestClose(tab) },
   ];
@@ -427,7 +431,8 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
             </div>
           );
         })}
-        <button type="button" className="tab-strip-add" aria-label={t("New tab")} title={t("New tab")} onClick={onNewTab}>
+        <button type="button" className="tab-strip-add" aria-label={t("New terminal")} title={t("New terminal")}
+          onClick={() => { setError(null); void onNewTerminal().catch((reason: unknown) => setError(t("New terminal failed: {reason}", { reason: said(reason) }))); }}>
           <Plus aria-hidden="true" />
         </button>
         {error && <span className="tab-strip-error" role="alert">{error}</span>}

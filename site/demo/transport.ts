@@ -493,6 +493,27 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/portal/start" || path === "/api/portal/stop") return error("portal_unsupported", "The demo opens no public address.", 409);
   if (path === "/api/access") return json({ port: 7317, tailscale: { state: "running", dns_name: "workstation.example.ts.net", serving_url: "https://workstation.example.ts.net", serve_command: null, serve_url: null } });
   if (path === "/api/usage") return json(usageReport(), 200, { "cache-control": "no-store" });
+  if (path === "/api/usage/login") {
+    if (method === "GET") {
+      if (url.searchParams.has("provider")) return json({ accounts: url.searchParams.get("provider") === "cursor" ? ["cursor@example.test"] : [] });
+      return json({ providers: [
+        { id: "claude", cli: "claude", installed: true, local: true, separate_home: true },
+        { id: "codex", cli: "codex", installed: true, local: true, separate_home: true },
+        { id: "cursor", cli: "Cursor CLI (agent)", installed: true, local: true, separate_home: false },
+        { id: "copilot", cli: "GitHub CLI (gh)", installed: true, local: true, separate_home: false },
+        { id: "grok", cli: "grok", installed: false, local: true, separate_home: false },
+        { id: "antigravity", cli: "Antigravity CLI (agy)", installed: true, local: false, separate_home: false },
+        { id: "opencode", cli: "opencode", installed: true, local: true, separate_home: false },
+      ] });
+    }
+    return error("demo", "This demo cannot run a local CLI. Sign in on an installed server.", 409);
+  }
+  // Public demo never saves management credentials or starts a real OAuth login.
+  if (path === "/api/cliproxy") {
+    if (method === "GET") return json({ configured: false, url: "http://localhost:8317", ok: false, problem: null });
+    return error("demo", "Connect CLIProxyAPI from an installed server, not the public demo.", 409);
+  }
+  if (path === "/api/cliproxy/login" || path === "/api/cliproxy/callback") return error("demo", "Sign in from an installed server, not the public demo.", 409);
   if (path === "/api/push" || path.startsWith("/api/push/")) return error("push_unavailable", "the demo sends no alerts", 404);
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);

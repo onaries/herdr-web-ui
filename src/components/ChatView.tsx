@@ -517,7 +517,7 @@ function UserImages({ paneId, parts, text }: { paneId: string; parts: Conversati
  * every row) the last line fades into the card and "Show full message" opens it. Opened, it stays
  * open while its row leaves and re-enters the list (useChatRowToggle).
  */
-function UserMessage({ text }: { text: string }) {
+function UserMessage({ text, skills = null }: { text: string; skills?: SkillMatcher | null }) {
   const t = useT();
   const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
   const [chosen, setOpen] = useChatRowToggle("fold", false);
@@ -550,7 +550,7 @@ function UserMessage({ text }: { text: string }) {
     if (node && view && node.getBoundingClientRect().top < view.getBoundingClientRect().top) node.scrollIntoView({ block: "start" });
   }, [open]);
   return <div ref={card} className={`chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}`}>
-    <div ref={body} className="chat-bubble-body"><Markdown>{text}</Markdown></div>
+    <div ref={body} className="chat-bubble-body"><Markdown skills={skills}>{text}</Markdown></div>
     {(open || clipped) && <div className="chat-bubble-foot">
       <button type="button" className="chat-bubble-fold" aria-expanded={open} onClick={toggle}>{open ? t("Show less") : t("Show full message")}</button>
     </div>}
@@ -567,6 +567,8 @@ interface TurnProps {
   showThinking: boolean;
   /** the pane's skill names: an answer's text chips them */
   skills?: SkillMatcher | null;
+  /** omo only: the user's own `$skill:x` and the `[skill: x]` omo leaves where one stood are chipped too */
+  userSkills?: SkillMatcher | null;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -613,7 +615,7 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null }: TurnProps) {
+const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, userSkills = null }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
@@ -650,7 +652,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       <UserImages paneId={paneId} parts={turn.parts} text={text} />
       {/* one row: with a mouse the time and copy sit beside the bubble, on touch under it */}
       <div className="chat-user-row">
-        {text.length > 0 && <UserMessage text={text} />}
+        {text.length > 0 && <UserMessage text={text} skills={userSkills} />}
         <div className="chat-turn-meta">{time}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
       </div>
       {copyError}
@@ -723,7 +725,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   const { settings } = useSettings();
   const machineId = useMachineId();
   const diffContext = useMemo(() => onOpenDiff ? { openDiff: onOpenDiff, cwd } : null, [onOpenDiff, cwd]);
-  const skillMatcher = useSkillMatcher(paneId);
+  const skillMatcher = useSkillMatcher(paneId, agent);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
   const visible = paneVisible && pageVisible;
@@ -1349,7 +1351,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} />
+      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} />
     </RenderBoundary>;
   }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher]);
   const header = <>

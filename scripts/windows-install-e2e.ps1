@@ -18,6 +18,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$env:HERDR_WEB_NO_OPEN = '1'
 $origin = 'http://127.0.0.1:7317'
 $pluginId = 'devswha.herdr-web-ui'
 # where the official installers put both tools; a terminal opened before them has neither on PATH

@@ -27,6 +27,17 @@ let pushing = false;
  * so its popstate comes and clears this; the next step starts a set of its own.
  */
 let stepping: Set<string> | null = null;
+/** whether the popstate being dispatched is such a step: this module listens first, so the app's Back reads it for the same event */
+let steppedOff = false;
+
+/**
+ * Whether the popstate the app is handling is a closed sheet stepping off its own entry, not a Back.
+ * The entry it lands on is the one the sheet opened over, whose address may not say yet what the
+ * sheet's item opened (a pane the roster does not list yet): the app stays where it is.
+ */
+export function sheetSteppedOff(): boolean {
+  return steppedOff;
+}
 
 function sheetOf(state: unknown): string | null {
   if (state === null || typeof state !== "object") return null;
@@ -116,6 +127,7 @@ if (typeof window !== "undefined") {
     // the step off a closed sheet's entry: not a Back for the sheets that opened while it was on its way
     const step = stepping;
     stepping = null;
+    steppedOff = step !== null;
     // the sheets that stay: their entries are made again over where the history landed
     const again: Array<[string, () => boolean | void]> = [];
     for (const [id, onBack] of [...open]) {

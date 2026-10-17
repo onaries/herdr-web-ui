@@ -65,9 +65,6 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     const second = (await paneSplit(first, "right", false)).pane_id;
     const other = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-mobile-tabs-other" });
     otherWorkspaceId = other.workspace.workspace_id;
-    const panes: string[] = [];
-    for (const label of TAB_LABELS) panes.push((await tabCreate({ workspaceId, cwd: root, label })).root_pane.pane_id);
-    const last = panes.at(-1)!;
     await herdrRpc("pane.report_agent", { pane_id: first, source: "manual", agent: "claude", state: "idle" });
 
     await context.addInitScript(() => {
@@ -104,8 +101,24 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await assertShell(page, "chat with the keyboard up");
     assert.ok((await box(page, ".composer")).bottom <= 481, "the composer stays above the keyboard");
     await screenshot("chat-keyboard");
+
+    await page.setViewportSize({ width: 390, height: 480 });
+    await page.locator(".tab-strip").waitFor({ state: "detached" });
+    const paneMenu = firstFrame.locator(".pane-frame-menu");
+    await paneMenu.waitFor();
+    const paneMenuBox = await box(page, ".pane-frame.is-current > .pane-frame-head");
+    assert.ok(paneMenuBox.top >= (await box(page, ".app-header")).bottom, "the pane menu stays below the phone header when its lone tab is hidden");
+    await screenshot("chat-short-keyboard");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator(".tab-strip").waitFor();
+
     await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); (window as unknown as KeyboardQA).keyboardQA(null); });
     await page.waitForFunction(() => !document.documentElement.hasAttribute("data-keyboard"));
+
+    const panes: string[] = [];
+    for (const label of TAB_LABELS) panes.push((await tabCreate({ workspaceId, cwd: root, label })).root_pane.pane_id);
+    const last = panes.at(-1)!;
+    await page.getByRole("tab", { name: "docs", exact: true }).waitFor();
 
     await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
     await firstFrame.locator(".key-bar").waitFor();
@@ -140,7 +153,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     const tabItems = await tabSheet.locator(".row-sheet-item").allTextContents();
     assert.equal(tabItems.indexOf("Rename pane"), 2, "a split tab's menu lists its two panes first on a phone");
     assert.ok(tabItems.includes("Rename pane") && tabItems.includes("Close pane"), "the open pane's actions are in the tab's menu on a phone");
-    assert.deepEqual(tabItems.slice(-3), ["Move tab right", "Rename tab", "Close tab"], "the first tab offers only its available adjacent move, and no New tab beside the strip's +");
+    assert.deepEqual(tabItems.slice(-4), ["Move tab right", "New tab with agent…", "Rename tab", "Close tab"], "the first tab offers only its available adjacent move, and the agent's dialog beside the strip's shell +");
     await tabSheet.getByRole("button", { name: "Cancel", exact: true }).tap();
     await tabSheet.waitFor({ state: "detached" });
 

@@ -45,7 +45,7 @@ import { codexHistorySegments, createCodexTranscriptParser, codexOutputText, cod
 import { CODEX_IMAGE_REF, codexTranscriptImage } from "./codex-images.ts";
 import { AmbiguousClaudeStore, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import { forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
-import { omoProcessIdentity, omoSessionForPane } from "./omo.ts";
+import { omoProcessIdentity, omoSessionForPane, processEnviron } from "./omo.ts";
 import { processStartedAt } from "./process-start.ts";
 import { ompHeldTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
@@ -62,6 +62,7 @@ import { parseConversationMetadata } from "./conversation-metadata.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { invokedSkill } from "./skill-activity.ts";
+import { claudeCommandEcho } from "./skill-invocations/claude.ts";
 import { agentTaskResult, claudePeerId, claudePeerNotice, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
 import { forgetSubagents, lineNotifications, subagentDetails, taskNotification, type SubagentDetail } from "./claude-subagents.ts";
 import { launchedAgents } from "./launched-agents.ts";
@@ -95,6 +96,7 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /** Slash-command and bookkeeping entries Claude logs as user turns — not conversations. */
 function isCommandEntry(text: string): boolean {
+  if (claudeCommandEcho(text)) return false;
   return text.startsWith("<command-") || text.startsWith("<local-command") || text.startsWith("<task-");
 }
 
@@ -379,17 +381,28 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
 
     if (entry.type === "user" && typeof content === "string") {
       if (notified(content, entry.timestamp ?? null)) continue;
+      const invocation = claudeCommandEcho(content);
+      if (invocation) {
+        pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: invocation.text }, { kind: "skill", skill: invocation.skill }] }, entry);
+        continue;
+      }
       if (isCommandEntry(content)) continue;
       pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: unwrapPastes(content) }] }, entry);
       continue;
     }
 
     if (entry.type === "user" && Array.isArray(content)) {
+      const invocations: ConversationPart[] = [];
       const prompt = content.flatMap((block: unknown) => {
         if (block === null || typeof block !== "object") return [];
         const part = block as { type?: string; text?: unknown };
         // a notice can share an entry with a tool's result
         if (part.type === "text" && typeof part.text === "string" && notified(part.text, entry.timestamp ?? null)) return [];
+        const invocation = part.type === "text" && typeof part.text === "string" ? claudeCommandEcho(part.text) : null;
+        if (invocation) {
+          invocations.push({ kind: "skill", skill: invocation.skill });
+          return [invocation.text];
+        }
         return part.type === "text" && typeof part.text === "string" && !isCommandEntry(part.text.trim()) ? [part.text] : [];
       }).join("\n");
       for (const block of content) {
@@ -409,7 +422,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
         if (image?.type !== "image" || image.source?.type !== "base64" || typeof image.source.media_type !== "string" || !IMAGE_TYPES.has(image.source.media_type)) return [];
         return [{ kind: "image" as const, media_type: image.source.media_type, ref: `${entry.uuid}:${index}` }];
       });
-      if (prompt.trim() || images.length > 0) pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [...images, ...(prompt.trim() ? [{ kind: "text" as const, text: unwrapPastes(prompt) }] : [])] }, entry);
+      if (prompt.trim() || images.length > 0) pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [...images, ...(prompt.trim() ? [{ kind: "text" as const, text: unwrapPastes(prompt) }] : []), ...invocations] }, entry);
       continue;
     }
 
@@ -1131,6 +1144,66 @@ export async function paneRunsOmo(paneId: string): Promise<boolean> {
       cwd: typeof process.cwd === "string" && process.cwd ? process.cwd : undefined,
     }, "", home) !== null,
   );
+}
+
+/** Loaded roots and environment belong to the foreground agent, not the web server. */
+export async function paneProcessRoots(paneId: string, agent: string | null | undefined): Promise<{
+  omo: { agentDir: string | null; pluginDir: string | null } | null;
+  environ: string[] | null;
+  pid: number | null;
+  cwd: string | null;
+}> {
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown; cwd?: unknown }[] } }>(
+    "pane.process_info", { pane_id: paneId },
+  ).catch(() => null);
+  const home = process.env["HOME"] ?? "";
+  const directory = (path: string | null): string | null => {
+    try { return path && statSync(path).isDirectory() ? path : null; } catch { return null; }
+  };
+  let matched: { pid: number; cwd: string } | null = null;
+  for (const candidate of info?.process_info?.foreground_processes ?? []) {
+    const process = {
+      pid: typeof candidate.pid === "number" ? candidate.pid : -1,
+      argv: Array.isArray(candidate.argv) ? candidate.argv.map(String) : [],
+      cwd: typeof candidate.cwd === "string" ? candidate.cwd : "",
+    };
+    const binary = (word: string): string => nodePath.posix.basename(word.replace(/\\/g, "/")).replace(/\.(?:exe|cmd|js|mjs|cjs)$/i, "");
+    const executable = binary(process.argv[0] ?? "");
+    const launched = ["node", "bun", "python", "python3"].includes(executable) ? binary(process.argv[1] ?? "") : executable;
+    if (!matched && agent && ["claude", "codex", "omp", "gjc", "pi", "opencode", "devin", "grok", "hermes", "agy"].includes(agent) && launched === agent) {
+      matched = process;
+    }
+    const identity = omoProcessIdentity(process, "", home);
+    if (!identity) continue;
+    const agentDir = directory(identity.agentDir);
+    const argv = process.argv.map((word) => word.replace(/\\/g, "/"));
+    const extension = argv.find((word, index) => argv[index - 1] === "--extension" && /\/omo-ai\/plugin\/?$/.test(word));
+    let pluginDir = directory(extension ? nodePath.resolve(process.cwd, extension) : null);
+    if (!pluginDir) {
+      const word = argv.find((word) => word.includes("/omo-ai/"));
+      if (word) {
+        try {
+          const canonical = realpathSync(nodePath.resolve(process.cwd, word));
+          const paths = nodePath.win32.isAbsolute(canonical) && !nodePath.posix.isAbsolute(canonical) ? nodePath.win32 : nodePath.posix;
+          for (let parent = paths.dirname(canonical); parent !== paths.dirname(parent); parent = paths.dirname(parent)) {
+            if (paths.basename(parent) === "omo-ai") {
+              pluginDir = directory(paths.join(parent, "plugin"));
+              break;
+            }
+          }
+        } catch { /* launcher may have gone away; try the installed executable */ }
+      }
+    }
+    if (!pluginDir) {
+      const executable = Bun.which("omo");
+      if (executable) {
+        try { pluginDir = directory(nodePath.join(nodePath.dirname(nodePath.dirname(realpathSync(executable))), "plugin")); }
+        catch { /* no readable installed plugin */ }
+      }
+    }
+    return { omo: { agentDir, pluginDir }, environ: processEnviron(process.pid), pid: process.pid, cwd: process.cwd || null };
+  }
+  return { omo: null, environ: matched ? processEnviron(matched.pid) : null, pid: matched?.pid ?? null, cwd: matched?.cwd || null };
 }
 
 /**

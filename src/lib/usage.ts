@@ -11,7 +11,7 @@ const POLL_MS = 60_000;
 export const HIGH_PERCENT = 80;
 
 export const PROVIDER_NAME: Readonly<Record<UsageProviderId, string>> = {
-  claude: "Claude", codex: "Codex", cursor: "Cursor", copilot: "Copilot", grok: "Grok", antigravity: "Antigravity", opencode: "OpenCode",
+  claude: "Claude", codex: "Codex", cursor: "Cursor", copilot: "GitHub Copilot", grok: "Grok", antigravity: "Antigravity", opencode: "OpenCode",
 };
 
 /** AgentMark's name for each provider's logo */
@@ -144,6 +144,13 @@ export function useUsage(enabled: boolean) {
     return () => clearInterval(timer);
   }, [enabled, visible, load]);
 
-  const refresh = useCallback(() => void load(true), [load]);
+  useEffect(() => {
+    if (!enabled) return;
+    const changed = () => void load(true);
+    window.addEventListener("herdr-usage-changed", changed);
+    return () => window.removeEventListener("herdr-usage-changed", changed);
+  }, [enabled, load]);
+
+  const refresh = useCallback(() => { if (enabled) void load(true); }, [enabled, load]);
   return { report, loading, refresh };
 }

@@ -39,7 +39,34 @@ describe("worktree branch metadata", () => {
     const shell = { ...workspace("shell"), worktree: null };
     expect(worktreeRepositories([workspace("child"), workspace("other", "/other", "other"), workspace("main", "/repo", "repo", false), workspace("second"), shell]))
       .toEqual([{ repoKey: "other", workspaceId: "other" }, { repoKey: "repo", workspaceId: "main" }]);
-    expect(worktreeRepositories([workspace("main", "/repo", "repo", false), shell])).toEqual([]);
+    // a repository with no linked worktree is read too, for its branch line
+    expect(worktreeRepositories([workspace("main", "/repo", "repo", false), shell])).toEqual([{ repoKey: "repo", workspaceId: "main" }]);
+    expect(worktreeRepositories([shell])).toEqual([]);
+  });
+
+  it("names an unmarked git workspace's branch by the checkout it answered from, while it is still listed as one", () => {
+    const unmarked = { ...workspace("plain"), worktree: null };
+    const cache = new WorkspaceBranchCache();
+    cache.reconcile([unmarked]);
+    expect(cache.applyUnmarked("plain", listing([entry(null, "/repo/", "main", { is_linked_worktree: false }), entry("child", "/repo/child")]), cache.generation)).toBe(true);
+    expect(cache.branchesFor([unmarked], new Set(["plain"])).get("plain")).toEqual({ checkoutPath: "/repo", branch: "main", isDetached: false });
+    expect(cache.applyUnmarked("plain", listing([entry(null, "/repo", "main", { is_linked_worktree: false })]), cache.generation)).toBe(false);
+    expect(cache.branchesFor([unmarked]).has("plain")).toBe(false);
+    expect(cache.applyUnmarked("plain", listing([entry(null, "/repo", "main")]), cache.generation - 1)).toBe(false);
+    cache.applyUnmarked("plain", listing([entry("child", "/repo/child")]), cache.generation);
+    expect(cache.branchesFor([unmarked], new Set(["plain"])).has("plain")).toBe(false);
+  });
+
+  it("forgets an unmarked workspace's branch once git refuses it, but not from a stale read", () => {
+    const unmarked = { ...workspace("plain"), worktree: null };
+    const cache = new WorkspaceBranchCache();
+    cache.reconcile([unmarked]);
+    cache.applyUnmarked("plain", listing([entry(null, "/repo", "main", { is_linked_worktree: false })]), cache.generation);
+    expect(cache.forgetUnmarked("plain", cache.generation - 1)).toBe(false);
+    expect(cache.branchesFor([unmarked], new Set(["plain"])).has("plain")).toBe(true);
+    expect(cache.forgetUnmarked("plain", cache.generation)).toBe(true);
+    expect(cache.branchesFor([unmarked], new Set(["plain"])).has("plain")).toBe(false);
+    expect(cache.forgetUnmarked("plain", cache.generation)).toBe(false);
   });
 
   it("ignores status, names and order but changes its signature for checkout identity", () => {
