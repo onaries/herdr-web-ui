@@ -79,6 +79,29 @@ const BRIDGE_HEALTH = { ok: true, auth: { required: false, authenticated: true }
 /** What the app's full health answers while herdr does (every release since v0.1.0 has sent these). */
 const APP_HEALTH = { ok: true, herdr: { version: "0.9.3", protocol: 1 }, auth: { required: false, authenticated: true } };
 
+describe("the herdr socket", () => {
+  /** a stand-in server that records the HERDR_SOCKET it was started with, then exits */
+  const socketSeen = async (): Promise<string> => {
+    const root = join(scratch, "root");
+    mkdirSync(join(root, "server"), { recursive: true });
+    writeFileSync(join(root, "server", "managed.ts"), `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(join(scratch, "seen"))}, process.env.HERDR_SOCKET ?? "unset");\n`);
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null) });
+    const port = probe.port;
+    await probe.stop(true);
+    await run("start", { HERDR_PLUGIN_ROOT: root, HERDR_SOCKET_PATH: "/herdr/own.sock", PORT: String(port) });
+    return readFileSync(join(scratch, "seen"), "utf8");
+  };
+
+  it("passes herdr's socket on to the server", async () => {
+    expect(await socketSeen()).toBe("/herdr/own.sock");
+  });
+
+  it("keeps a HERDR_SOCKET set in the plugin config over herdr's socket", async () => {
+    writeFileSync(join(configDir, ".env"), "HERDR_SOCKET=/named/session.sock\n");
+    expect(await socketSeen()).toBe("/named/session.sock");
+  });
+});
+
 describe("port", () => {
   const keep = (port: number) => {
     mkdirSync(join(scratch, ".config", "herdr-web-ui"), { recursive: true });

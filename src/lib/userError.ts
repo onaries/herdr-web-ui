@@ -35,6 +35,15 @@ const NAMED_CAUSES: ReadonlyArray<[RegExp, () => string]> = [
   [/\bEACCES\b|\bEPERM\b|permission denied/i, () => t("No permission on the PC")],
 ];
 
+/** A failure the server names by a code of its own, whatever the status: the sentence is the next step on the PC. */
+const SENTENCE_BY_CODE: Readonly<Record<string, () => string>> = {
+  // server/preferences.ts: its state folder refused the write, so no browser can save a shared setting
+  preferences_unwritable: () => t("The server cannot save settings: check that its state folder is writable."),
+};
+
+/** The server's own words when herdr itself is away (server/herdr/client.ts names the socket it tried). */
+const HERDR_AWAY = /cannot reach herdr/i;
+
 function kindOf(cause: unknown): FailureKind {
   if (cause instanceof ApiError) {
     if (cause.status === 401 || cause.status === 403) return "signed-out";
@@ -85,9 +94,18 @@ const ADVICE: Record<FailureKind, (() => string) | null> = {
 
 /** A plain sentence for a failure, with what the server or the browser said kept beside it. */
 export function userErrorMessage(cause: unknown): UserError {
-  const message = SENTENCE[kindOf(cause)]();
+  const coded = cause instanceof ApiError && cause.code !== null && Object.hasOwn(SENTENCE_BY_CODE, cause.code) ? SENTENCE_BY_CODE[cause.code] : undefined;
+  const message = coded?.() ?? SENTENCE[kindOf(cause)]();
   const original = ownWords(cause);
   return { message, detail: original.trim() === "" || original === message ? null : original };
+}
+
+/**
+ * Whether the server's words say herdr itself is away on its PC: nothing in this browser helps, so
+ * the sidebar's state line and the header's pill add the step to take there.
+ */
+export function saysHerdrAway(words: string): boolean {
+  return HERDR_AWAY.test(words);
 }
 
 /** The failure's parts: the cause when the status or the server's words name one, the advice, the words. */

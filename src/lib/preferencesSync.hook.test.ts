@@ -8,6 +8,7 @@ import { PreferenceStore } from "../../server/preferences.ts";
 import { type PreferencesChange, type SharedPreferences } from "../../shared/preferences.ts";
 import { DEFAULT_SETTINGS, SettingsProvider, sanitizeSettings, useSettings, type Settings } from "./settings.ts";
 import { usePreferencesSync } from "./preferencesSync.ts";
+import type { UserError } from "./userError.ts";
 
 const deadlineTimer = globalThis.setTimeout;
 const clearDeadline = globalThis.clearTimeout;
@@ -25,6 +26,9 @@ describe("preferences sync real send path", () => {
   let clients: Client[];
   let revisions: number[];
   let answers: number;
+  /** the next PUT's answer when the server refuses it, in its error envelope; stored nothing */
+  let refuse: Response | null;
+  let refusals: number;
   let answerListeners: Set<() => void>;
   const dropNewKeys = (doc: SharedPreferences): SharedPreferences => ({
     ...doc, settings: Object.fromEntries(Object.entries(doc.settings).filter(([key]) => key !== "darkTheme" && key !== "lightTheme")),
@@ -34,6 +38,7 @@ describe("preferences sync real send path", () => {
     rendered: { id: string; mode: string };
     update: (patch: Partial<Settings>) => void;
     receive: (doc: SharedPreferences) => void;
+    saveError: UserError | null;
   }
 
   beforeEach(() => {
@@ -59,6 +64,8 @@ describe("preferences sync real send path", () => {
     clients = [];
     revisions = [];
     answers = 0;
+    refuse = null;
+    refusals = 0;
     answerListeners = new Set();
     store.subscribe((doc) => {
       revisions.push(doc.revision);
@@ -66,6 +73,13 @@ describe("preferences sync real send path", () => {
     });
     const fetchPreferences = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       if (init?.method !== "PUT") return Response.json(oldServer ? dropNewKeys(store.get()) : store.get());
+      if (refuse !== null) {
+        const answer = refuse;
+        refuse = null;
+        refusals++;
+        for (const listener of [...answerListeners]) listener();
+        return answer;
+      }
       const body: PreferencesChange = JSON.parse(String(init.body));
       const settings = oldServer ? dropNewKeys({ revision: 0, settings: body.settings }).settings : body.settings;
       const saved = store.set({ ...body, settings });
@@ -94,13 +108,15 @@ describe("preferences sync real send path", () => {
   async function open(raw: object = DEFAULT_SETTINGS): Promise<Client> {
     records.clear();
     records.set("herdr-web-ui:settings", JSON.stringify(raw));
-    const client: Client = { settings: sanitizeSettings(raw), rendered: { id: "amber", mode: "dark" }, update: () => { throw new Error("not mounted"); }, receive: () => { throw new Error("not mounted"); } };
+    const client: Client = { settings: sanitizeSettings(raw), rendered: { id: "amber", mode: "dark" }, update: () => { throw new Error("not mounted"); }, receive: () => { throw new Error("not mounted"); }, saveError: null };
     function Probe() {
       const context = useSettings();
       client.settings = context.settings;
       client.rendered = context.resolvedEntry;
       client.update = context.update;
-      client.receive = usePreferencesSync(true);
+      const sync = usePreferencesSync(true);
+      client.receive = sync.receive;
+      client.saveError = sync.saveError;
       return null;
     }
     await act(async () => {
@@ -234,5 +250,44 @@ describe("preferences sync real send path", () => {
     expect(store.get().settings.palette).toBe("gruvbox");
     await windows(3);
     expect(revisions).toEqual([1, 2]);
+  });
+
+  it("says in plain words that the server cannot save, and clears it once the retried change lands", async () => {
+    const client = await open();
+    expect(client.saveError).toBeNull();
+    // server/preferences.ts: its state folder refused the write
+    refuse = Response.json({ error: { code: "preferences_unwritable", message: "EACCES: permission denied, open '/state/preferences.json.7.tmp'" } }, { status: 500 });
+    await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
+    await send();
+    expect(refusals).toBe(1);
+    expect(answers).toBe(0);
+    expect(store.get().revision).toBe(0);
+    expect(client.saveError).toEqual({ message: "The server cannot save settings: check that its state folder is writable.", detail: "EACCES: permission denied, open '/state/preferences.json.7.tmp'" });
+    // the change goes out again after the wait (RETRY_MS) and lands
+    await act(async () => { jest.advanceTimersByTime(5_000); });
+    await send();
+    expect(answers).toBe(1);
+    expect(client.saveError).toBeNull();
+    expect(store.get().settings.darkTheme).toBe("tokyo-night");
+    await windows(3);
+    expect(revisions).toEqual([1]);
+  });
+
+  it("clears a save error when the server stops accepting saves", async () => {
+    const client = await open();
+    refuse = Response.json({ error: { code: "preferences_unwritable" } }, { status: 500 });
+    await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
+    await send();
+    expect(client.saveError).not.toBeNull();
+
+    refuse = Response.json({ error: { code: "forbidden" } }, { status: 403 });
+    await act(async () => { jest.advanceTimersByTime(5_000); });
+    await send();
+    expect(client.saveError).toBeNull();
+
+    refuse = Response.json({ error: { code: "not_found" } }, { status: 404 });
+    await act(async () => { client.update({ darkTheme: "gruvbox" }); });
+    await windows();
+    expect(client.saveError).toBeNull();
   });
 });

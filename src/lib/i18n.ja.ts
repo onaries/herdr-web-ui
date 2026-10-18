@@ -259,6 +259,7 @@ export const JA: Record<string, string> = {
   "reconnecting": "再接続中",
   "connecting": "接続しています",
   "herdr offline": "herdr オフライン",
+  "Start herdr on this PC, or check HERDR_SOCKET.": "この PC で herdr を起動するか、HERDR_SOCKET を確認してください。",
   "Browse files": "ファイルを参照",
   "Copy link": "リンクをコピー",
   "Link copied": "リンクをコピーしました",
@@ -882,6 +883,7 @@ export const JA: Record<string, string> = {
   "Check it and try again.": "確認してからもう一度お試しください。",
   "Check your connection, then try again.": "接続を確認してからもう一度お試しください。",
   "Try again; if it keeps failing, restart herdr web ui on the PC.": "もう一度お試しください。失敗が続く場合は PC で herdr web ui を再起動してください。",
+  "The server cannot save settings: check that its state folder is writable.": "サーバーが設定を保存できません。サーバーの状態フォルダーに書き込めるか確認してください。",
 
   // ---- sign-in ----
   "Enter all 6 digits of the pairing code.": "ペアリングコードの 6 桁をすべて入力してください。",

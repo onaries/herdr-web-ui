@@ -158,6 +158,11 @@
   overflow-wrap: anywhere;
 }
 
+/* the step to take when the server's words name one (MachineSidebar.tsx): a notch above its words */
+.machine-state-next {
+  color: var(--text);
+}
+
 .machine-empty {
   padding: 0 var(--side-gutter) var(--space-2) var(--machine-indent);
 }

@@ -31,3 +31,11 @@ export function keepDeleteRepeatText(field: Pick<HTMLTextAreaElement, "value" | 
   field.setSelectionRange(DELETE_REPEAT_TEXT.length, DELETE_REPEAT_TEXT.length);
   return true;
 }
+
+/** Before the next edit, keep the placeholder outside the range xterm will commit. */
+export function restoreDeleteRepeatCaret(field: Pick<HTMLTextAreaElement, "value" | "selectionStart" | "selectionEnd" | "setSelectionRange">): boolean {
+  if (field.value !== DELETE_REPEAT_TEXT
+    || (field.selectionStart === DELETE_REPEAT_TEXT.length && field.selectionEnd === DELETE_REPEAT_TEXT.length)) return false;
+  field.setSelectionRange(DELETE_REPEAT_TEXT.length, DELETE_REPEAT_TEXT.length);
+  return true;
+}

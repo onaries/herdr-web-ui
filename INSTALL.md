@@ -143,7 +143,8 @@ Success is JSON with `"ok":true` and a `herdr` object, for example
   state directory. Port `7317` in use: set `PORT` (see [Configuration](#configuration)) and restart.
 - An error mentioning the herdr socket: herdr is not running, or it uses a named session. For a
   named session, set `HERDR_SOCKET=~/.config/herdr/sessions/<name>/herdr.sock`. The plugin follows
-  herdr's session automatically.
+  herdr's session automatically (herdr passes it `HERDR_SOCKET_PATH`); a `HERDR_SOCKET` in the plugin
+  config overrides that.
 
 Tell the user to open <http://127.0.0.1:7317>.
 
@@ -206,7 +207,7 @@ Other PCs over SSH are added from the web UI (Settings → Remote PCs → **Add 
 | `HOST` | `127.0.0.1` | Bind address |
 | `PORT` | `7317` | HTTP and WebSocket port |
 | `HERDR_WEB_TOKEN` | unset | Token for scripts and proxies. Once set, every client that is not a paired device or the user's own Tailscale login needs it, this PC included |
-| `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket (source installs; the plugin follows herdr) |
+| `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket. The plugin follows herdr's session (herdr passes `HERDR_SOCKET_PATH`); a `HERDR_SOCKET` set in the plugin config wins |
 | `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new versions automatically |
 | `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Push keys, device subscriptions, PC registrations, update builds. Keep it across reinstalls. |
 

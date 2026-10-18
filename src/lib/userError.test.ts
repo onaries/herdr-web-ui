@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { ApiError } from "./api.ts";
 import { withChatReadDeadline } from "./chatReadDeadline.ts";
 import { setCurrentLanguage, translate } from "./i18n.ts";
-import { userErrorMessage, userFailure } from "./userError.ts";
+import { saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
 
 const api = (status: number, detail = "herdr said no") => new ApiError("/api/x", status, detail, null);
 
@@ -39,6 +39,17 @@ describe("userErrorMessage", () => {
     expect(userErrorMessage(api(502)).message).toBe("The PC could not do that. Try again; if it keeps failing, restart herdr web ui on the PC.");
   });
 
+  it("names the next step when the server's code says its state folder refused the save", () => {
+    const refused = new ApiError("/api/preferences", 500, "EACCES: permission denied, open '/state/preferences.json.7.tmp'", "preferences_unwritable");
+    expect(userErrorMessage(refused)).toEqual({ message: "The server cannot save settings: check that its state folder is writable.", detail: "EACCES: permission denied, open '/state/preferences.json.7.tmp'" });
+  });
+
+  it("ignores inherited object keys when looking up a server error code", () => {
+    for (const code of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(userErrorMessage(new ApiError("/api/x", 500, "herdr said no", code))).toEqual(userErrorMessage(api(500)));
+    }
+  });
+
   it("says the PC cannot be reached when fetch never got an answer", () => {
     for (const words of ["Failed to fetch", "NetworkError when attempting to fetch resource.", "Load failed"]) {
       expect(userErrorMessage(new TypeError(words))).toEqual({ message: "Can't reach the PC. Check your connection, then try again.", detail: words });
@@ -61,6 +72,13 @@ describe("userErrorMessage", () => {
     setCurrentLanguage("ko");
     expect(userErrorMessage(new TypeError("Failed to fetch")).message).toBe(translate("ko", "Can't reach the PC. Check your connection, then try again."));
     expect(userErrorMessage(new TypeError("Failed to fetch")).message).not.toBe("Can't reach the PC. Check your connection, then try again.");
+  });
+});
+
+describe("saysHerdrAway", () => {
+  it("reads the server's words for a herdr it could not reach, and no other failure", () => {
+    expect(saysHerdrAway("cannot reach herdr at /tmp/x/herdr.sock: connect ENOENT /tmp/x/herdr.sock")).toBe(true);
+    expect(saysHerdrAway("Disabled in herdr")).toBe(false);
   });
 });
 

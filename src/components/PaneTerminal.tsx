@@ -56,7 +56,7 @@ import { OpenFileContext } from "../lib/filePaths.ts";
 import { WebPanelContext } from "../lib/webPanel.ts";
 import { fileUriPath, hyperlinkFilter, isWebLink, openWebLink, terminalFileLinkProvider } from "../lib/terminalFileLinks.ts";
 import { adjustTerminalGlyphs } from "../lib/terminalGlyphs.ts";
-import { keepDeleteRepeatText, keyboardNeedsText } from "../lib/deleteRepeat.ts";
+import { keepDeleteRepeatText, keyboardNeedsText, restoreDeleteRepeatCaret } from "../lib/deleteRepeat.ts";
 import { terminalLabel } from "../lib/terminalLabel.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
@@ -646,6 +646,7 @@ export function PaneTerminal({
     const keepText = (event: Event): void => {
       if (!textarea || composingRef.current) return;
       if ((event instanceof KeyboardEvent || event instanceof InputEvent) && event.isComposing) return;
+      if (event.type === "focus" || event.type === "keydown") restoreDeleteRepeatCaret(textarea);
       if (event instanceof KeyboardEvent && event.keyCode === 229) return;
       keepDeleteRepeatText(textarea);
     };

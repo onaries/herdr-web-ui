@@ -790,6 +790,33 @@ try {
       });
       console.log("PASS Send tapped mid-composition finishes the word and sends");
 
+      // Some keyboards commit on blur without delivering compositionend to the app. Keep the
+      // browser's real IME edit, but hide only that notification from React.
+      await withCard(browser, 390, { status: "idle", model: "claude-opus-5-5" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await box.fill("/reload");
+        await box.evaluate((node) => node.addEventListener("compositionend", (event) => event.stopImmediatePropagation(), { capture: true }));
+        await page.evaluate(() => {
+          const fixture = window as unknown as { fitSocket: WebSocket; imeSubmits: string[] };
+          fixture.imeSubmits = [];
+          const send = fixture.fitSocket.send.bind(fixture.fitSocket);
+          fixture.fitSocket.send = (raw) => {
+            if (typeof raw === "string") { const frame = JSON.parse(raw); if (frame.type === "submit") fixture.imeSubmits.push(frame.text); }
+            send(raw);
+          };
+        });
+        const cdp = await page.context().newCDPSession(page);
+        try {
+          await cdp.send("Input.imeSetComposition", { text: "한", selectionStart: 1, selectionEnd: 1 });
+          assert.equal(await box.inputValue(), "/reload한");
+          await page.getByRole("button", { name: "Send message", exact: true }).tap();
+          await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "", undefined, { timeout: 5_000 });
+          assert.deepEqual(await page.evaluate(() => (window as unknown as { imeSubmits: string[] }).imeSubmits), ["/reload한"]);
+          assert.equal(await box.evaluate((node) => document.activeElement === node), true);
+        } finally { await cdp.detach(); }
+      });
+      console.log("PASS Send commits once when blur commits the text without compositionend");
+
       // A keyboard that does not commit inside the tap leaves it waiting for the word. A drop inside
       // that wait withdraws it: the commit after a quick reconnect sends nothing on the new connection.
       await withCard(browser, 390, { status: "idle", model: "claude-opus-5-5" }, async (page) => {

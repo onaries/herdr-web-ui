@@ -1712,7 +1712,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   raises the keyboard: the user reads first, and a tap on the message box or the grid raises it.
   A desktop's picked pane takes typing at once.
 - The Send button accepts the visible draft even while a phone IME is composing; only keyboard
-  confirmation keys are withheld. A tap keeps the text box focused so the soft keyboard stays open.
+  confirmation keys are withheld. As in the existing T3 Code-style composer, a tap preserves the
+  draft and returns focus to the text box. If Send must finish a composition, blur is an editing
+  boundary even when a mobile keyboard omits compositionend; refocus follows in the next task,
+  without stealing focus from another control. A disconnect withdraws any waiting Send.
 - Enter sends and Shift+Enter breaks by default; with **Enter sends** off, Mod+Enter sends. On touch screens the same device setting is shown inverted as **Return inserts a new line**, with Send and hardware Mod+Enter explained below it. IME Enter is ignored. Stop sends Escape. While the agent works and a draft shows Send in Stop's place, Escape in the box is Stop; an open completion menu takes the first Escape, and its X in the top corner (`.composer-menu-close`, Close suggestions, sticky over the rows it scrolls; the first row leaves it room) does the same for a pointer or a phone, which has no Escape, keeping the text and the focus in the box. T3 Code's command menu closes on Escape alone. Working Send schedules a pending message; its Send now action submits that same message now.
 
 ### Voice input

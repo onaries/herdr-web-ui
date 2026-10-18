@@ -19,6 +19,35 @@ import { CompletionTracker } from "./completion.ts";
 import type { PushService } from "./push.ts";
 import { recentSshOutput } from "./ssh.ts";
 
+describe("machine settings recovery", () => {
+  it("logs damaged settings but stays quiet for valid or missing settings", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-machine-settings-"));
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    const createManager = () => new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
+    try {
+      const valid = createManager();
+      valid.stop();
+      expect(errors).toEqual([]);
+
+      writeFileSync(join(dir, "machine-settings.json"), "{");
+      const damaged = createManager();
+      damaged.stop();
+      expect(errors).toEqual([`Cannot read ${join(dir, "machine-settings.json")}; remote PC settings start empty`]);
+
+      errors.length = 0;
+      writeFileSync(join(dir, "machine-settings.json"), JSON.stringify({ auto_update_bridges: true }));
+      const repaired = createManager();
+      repaired.stop();
+      expect(errors).toEqual([]);
+    } finally {
+      console.error = originalError;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("independently managed bridge updates", () => {
   it("requires the owning app's update controls before installing a remote bundle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "herdr-bridge-owner-"));

@@ -13,6 +13,7 @@ import { ApiError, fetchPreferences, savePreferences } from "./api.ts";
 import { DEFAULT_THEME } from "./themes.ts";
 import { sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
+import { userErrorMessage, type UserError } from "./userError.ts";
 
 const SEND_AFTER_MS = 600;
 /** a request that failed on the way (the network, a restart) is tried again after this */
@@ -93,7 +94,18 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
   return { base: { settings, pins: remote.pins === undefined ? base.pins : [...remote.pins] }, patch: patch as Partial<Settings>, pins };
 }
 
-export function usePreferencesSync(enabled: boolean): (preferences: SharedPreferences) => void {
+export interface PreferencesSync {
+  /** a document the event stream brought */
+  receive(preferences: SharedPreferences): void;
+  /**
+   * the last change the server refused to save, as a sentence for Settings (lib/userError.ts); null
+   * once a save lands. The change is sent again meanwhile. A watching device and a server without
+   * the route are not refusals.
+   */
+  saveError: UserError | null;
+}
+
+export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const { settings, update } = useSettings();
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   const latest = useRef<Local>({ settings, pins });
@@ -115,6 +127,7 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
   // the send effect runs again when this moves: after a send, or a failed one's wait
   const [attempt, setAttempt] = useState(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [saveError, setSaveError] = useState<UserError | null>(null);
   // the baseline is a ref: a document that changes nothing here still moves what is pending
   const [, setTaken] = useState(0);
 
@@ -175,17 +188,27 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
         // before comes with it, one that landed after was held and is read now
         absorb(saved);
         settled();
+        setSaveError(null);
         // what changed while this was on its way goes out now
         setAttempt((count) => count + 1);
       }).catch((error: unknown) => {
         settled();
-        if (error instanceof ApiError && error.status === 403) readOnly.current = true;
-        else if (error instanceof ApiError && error.status === 404) off.current = true;
-        else retry = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
+        if (error instanceof ApiError && error.status === 403) {
+          readOnly.current = true;
+          setSaveError(null);
+        } else if (error instanceof ApiError && error.status === 404) {
+          off.current = true;
+          setSaveError(null);
+        } else {
+          // the same refusal every RETRY_MS is one state, not a render each time
+          const next = userErrorMessage(error);
+          setSaveError((before) => before !== null && before.message === next.message && before.detail === next.detail ? before : next);
+          retry = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
+        }
       });
     }, SEND_AFTER_MS);
     return () => { window.clearTimeout(timer); window.clearTimeout(retry); };
   }, [enabled, loaded, pending, attempt, absorb, settled]);
 
-  return receive;
+  return { receive, saveError };
 }

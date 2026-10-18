@@ -126,6 +126,23 @@
   display: none;
 }
 
+/* a change the server refused to save (SettingsDialog.tsx SaveFailure), above whichever page is
+   open: the sentence in the blocked color, the server's own words behind its Details word, in the
+   interface face as every failure's folded line is (styles.css) */
+.settings-save-error > p,
+.settings-save-error > .settings-details > summary {
+  margin: 0;
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+}
+
+.settings-save-error > .settings-details > code {
+  display: block;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
 .settings-keys {
   display: inline-flex;
   gap: var(--space-1);

@@ -44,7 +44,7 @@ if (-not (Get-Command herdr -ErrorAction SilentlyContinue)) {
 }
 $herdrVersion = (Run-Tool herdr @('--version')) -replace '^herdr\s+', '' -replace '-.*$', ''
 if ([version]$herdrVersion -lt [version]'0.9.0') {
-    throw "Needs herdr 0.9.0 or newer; this is $herdrVersion. Update herdr and run this again."
+    throw "Needs herdr 0.9.0 or newer; this is $herdrVersion. Update herdr, restart it, and run this again."
 }
 
 $bun = Get-Command bun -ErrorAction SilentlyContinue

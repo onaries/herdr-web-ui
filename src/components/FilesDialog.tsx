@@ -50,9 +50,10 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
     setTab(next);
     if (next === "changes") setChangesVisited(true);
   };
-  // the folder the browser shows now (it tells each one it opens), else the one the dialog opened at
-  const folder = useRef<string | null>(null);
-  const browseFolders = (): void => onBrowseFolders(folder.current ?? (start || "~"));
+  // the folder the browser shows now (it tells each one it opens), for the pane it showed it for;
+  // else the one the dialog opened at
+  const folder = useRef<{ pane: string; path: string } | null>(null);
+  const browseFolders = (): void => onBrowseFolders(folder.current?.pane === paneId ? folder.current.path : (start || "~"));
   return (
     <div className="modal-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section ref={surface} className="modal files-dialog" role="dialog" aria-modal="true" aria-labelledby="files-dialog-title" tabIndex={-1}>
@@ -66,7 +67,9 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
           <button type="button" className="icon-button" aria-label={t("Close files")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body">
-          <div hidden={tab !== "browse"}><DirectoryBrowser start={start} onOpenFile={onOpenFile} onFolder={(path) => { folder.current = path; }} /></div>
+          {/* the dialog stays open across a pane switch (Next pane): the browser starts over on the new
+              pane's folder, as Changes reads the new pane, instead of listing the pane it was opened on */}
+          <div hidden={tab !== "browse"}><DirectoryBrowser key={paneId} start={start} onOpenFile={onOpenFile} onFolder={(path) => { folder.current = { pane: paneId, path }; }} /></div>
           {changesVisited && <div hidden={tab !== "changes"}><RepoChanges paneId={paneId} directory={start} onOpenDiff={onOpenDiff} /></div>}
         </div>
       </section>

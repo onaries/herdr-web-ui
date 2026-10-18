@@ -866,7 +866,9 @@ export function Composer({
     const element = textareaRef.current;
     if (element !== null && document.activeElement === element) {
       element.blur();
-      element.focus({ preventScroll: true });
+      setTimeout(() => {
+        if (mounted.current && document.activeElement === document.body) element.focus({ preventScroll: true });
+      });
     }
     // committed inside the tap (Chrome, Gboard): compositionend already queued the send, no note
     if (composingRef.current && commitWait.current === tapped) awaitCommit(tapped);
@@ -1225,6 +1227,11 @@ export function Composer({
 
         <textarea
           ref={textareaRef}
+          onBlur={() => {
+            // A mobile keyboard can commit on blur without delivering compositionend.
+            composingRef.current = false;
+            if (commitWait.current !== null) setTimeout(sendCommitted);
+          }}
         onCompositionStart={() => { composingRef.current = true; }}
         onCompositionEnd={() => {
           composingRef.current = false;

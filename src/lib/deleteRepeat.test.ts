@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { DELETE_REPEAT_TEXT, keepDeleteRepeatText, keyboardNeedsText } from "./deleteRepeat.ts";
+import { DELETE_REPEAT_TEXT, keepDeleteRepeatText, keyboardNeedsText, restoreDeleteRepeatCaret } from "./deleteRepeat.ts";
 
 const field = (value: string) => {
-  const box = { value, selection: [value.length, value.length], setSelectionRange(start: number, end: number) { box.selection = [start, end]; } };
+  const box = {
+    value, selection: [value.length, value.length],
+    get selectionStart() { return box.selection[0]!; },
+    get selectionEnd() { return box.selection[1]!; },
+    setSelectionRange(start: number, end: number) { box.selection = [start, end]; },
+  };
   return box;
 };
 
@@ -18,6 +23,34 @@ describe("keyboardNeedsText", () => {
     expect(keyboardNeedsText({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/27.0 Safari/605.1.15", maxTouchPoints: 0 })).toBe(false);
     expect(keyboardNeedsText({ userAgent: "Mozilla/5.0 (Linux; Android 16; Pixel 7) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36", maxTouchPoints: 5 })).toBe(false);
     expect(keyboardNeedsText({ userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36", maxTouchPoints: 0 })).toBe(false);
+  });
+});
+
+describe("restoreDeleteRepeatCaret", () => {
+  test("a caret before the kept space or a selection moves to its end", () => {
+    for (const selection of [[0, 0], [0, 1]]) {
+      const box = field(DELETE_REPEAT_TEXT);
+      box.selection = selection;
+      expect(restoreDeleteRepeatCaret(box)).toBe(true);
+      expect(box.selection).toEqual([1, 1]);
+      expect(box.value).toBe(DELETE_REPEAT_TEXT);
+    }
+  });
+
+  test("an empty field and real text retain their selection", () => {
+    for (const value of ["", " 한", "abc", "日本"]) {
+      const box = field(value);
+      box.setSelectionRange(0, 0);
+      expect(restoreDeleteRepeatCaret(box)).toBe(false);
+      expect(box.selection).toEqual([0, 0]);
+      expect(box.value).toBe(value);
+    }
+  });
+
+  test("a caret already after the kept space needs no change", () => {
+    const box = field(DELETE_REPEAT_TEXT);
+    expect(restoreDeleteRepeatCaret(box)).toBe(false);
+    expect(box.selection).toEqual([1, 1]);
   });
 });
 

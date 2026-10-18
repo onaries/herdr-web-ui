@@ -173,7 +173,9 @@ export class MachineManager {
     try {
       const saved: unknown = JSON.parse(readFileSync(this.settingsPath, "utf8"));
       if (saved && typeof saved === "object" && typeof (saved as MachineSettings).auto_update_bridges === "boolean") this.preferences.auto_update_bridges = (saved as MachineSettings).auto_update_bridges;
-    } catch { /* absent or unreadable: the defaults */ }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.settingsPath}; remote PC settings start empty`);
+    }
     if (existsSync(this.statePath)) {
       const saved: unknown = JSON.parse(readFileSync(this.statePath, "utf8"));
       if (!Array.isArray(saved)) throw new Error("Invalid machines.json; registrations were preserved");

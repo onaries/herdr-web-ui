@@ -99,6 +99,8 @@ const fileVars = CONFIG_FILES.map(readEnvFile);
 /** keys both files set to different values: `.env` wins, which someone editing `env` would not expect */
 const shadowed = fileVars.length === 2 ? Object.keys(fileVars[0]!).filter((key) => key in fileVars[1]! && fileVars[0]![key] !== fileVars[1]![key]) : [];
 const env = { ...process.env, ...Object.assign({}, ...fileVars) as Record<string, string> };
+/** HERDR_SOCKET the user put in the config files: it names the session to show, so herdr's own socket does not replace it */
+const configuredSocket = fileVars.some((vars) => (vars["HERDR_SOCKET"] ?? "") !== "");
 const PATH_KEY = platform() === "win32" ? Object.keys(env).sort().find(key => key.toLowerCase() === "path") ?? "PATH" : "PATH";
 /** the app's own state, as the server finds it (server/update-state.ts): the same path with or without herdr's env */
 const APP_STATE_DIR = env["HERDR_WEB_STATE_DIR"] || join(env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "herdr-web-ui");
@@ -301,8 +303,8 @@ async function start(): Promise<number> {
       HOST: host,
       PORT: String(port),
       // herdr hands the plugin HERDR_SOCKET_PATH; the server (and the attach it
-      // spawns) reads HERDR_SOCKET
-      ...(env["HERDR_SOCKET_PATH"] !== undefined ? { HERDR_SOCKET: env["HERDR_SOCKET_PATH"] } : {}),
+      // spawns) reads HERDR_SOCKET. A HERDR_SOCKET set in the config files wins.
+      ...(env["HERDR_SOCKET_PATH"] !== undefined && !configuredSocket ? { HERDR_SOCKET: env["HERDR_SOCKET_PATH"] } : {}),
     },
   });
   child.unref();
