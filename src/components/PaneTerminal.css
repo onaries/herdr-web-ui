@@ -46,8 +46,16 @@
   overflow: auto;
 }
 
+/* Chrome's CJK typography (text-spacing-trim, text-autospace) changes how far a glyph advances
+   with what stands beside it, and a cell grid needs every glyph to advance alike. xterm's
+   WidthCache measures a glyph as 32 copies in one span, which Chrome trims to half width when
+   the glyph is fullwidth punctuation (，。（）), so xterm gave every such mark half a glyph too
+   much letter-spacing and the rest of its row drew right of its cells: OmO's side panel stood
+   in a different column on each row, moving as scrolling brought other rows beside it (#739). */
 .pane-terminal .xterm {
   padding: var(--space-2) var(--space-2) 0;
+  text-spacing-trim: space-all;
+  text-autospace: no-autospace;
 }
 
 /* the mount's own box: everything that may overlay the pty (the chat lens) is
@@ -173,6 +181,16 @@
   pointer-events: none;
 }
 
+/* the wait-for-input live region (PaneTerminal.tsx) stays in the column while empty, clipped by the
+   shared primitive (.visually-hidden, styles.css): its 1px box is anchored at the column's top-left
+   corner, not left at its static place at the end of the column, where its negative margin stood it
+   one pixel past the column's edge and widened it (the T14 probe measures scrollWidth against
+   clientWidth). Nothing is drawn either way */
+.terminal-banners > .visually-hidden {
+  top: 0;
+  left: 0;
+}
+
 .terminal-banner {
   display: inline-flex;
   align-items: center;
@@ -184,7 +202,22 @@
   background: var(--bg-elevated);
   font-size: var(--fs-xs);
   color: var(--text-dim);
+  /* a narrow pane (a phone, or a split on a desktop) wraps a banner's sentences instead of letting
+     it run past the pane's edge; held input (.draft-held, .draft-text) stays on one line instead */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  /* what does not fit beside the text (held input, actions) goes to the next line */
+  flex-wrap: wrap;
+  /* never wider than the column, which the pane caps: while the column measures its content, the
+     held preview's percentage cap cannot act and its unbreakable command would size the banner, and
+     a right-anchored banner wider than a narrow split runs out of the pane's left edge */
+  max-width: 100%;
+}
+
+/* a button's label stays whole: it moves to the next line instead of breaking letter by letter */
+.terminal-banner button {
   white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .terminal-banner-warning {
@@ -243,108 +276,81 @@
   pointer-events: auto;
 }
 
-/* view-only state: the same pill anatomy as the banners, accent-tint layered OVER the
-   opaque elevated base - a bare tint would let live pty glyphs bleed through */
-.terminal-banner-observe {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
+/* view-only state: the neutral pill, a glyph and the word. Nothing is wrong and nothing is asked,
+   so it takes no state color; the glyph is the text's size */
+.terminal-banner-observe svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
 }
 
-/* the held-input review banner: wider than a pill because it carries text + actions,
-   so it takes --radius-md (a control-bearing box, not a chip) and grows to fit its
-   --control-h buttons. It only renders while CONNECTED (the reconnecting banner owns
-   the disconnected slot), and it is the one banner that accepts pointer events. */
+/* the held-input row: the command and its two controls (send, discard), no sentence. Wider than
+   a pill because it carries controls, so it takes --radius-md (a control-bearing box, not a chip)
+   and is as tall as its .icon-button pair (--touch-target on a coarse pointer). It only renders
+   while CONNECTED (the reconnecting banner owns the disconnected slot), and it is the one banner
+   that accepts pointer events. */
 .terminal-banner-draft {
   height: auto;
-  min-height: calc(var(--control-h) + 2 * var(--space-1));
-  padding: var(--space-1) var(--space-2);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
   max-width: 100%;
   pointer-events: auto;
 }
 
-/* the held-draft echo inside the reconnecting pill is capped like the review text */
+/* the held-draft echo inside the reconnecting pill: capped like the review text, on one line and
+   cut with an ellipsis (its title holds the whole text), so a command is never broken inside a
+   word as the wrapping banner around it would; the text itself in mono, as the review banner's */
 .draft-held {
-  max-width: 32ch;
+  max-width: min(32ch, 100%);
+  white-space: nowrap;
+  overflow-wrap: normal;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* takes the pointer back from the pass-through column, as a banner's action does: a title only
+     shows for an element the pointer can reach */
+  pointer-events: auto;
 }
 
-.terminal-banner-draft .draft-label {
-  color: var(--status-working);
+.draft-held code {
+  font-family: var(--font-mono);
 }
 
+/* the row's held text: one line, cut with an ellipsis (its title holds the whole text), never
+   broken inside a word as the wrapping banner around it would break a command at its hyphens */
 .terminal-banner-draft .draft-text {
-  max-width: 32ch;
+  max-width: min(32ch, 100%);
+  white-space: nowrap;
+  overflow-wrap: normal;
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
   color: var(--text);
 }
 
+/* what the row has to tell only when it applies (text left out, an Enter left out): a line of its
+   own under the command and its controls, starting at the left */
 .terminal-banner-draft .draft-truncated {
+  flex-basis: 100%;
   color: var(--text-dim);
 }
 
 .terminal-banner-draft .draft-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: var(--space-1);
 }
 
-.terminal-banner-draft .draft-actions button {
-  height: var(--control-h);
-  padding: 0 var(--space-2);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  font-size: var(--fs-xs);
-  font-family: inherit;
-  color: var(--text);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out);
-}
-
-.terminal-banner-draft .draft-actions button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.terminal-banner-draft .draft-actions button:active {
-  background: var(--bg-elevated);
-}
-
-.terminal-banner-draft .draft-actions button:disabled {
-  opacity: 0.7;
-  cursor: default;
-}
-
-.terminal-banner-draft .draft-actions button:focus-visible {
-  outline: var(--ring);
-  outline-offset: var(--ring-offset);
-}
-
-/* phones: banners wrap instead of overflowing - a wrapping box stops being a chip, so it
-   takes padding and --radius-md (the review banner already does) */
+/* phones: a wrapping box stops being a chip, so it takes padding and --radius-md (the held-input
+   row already does); its lines start at the left as prose does, however the box is anchored */
 @media (max-width: 480px) {
-  .terminal-banner {
-    white-space: normal;
-  }
-
-  .terminal-banner-observe,
   .terminal-banner-soon,
   .terminal-banner-warning {
     max-width: min(36ch, 100%);
-    text-align: right;
+    text-align: start;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-md);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .terminal-banner-draft .draft-actions button {
-    transition: none;
   }
 }
 

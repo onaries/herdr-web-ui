@@ -28,21 +28,59 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
 - Selecting a pane or tab in the browser never moves herdr's own focus; only an explicit action
   that needs it calls `pane.focus`.
 - Never edit `shared/herdr-api.generated.ts`; run `bun run generate:types`.
+- Theme colors are edited only in the theme blocks of `src/styles.css`. Never edit
+  `src/lib/themes.generated.ts` or the generated copies in DESIGN.md, index.html and
+  `public/manifest.webmanifest`; run `bun run generate:themes`.
 
 ## Tests and QA
 - Tests never touch the user's herdr session or real state: they use the isolated test session,
   a `mkdtempSync` `stateDir` and `port: 0` for every `createServer`. Never run the real
   `herdr update` in a test.
 - Screenshots and recordings come from the demo or a test session, never the user's live one.
+- A web UI server an agent starts for someone to open (manual QA, a preview) binds to this PC's
+  Tailscale address, not loopback: `HOST=$(tailscale ip -4) PORT=<free port> bun run server`,
+  then hand over `http://<that address>:<port>`. A Tailscale-only bind stays inside the tailnet
+  (`lanExposed` in `server/access.ts`); never bind `0.0.0.0` for it. Tests keep `port: 0` on
+  loopback.
 
 ## Maintainer workflow
 - A session that changes code, in any harness, stops at an open PR: only the maintainer's merge
   pass merges, unless the maintainer asks that session to merge. One session that edits files per
   worktree; read-only sessions may share it.
+- A worktree an agent adds with `git worktree add` that outlives its session (an open PR) goes
+  under `~/.herdr/worktrees/herdr-web-ui-wt/`, named after its branch with `/` as `-`
+  (`fix/pin-order` in `herdr-web-ui-wt/fix-pin-order`); a short-lived one may stay in the run's
+  temp root, and skills that name their own path keep it. Once its PR merges, remove the
+  worktree and its branch.
+- After a merge, the merge pass also closes the herdr worktree workspace the PR came from (the
+  one checked out on the PR's branch, under `~/.herdr/worktrees/herdr-web-ui/`), only when all
+  hold: no pane in it has an agent `working`, `git status` there is clean, and the branch's tip
+  is the PR's head commit (`gh pr view --json headRefOid`), so nothing was added after it. Close
+  it with `herdr worktree remove --workspace <id>`, never `git worktree remove`, so the
+  workspace leaves with its checkout. herdr keeps the branch: then `git branch -D` it (a squash
+  merge leaves it unmerged to git; GitHub already deletes the remote one). A workspace that
+  fails a check stays, and the merge report names it and why. A session never removes the
+  worktree it runs in.
 - Everything written to git and GitHub (commits, branches, PRs, reviews, issues, changelog
   fragments) is in English.
 - Never push a `v*` tag by hand: installed updaters act on tags alone.
+- The merge pass cuts releases ([steps](docs/development.md#releasing)); any other session may
+  prepare the release PR but stops at it. When that PR raises `REMOTE_BUNDLE_VERSION`, the merge
+  pass merges nothing touching `server/`, `shared/`, `bun.lock` or `patches/` from its merge until
+  the Release run is done.
 - Required checks: Fast checks, Integration and browser, Native Windows install. Resolve review
   threads before merging (branch protection does not enforce it).
+- CodeRabbit's reviews are rationed per PR author, and agents open their PRs as one account:
+  opening a PR, a push and each `@coderabbitai review` spend one, and past about 80 in a week
+  one comes back per hour. Open verified work ready for review, not as a draft: the merge pass
+  reviews every PR itself and stops at a draft. A draft is only for work still unfinished; push
+  it once when it is ready. Do not open a stack of PRs at once, and ask for another review
+  only after a commit that changes behaviour in `server/`, `src/` or `shared/`, an HTTP/WS
+  contract or a workflow. A rebase, changelog fragment, docs, comment or test-only commit gets
+  none.
+- A rate-limited review still shows a passing CodeRabbit check; its "Review limit reached"
+  comment means no review ran. A PR touching `--takeover`, observe permissions, queued input,
+  authentication, an HTTP/WS contract or a workflow waits for a real review. Any other PR says
+  in a comment that CodeRabbit did not review it, and merges on its checks and the maintainer.
 - Changelog entries go in `changelog.d/` fragments ([format](changelog.d/README.md)), not
   CHANGELOG.md; only a release folds them in.

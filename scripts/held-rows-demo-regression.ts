@@ -120,7 +120,7 @@ try {
       };
 
       {
-        const { page, errors, close } = await open({ [panes.web]: stored(["first held", "second held"]), [panes.infra]: stored(["infra held"]) }, panes.web);
+        const { page, errors, close } = await open({ [panes.web]: stored(["first held", "second held"]), [panes.omp]: stored(["infra held"]) }, panes.web);
         try {
           const toggle = page.locator(".composer-queue-toggle");
           await toggle.waitFor();
@@ -166,7 +166,7 @@ try {
           console.log("PASS a list that was emptied and filled again starts folded");
 
           // focus in another pane's row does not open this pane's rows
-          await select(page, panes.infra);
+          await select(page, panes.omp);
           await page.locator(".composer-queue-text").first().focus();
           assert.equal((await heldOf(page)).toggle, false, "a ready list is never folded");
           await select(page, panes.web);
@@ -191,7 +191,7 @@ try {
       }
 
       {
-        const { page, errors, close } = await open({ [panes.web]: stored(["first held", "second held"]), [panes.infra]: stored(["infra held"]) }, panes.web);
+        const { page, errors, close } = await open({ [panes.web]: stored(["first held", "second held"]), [panes.omp]: stored(["infra held"]) }, panes.web);
         try {
           const toggle = page.locator(".composer-queue-toggle");
           await toggle.waitFor();
@@ -201,7 +201,7 @@ try {
           await page.locator(".composer-queue-item .composer-queue-error").waitFor();
           await page.evaluate(() => { (window as unknown as { refuseSubmits: boolean }).refuseSubmits = false; });
           // back in the pane, the error alone holds the rows open: the user never opened them here
-          await select(page, panes.infra);
+          await select(page, panes.omp);
           await page.locator(".composer-queue.is-ready").waitFor();
           await select(page, panes.web);
           await page.locator(".composer-queue-item .composer-queue-error").waitFor();
@@ -227,7 +227,7 @@ try {
 
           // focus on this pane's button says nothing about the pane the user moves to
           await toggle.focus();
-          await select(page, panes.infra);
+          await select(page, panes.omp);
           await page.locator(".composer-queue.is-ready").waitFor();
           await page.waitForFunction(() => document.activeElement?.classList.contains("composer-text") === true, undefined, { timeout: 3_000 });
           await page.keyboard.type("typed here");
@@ -240,13 +240,13 @@ try {
 
       {
         // a touch screen gives the next pane's message box no focus: nothing else may take it there
-        const { page, errors, close } = await open({ [panes.web]: stored(["first held"]), [panes.infra]: stored(["infra held"]) }, panes.web, true);
+        const { page, errors, close } = await open({ [panes.web]: stored(["first held"]), [panes.omp]: stored(["infra held"]) }, panes.web, true);
         try {
           assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), true);
           const toggle = page.locator(".composer-queue-toggle");
           await toggle.waitFor();
           await toggle.focus();
-          await select(page, panes.infra);
+          await select(page, panes.omp);
           await page.locator(".composer-queue.is-ready").waitFor();
           assert.equal(await page.locator(".composer-queue-text").inputValue(), "infra held");
           assert.notEqual((await heldOf(page)).active, "composer-queue-list", "the other pane's list is not the one the button stood for");
@@ -257,7 +257,7 @@ try {
 
       {
         // each row's hidden label scrolls with the list: it must not grow the pane's own overflow
-        const { page, errors, close } = await open({ [panes.infra]: stored(Array.from({ length: 30 }, (_, index) => `held ${index + 1}`)) }, panes.infra);
+        const { page, errors, close } = await open({ [panes.omp]: stored(Array.from({ length: 30 }, (_, index) => `held ${index + 1}`)) }, panes.omp);
         try {
           assert.equal(await page.locator(".composer-queue-text").count(), 30);
           const host = await page.evaluate(() => { const node = document.querySelector(".terminal-host")!; return { scroll: node.scrollHeight, client: node.clientHeight }; });

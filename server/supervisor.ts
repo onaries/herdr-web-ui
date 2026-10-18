@@ -75,7 +75,9 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
         if (message?.type === "update-status-request") publish();
         if (message?.type === "update-command" && (message.command === "check" || message.command === "install")) {
           const command = message.command;
-          void started.promise.then(() => updater.request(command));
+          // a browser's Check or Update is a user's own request: it does not wait the unshallow
+          // backoff out, the 5-minute timer does
+          void started.promise.then(() => updater.request(command, true));
         }
       },
       onExit(proc, code) {

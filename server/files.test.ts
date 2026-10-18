@@ -109,4 +109,15 @@ describe("paneFiles", () => {
     writeFileSync(join(root, "src", "secret.txt"), "private");
     expect(await paneFiles(join(root, "src"), "", 100)).toEqual(["api.ts", "components/PromptCard.tsx"]);
   });
+
+  it("keeps files listed after a folder of thousands in the git inventory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "files-search-"));
+    roots.push(root);
+    mkdirSync(join(root, "a-data"));
+    for (let index = 0; index < 5_100; index += 1) writeFileSync(join(root, "a-data", `page-${index}.txt`), "");
+    mkdirSync(join(root, "docs", "design"), { recursive: true });
+    writeFileSync(join(root, "docs", "design", "11_two-version-design.md"), "# design");
+    expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+    expect(await paneFiles(root, "two-version", 20)).toEqual(["docs/design/11_two-version-design.md"]);
+  });
 });

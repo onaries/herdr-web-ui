@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { installedState, installHelp, type InstalledStateInput } from "./install.ts";
+import { installedState, installHelp, isAppWindow, type InstalledStateInput } from "./install.ts";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const IPAD = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
@@ -132,5 +132,28 @@ describe("installHelp", () => {
   it("asks for HTTPS before anything else a browser needs to install", () => {
     expect(installHelp({ userAgent: CHROME, secure: false, maxTouchPoints: 0 })).toContain("HTTPS");
     expect(installHelp({ userAgent: ANDROID, secure: false, maxTouchPoints: 5 })).toContain("HTTPS");
+  });
+});
+
+describe("isAppWindow", () => {
+  // the window this page runs in, not whether the app is installed somewhere on the device
+  const inWindow = (modes: string[], standalone = false): boolean => {
+    const saved = { window: globalThis.window, navigator: globalThis.navigator };
+    Object.assign(globalThis, {
+      window: { matchMedia: (query: string) => ({ matches: modes.some((mode) => query === `(display-mode: ${mode})`) }) },
+      navigator: { standalone },
+    });
+    try { return isAppWindow(); } finally { Object.assign(globalThis, saved); }
+  };
+
+  it("is the app's own window in standalone, minimal-ui or iOS standalone", () => {
+    expect(inWindow(["standalone"])).toBe(true);
+    expect(inWindow(["minimal-ui"])).toBe(true);
+    expect(inWindow([], true)).toBe(true);
+  });
+
+  it("is a plain browser tab even after an app window was seen", () => {
+    expect(inWindow(["standalone"])).toBe(true);
+    expect(inWindow(["browser"])).toBe(false);
   });
 });

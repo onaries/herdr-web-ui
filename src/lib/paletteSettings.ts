@@ -16,7 +16,7 @@ export interface SettingsPageEntry {
  */
 export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
   return [
-    { id: "appearance", label: t("Appearance"), aliases: t("theme dark light mode colors palette density language sidebar logos") },
+    { id: "appearance", label: t("Appearance"), aliases: t("theme themes palette dark light mode colors density language sidebar logos") },
     { id: "chat", label: t("Chat"), aliases: t("chat font size message width composer enter send thinking code") },
     { id: "terminal", label: t("Terminal"), aliases: t("terminal font size key bar keyboard clipboard") },
     { id: "alerts", label: t("Alerts"), aliases: t("notifications sound push bell needs input finished") },

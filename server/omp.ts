@@ -1,14 +1,14 @@
 /**
- * omp sessions from the pane's own omp process. herdr's agent.get names omp's session file for
- * most panes, but loses some: no session at all, or a Claude session id where omp runs (seen
- * 2026-10-07 on herdr 0.9.3, for omp processes that had been running for days). omp keeps its
- * store the way GJC does, so the process's open transcript or terminal breadcrumb names it then.
+ * OMP sessions from the pane's own process when Herdr supplies no usable session path.
+ * Herdr deliberately omits recognized agents' argv on WSL to avoid blocking procfs reads.
+ * Recover process identity outside the bridge, then use the open transcript or breadcrumb.
  */
 import { join } from "node:path";
 
 import { paneProcessInfo } from "./herdr/client.ts";
 import { heldTranscript, runsAgent } from "./gjc-runtime.ts";
 import { processEnviron } from "./omo.ts";
+import { isWsl, ompProcessMemory } from "./omp-process.ts";
 
 const OMP_EXECUTABLE = /(^|[\\/])omp(?:\.exe|\.[cm]?js)?$/i;
 
@@ -39,14 +39,30 @@ export async function ompHeldTranscript(paneId: string, cwd: string, home = proc
   const info = await paneProcessInfo(paneId).catch(() => null);
   let agentDir: string | null = null;
   const pids: number[] = [];
-  for (const process of info?.foreground_processes ?? []) {
-    const argv = Array.isArray(process.argv) ? process.argv.map(String) : [];
-    if (typeof process.pid !== "number" || !isOmpProcess(argv)) continue;
-    const dir = ompAgentDir(argv, processEnviron(process.pid), home);
+  const environs = new Map<number, readonly string[]>();
+  for (const foreground of info?.foreground_processes ?? []) {
+    if (typeof foreground.pid !== "number") continue;
+    let argv = Array.isArray(foreground.argv) ? foreground.argv.map(String) : [];
+    if (argv.length > 0 && !isOmpProcess(argv)) continue;
+    // Herdr omits a recognized agent's argv on WSL; there, and only there, procfs memory reads
+    // may block, so they go through the helper. Elsewhere herdr's argv and a direct read hold.
+    const probe = process.platform === "linux" && (argv.length === 0 || isWsl());
+    let environ: readonly string[] | undefined;
+    if (probe) {
+      const memory = await ompProcessMemory(foreground.pid, argv.length === 0);
+      if (memory === null) continue;
+      if (argv.length === 0) argv = memory.argv;
+      environ = memory.environ;
+    }
+    if (!isOmpProcess(argv)) continue;
+    const dir = ompAgentDir(argv, environ ?? processEnviron(foreground.pid), home);
     // a moved store, or two omp processes keeping different ones: nothing says which the pane shows
     if (dir === null || agentDir !== null && dir !== agentDir) return null;
     agentDir = dir;
-    pids.push(process.pid);
+    pids.push(foreground.pid);
+    if (environ !== undefined) environs.set(foreground.pid, environ);
   }
-  return agentDir === null ? null : heldTranscript(agentDir, cwd, pids).path;
+  if (agentDir === null) return null;
+  // a probed process's environment stands in for gjcTerminal's /proc read, which could block too
+  return heldTranscript(agentDir, cwd, pids, (pid) => environs.get(pid)).path;
 }

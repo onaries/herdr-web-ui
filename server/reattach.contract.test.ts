@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { testShellEnv } from "../scripts/test-shell.ts";
 
 /**
  * A live handoff (`herdr update --handoff`, `herdr server live-handoff`) moves every pane to a
@@ -24,7 +25,7 @@ const config = mkdtempSync(process.platform === "win32" ? join(tmpdir(), "hwu-")
 const socket = join(config, "herdr", "sessions", SESSION, "herdr.sock");
 const herdr = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr") || "herdr";
 // run from inside a herdr pane, this process carries that pane's HERDR_* variables
-const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), XDG_CONFIG_HOME: config };
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), ...testShellEnv(config), XDG_CONFIG_HOME: config };
 
 async function cli(...args: string[]): Promise<{ code: number; output: string }> {
   const proc = Bun.spawn([herdr, "--session", SESSION, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env });

@@ -20,6 +20,7 @@ try {
   await viteBuild({ configFile: join(repo, "vite.config.ts"), root, publicDir: false, logLevel: "warn", build: { outDir: output, emptyOutDir: true } });
   const terminalReads: string[] = [];
   let structured = false, resolveAgent!: () => void, agentReadArrived!: () => void;
+  let lookupTimeout = false;
   let source = "codex-transcript";
   let turns: ConversationTurn[] = [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Structured conversation arrived" }] }];
   // resolved by the server's handler: a browser-side waitForRequest can win the race against it
@@ -29,7 +30,10 @@ try {
     if (url.pathname === "/api/pane/prompt") return Response.json({ prompt: null });
     // the chat's skill matcher asks for the pane's commands
     if (url.pathname === "/api/pane/commands") return Response.json({ commands: [] });
-    if (url.pathname === "/api/pane/conversation") return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? source : "scrollback", cursor: null, turns: structured && pane === "agent" ? turns : [] });
+    if (url.pathname === "/api/pane/conversation") {
+      if (lookupTimeout && pane === "agent") return Response.json({ error: { code: "gjc_sdk_timeout", message: "GJC SDK lookup timed out." } }, { status: 504 });
+      return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? source : "scrollback", cursor: null, turns: structured && pane === "agent" ? turns : [] });
+    }
     if (url.pathname === "/api/pane/read") {
       terminalReads.push(pane ?? "");
       if (pane === "error") return Response.json({ error: { code: "read_failed", message: "Terminal output unavailable" } }, { status: 500 });
@@ -63,6 +67,18 @@ try {
   structured = true;
   await page.evaluate(() => window.chatFallbackQA.refresh());
   await page.getByText("Structured conversation arrived", { exact: true }).waitFor();
+  lookupTimeout = true;
+  const timedOut = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/pane/conversation" && response.status() === 504);
+  await page.evaluate(() => window.chatFallbackQA.refresh());
+  await timedOut;
+  await page.getByText("Waiting for the PC…", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Structured conversation arrived", { exact: true }).isVisible(), true, "a temporary SDK timeout keeps the already rendered conversation");
+  assert.equal(await page.locator(".chat-terminal-fallback").count(), 0, "a timeout does not replace the conversation with terminal fallback");
+  lookupTimeout = false;
+  turns = [{ role: "assistant", ts: null, parts: [{ kind: "text", text: "Conversation recovered after SDK timeout" }] }];
+  await page.evaluate(() => window.chatFallbackQA.refresh());
+  await page.getByText("Conversation recovered after SDK timeout", { exact: true }).waitFor();
+  await page.getByText("Waiting for the PC…", { exact: true }).waitFor({ state: "hidden" });
   const nextKindRead = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/pane/conversation", { timeout: 3_000 });
   await page.evaluate(() => window.chatFallbackQA.agent("claude"));
   await nextKindRead;
@@ -75,9 +91,19 @@ try {
   await page.evaluate(() => window.chatFallbackQA.pane("error"));
   await summary.waitFor();
   await summary.click();
-  const fallbackError = page.getByText("Terminal output unavailable");
+  // the failure is one line naming what failed, Try again beside it (no cause is known), and the
+  // advice with the server's words folded behind Details (lib/userError.ts, ChatView FailureLine)
+  const fallbackError = page.locator(".chat-terminal-fallback [role=\"alert\"]");
   await fallbackError.waitFor();
-  assert.equal(await fallbackError.getAttribute("role"), "alert", "terminal-read failures are announced as errors");
+  assert.equal(await fallbackError.count(), 1, "terminal-read failures are announced as errors");
+  assert.equal(await fallbackError.locator(".chat-failure-line").innerText(), "Couldn't load the terminal output", "the alert names what failed, nothing more on the line");
+  assert.equal(await fallbackError.getByRole("button", { name: "Try again", exact: true }).count(), 1, "an unknown cause offers Try again");
+  const fold = fallbackError.locator("details");
+  assert.equal(await fold.locator("> summary").innerText(), "Details", "the rest is folded");
+  assert.equal(await fold.evaluate((node: HTMLDetailsElement) => node.open), false, "and folded until asked");
+  await fold.locator("> summary").click();
+  assert.ok((await fold.innerText()).includes("Try again; if it keeps failing, restart herdr web ui on the PC."), "opened, Details holds the advice");
+  assert.equal(await fold.locator("code").innerText(), "Terminal output unavailable", "and the server's words, selectable, beside it");
   assert.equal(await page.locator(".chat-empty").count(), 0, "a fallback failure is not an empty structured conversation");
   await page.evaluate(() => window.chatFallbackQA.pane("empty"));
   await page.getByText("No conversation yet — say something below", { exact: true }).waitFor();

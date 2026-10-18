@@ -842,6 +842,39 @@ describe("Codex submitted first exchange", () => {
     ], started)).toBeNull(); // control: competing evidence
   });
 
+  it("matches the first short reply before Codex's completed-turn footer", () => {
+    for (const footer of ["Worked for <1s • 11:19", "Worked for 1s • 11:11 AM", "Worked for 2m 14s • 16:11", "Worked for 0s"]) {
+      const completed = screen.replace(answer, answer + "\n\n  " + footer);
+      expect(matchCodexFirstExchange(completed, [row()], started)).toBe("new");
+      expect(matchCodexFirstExchange(completed, [row(), row("old", started - 1)], started)).toBeNull();
+    }
+  });
+
+  it("does not discard answer text or an unrecognized completion footer", () => {
+    for (const suffix of [
+      "Worked for a while on this.",
+      "Worked for 1s • unknown time",
+      "Worked for 1s • 11:11 AM\nMore answer text",
+    ]) {
+      expect(matchCodexFirstExchange(screen.replace(answer, answer + "\n\n" + suffix), [row()], started)).toBeNull();
+    }
+    const literal = "Worked for 1s • 11:11 AM";
+    expect(matchCodexFirstExchange(screen.replace(answer, literal), [row("new", started, prompt, literal)], started)).toBe("new");
+    const completed = screen.replace(answer, answer + "\n\nWorked for 1s • 11:11 AM");
+    expect(matchCodexFirstExchange(completed, [
+      row(), row("old", started - 1, prompt, answer + "\n\nWorked for 1s • 11:11 AM"),
+    ], started)).toBeNull();
+  });
+
+  it("preserves a literal footer-shaped final paragraph without native chrome", () => {
+    const literal = answer + "\n\nWorked for 1s • 11:11 AM";
+    const completed = screen.replace(answer, literal);
+    expect(matchCodexFirstExchange(completed, [row("new", started, prompt, literal)], started)).toBe("new");
+    expect(matchCodexFirstExchange(completed, [
+      row("new", started, prompt, literal), row("old", started - 1),
+    ], started)).toBeNull();
+  });
+
   it("skips known Codex notices before the submitted prompt (regression)", () => {
     for (const notice of ["Model changed to gpt-5", "Unrecognized command '/wat'", "Working directory changed to /tmp"]) {
       expect(matchCodexFirstExchange(screen.replace(`› ${prompt}`, `• ${notice}\n\n› ${prompt}`), [row()], started)).toBe("new");

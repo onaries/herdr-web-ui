@@ -81,6 +81,22 @@ describe("CI cache contract", () => {
     expect(dockerfile.match(/^ARG PLAYWRIGHT_VERSION=(.+)$/m)?.[1]).toBe(playwright);
   });
 
+  it("saves the dependency cache only when a job allows it", () => {
+    const save = action.runs.steps.find((step) => step.name === "Cache Bun dependencies")!;
+    const restore = action.runs.steps.find((step) => step.name === "Restore Bun dependencies (read-only)")!;
+    expect(action.inputs.cache!.default).toBe("save");
+    expect(save.if).toContain("inputs.cache != 'restore'");
+    expect(restore.if).toContain("inputs.cache == 'restore'");
+    expect(restore.uses).toBe("actions/cache/restore@v4");
+    expect(restore.with).toEqual(save.with);
+    const canary = Bun.YAML.parse(readFileSync(join(root, ".github/workflows/omp-question-compat.yml"), "utf8")) as {
+      jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, string> }> }>;
+    };
+    for (const job of Object.values(canary.jobs)) {
+      expect(job.steps.find((step) => step.uses === "./.github/actions/setup-ci")!.with!.cache).toBe("restore");
+    }
+  });
+
   it("keeps dependency caches inside the workspace and separates runner environments", () => {
     const cache = action.runs.steps.find((step) => step.name === "Cache Bun dependencies")!;
     expect(cache.with!.path).toBe(".ci-cache/bun");
@@ -91,8 +107,9 @@ describe("CI cache contract", () => {
   });
 
   it("does not transfer dependency or browser caches over the prepared image", () => {
-    expect(action.runs.steps.find((step) => step.name === "Cache Bun dependencies")!.if)
-      .toBe("runner.environment != 'self-hosted'");
+    for (const name of ["Cache Bun dependencies", "Restore Bun dependencies (read-only)"]) {
+      expect(action.runs.steps.find((step) => step.name === name)!.if).toStartWith("runner.environment != 'self-hosted' && ");
+    }
     for (const uses of ["oven-sh/setup-bun@v2", "actions/setup-node@v7"]) {
       expect(action.runs.steps.find((step) => step.uses === uses)!.if).toContain("runner.environment != 'self-hosted'");
     }

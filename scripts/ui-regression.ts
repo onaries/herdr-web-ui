@@ -1154,7 +1154,7 @@ try {
 
   const selectPane = async (paneId: string) => {
     await page.locator(`.pane-select[title^="${paneId} —"]`).click();
-    await page.getByRole("log", { name: `conversation of ${paneId}`, exact: true }).waitFor();
+    await page.locator(`.pane-frame[data-layout-pane="${paneId}"]`).getByRole("log").waitFor();
   };
   await composer.fill("draft for A");
   await selectPane(paneB);
@@ -1366,9 +1366,9 @@ try {
   await composer.fill("");
   console.log("PASS paths wait for a /command, typed or dictated, or an IME composition to finish, and selections keep their direction");
 
-  // A path that does not fit whole is never cut: it waits, its chip and the status line say how many
-  // characters to remove, Send is off, and the path goes in once there is room. The count of
-  // characters left shows only near the limit.
+  // A path that does not fit whole is never cut: it waits, its chip shows a warning glyph (its words
+  // for assistive tech) and the status line says the limit and how many characters over, Send is
+  // off, and the path goes in once there is room. The count of characters left shows only near the limit.
   const MAX_COMPOSER_CHARS = 20_000; // src/lib/compose.ts; importing it would load the app's modules here
   const statusHint = page.locator(".composer-status-hint");
   const sendButton = page.getByRole("button", { name: "Send message", exact: true });
@@ -1382,9 +1382,10 @@ try {
   await finish("fourteenth.txt");
   const roomless = page.locator(".composer-attachment.is-no-room");
   await roomless.waitFor();
-  assert.match(await roomless.innerText(), /No room/);
-  await until(async () => /No room for fourteenth\.txt: remove \d+ characters/.test(await statusHint.textContent() ?? ""), "the status line says how much to cut");
-  const short = Number(/remove (\d+) characters/.exec(await statusHint.textContent() ?? "")![1]);
+  assert.equal(await roomless.locator(".composer-attachment-state svg").count(), 1, "the tile's badge is a glyph");
+  assert.equal(await roomless.locator(".composer-attachment-state .visually-hidden").innerText(), "No room", "its words are for assistive tech");
+  await until(async () => /20,000-character limit · \d+ over/.test(await statusHint.textContent() ?? ""), "the status line says the limit and how much over");
+  const short = Number(/· (\d+) over/.exec(await statusHint.textContent() ?? "")![1]);
   assert.equal(await sendButton.isDisabled(), true, "Send waits for the path");
   assert.equal(await composer.inputValue(), "x".repeat(MAX_COMPOSER_CHARS - 5), "no part of the path went in");
   await composer.fill("x".repeat(MAX_COMPOSER_CHARS - 200));
@@ -1400,7 +1401,7 @@ try {
   await finish(long);
   await roomless.waitFor();
   await finish("sixteenth.txt");
-  assert.match(await roomless.innerText(), /No room/);
+  assert.equal(await roomless.locator(".composer-attachment-state svg").count(), 1, "the long path's tile shows the glyph");
   assert.equal(await sendButton.isDisabled(), true, "the short path waits behind the long one");
   assert.doesNotMatch(await composer.inputValue(), /sixteenth/u);
   await page.getByRole("button", { name: `Remove ${long}`, exact: true }).click();
@@ -1747,7 +1748,24 @@ try {
   assert.deepEqual(await strip.getByRole("tab").allTextContents(), ["Tab 1", "second"]);
   assert.equal(await strip.getByRole("tab", { selected: true }).textContent(), "second");
   assert.equal(await strip.locator(".tab-strip-close, .tab-strip-panes").count(), 0, "tab close buttons and chevrons are removed");
-  assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 0, "desktop tabs use their context menu");
+  assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 0, "desktop tabs show no menu button at rest");
+  // the selected tab's actions button waits hidden in its place: the pointer over the strip or the
+  // tab's keyboard focus brings it into view, and no other tab draws one
+  const stripMenu = strip.locator(".tab-strip-item.is-active .tab-strip-menu");
+  const stripMenuOpacity = () => stripMenu.evaluate((node) => getComputedStyle(node).opacity);
+  await strip.hover();
+  await stripMenu.waitFor({ state: "visible" });
+  await until(async () => await stripMenuOpacity() === "1", "the pointer over the strip reveals the selected tab's actions button");
+  assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 1, "only the selected tab shows an actions button");
+  assert.equal(await stripMenu.getAttribute("aria-label"), "Actions for second");
+  await page.mouse.move(640, 600);
+  await stripMenu.waitFor({ state: "hidden" });
+  await page.locator(".tab-strip-add").focus();
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(await strip.getByRole("tab", { selected: true }).evaluate((node) => node === document.activeElement), true, "Shift+Tab from the + lands on the selected tab");
+  await stripMenu.waitFor({ state: "visible" });
+  await until(async () => await stripMenuOpacity() === "1", "keyboard focus on the selected tab reveals its actions button");
+  assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 1, "keyboard focus reveals the selected tab's button alone");
   await strip.getByRole("tab", { name: "Tab 1", exact: true }).click();
   await until(async () => (await page.locator(`.pane-select[title^="${created.pane_id} —"]`).getAttribute("aria-current")) === "true", "the first tab opens its pane again");
   assert.equal(await strip.getByRole("tab", { selected: true }).textContent(), "Tab 1");
@@ -2117,8 +2135,8 @@ try {
     await page.mouse.up();
     await until(async () => await page.locator(".pane-slot").count() === 2, "two halves after the drop");
     const half = (side: string) => page.locator(`.pane-slot[data-side="${side}"]`);
-    await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
-    await half("right").getByRole("log", { name: `conversation of ${paneB}`, exact: true }).waitFor();
+    await half("left").locator(`.pane-frame[data-layout-pane="${paneA}"]`).getByRole("log").waitFor();
+    await half("right").locator(`.pane-frame[data-layout-pane="${paneB}"]`).getByRole("log").waitFor();
     assert.equal(await half("right").evaluate((slot) => slot.classList.contains("is-active")), true, "the dropped pane's half is active");
     assert.equal(await page.locator(".pane-select[aria-current=\"true\"]").getAttribute("title").then((title) => title?.startsWith(`${paneB} —`)), true, "and its pane is the selected one");
     const [left, right] = await Promise.all([half("left").boundingBox(), half("right").boundingBox()]);
@@ -2127,13 +2145,13 @@ try {
     await until(async () => await half("left").evaluate((slot) => slot.classList.contains("is-active")), "a press makes the left half active");
     // the header speaks for the active half's connection, handed over by a terminal that was already connected
     await page.locator(".conn.conn-live").waitFor();
-    await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
-    await half("right").getByRole("log", { name: `conversation of ${paneB}`, exact: true }).waitFor();
+    await half("left").locator(`.pane-frame[data-layout-pane="${paneA}"]`).getByRole("log").waitFor();
+    await half("right").locator(`.pane-frame[data-layout-pane="${paneB}"]`).getByRole("log").waitFor();
     assert.match(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split") ?? ""), /"active":"a"/, "the split is kept for a reload");
     await half("right").getByRole("button", { name: "Close this half", exact: true }).click();
     await until(async () => await page.locator(".pane-slot").count() === 1, "one pane after closing a half");
     assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null);
-    await page.getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
+    await page.locator(`.pane-frame[data-layout-pane="${paneA}"]`).getByRole("log").waitFor();
   }
   console.log("PASS a dragged row opens its pane beside the open one; a press switches the active half; a half closes");
 

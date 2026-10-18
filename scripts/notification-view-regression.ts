@@ -84,7 +84,7 @@ export async function checkNotificationView(browser: Browser, origin: string): P
         .finally(() => clearTimeout(unasked));
       await tapAlert(ended, workspaces[0]);
       release();
-      await page.locator(".context-title-text", { hasText: "That agent has closed: its workspace is open" }).waitFor({ timeout: 4000 });
+      await page.locator(".header-note", { hasText: "That agent has closed: its workspace is open" }).waitFor({ timeout: 4000 });
     } finally {
       release();
       await page.unroute("**/api/session");
@@ -103,7 +103,7 @@ export async function checkNotificationView(browser: Browser, origin: string): P
     await paneClose(agent);
     // a shell beside an agent has no sidebar row of its own: its frame is the one shown as current
     await page.locator(`.pane-frame.is-current[data-layout-pane="${sibling}"]`).waitFor({ timeout: 8000 });
-    await page.locator(".context-title-text", { hasText: "That agent has closed: its workspace is open" }).waitFor({ timeout: 4000 });
+    await page.locator(".header-note", { hasText: "That agent has closed: its workspace is open" }).waitFor({ timeout: 4000 });
     assert.deepEqual(errors, []);
     console.log("PASS a tapped pane alert opens an agent's chat once, and a shell's terminal; an ended pane's alert, delivered twice or tapped while still listed, opens its workspace");
   } finally {

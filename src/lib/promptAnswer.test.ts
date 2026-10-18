@@ -55,6 +55,10 @@ describe("answering a prompt from the chat", () => {
     expect(answerFromText(multi, "1, 3")).toEqual({ option_indices: [0, 2] });
     expect(answerFromText(multi, "1 1 2")).toEqual({ option_indices: [0, 1] });
     expect(answerFromText(multi, "1 and 3")).toBeNull();
+    // a multiple choice with a typed-answer row (Claude's) takes anything else as that answer
+    const open = prompt(["Manzana", "Pera"], 2, true);
+    expect(answerFromText(open, "1 2")).toEqual({ option_indices: [0, 1] });
+    expect(answerFromText(open, "Kiwi")).toEqual({ custom_text: "Kiwi" });
   });
 });
 

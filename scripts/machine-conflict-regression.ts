@@ -90,7 +90,7 @@ try {
   // the roster without the PC came in while the request was held: a note it raised is still up
   const deadline = Date.now() + 5_000;
   while (removed === 0) { if (Date.now() > deadline) throw new Error("Remove PC never sent DELETE"); await Bun.sleep(25); }
-  assert.equal(await page.locator(".context-title-text", { hasText: "That link's PC is not set up here" }).count(), 0, "removing the selected PC here is not a link to a missing PC");
+  assert.equal(await page.locator(".header-note", { hasText: "That link's PC is not set up here" }).count(), 0, "removing the selected PC here is not a link to a missing PC");
   assert.deepEqual(errors, []);
   console.log("PASS: a bridge conflict is named as one in the sidebar and under the header, and Reconnect starts a plain setup; removing the selected PC opens this one without a note; screenshots:", shots);
 } finally { await browser.close(); server.stop(true); }

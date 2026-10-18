@@ -136,7 +136,10 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
         <p className="settings-hint">{t("Pairing a device turns on the app's own sign-in, on top of any proxy sign-in: other browsers then need pairing or the access token. If your proxy already signs people in, set HERDR_WEB_TOKEN and have the proxy send it instead.")}</p>
         <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()} disabled={pairingSelf}>{t("Pair this device now")}</button></div>
       </>}
-      <p className="settings-description">{t("A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.")}</p>
+      <details className="settings-details">
+        <summary>{t("A paired device gets in on its own until you revoke it here.")}<span className="settings-details-toggle">{t("Details")}</span></summary>
+        <p className="settings-hint">{t("It gets in from anywhere it can reach this server. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.")}</p>
+      </details>
       {devices === null ? <p className="settings-hint" role="status">{t("Loading…")}</p> : devices.length === 0 ? (
         <p className="settings-hint">{t("No devices paired yet.")}</p>
       ) : (
@@ -157,8 +160,9 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
                   </div>
                   <div className="devices-actions">
                     <button type="button" className="icon-button" aria-label={t("Rename {name}", { name: d.label })} onClick={() => setRenaming({ id: d.id, label: d.label })}><Pencil /></button>
-                    <button type="button" className={`btn ${confirming === d.id ? "btn-danger" : "btn-ghost"}`} onClick={() => void revoke(d.id)}>
-                      <Trash2 aria-hidden="true" />{t(confirming === d.id ? "Revoke?" : "Revoke")}
+                    {/* one element across both steps, so focus stays on it when it asks to confirm */}
+                    <button type="button" className={confirming === d.id ? "btn btn-danger" : "icon-button"} aria-label={confirming === d.id ? undefined : t("Revoke {name}", { name: d.label })} onClick={() => void revoke(d.id)}>
+                      <Trash2 aria-hidden="true" />{confirming === d.id && t("Revoke?")}
                     </button>
                   </div>
                 </>

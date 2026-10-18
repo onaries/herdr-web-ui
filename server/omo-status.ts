@@ -40,6 +40,7 @@ export { readOmoLines as readLines, type OmoLine } from "./omo-records.ts";
 
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { omoAsksAfter, type OmoAsks } from "./omo-ask.ts";
+import { omoDetachedAfter, type OmoDetachedCell } from "./omo-detached.ts";
 import type { OmoRest } from "./completion.ts";
 import { OMO_RUNNING, omoStateDir, type OmoStateOptions } from "./omo-state-dir.ts";
 
@@ -60,6 +61,8 @@ export interface OmoTurn {
   at: number | null;
   /** the questions open for the user */
   asks: OmoAsks;
+  /** eval cells whose terminal notification has not arrived */
+  detached?: readonly OmoDetachedCell[];
 }
 
 export const noTurn = (): OmoTurn => ({ status: null, at: null, asks: [] });
@@ -78,6 +81,7 @@ export function omoTurnAfter(turn: OmoTurn, line: OmoLine): OmoTurn {
   if (!custom && !head.startsWith('{"type":"message"')) return turn;
   let role: unknown, stopReason: unknown, customType: unknown, timestamp: unknown;
   let asks = turn.asks;
+  let detached = turn.detached;
   if ("text" in line) {
     try {
       const entry = JSON.parse(line.text) as { customType?: unknown; timestamp?: unknown; message?: { role?: unknown; stopReason?: unknown } };
@@ -85,6 +89,7 @@ export function omoTurnAfter(turn: OmoTurn, line: OmoLine): OmoTurn {
       role = entry.message?.role;
       stopReason = entry.message?.stopReason;
       asks = omoAsksAfter(asks, entry);
+      detached = omoDetachedAfter(detached ?? [], entry);
     } catch { return turn; }
   } else {
     // Legacy end-only records cannot establish or close a question safely.
@@ -95,9 +100,9 @@ export function omoTurnAfter(turn: OmoTurn, line: OmoLine): OmoTurn {
   }
   const parsed = typeof timestamp === "string" ? Date.parse(timestamp) : NaN;
   const at = Number.isFinite(parsed) ? parsed : turn.at;
-  if (custom) return typeof customType === "string" && TURN_STARTS.has(customType) ? { status: "working", at, asks } : turn;
-  if (role === "assistant") return stopReason === "toolUse" ? { status: "working", at, asks } : { status: "idle", ...(stopReason === "error" ? { failed: true } : {}), at, asks };
-  return role === "user" || role === "toolResult" ? { status: "working", at, asks } : { ...turn, asks };
+  if (custom) return typeof customType === "string" && TURN_STARTS.has(customType) ? { status: "working", at, asks, detached } : turn;
+  if (role === "assistant") return stopReason === "toolUse" ? { status: "working", at, asks, detached } : { status: "idle", ...(stopReason === "error" ? { failed: true } : {}), at, asks, detached };
+  return role === "user" || role === "toolResult" ? { status: "working", at, asks, detached } : { ...turn, asks, detached };
 }
 
 /** The turn at the end of a session text. */
@@ -269,6 +274,11 @@ export class OmoStatus {
     return this.panes.get(paneId)?.background ?? 0;
   }
 
+  /** The native session already resolved for this pane; no new process or file lookup. */
+  pathOf(paneId: string): string | null {
+    return this.panes.get(paneId)?.path ?? null;
+  }
+
   /** The folder and session id of the OmO session the pane holds, once its file is known. */
   sessionOf(paneId: string): { cwd: string; sessionId: string } | null {
     const tracked = this.panes.get(paneId);
@@ -369,7 +379,9 @@ export class OmoStatus {
       const sessionId = omoSessionId(tracked.path);
       const cwd = tracked.sessionCwd ?? tracked.cwd;
       if (!counts.has(cwd)) counts.set(cwd, cwd ? this.background(cwd) : new Map());
-      const background = sessionId ? counts.get(cwd)!.get(sessionId) ?? 0 : 0;
+      // A resumed file can hold cells from a kernel that died with its previous process.
+      const detached = tracked.turn.detached?.filter((cell) => tracked.startedAt === null || cell.at >= tracked.startedAt).length ?? 0;
+      const background = (sessionId ? counts.get(cwd)!.get(sessionId) ?? 0 : 0) + detached;
       const failed = status === "idle" && (tracked.turn.failed === true || (this.staleIsFailure && stale));
       // an answer written after the error that ended the turn (a retry's, or one to a new prompt):
       // the pane worked meanwhile, though it read READY, and this rest is the finish of that work.

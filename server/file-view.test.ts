@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import * as fileView from "./file-view.ts";
-import { crossSiteFileRead, fileInfo, fileResponse, locateFile, locateFileInFolder, resolveFilePath } from "./file-view.ts";
+import { crossSiteFileRead, fileInfo, fileResponse, forgetPageMedia, locateFile, locateFileInFolder, PAGE_MEDIA_LIFETIME_MS, PAGE_MEDIA_PER_RENDER, pageMediaResponse, pageMediaSource, resolveFilePath } from "./file-view.ts";
 import { clearFileCache, filesNamed } from "./files.ts";
 
 describe("file view", () => {
@@ -111,6 +111,206 @@ describe("file view", () => {
     expect(html).toContain(`<script id="notjs" src="notes.txt"></script>`);
     expect(html).not.toContain("secret");
     expect(html).not.toContain("private notes");
+  });
+
+  it("plays a page's video too large to put into it from an address only its render gives out", async () => {
+    const root = temp();
+    const site = join(root, "site");
+    mkdirSync(join(site, "clips"), { recursive: true });
+    mkdirSync(join(site, ".cache"));
+    const big = 8 * 1024 * 1024 + 1;
+    const sized = (path: string, bytes: number) => { writeFileSync(path, ""); truncateSync(path, bytes); };
+    sized(join(site, "big.mp4"), big);
+    sized(join(site, "clips", "take.webm"), big);
+    sized(join(site, ".cache", "hidden.mp4"), big);
+    sized(join(site, "huge.png"), big);
+    mkdirSync(join(root, "share", ".private"), { recursive: true });
+    sized(join(root, "share", "take.m4a"), big);
+    sized(join(root, "share", ".private", "take.mp4"), big);
+    sized(join(root, "outside.mp4"), big);
+    writeFileSync(join(site, "small.mp4"), "tiny");
+    writeFileSync(join(site, "notes.txt"), "private notes");
+    // recordings kept elsewhere (a network share), linked beside the report
+    symlinkSync(join(root, "share", "take.m4a"), join(site, "linked.m4a"));
+    symlinkSync(join(root, "share", ".private", "take.mp4"), join(site, "private.mp4"));
+    symlinkSync(join(root, "outside.mp4"), join(site, "elsewhere.mp4"));
+    symlinkSync(join(site, "notes.txt"), join(site, "notes.mp4.txt"));
+    writeFileSync(join(site, "report.html"), [
+      `<video id="big" src="big.mp4" poster="huge.png"></video><video id="again" src="./big.mp4"></video><video id="small" src="small.mp4"></video>`,
+      `<video><source id="source" src="clips/take.webm" type="video/webm"></video><audio id="linked" src="linked.m4a"></audio>`,
+      `<video id="private" src="private.mp4"></video><video id="elsewhere" src="elsewhere.mp4"></video>`,
+      `<audio id="above" src="../share/take.m4a"></audio><video id="abovehidden" src="../share/.private/take.mp4"></video>`,
+      `<video id="hidden" src=".cache/hidden.mp4"></video><video id="up" src="../outside.mp4"></video><video id="text" src="notes.mp4.txt"></video>`,
+      `<img id="img" src="huge.png"><video id="rooted" src="/etc/hosts"></video>`,
+    ].join(""));
+    const source = "http://127.0.0.1:7317/api/fs/page-media/";
+    const media = { source, client: "10.0.0.2", device: "phone" };
+    const page = fileResponse(fileInfo(join(site, "report.html"))!, false, true, media);
+    const policy = page.headers.get("content-security-policy")!;
+    // media from that one path, and still nothing else from this server or the web
+    expect(policy).toContain(`media-src data: blob: ${source}`);
+    expect(policy.split("; ").filter((directive) => directive.includes("http"))).toEqual([`media-src data: blob: ${source}`]);
+    const html = await page.text();
+    // absolute, from the same host as the policy's source, so the two always agree
+    const address = (id: string) => new RegExp(`id="${id}" src="${source}([A-Za-z0-9_-]{32})"`).exec(html)?.[1];
+    const played = address("big")!;
+    expect(played).toBeDefined();
+    // one address per file, however it is named
+    expect(html).toContain(`<video id="again" src="${source}${played}">`);
+    expect(address("source")).toBeDefined();
+    // a symlink out of its folder plays nothing: the page could have brought it along to ask whether a file exists
+    for (const [id, src] of [["linked", "linked.m4a"], ["private", "private.mp4"], ["elsewhere", "elsewhere.mp4"], ["above", "../share/take.m4a"], ["abovehidden", "../share/.private/take.mp4"]]) {
+      expect(html).toContain(`id="${id}" src="${src}"`);
+    }
+    // what fits is still put into the page; a picture or poster is never played from here
+    expect(html).toContain(`<video id="small" src="data:video/mp4;base64,${Buffer.from("tiny").toString("base64")}">`);
+    expect(html).toContain(`poster="huge.png"`);
+    expect(html).toContain(`<img id="img" src="huge.png">`);
+    // nothing under a hidden name, above its folder, of another kind, or rooted
+    for (const [id, src] of [["hidden", ".cache/hidden.mp4"], ["up", "../outside.mp4"], ["text", "notes.mp4.txt"], ["rooted", "/etc/hosts"]]) {
+      expect(html).toContain(`<video id="${id}" src="${src}">`);
+    }
+    const served = pageMediaResponse(played, "10.0.0.2")!;
+    expect(served.headers.get("content-type")).toBe("video/mp4");
+    expect(served.headers.get("content-security-policy")).toStartWith("sandbox");
+    expect(served.headers.get("access-control-allow-origin")).toBeNull();
+    expect((await served.arrayBuffer()).byteLength).toBe(big);
+    // a new address on the next render (the first one stays its own), none for a guess
+    const again = await fileResponse(fileInfo(join(site, "report.html"))!, false, true, media).text();
+    expect(again).toMatch(new RegExp(`<video id="big" src="${source}[A-Za-z0-9_-]{32}"`));
+    expect(again).not.toContain(played);
+    expect(pageMediaResponse("A".repeat(32), "10.0.0.2")).toBeNull();
+    // the address serves the file its render checked, not what later took its place
+    const swapped = address("source")!;
+    expect(pageMediaResponse(swapped, "10.0.0.2")).not.toBeNull();
+    rmSync(join(site, "clips"), { recursive: true });
+    mkdirSync(join(root, "elsewhere"));
+    sized(join(root, "elsewhere", "take.webm"), big);
+    symlinkSync(join(root, "elsewhere"), join(site, "clips"));
+    expect(pageMediaResponse(swapped, "10.0.0.2")).toBeNull();
+    // ...unless it leads into a folder the operator named, and then not under a hidden name there
+    const before = process.env["HERDR_WEB_MEDIA_ROOTS"];
+    process.env["HERDR_WEB_MEDIA_ROOTS"] = ["/nonexistent-share", join(root, "share")].join(delimiter);
+    try {
+      const shared = await fileResponse(fileInfo(join(site, "report.html"))!, false, true, media).text();
+      expect(shared).toMatch(new RegExp(`<audio id="linked" src="${source}[A-Za-z0-9_-]{32}">`));
+      // there it decides where the file lies, however the page reaches it, never under a hidden name or elsewhere above
+      expect(shared).toMatch(new RegExp(`<audio id="above" src="${source}[A-Za-z0-9_-]{32}">`));
+      expect(shared).toContain(`<video id="abovehidden" src="../share/.private/take.mp4">`);
+      expect(shared).toContain(`<video id="up" src="../outside.mp4">`);
+      expect(shared).toContain(`<video id="private" src="private.mp4">`);
+      expect(shared).toContain(`<video id="elsewhere" src="elsewhere.mp4">`);
+    } finally {
+      if (before === undefined) delete process.env["HERDR_WEB_MEDIA_ROOTS"];
+      else process.env["HERDR_WEB_MEDIA_ROOTS"] = before;
+    }
+    // without a media source (a PC's bridge, a Host that is not plain) the page is drawn as before
+    expect(await fileResponse(fileInfo(join(site, "report.html"))!, false, true).text()).toContain(`<video id="big" src="big.mp4"`);
+  });
+
+  it("seeks a page's video by Range", async () => {
+    const root = temp();
+    writeFileSync(join(root, "clip.mp4"), Buffer.alloc(9 * 1024 * 1024, 7));
+    writeFileSync(join(root, "page.html"), `<video src="clip.mp4"></video>`);
+    const html = await fileResponse(fileInfo(join(root, "page.html"))!, false, true, { source: "http://127.0.0.1:1/api/fs/page-media/", client: null, device: null }).text();
+    const token = /page-media\/([A-Za-z0-9_-]{32})/.exec(html)![1]!;
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => pageMediaResponse(token, null) ?? new Response(null, { status: 404 }) });
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`, { headers: { range: "bytes=100-109" } });
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-range")).toBe(`bytes 100-109/${9 * 1024 * 1024}`);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(10).fill(7));
+    } finally { server.stop(true); }
+  });
+
+  const streamedPage = (root: string, name = "page.html", files = 1): string => {
+    const tags: string[] = [];
+    for (let i = 0; i < files; i += 1) {
+      writeFileSync(join(root, `clip-${i}.mp4`), "");
+      truncateSync(join(root, `clip-${i}.mp4`), 9 * 1024 * 1024);
+      tags.push(`<video id="v${i}" src="clip-${i}.mp4"></video>`);
+    }
+    writeFileSync(join(root, name), tags.join(""));
+    return join(root, name);
+  };
+  const tokensOf = (html: string): string[] => [...html.matchAll(/page-media\/([A-Za-z0-9_-]{32})/g)].map((match) => match[1]!);
+  const owner = (client: string | null, device: string | null = null) => ({ source: "https://pc.example.ts.net/api/fs/page-media/", client, device });
+
+  it("ends a page's media address a fixed time after its render, however often it plays", async () => {
+    const root = temp();
+    const rendered = Date.now();
+    const [token] = tokensOf(await fileResponse(fileInfo(streamedPage(root))!, false, true, owner("10.0.0.2")).text());
+    // playing it does not stretch its life: each play near the end still ends at the same moment
+    for (const at of [1, PAGE_MEDIA_LIFETIME_MS / 2, PAGE_MEDIA_LIFETIME_MS - 60_000]) expect(pageMediaResponse(token!, "10.0.0.2", rendered + at)).not.toBeNull();
+    expect(pageMediaResponse(token!, "10.0.0.2", rendered + PAGE_MEDIA_LIFETIME_MS + 60_000)).toBeNull();
+    // and once lapsed it is gone for good
+    expect(pageMediaResponse(token!, "10.0.0.2")).toBeNull();
+  });
+
+  it("plays a page's media only to the client that rendered it", async () => {
+    const root = temp();
+    const [token] = tokensOf(await fileResponse(fileInfo(streamedPage(root))!, false, true, owner("10.0.0.2")).text());
+    // an address the page's script passed on, asked for from elsewhere
+    expect(pageMediaResponse(token!, "203.0.113.9")).toBeNull();
+    expect(pageMediaResponse(token!, "203.0.113.9 via 127.0.0.1")).toBeNull();
+    expect(pageMediaResponse(token!, null)).toBeNull();
+    expect(pageMediaResponse(token!, "10.0.0.2")).not.toBeNull();
+  });
+
+  it("drops a device's page media when it is revoked, and a client's when it signs out", async () => {
+    const root = temp();
+    const page = fileInfo(streamedPage(root))!;
+    const [phone] = tokensOf(await fileResponse(page, false, true, owner("10.0.0.2", "phone")).text());
+    const [laptop] = tokensOf(await fileResponse(page, false, true, owner("10.0.0.3", "laptop")).text());
+    const [shared] = tokensOf(await fileResponse(page, false, true, owner("10.0.0.4")).text());
+    forgetPageMedia({ device: "phone" });
+    expect(pageMediaResponse(phone!, "10.0.0.2")).toBeNull();
+    expect(pageMediaResponse(laptop!, "10.0.0.3")).not.toBeNull();
+    forgetPageMedia({ client: "10.0.0.4" });
+    expect(pageMediaResponse(shared!, "10.0.0.4")).toBeNull();
+    expect(pageMediaResponse(laptop!, "10.0.0.3")).not.toBeNull();
+  });
+
+  it("refuses a page's media once the file is written over in place", async () => {
+    const root = temp();
+    const page = fileInfo(streamedPage(root))!;
+    const clip = join(root, "clip-0.mp4");
+    const second = Math.floor(Date.now() / 1000) - 60;
+    utimesSync(clip, second, second);
+    const [touched] = tokensOf(await fileResponse(page, false, true, owner("10.0.0.2")).text());
+    const [grown] = tokensOf(await fileResponse(page, false, true, owner("10.0.0.2")).text());
+    const { ino } = statSync(clip);
+    // grown in place (same inode), its modification time put back: only its size tells
+    appendFileSync(clip, "more");
+    utimesSync(clip, second, second);
+    expect(statSync(clip).ino).toBe(ino);
+    expect(pageMediaResponse(grown!, "10.0.0.2")).toBeNull();
+    // rewritten at the same size: only its modification time tells
+    const [rewritten] = tokensOf(await fileResponse(page, false, true, owner("10.0.0.2")).text());
+    expect(pageMediaResponse(rewritten!, "10.0.0.2")).not.toBeNull();
+    utimesSync(clip, second + 5, second + 5);
+    expect(pageMediaResponse(rewritten!, "10.0.0.2")).toBeNull();
+    expect(pageMediaResponse(touched!, "10.0.0.2")).toBeNull();
+  });
+
+  it("streams at most so many files from one render", async () => {
+    const root = temp();
+    const html = await fileResponse(fileInfo(streamedPage(root, "page.html", PAGE_MEDIA_PER_RENDER + 1))!, false, true, owner("10.0.0.2")).text();
+    expect(tokensOf(html)).toHaveLength(PAGE_MEDIA_PER_RENDER);
+    // the one past the cap is left as the page wrote it
+    expect(html).toContain(`<video id="v${PAGE_MEDIA_PER_RENDER}" src="clip-${PAGE_MEDIA_PER_RENDER}.mp4">`);
+  });
+
+  it("allows media only from the host the browser asked by", () => {
+    expect(pageMediaSource("127.0.0.1:7317", false)).toBe("http://127.0.0.1:7317/api/fs/page-media/");
+    expect(pageMediaSource("pc.tailnet.ts.net", true)).toBe("https://pc.tailnet.ts.net/api/fs/page-media/");
+    expect(pageMediaSource("[::1]:7317", false)).toBe("http://[::1]:7317/api/fs/page-media/");
+    // a Host that could write a directive of its own into the policy is no source at all
+    for (const host of [null, "", "a b", "evil; script-src *", "host/path", "host:7317 'unsafe-inline'", "host,other"]) expect(pageMediaSource(host, false)).toBeNull();
+    // behind a proxy that rewrites Host, the host the browser used is the one it forwards
+    expect(pageMediaSource("127.0.0.1:7317", true, "pc.example.ts.net")).toBe("https://pc.example.ts.net/api/fs/page-media/");
+    expect(pageMediaSource("127.0.0.1:7317", true, "pc.example.ts.net, inner.proxy")).toBe("https://pc.example.ts.net/api/fs/page-media/");
+    expect(pageMediaSource("127.0.0.1:7317", true, "evil; script-src *")).toBeNull();
   });
 
   it("resolves a page's URLs once each, and only so many", async () => {
@@ -357,5 +557,51 @@ describe("locateFile", () => {
     expect(locateFile("missing.txt", root)).toBeNull();
     // an absolute or ~ path is taken as written, never searched for
     expect(locateFile("/nowhere/demo.mp4", root)).toBeNull();
+  });
+
+  // the walk goes files first, then folders in name order, and stops at 5,000 entries
+  const bigFolder = (root: string) => {
+    mkdirSync(join(root, "a-data"));
+    for (let index = 0; index < 5_100; index += 1) writeFileSync(join(root, "a-data", `page-${index}.txt`), "");
+  };
+
+  it("finds a tracked file past an ignored folder too large to walk", () => {
+    const root = temp();
+    bigFolder(root);
+    mkdirSync(join(root, "docs/design"), { recursive: true });
+    writeFileSync(join(root, "docs/design/11_two-version-design.md"), "# design");
+    writeFileSync(join(root, ".gitignore"), "a-data/\n");
+    expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+    clearFileCache();
+    expect(locateFile("11_two-version-design.md", root)).toMatchObject({ info: { path: join(root, "docs/design/11_two-version-design.md") } });
+  });
+
+  it("finds an ignored file past an ignored folder too large to walk", () => {
+    const root = temp();
+    bigFolder(root);
+    mkdirSync(join(root, "recordings"));
+    writeFileSync(join(root, "recordings/demo.mp4"), "x");
+    writeFileSync(join(root, ".gitignore"), "a-data/\nrecordings/\n");
+    expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+    clearFileCache();
+    expect(locateFile("demo.mp4", root)).toMatchObject({ info: { path: join(root, "recordings/demo.mp4") } });
+  });
+
+  it("walks the subfolders of a folder holding thousands of files outside a repository", () => {
+    const root = temp();
+    for (let index = 0; index < 1_500; index += 1) writeFileSync(join(root, `page-${index}.txt`), "");
+    mkdirSync(join(root, "docs"));
+    writeFileSync(join(root, "docs/notes.md"), "notes");
+    clearFileCache();
+    expect(locateFile("notes.md", root)).toMatchObject({ info: { path: join(root, "docs/notes.md") } });
+  });
+
+  it("finds a file past a folder too large to walk outside a repository", () => {
+    const root = temp();
+    bigFolder(root);
+    mkdirSync(join(root, "docs"));
+    writeFileSync(join(root, "docs/notes.md"), "notes");
+    clearFileCache();
+    expect(locateFile("notes.md", root)).toMatchObject({ info: { path: join(root, "docs/notes.md") } });
   });
 });

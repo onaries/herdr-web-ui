@@ -4,6 +4,10 @@
     "noEmit": true
   },
   "files": [
+    "scripts/herdr-themes.ts",
+    "scripts/herdr-theme-proposal.ts",
+    "scripts/herdr-theme-overrides.ts",
+    "scripts/herdr-themes.test.ts",
     "scripts/check.ts",
     "scripts/cliproxy-settings-regression.ts",
     "scripts/build-site.ts",
@@ -31,7 +35,10 @@
     "scripts/repo-diff-fixture.tsx",
     "scripts/lan-exposure-notice-regression.ts",
     "scripts/application-paging-regression.ts",
-    "scripts/pane-paging-demo-regression.ts"
+    "scripts/omo-question-wheel-regression.ts",
+    "scripts/terminal-cjk-punctuation-regression.ts",
+    "scripts/pane-paging-demo-regression.ts",
+    "scripts/omp-question-compat.ts"
   ],
   "include": []
 }

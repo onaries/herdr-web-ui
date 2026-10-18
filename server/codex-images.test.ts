@@ -25,6 +25,46 @@ it("preserves image-only Codex turns and pairs event/response copies in either o
   expect(parseCodexTranscript(jsonl(response("", data)))[0]?.parts).toEqual(codexImageParts(response("", data)));
 });
 
+it("strips Codex's native image envelope but keeps user-typed lookalikes", () => {
+  const withEnvelope = {
+    type: "response_item", timestamp: "2026-09-27T00:00:00Z",
+    payload: { type: "message", role: "user", content: [
+      { type: "input_text", text: '<image name=[Image #1] path="/tmp/yellow-star.gif">' },
+      { type: "input_image", image_url: data },
+      { type: "input_text", text: "</image>" },
+      { type: "input_text", text: "[Image #1]" },
+    ] },
+  };
+  const regressionTurns = parseCodexTranscript(jsonl(withEnvelope));
+  const regressionUser = regressionTurns[0]!;
+  expect(regressionUser.parts.filter((part) => part.kind === "text").map((part) => part.text)).toEqual(["[Image #1]"]); // regression (fails on main)
+  expect(regressionUser.parts.filter((part) => part.kind === "image")).toHaveLength(1); // regression (fails on main)
+  expect(JSON.stringify(regressionUser)).not.toContain("/tmp/yellow-star.gif"); // regression (fails on main)
+
+  // a pasted image's envelope has no path; two of them in one message
+  const pasted = parseCodexTranscript(jsonl({
+    type: "response_item", timestamp: "2026-09-27T00:00:00Z",
+    payload: { type: "message", role: "user", content: [
+      { type: "input_text", text: "<image name=[Image #1]>" },
+      { type: "input_image", image_url: data },
+      { type: "input_text", text: "</image>" },
+      { type: "input_text", text: "<image name=[Image #2]>" },
+      { type: "input_image", image_url: data.replace("image/png", "image/gif") },
+      { type: "input_text", text: "</image>" },
+      { type: "input_text", text: "[Image #1] [Image #2] compare these" },
+    ] },
+  }))[0]!;
+  expect(pasted.parts.filter((part) => part.kind === "text").map((part) => part.text)).toEqual(["[Image #1] [Image #2] compare these"]);
+  expect(pasted.parts.filter((part) => part.kind === "image")).toHaveLength(2);
+
+  const controlTurns = parseCodexTranscript(jsonl({
+    type: "response_item", timestamp: "2026-09-27T00:00:00Z",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text: 'I typed <image name=x> and </image> literally.' }] },
+  }));
+  expect(controlTurns[0]?.parts.filter((part) => part.kind === "text").map((part) => part.text))
+    .toEqual(['I typed <image name=x> and </image> literally.']); // control
+});
+
 it("does not turn remote URLs, unsupported data, or assistant/tool content into images", () => {
   expect(codexImageParts(event("", ["https://host/shot.png", "file:///tmp/a.png", "data:image/svg+xml;base64,PHN2Zz4=", "bad\0.png"]))).toEqual([]);
   expect(codexImageParts({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "input_image", image_url: data }] } })).toEqual([]);

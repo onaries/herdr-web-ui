@@ -12,6 +12,48 @@ afterEach(() => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: tr
 const put = (store: PreferenceStore, body: string, headers: Record<string, string> = {}) => handlePreferencesRequest(new Request("http://x/api/preferences", { method: "PUT", body, headers }), store);
 
 describe("shared preferences", () => {
+  const seed = { theme: "dark", palette: "tokyo-night", darkTheme: "tokyo-night", lightTheme: "tokyo-night-day" };
+  it.each([
+    ["h", [{ palette: "catppuccin" }], { darkTheme: "catppuccin", lightTheme: "tokyo-night-day", palette: "catppuccin" }],
+    ["h2", [{ theme: "light" }, { palette: "charcoal" }], { darkTheme: "tokyo-night", lightTheme: "charcoal", palette: "charcoal" }],
+    ["h4", [{ theme: "light" }], { darkTheme: "tokyo-night", lightTheme: "tokyo-night-day", palette: "tokyo-night-day" }],
+    ["h4b", [{ theme: "light" }, { palette: "charcoal" }], { darkTheme: "tokyo-night", lightTheme: "charcoal", palette: "charcoal" }],
+    ["h4c", [{ theme: "system" }, { palette: "charcoal" }], { darkTheme: "tokyo-night", lightTheme: "tokyo-night-day", palette: "tokyo-night" }],
+    ["new format takes precedence", [{ darkTheme: "gruvbox", palette: "charcoal" }], { darkTheme: "gruvbox", lightTheme: "tokyo-night-day", palette: "gruvbox" }],
+    ["unknown ids stay on the server", [{ darkTheme: "future-theme" }], { darkTheme: "future-theme", lightTheme: "tokyo-night-day", palette: "future-theme" }],
+  ] as const)("%s normalizes only at the store writer", (_label, changes, expected) => {
+    const dir = root();
+    const store = new PreferenceStore(dir);
+    store.set({ settings: seed });
+    const revisions: number[] = [];
+    store.subscribe((doc) => revisions.push(doc.revision));
+    for (const settings of changes) store.set({ settings });
+    expect(store.get().settings).toMatchObject(expected);
+    expect(revisions).toEqual(changes.map((_, index) => index + 2));
+    expect(new PreferenceStore(dir).get()).toEqual(store.get());
+  });
+
+  it("does not invent a side for a legacy System or mode-only document", () => {
+    const store = new PreferenceStore(root());
+    store.set({ settings: { theme: "system", palette: "amber" } });
+    expect(store.get().settings).toEqual({ theme: "system", palette: "amber" });
+    store.set({ settings: { theme: "light" } });
+    expect(store.get().settings).toEqual({ theme: "light", palette: "amber" });
+  });
+
+  it.each([
+    ["dark", { lightTheme: "one-light" }, { theme: "dark", palette: "charcoal", darkTheme: "charcoal", lightTheme: "one-light" }],
+    ["light", { darkTheme: "gruvbox" }, { theme: "light", palette: "charcoal", darkTheme: "gruvbox", lightTheme: "charcoal" }],
+    ["system", { lightTheme: "one-light" }, { theme: "system", palette: "charcoal", darkTheme: "charcoal", lightTheme: "one-light" }],
+  ] as const)("keeps a legacy %s document's palette on its side when a new client picks the other side", (theme, change, expected) => {
+    // a document an older server wrote: one palette and no sides
+    const dir = root();
+    writeFileSync(join(dir, "preferences.json"), JSON.stringify({ revision: 3, settings: { theme, palette: "charcoal" } }));
+    const store = new PreferenceStore(dir);
+    store.set({ settings: change });
+    expect(store.get().settings).toEqual(expected);
+  });
+
   it("starts empty, keeps only the shared names, counts each write, and survives a restart", async () => {
     const dir = root();
     const store = new PreferenceStore(dir);

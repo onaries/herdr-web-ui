@@ -188,6 +188,34 @@ try {
     await settleBottom(page);
     await page.evaluate((height) => window.chatQa.resize(height), height);
     await settleBottom(page);
+    // #1205: a composer that grows a line shrinks the view; the frame painted next is already at
+    // the end. An observer made after ChatView's runs after it, before that paint.
+    const painted = await page.evaluate(async (height) => {
+      const node = document.querySelector(".chat-view")!;
+      const offsets: number[] = [];
+      const observer = new ResizeObserver(() => offsets.push(Math.round(node.scrollHeight - node.clientHeight - node.scrollTop)));
+      observer.observe(node);
+      // waits until the observer has delivered `count` sizes; its first is the size it started with
+      const observed = async (count: number) => {
+        const deadline = performance.now() + 5_000;
+        while (offsets.length < count) {
+          if (performance.now() > deadline) throw new Error(`no resize observed: ${JSON.stringify(offsets)}`);
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+      };
+      await observed(1);
+      const start = offsets.length;
+      for (const line of [1, 2, 3]) {
+        window.chatQa.resize(height - 22 * line);
+        await observed(start + line);
+      }
+      observer.disconnect();
+      return offsets.slice(start);
+    }, height);
+    assert.ok(painted.length === 3 && painted.every((offset) => offset <= 1), `a growing composer keeps the painted frame at the end: ${JSON.stringify(painted)}`);
+    await page.evaluate((height) => window.chatQa.resize(height), height);
+    await settleBottom(page);
+    console.log(`PASS ${width} ${theme}: a composer growing a line paints no frame off the end`);
     assert.ok(await page.locator(".chat-view").evaluate((node) => node.scrollWidth <= node.clientWidth), "production terminal hierarchy has no horizontal overflow");
 
     await page.evaluate(() => window.chatQa.page(-1));

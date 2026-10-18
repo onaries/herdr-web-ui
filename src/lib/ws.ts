@@ -56,6 +56,8 @@ const SHOWN_GRACE_MS = 5_000;
 const SOCKET_CLOSING = 2;
 const SOCKET_CLOSED = 3;
 const DISCONNECTED: SubmitResult = { ok: false, code: "disconnected", message: "the connection dropped before the pane confirmed this message" };
+/** The connection dropped before the request's frame left: nothing can have reached the pane. */
+const NOT_TRANSMITTED: SubmitResult = { ok: false, code: "not_transmitted", message: "the connection dropped before this message was sent" };
 
 /**
  * Where the connection stands. `connected` and the input checks still read the socket itself:
@@ -826,7 +828,7 @@ export class HerdrSocket {
     return (async (): Promise<SubmitResult> => {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
       // a liveness probe in flight is waited out: nothing is sent on a socket that may be dead
-      if (!(await this.probeSettled(socket))) return DISCONNECTED;
+      if (!(await this.probeSettled(socket))) return NOT_TRANSMITTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages." };
       if (delivery === "agent-queue" && (!this.features.has("submit") || !this.features.has("agent-queue"))) {
         return { ok: false, code: "agent_queue_unsupported", message: "Update this PC to use the agent's native queue. Nothing was sent." };
@@ -851,7 +853,7 @@ export class HerdrSocket {
     if (!this.connected || socket === null || this.mode === "observe") return null;
     return (async (): Promise<SubmitResult> => {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
-      if (!(await this.probeSettled(socket))) return DISCONNECTED;
+      if (!(await this.probeSettled(socket))) return NOT_TRANSMITTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot change pending messages." };
       if (action === "agent-queue" && !this.canQueuePendingMessages()) return { ok: false, code: "agent_queue_unsupported", message: "Update this PC to transfer pending messages to the agent's native queue. Nothing was sent." };
       if (!this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to manage pending messages." };
@@ -874,7 +876,7 @@ export class HerdrSocket {
     });
     try { this.rawSend(message); }
     catch {
-      this.submits.get(id)?.(DISCONNECTED);
+      this.submits.get(id)?.(NOT_TRANSMITTED);
       this.submits.delete(id);
       this.requests.delete(id);
     }

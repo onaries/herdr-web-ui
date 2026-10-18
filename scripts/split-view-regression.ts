@@ -199,7 +199,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       });
       await splitRight(page, right);
       const kept = (await half(page, "right").locator(".pane-terminal").elementHandle())!;
-      await half(page, "right").getByRole("log", { name: `conversation of ${right}`, exact: true }).waitFor();
+      await half(page, "right").locator(`.pane-frame[data-layout-pane="${right}"]`).getByRole("log").waitFor();
       // the half dropped on the right is slot b, which draws on a connection of its own (App's SlotSessions)
       assert.equal(sockets.length, 2, "the second half opens a second socket to the PC");
       // the right half is active: closing the left one must not mount its pane again
@@ -208,7 +208,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await settled(page);
       assert.equal(await kept.evaluate((element) => element.isConnected), true, "the active half's terminal stays mounted");
       assert.equal(sockets[1]!.isClosed(), false, "the active half's connection stays open");
-      await page.getByRole("log", { name: `conversation of ${right}`, exact: true }).waitFor();
+      await page.locator(`.pane-frame[data-layout-pane="${right}"]`).getByRole("log").waitFor();
       console.log("PASS closing the other half leaves the active pane mounted on its connection");
       assert.deepEqual(errors, []);
     }
@@ -246,7 +246,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       const unchanged = async (): Promise<void> => {
         await preview(false, null);
         assert.equal(await page.locator(".pane-slot").count(), 1, "cancelling does not create a half");
-        await page.getByRole("log", { name: `conversation of ${opened}`, exact: true }).waitFor();
+        await page.locator(`.pane-frame[data-layout-pane="${opened}"]`).getByRole("log").waitFor();
         assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null, "cancelling does not save a split");
       };
 
@@ -320,7 +320,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await area.dispatchEvent("drop", { dataTransfer: data, clientX: middle - 1, clientY: y });
       await preview(false, null);
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
-      await half(page, "right").getByRole("log", { name: `conversation of ${dragged}`, exact: true }).waitFor();
+      await half(page, "right").locator(`.pane-frame[data-layout-pane="${dragged}"]`).getByRole("log").waitFor();
       await isActive(page, "right");
       await data.dispose();
       console.log("PASS split preview starts early, survives child leaves, cancels cleanly and matches the drop side");
@@ -428,17 +428,17 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await isActive(page, "left");
       await page.setViewportSize({ width: 700, height: 800 });
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1);
-      await page.getByRole("log", { name: `conversation of ${shown}`, exact: true }).waitFor();
+      await page.locator(`.pane-frame[data-layout-pane="${shown}"]`).getByRole("log").waitFor();
       // the narrow window keeps the workspace list in a drawer
       await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
       await page.locator(`.pane-select[title^="${hidden} —"]`).click();
-      await page.getByRole("log", { name: `conversation of ${hidden}`, exact: true }).waitFor();
+      await page.locator(`.pane-frame[data-layout-pane="${hidden}"]`).getByRole("log").waitFor();
       assert.notEqual(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null, "the split is kept while the window is narrow");
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
       await isActive(page, "left");
-      await half(page, "left").getByRole("log", { name: `conversation of ${hidden}`, exact: true }).waitFor();
-      await half(page, "right").getByRole("log", { name: `conversation of ${hidden}`, exact: true }).waitFor();
+      await half(page, "left").locator(`.pane-frame[data-layout-pane="${hidden}"]`).getByRole("log").waitFor();
+      await half(page, "right").locator(`.pane-frame[data-layout-pane="${hidden}"]`).getByRole("log").waitFor();
       assert.deepEqual(errors, []);
       console.log("PASS a narrow window keeps the split, and a pick there changes the shown half alone");
     }
@@ -551,9 +551,9 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await firstPage.reload();
       await firstPage.locator(".conn-live").waitFor();
       await firstPage.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
-      await half(firstPage, "left").getByRole("log", { name: `conversation of ${first}`, exact: true }).waitFor();
-      await half(firstPage, "right").getByRole("log", { name: `conversation of ${firstOther}`, exact: true }).waitFor();
-      assert.equal(await firstPage.getByRole("log", { name: `conversation of ${secondOther}`, exact: true }).count(), 0,
+      await half(firstPage, "left").locator(`.pane-frame[data-layout-pane="${first}"]`).getByRole("log").waitFor();
+      await half(firstPage, "right").locator(`.pane-frame[data-layout-pane="${firstOther}"]`).getByRole("log").waitFor();
+      assert.equal(await firstPage.locator(`.pane-frame[data-layout-pane="${secondOther}"]`).getByRole("log").count(), 0,
         "reloading the first page restores its split instead of the second page's");
       assert.deepEqual(firstErrors, []);
       assert.deepEqual(secondErrors, []);
@@ -599,6 +599,34 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         "activating the half keeps the in-memory lens choice");
       assert.deepEqual(errors, []);
       console.log("PASS an inactive-half lens choice works and survives activation when storage writes fail");
+    }
+
+    // 9a. A half's row end, past its tabs, is its grip: its pane, dragged onto the other half, opens there too.
+    {
+      const [left, right] = await panesFor("grip-left", "grip-right") as [string, string];
+      const { page, errors } = await open([left, right], "terminal");
+      await splitRight(page, right);
+      const grip = (await half(page, "right").locator(".pane-slot-grip").boundingBox())!;
+      // the free end, left of the close
+      const x = grip.x + 8;
+      const y = grip.y + grip.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x - 8, y + 4, { steps: 2 });
+      await page.waitForFunction(() => document.querySelector(".split-drop")?.classList.contains("is-visible") === true);
+      const box = (await page.locator(".pane-split").boundingBox())!;
+      await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 8 });
+      await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
+      await page.waitForFunction(() => {
+        const guide = document.querySelector(".split-drop");
+        return guide?.classList.contains("is-visible") === true && guide.getAttribute("data-side") === "left";
+      });
+      await page.mouse.up();
+      await isActive(page, "left");
+      await half(page, "left").locator(`.pane-frame[data-layout-pane="${right}"]`).waitFor();
+      assert.equal(await page.locator(".pane-slot").count(), 2, "the split stays, both halves on the dragged pane");
+      assert.deepEqual(errors, []);
+      console.log("PASS a half's row end drags its pane into the other half");
     }
 
     // 9b. A drop just after the node under the pointer was replaced still opens the half.
@@ -692,7 +720,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       }));
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1
         && sessionStorage.getItem("herdr-web-ui:split") === null);
-      await page.getByRole("log", { name: `conversation of ${pane}`, exact: true }).waitFor();
+      await page.locator(`.pane-frame[data-layout-pane="${pane}"]`).getByRole("log").waitFor();
       assert.deepEqual(errors, []);
       console.log("PASS a saved split on a removed PC closes after the roster arrives");
     }

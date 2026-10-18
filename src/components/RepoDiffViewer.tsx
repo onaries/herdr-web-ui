@@ -77,7 +77,7 @@ function DiffSkeleton({ label }: { label: string }) {
  */
 export function RepoDiffViewer({ target, onClose, onOpenFile, keyboardActive = true }: RepoDiffViewerProps) {
   const t = useT();
-  const { settings, update, resolvedTheme } = useSettings();
+  const { settings, update, resolvedEntry } = useSettings();
   const { fetchRepoDiffFile } = useMachineApi();
   const surface = useFocusTrap<HTMLElement>(true);
   const narrow = useMediaQuery(SHEET_QUERY);
@@ -137,7 +137,7 @@ export function RepoDiffViewer({ target, onClose, onOpenFile, keyboardActive = t
     if (unavailable !== null || patch === null) return <p className="repo-diff-note">{unavailable ?? t("No lines changed.")}</p>;
     return <RenderBoundary resetKey={patch} fallback={() => <p className="repo-diff-note" role="alert">{t("This change can't be shown.")}</p>}>
       <Suspense fallback={<DiffSkeleton label={t("Opening…")} />}>
-        <RepoDiff patch={patch} style={style} folded={folded} wrap={settings.wrapCode} theme={resolvedTheme} colored={colored} />
+        <RepoDiff patch={patch} style={style} folded={folded} wrap={settings.wrapCode} theme={resolvedEntry.mode} colored={colored} />
       </Suspense>
     </RenderBoundary>;
   })();

@@ -82,7 +82,8 @@ try {
     if (summary) writeFileSync(join(upstream, "release-summaries.json"), JSON.stringify({ [version]: { en: { new: [summary] } } }));
   };
   const told = "The QA release, in a line.";
-  cut("99.0.0", "", told);
+  // its own section: Unreleased is empty since changelog.d fragments, and an empty release is not told
+  cut("99.0.0", "\n### Fixed\n- The QA release fixes one thing.\n", told);
   await git(upstream, "add", "."); await git(upstream, "commit", "-qm", "QA update"); await git(upstream, "tag", "v99.0.0");
   const next = await git(upstream, "rev-parse", "HEAD");
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();

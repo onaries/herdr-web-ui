@@ -35,7 +35,8 @@ export function answerFromText(prompt: InteractivePrompt, text: string): TypedAn
   };
   if (prompt.multi_select) {
     const indices = value.split(/[\s,]+/).filter(Boolean).map(byNumber);
-    return indices.every((index) => index !== null) ? { option_indices: [...new Set(indices as number[])] } : null;
+    if (indices.every((index) => index !== null)) return { option_indices: [...new Set(indices as number[])] };
+    return prompt.custom_option_index !== null ? { custom_text: value } : null;
   }
   const numbered = byNumber(value);
   if (numbered !== null) return { option_index: numbered };

@@ -1,9 +1,12 @@
 /** With pushes, a lost one still gets a full conversation read. */
 const BACKSTOP_MS = 10_000;
 
-/** Pushes never start newest-page reads faster than the former 2s polling cadence, and a chat
- * without them (an older bridge, a tab that let go of its pane) reads at that cadence. */
-const INVALIDATION_MS = 2000;
+/** Pushes start newest-page reads at least 1s apart: a streaming answer moves every second, and
+ * a bridge's transcript reads stay bounded while an agent writes continuously. */
+const INVALIDATION_MS = 1000;
+
+/** A chat without pushes (an older bridge, a tab that let go of its pane) reads every 2s. */
+const POLL_MS = 2000;
 
 /** One serial lane for newest pages and their gap fills; an older page starts in it, after the
  * newest read before it, but never holds the next newest read back. */
@@ -81,7 +84,7 @@ export class ConversationRefresh {
   }
 
   private backstop(): number {
-    return this.pushes ? BACKSTOP_MS : INVALIDATION_MS;
+    return this.pushes ? BACKSTOP_MS : POLL_MS;
   }
 
   private clearTimer(): void {

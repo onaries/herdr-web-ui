@@ -222,6 +222,14 @@ return (u.pathname==='/api/usage'||u.pathname==='/api/cliproxy'||u.pathname.star
   await modal.getByRole("button", { name: "Connect a hub first", exact: true }).click();
   await modal.locator("#usage-hub-url").fill(config.url);
   await modal.locator("#usage-hub-key").fill(key);
+  const showKey = modal.getByRole("button", { name: "Show key", exact: true });
+  assert.equal(await modal.locator("#usage-hub-key").getAttribute("type"), "password");
+  await showKey.click();
+  assert.equal(await showKey.getAttribute("aria-pressed"), "true");
+  assert.equal(await modal.locator("#usage-hub-key").getAttribute("type"), "text");
+  assert.equal(await modal.locator("#usage-hub-key").inputValue(), key);
+  await showKey.click();
+  assert.equal(await modal.locator("#usage-hub-key").getAttribute("type"), "password");
   await modal.getByRole("button", { name: "Connect", exact: true }).click();
   await modal.getByRole("button", { name: "Done", exact: true }).waitFor();
   assert.equal(await modal.locator("#usage-hub-key").count(), 0);

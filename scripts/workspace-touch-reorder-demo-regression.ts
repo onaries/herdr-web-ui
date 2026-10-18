@@ -40,7 +40,18 @@ async function stroke(page: Page, cdp: CDPSession, from: { x: number; y: number 
 const pinnedRows = (page: Page) => page.locator(".workspace-list-pinned > .workspace-group").evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.workspace));
 
 /** Both input methods change saved pins, never the transport's workspace roster. */
+/** The demo has two repositories: a third top-level workspace gives a drag a row to pass. */
+async function addScratchWorkspace(page: Page): Promise<void> {
+  const scratch = await page.evaluate(async () => {
+    const response = await fetch("/api/workspace/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: "/home/demo/scratch", label: "scratch" }) });
+    if (!response.ok) throw new Error(`create demo workspace: ${response.status}`);
+    return (await response.json() as { workspace_id: string }).workspace_id;
+  });
+  await page.locator(`.machine-workspaces .workspace-group[data-workspace="${scratch}"]`).waitFor();
+}
+
 async function checkPinned(page: Page, cdp?: CDPSession): Promise<void> {
+  if ((await topRows(page)).length < 3) await addScratchWorkspace(page);
   const before = await topRows(page);
   const ids = before.slice(0, 2);
   assert.equal(ids.length, 2);
@@ -144,8 +155,9 @@ try {
       assert.equal(await page.locator(".machine-workspaces .workspace-select").first().getAttribute("draggable"), "false",
         "on a touch screen the browser's own drag is off, so iOS lifts no drag preview that drops nothing");
 
+      await addScratchWorkspace(page);
       const before = await topRows(page);
-      assert.ok(before.length >= 3, `the demo has three top-level workspaces: ${JSON.stringify(before)}`);
+      assert.ok(before.length >= 3, `three top-level workspaces: ${JSON.stringify(before)}`);
       assert.deepEqual((await serverOrder(page)).filter((id) => before.includes(id)), before, "the sidebar draws herdr's order");
 
       // a quick stroke is a scroll, not a lift
@@ -176,8 +188,8 @@ try {
       await movedRow.locator(".row-menu-toggle").click();
       const workspaceSheet = page.locator(".row-sheet");
       await workspaceSheet.waitFor();
-      assert.deepEqual(await workspaceSheet.locator(".row-sheet-item").allTextContents(), ["Pin workspace", "Rename workspace", "Close workspace", "New worktree", "Open worktree…"],
-        "the touch menu contains native workspace actions, with no pane or reorder actions");
+      assert.deepEqual(await workspaceSheet.locator(".row-sheet-item").allTextContents(), ["Pin workspace", "Rename workspace", "Close group", "New worktree", "Open worktree…", "Collapse"],
+        "the touch menu of a repository contains its group's native actions, with no pane or reorder actions");
       await workspaceSheet.getByRole("button", { name: "Cancel", exact: true }).click();
       await workspaceSheet.waitFor({ state: "detached" });
       // Keyboard reordering remains available on the row itself.

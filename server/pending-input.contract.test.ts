@@ -10,6 +10,7 @@ import type { PendingMessage, ServerMessage } from "../shared/protocol.ts";
 import * as processStart from "./process-start.ts";
 import * as pendingInput from "./pending-input.ts";
 import { OmoStatus } from "./omo-status.ts";
+import * as claudeStore from "./claude-store.ts";
 
 type PendingUpdate = Extract<ServerMessage, { type: "pending-messages" }>;
 
@@ -270,6 +271,33 @@ describe("connection-owned pending input", () => {
     } finally { session.mockRestore(); }
   }, 30_000);
 
+  for (const cleared of [true, false]) it(`${cleared ? "holds" : "delivers"} a message when a hookless Claude's PID record ${cleared ? "names another session after /clear" : "keeps its session"} (${cleared ? "regression" : "control"} #540)`, async () => {
+    const f = await setup(`claude-session-${cleared ? "cleared" : "kept"}`);
+    expect((await herdrClient.paneGet(f.pane)).agent_session ?? null).toBeNull(); // control: herdr reports no session
+    let sessionId = "11111111-1111-4111-8111-111111111111";
+    // the recorder runs as `claude`; its PID record is supplied, so no real Claude store is read
+    const session = spyOn(claudeStore, "claudeForegroundSession").mockImplementation(async (processes) =>
+      processes.some((entry) => entry.name === "claude") ? sessionId : null);
+    try {
+      const message = await f.queue(545, "for the session before clear");
+      if (cleared) sessionId = "22222222-2222-4222-8222-222222222222";
+      const settled = f.socket.event((frame) => frame.messages.some((entry) => entry.id === message.id && entry.state === "held")
+        || frame.removed?.some((entry) => entry.id === message.id) === true);
+      await f.state("idle");
+      const outcome = await settled;
+      if (cleared) {
+        expect(outcome.messages).toContainEqual(expect.objectContaining({
+          id: message.id, state: "held", error: expect.objectContaining({ code: "pending_target_changed" }),
+        })); // regression: a session switched inside the same process is held
+        expect(f.bytes()).toBe(""); // regression: the new session receives nothing
+      } else {
+        expect(outcome.removed).toContainEqual({ id: message.id, outcome: "sent" }); // control
+        await f.waitBytes("\r");
+        expect(f.bytes()).toBe(`${paste(message.text)}\r`); // control: delivered once
+      }
+    } finally { session.mockRestore(); }
+  }, 30_000);
+
   for (const originalFirst of [false, true]) it(`regression: two connections share refusal then retry a new attempt once (original first=${originalFirst})`, async () => {
     const rule = "\u2500".repeat(60), footer = "[Haiku 4.5] \u2502 project";
     const f = await setup("copy-retry", "claude", `  \u273b Cooked for 1s\n${rule}\n\u276f occupied draft\n${rule}\n  ${footer}\n`);
@@ -303,15 +331,9 @@ describe("connection-owned pending input", () => {
     send(f.socket, 4, 1); send(other, 5, 1);
     expect(await originalResult(4)).toMatchObject({ ok: true });
     expect(await other.result(5)).toMatchObject({ ok: true });
-    const barrier = new Promise<void>((resolve, reject) => {
-      const watcher = watch(root, () => {
-        if (f.bytes().includes("retry-barrier\r")) { clearTimeout(timer); watcher.close(); resolve(); }
-      });
-      const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
-    });
     other.send({ type: "submit", id: 6, pane_id: f.pane, text: "retry-barrier", payload: "retry-barrier", typed: true });
     expect(await other.result(6)).toMatchObject({ ok: true });
-    await barrier;
+    await f.waitBytes("retry-barrier\r");
     expect(f.bytes().split("retry copy").length - 1).toBe(1);
   }, 30_000);
   for (const copyFirst of [false, true]) it(`regression: shares a held row's send with its saved copy (copy first=${copyFirst})`, async () => {
@@ -327,15 +349,9 @@ describe("connection-owned pending input", () => {
     else { original(); expect(await f.socket.action(3)).toMatchObject({ ok: true }); copy(); }
     expect(await other.result(2)).toMatchObject({ ok: true });
     expect(await f.socket.action(3)).toMatchObject({ ok: true });
-    const barrier = new Promise<void>((resolve, reject) => {
-      const watcher = watch(root, () => {
-        if (f.bytes().includes("barrier\r")) { clearTimeout(timer); watcher.close(); resolve(); }
-      });
-      const timer = setTimeout(() => { watcher.close(); reject(new Error("recorder barrier timed out")); }, 5000);
-    });
     other.send({ type: "submit", id: 4, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
     expect(await other.result(4)).toMatchObject({ ok: true });
-    await barrier;
+    await f.waitBytes("barrier\r");
     expect(f.bytes().split("held cross tab").length - 1).toBe(1);
   }, 30_000);
   it("interrupts an explicit Codex Send now only after its native steering panel appears", async () => {

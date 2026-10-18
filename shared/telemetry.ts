@@ -26,6 +26,17 @@ export type TelemetryEventName = "install" | "update";
 export const NOTICE_VERSION = 4;
 
 /**
+ * Every theme id a snapshot may name: the three original palettes, the app's Codex theme and
+ * herdr's canonical theme names. A literal list, not an import, so the Worker's copy only changes with a deploy.
+ */
+export const TELEMETRY_THEME_IDS = [
+  "amber", "charcoal", "codex", "catppuccin", "catppuccin-latte", "tokyo-night", "tokyo-night-day", "dracula", "nord",
+  "gruvbox", "gruvbox-light", "one-dark", "one-light", "solarized", "solarized-light", "kanagawa",
+  "kanagawa-lotus", "rose-pine", "rose-pine-dawn", "vesper",
+] as const;
+export type TelemetryThemeId = typeof TELEMETRY_THEME_IDS[number];
+
+/**
  * Current setting values safe to report. Only finite enums, booleans and bounded numbers are
  * represented; user-entered strings and account identifiers are summarized or omitted by the
  * browser producer in src/lib/settings.ts.
@@ -38,10 +49,13 @@ export interface TelemetrySettings {
   agentOrder: "workspace" | "activity";
   agentMarks: "color" | "mono";
   statusIndicators: "classic" | "dots" | "symbols";
-  palette: "amber" | "charcoal" | "catppuccin";
+  palette: TelemetryThemeId;
   /** the pair System mode switches between */
-  paletteLight: "amber" | "charcoal" | "catppuccin";
-  paletteDark: "amber" | "charcoal" | "catppuccin";
+  paletteLight: TelemetryThemeId;
+  paletteDark: TelemetryThemeId;
+  /** the theme for each side; a snapshot carries both or neither (apps before them send neither) */
+  darkTheme?: TelemetryThemeId;
+  lightTheme?: TelemetryThemeId;
   terminalFontSize: number;
   terminalWheelSpeed: number;
   paneClipboard: boolean;
@@ -101,7 +115,7 @@ const nullableIntegerBetween = (min: number, max: number) => (value: unknown): b
   value === null || integerBetween(min, max)(value);
 
 // This explicit shared schema must track the producer without importing frontend code at runtime.
-const PALETTES = ["amber", "charcoal", "catppuccin"] as const;
+type TelemetryThemeSideKey = "darkTheme" | "lightTheme";
 const TELEMETRY_SETTINGS_VALIDATORS = {
   terminalInputMode: oneOf(["auto", "line", "direct"]),
   theme: oneOf(["dark", "light", "system"]),
@@ -110,9 +124,9 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   agentOrder: oneOf(["workspace", "activity"]),
   agentMarks: oneOf(["color", "mono"]),
   statusIndicators: oneOf(["classic", "dots", "symbols"]),
-  palette: oneOf(PALETTES),
-  paletteLight: oneOf(PALETTES),
-  paletteDark: oneOf(PALETTES),
+  palette: oneOf(TELEMETRY_THEME_IDS),
+  paletteLight: oneOf(TELEMETRY_THEME_IDS),
+  paletteDark: oneOf(TELEMETRY_THEME_IDS),
   terminalFontSize: integerBetween(10, 22),
   terminalWheelSpeed: integerBetween(1, 10),
   paneClipboard: booleanValue,
@@ -151,10 +165,20 @@ const TELEMETRY_SETTINGS_VALIDATORS = {
   quickReplyCount: integerBetween(0, 12),
   usageHiddenCount: integerBetween(0, 64),
   usageOrderCustom: booleanValue,
-} satisfies Record<keyof TelemetrySettings, (value: unknown) => boolean>;
+} satisfies Record<Exclude<keyof TelemetrySettings, TelemetryThemeSideKey>, (value: unknown) => boolean>;
+const THEME_SIDE_VALIDATORS = {
+  darkTheme: oneOf(TELEMETRY_THEME_IDS),
+  lightTheme: oneOf(TELEMETRY_THEME_IDS),
+} satisfies Record<TelemetryThemeSideKey, (value: unknown) => boolean>;
 
-/** Every key the Worker (telemetry/worker.ts) accepts in a snapshot, and requires. */
+/** Every key the Worker (telemetry/worker.ts) requires in a snapshot. */
 export const TELEMETRY_SETTINGS_KEYS = Object.keys(TELEMETRY_SETTINGS_VALIDATORS) as (keyof TelemetrySettings)[];
+/** The keys the Worker also accepts, only together: a snapshot is exactly TELEMETRY_SETTINGS_KEYS, or those and both of these. */
+export const TELEMETRY_THEME_SIDE_KEYS = Object.keys(THEME_SIDE_VALIDATORS) as TelemetryThemeSideKey[];
+
+const VALIDATORS: Record<string, (value: unknown) => boolean> = { ...TELEMETRY_SETTINGS_VALIDATORS, ...THEME_SIDE_VALIDATORS };
+/** the two key sets a snapshot may have: the original one, which older apps keep sending, and it with both theme sides */
+const ACCEPTED_KEY_SETS: readonly (readonly string[])[] = [TELEMETRY_SETTINGS_KEYS, [...TELEMETRY_SETTINGS_KEYS, ...TELEMETRY_THEME_SIDE_KEYS]];
 
 /** Validate the complete snapshot and return a fresh object containing only schema keys. */
 export function telemetrySettings(value: unknown): TelemetrySettings | null {
@@ -164,13 +188,13 @@ export function telemetrySettings(value: unknown): TelemetrySettings | null {
     if (prototype !== Object.prototype && prototype !== null) return null;
 
     const keys = Reflect.ownKeys(value);
-    if (keys.length !== TELEMETRY_SETTINGS_KEYS.length
-      || keys.some((key) => typeof key !== "string" || !Object.prototype.hasOwnProperty.call(TELEMETRY_SETTINGS_VALIDATORS, key))) return null;
+    const expected = ACCEPTED_KEY_SETS.find((set) => set.length === keys.length);
+    if (!expected || keys.some((key) => typeof key !== "string" || !expected.includes(key))) return null;
 
     const clean: Record<string, unknown> = {};
-    for (const key of TELEMETRY_SETTINGS_KEYS) {
+    for (const key of expected) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !descriptor.enumerable || !("value" in descriptor) || !TELEMETRY_SETTINGS_VALIDATORS[key](descriptor.value)) return null;
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor) || !VALIDATORS[key]!(descriptor.value)) return null;
       clean[key] = descriptor.value;
     }
     return clean as unknown as TelemetrySettings;

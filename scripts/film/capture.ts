@@ -53,7 +53,7 @@ const VIDEO_DESKTOP = { width: 1280, height: 800 };
 /** the hero loop's take (R11): tall enough that the Claude chat fits with its first block open (see its note) */
 const LOOP_DESKTOP = { width: 1280, height: 1064 };
 const PHONE = { width: 390, height: 844 };
-const PANE = panes as Record<"api" | "web" | "infra" | "docs" | "shell", string>;
+const PANE = panes as Record<"api" | "web" | "flaky" | "omp" | "cli" | "hermes" | "shell", string>;
 const MESSAGE = "Nice. Now add a metric for replayed requests.";
 /** device scale factor of the R10/R11 takes (FILM_SCALE=3 for 3x; 2x unless the screencast keeps up) */
 const FILM_SCALE = Number(process.env["FILM_SCALE"] ?? 2);
@@ -752,10 +752,10 @@ const TAKES: Record<string, Take> = {
   "R5-terminal": {
     shows: "From the gjc chat (where S9 lands): click the shell pane in the sidebar, the terminal attaches and the git log --graph + bun test replay plays out",
     open: { pane: "web", viewport: VIDEO_DESKTOP, mods: { story: "after" } },
-    notes: "mods.story after; before recording, the Codex card is answered and the gjc pane (infra) opened, so the take starts where R4 ends. The replay starts when the pane attaches. The pointer then rests on the empty sidebar: the recorded screen turns on mouse reporting (?1003h), so a pointer over the terminal would be typed into the pretend shell as [<35;…M",
+    notes: "mods.story after; before recording, the Codex card is answered and the omp pane opened, so the take starts where R4 ends. The replay starts when the pane attaches. The pointer then rests on the empty sidebar: the recorded screen turns on mouse reporting (?1003h), so a pointer over the terminal would be typed into the pretend shell as [<35;…M",
     prepare: async (page, hand) => {
       await answerCodex(page);
-      await selectPane(page, "infra");
+      await selectPane(page, "omp");
       await chatToEnd(page);
       await hand.place(VIDEO_DESKTOP.width * 0.5, VIDEO_DESKTOP.height * 0.72);
       await Bun.sleep(500);
@@ -814,7 +814,7 @@ const TAKES: Record<string, Take> = {
     open: { pane: "api", viewport: VIDEO_DESKTOP },
     run: async (page, hand, marks) => {
       await Bun.sleep(500);
-      for (const key of ["web", "infra", "docs", "api"] as const) {
+      for (const key of ["web", "omp", "hermes", "api"] as const) {
         await hand.click(row(key));
         marks.add(`${key} selected`);
         await Bun.sleep(1200);
@@ -1105,7 +1105,7 @@ function writeIndex(): void {
     "  scroller's bottom padding uncovered, so text scrolled under the bar shows in a strip between it and the status",
     "  line (also in /demo/). R11 is recorded tall enough that nothing scrolls; other takes keep the chat at its end.",
     "- DO NOT USE: R1 (demo \"nothing ran\" answer), R9 (agent-pane terminal notice). R1b is superseded by R10.",
-    "- Pane ids: api=w1C:p1 (Claude), web=w1D:p1 (Codex), infra=w1E:p1 (gjc), docs=w1F:p1 (omo), shell=w1G:p1.",
+    "- Pane ids: api=w1C:p1 (Claude), web=w1D:p1 (Codex), flaky=w1H:p1 (Claude), omp=w1J:p1 (omp), cli=w1K:p1 (pi), hermes=w1L:p1 (Hermes), shell=w1G:p1 (a tab of checkout-api).",
     "",
     "## Stills",
     "",

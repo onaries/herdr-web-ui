@@ -22,6 +22,23 @@ function previewFromState(state: unknown): FilePreview | null {
     } : null;
 }
 
+/**
+ * Back to the entry under the preview's, where the system Back button goes. A page the viewer
+ * frames (an HTML file) that navigates inside its frame (a click on an anchor to #details, a
+ * script setting location.hash once it has loaded) puts entries of its own above the preview's in
+ * the session history: history.back() then steps the frame, and this window gets no popstate
+ * (#1203). The Navigation API lists this window's own entries alone, so the one under the current
+ * entry is the chat's whatever the frame did, and the browser works out the steps to it. A browser
+ * without it (Safari before 26.2, Firefox before 147) steps back one, as before.
+ */
+function backUnderPreview(): Promise<unknown> | undefined {
+  const navigation = window.navigation as Navigation | undefined;
+  const index = navigation?.currentEntry?.index ?? 0;
+  const below = navigation?.entries()[index - 1];
+  if (navigation === undefined || below === undefined) { window.history.back(); return undefined; }
+  return navigation.traverseTo(below.key).committed;
+}
+
 /** Android Back traverses history: a preview must be an entry above the chat, not just a modal. */
 export function useFileViewer() {
   const [viewing, setViewing] = useState(() => previewFromState(window.history.state));
@@ -51,8 +68,9 @@ export function useFileViewer() {
     if (closing.current) return;
     if (previewFromState(window.history.state)) {
       closing.current = true;
-      // X, Escape and scrim clicks consume the same entry as the system Back button.
-      window.history.back();
+      // X, Escape and scrim clicks consume the same entry as the system Back button. A traversal
+      // the browser refuses lands nowhere and fires no popstate: the latch is let go for the next click.
+      backUnderPreview()?.catch(() => { closing.current = false; });
     } else setViewing(null);
   }, []);
 

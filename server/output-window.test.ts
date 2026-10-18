@@ -232,6 +232,14 @@ describe("terminal output credit", () => {
     }
   });
 
+  it("says when output has fallen out of the tail", () => {
+    const replay = new ReplayBuffer(16);
+    replay.append("x".repeat(16));
+    expect(replay.truncated).toBe(false);
+    replay.append("y");
+    expect(replay.truncated).toBe(true);
+  });
+
   it("leads a late joiner's replay with the modes that fell out of the tail", () => {
     const replay = new ReplayBuffer(16);
     replay.append("\x1b[?1006l\x1b[?1016l\x1b[?1000l\x1b[?1049h\x1b[?1000h\x1b[?1002;1006h\x1b[?25l");

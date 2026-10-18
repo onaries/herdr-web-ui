@@ -1,9 +1,10 @@
 import { expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { forgetTranscriptState } from "./conversation.ts";
 import { gjcPidUnderShell, gjcSessionFile, gjcTranscriptForPane, isGjcProcess, parseGjcPs, recentProcessTable, storeRelative, terminalBreadcrumb, validateGjcSdkTranscript } from "./gjc-runtime.ts";
+import { GjcSdkLookupError } from "./gjc-sdk.ts";
 
 // Session paths come back canonical and the store root is passed in canonical; macOS's tmpdir is a symlink into /private.
 const tempDir = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -237,7 +238,7 @@ it("shares one SDK lookup between overlapping reads of a pane", async () => {
     release();
     expect(await Promise.all(burst)).toEqual(Array(5).fill(realpathSync(path)));
     expect(lookups).toBe(1);
-    // control: once it settles, the next read looks up again (nothing is retained)
+    // control: once it settles, the next read looks up again (no session index to key a kept binding by)
     gated = false;
     expect(await gjcTranscriptForPane("pane", cwd, home, options)).toBe(realpathSync(path));
     expect(lookups).toBe(2);
@@ -256,6 +257,126 @@ it("shares one SDK lookup between overlapping reads of a pane", async () => {
     lookups = 0;
     expect(await gjcTranscriptForPane("pane", cwd, home, options)).toBe(realpathSync(path));
     expect(lookups).toBe(1);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("keeps a proven binding for later reads until the session index or the pane's processes change", async () => {
+  forgetTranscriptState();
+  const home = tempDir("gjc-sdk-kept-");
+  try {
+    const cwd = join(home, "work"), agentDir = join(home, ".gjc", "agent");
+    const project = join(agentDir, "sessions", "v2-project"), index = join(agentDir, "sdk", "sessions", "index.jsonl");
+    mkdirSync(cwd); mkdirSync(project, { recursive: true }); mkdirSync(join(agentDir, "sdk", "sessions"), { recursive: true });
+    const write = (name: string, id: string) => {
+      const path = join(project, name);
+      writeFileSync(path, JSON.stringify({ type: "session", id, cwd }) + "\n");
+      return realpathSync(path);
+    };
+    const oldPath = write("old.jsonl", "old-session"), newPath = write("new.jsonl", "new-session");
+    const row = (type: string, sessionId: string) => appendFileSync(index, JSON.stringify({ type, sessionId, pid: 200 }) + "\n");
+    row("host_registered", "old-session");
+    const oldBinding = { sessionId: "old-session", pid: 200, path: oldPath, hostIncarnation: "host", endpointGeneration: 1 };
+    const newBinding = { ...oldBinding, sessionId: "new-session", path: newPath };
+    let answer: typeof oldBinding | null = oldBinding, lookups = 0, pid = 200, birth = 1000, clock = 0, running = true;
+    const options = {
+      platform: "linux",
+      processInfo: async () => ({ process_info: { foreground_processes: running ? [{ pid, argv: ["/usr/bin/gjc"] }] : [] } }),
+      processBirth: () => birth,
+      sdkTranscript: async () => { lookups += 1; return answer; },
+      now: () => clock,
+    };
+    const read = () => gjcTranscriptForPane("pane", cwd, home, options);
+
+    // regression (fails on main: every sequential read ran the SDK CLI): an unchanged index keeps the binding
+    expect(await read()).toBe(oldPath);
+    expect(await read()).toBe(oldPath);
+    expect(lookups).toBe(1);
+
+    // /new keeps the pid and the old transcript but rewrites the index: the next read asks the broker again
+    row("host_unregistered", "old-session"); row("host_registered", "new-session");
+    answer = null; // the new session has no transcript until its first message
+    expect(await read()).toBeNull();
+    expect(lookups).toBe(2);
+    // a null is never kept: the first message creates the transcript without a new index row
+    answer = newBinding;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(3);
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(3);
+
+    // another gjc process (same pid, new birth) is not the one the broker proved
+    birth = 2000;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(4);
+    pid = 201;
+    expect(await read()).toBeNull(); // the broker bound pid 200, not this one
+    expect(lookups).toBe(5);
+    pid = 200;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(6);
+
+    // a transcript that no longer names the session is not reused
+    writeFileSync(newPath, JSON.stringify({ type: "session", id: "other-session", cwd }) + "\n");
+    answer = null;
+    expect(await read()).toBeNull();
+    expect(lookups).toBe(7);
+    writeFileSync(newPath, JSON.stringify({ type: "session", id: "new-session", cwd }) + "\n");
+    answer = newBinding;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(8);
+
+    // a kept binding ages out even while the index stands still
+    clock = 29_999;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(8);
+    clock = 30_000;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(9);
+
+    // a compacted index (a new snapshot) counts as a change too
+    writeFileSync(join(agentDir, "sdk", "sessions", "index.snapshot.json"), "{}");
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(10);
+
+    // the pane's gjc leaving drops it, so a gjc started later is looked up afresh
+    running = false;
+    expect(await read()).toBeNull();
+    running = true;
+    expect(await read()).toBe(newPath);
+    expect(lookups).toBe(11);
+  } finally { forgetTranscriptState(); rmSync(home, { recursive: true, force: true }); }
+});
+
+it.each(["timeout", "unavailable"] as const)("propagates SDK %s without retaining an old transcript or a failed lookup", async (reason) => {
+  const home = tempDir("gjc-sdk-failure-");
+  try {
+    const cwd = join(home, "work"), agentDir = join(home, ".gjc", "agent");
+    const project = join(agentDir, "sessions", "project"), path = join(project, "main.jsonl");
+    mkdirSync(cwd); mkdirSync(project, { recursive: true });
+    const sessionId = "sdk-session-failure";
+    writeFileSync(path, JSON.stringify({ type: "session", id: sessionId, cwd }) + "\n");
+    const binding = { sessionId, pid: 200, path, hostIncarnation: "host", endpointGeneration: 1 };
+    const failure = new GjcSdkLookupError(reason);
+    let lookups = 0;
+    const options = {
+      platform: "linux",
+      processInfo: async () => ({ process_info: { foreground_processes: [{ pid: 200, argv: ["gjc"] }] } }),
+      processBirth: () => 1000,
+      sdkTranscript: async () => {
+        lookups += 1;
+        if (lookups === 2) throw failure;
+        return lookups === 3 ? null : binding;
+      },
+    };
+    expect(await gjcTranscriptForPane("pane", cwd, home, options)).toBe(path);
+    const failed = gjcTranscriptForPane("pane", cwd, home, options);
+    const overlapping = gjcTranscriptForPane("pane", cwd, home, options);
+    expect(overlapping).toBe(failed);
+    await expect(failed).rejects.toBe(failure);
+    await expect(overlapping).rejects.toBe(failure);
+    expect(await gjcTranscriptForPane("pane", cwd, home, options)).toBeNull();
+    expect(await gjcTranscriptForPane("pane", cwd, home, options)).toBe(path);
+    expect(lookups).toBe(4);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

@@ -9,7 +9,6 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
@@ -61,10 +60,15 @@ import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { cachedPaneCommands } from "../lib/paneCommandCache.ts";
 import { useT } from "../lib/i18n.ts";
+import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
+import { AttachmentTooLargeError } from "../lib/api.ts";
 import { modalOpen } from "../lib/focus.ts";
 
 export interface ComposerProps {
   connected: boolean;
+  /** the socket has been connected on this page before: not connected, the offline sentence says Reconnecting
+   *  (`connectedBefore`), else Connecting (omitted, as the fixtures do, a wait reads as the first connection) */
+  connectedBefore?: boolean;
   paneId: string;
   /** false: appearing must not take the keyboard (App switched to this pane on its own) */
   autoFocus?: boolean;
@@ -112,14 +116,6 @@ const ATTACH_LIMIT = 100;
  */
 const PREVIEW_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] as const;
 const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
-/** One height for every pane on this device: it is the screen, not the conversation, that decides it. */
-const COMPOSER_HEIGHT_KEY = "herdr-web-ui:composer-height";
-const COMPOSER_HEIGHT_MAX = 480;
-const COMPOSER_HEIGHT_STEP = 24;
-/** How far a press on the grip must travel to become a resize: a tap or a resting finger sets nothing. */
-const RESIZE_SLACK = { mouse: 3, touch: 10 } as const;
-/** Two taps on the grip this close return the box to its automatic height (iOS may send no dblclick). */
-const DOUBLE_TAP_MS = 350;
 /** How long a Send tapped mid-composition waits for the keyboard to commit the word (as in TerminalInput). */
 const COMMIT_WAIT_MS = 300;
 export const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
@@ -146,6 +142,9 @@ type Attachment = {
   leftOut: string | null;
 };
 
+/** an upload that failed: its tile, and the failure's parts for the note over the box */
+type UploadFailure = { attachment: Attachment; failure: UserFailure };
+
 function readSlashUsage(): Record<string, number> {
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(SLASH_USAGE_KEY) ?? "{}");
@@ -156,31 +155,6 @@ function readSlashUsage(): Record<string, number> {
   } catch {
     return {};
   }
-}
-
-/** A saved manual height, or null for the automatic one (also for anything malformed). */
-function readComposerHeight(): number | null {
-  try {
-    const value = Number(window.localStorage.getItem(COMPOSER_HEIGHT_KEY));
-    return Number.isFinite(value) && value > 0 && value <= COMPOSER_HEIGHT_MAX ? Math.round(value) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveComposerHeight(value: number | null): void {
-  try {
-    if (value === null) window.localStorage.removeItem(COMPOSER_HEIGHT_KEY);
-    else window.localStorage.setItem(COMPOSER_HEIGHT_KEY, String(value));
-  } catch {
-    // Without storage the height still holds until reload.
-  }
-}
-
-/** Half the visible viewport at most, so a raised keyboard never leaves the transcript without room. */
-function composerHeightLimit(): number {
-  const viewport = window.visualViewport?.height ?? window.innerHeight;
-  return Math.min(COMPOSER_HEIGHT_MAX, Math.floor(viewport / 2));
 }
 
 /**
@@ -245,6 +219,7 @@ function useMediaQuery(query: string): boolean {
 /** Chat-style input surface with pane-local drafts, command/file completion, and image mentions. */
 export function Composer({
   connected,
+  connectedBefore = false,
   paneId,
   autoFocus = true,
   active = true,
@@ -307,6 +282,14 @@ export function Composer({
   const filledFrom = useRef<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [files, setFiles] = useState<string[]>([]);
+  /** the file list could not be read: said in the menu, never drawn as "no matches" */
+  const [filesFailed, setFilesFailed] = useState(false);
+  /**
+   * what the last settled attachment did, for assistive tech (the tiles say it on screen); each
+   * settlement gets its own id, so a repeat of the same words is a new node and is read again
+   */
+  const [announcement, setAnnouncement] = useState<{ id: number; text: string } | null>(null);
+  const announce = useCallback((text: string) => setAnnouncement((previous) => ({ id: (previous?.id ?? 0) + 1, text })), []);
   const [slashUsage, setSlashUsage] = useState<Record<string, number>>(readSlashUsage);
   // the highlight lives in the refs below: a move redraws the menu, also when it lands on an index it held before
   const [, redrawMenu] = useState(0);
@@ -315,19 +298,12 @@ export function Composer({
   const [menuDismissed, setMenuDismissed] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [note, setNote] = useState<string | DraftRefusal | null>(null);
+  const [note, setNote] = useState<string | DraftRefusal | UploadFailure | null>(null);
   // shown only when chosen in Settings → Quick replies: a button beside the box was one more thing to read
   const quickOpen = settings.showQuickReplies;
   const quickReplies = quickReplyButtons(settings);
-  const [manualHeight, setManualHeight] = useState<number | null>(readComposerHeight);
-  /** the box's rendered height, for the grip to announce while the height is automatic */
-  const [autoHeight, setAutoHeight] = useState(0);
   /** the box's width: its text rewraps when the lane does (Settings → Chat width, a resized pane), and the automatic height with it */
   const [boxWidth, setBoxWidth] = useState(0);
-  /** the automatic height of an empty box (the textarea's CSS min-height): the grip's floor */
-  const [minHeight, setMinHeight] = useState(0);
-  const [heightLimit, setHeightLimit] = useState(composerHeightLimit);
-  const lastGripTap = useRef(0);
 
   attachmentsRef.current = attachments;
   textRef.current = text;
@@ -342,8 +318,9 @@ export function Composer({
   const agentLabel = agentDisplayLabel(agent);
   // the agent's suggestion stands in the empty box as it does in its own input, until anything is typed
   const offered = connected && answerHint === null && suggestion !== null ? suggestion : null;
+  const offlineSentence = t(connectedBefore ? "Reconnecting…" : "Connecting…");
   const placeholder = !connected
-    ? t("Reconnecting… message held here, never queued")
+    ? offlineSentence
     : answerHint ?? offered ?? t("Message {agent}…", { agent: agentLabel });
 
   // A cancelled send the agent put back in its input box fills an empty box again — without
@@ -387,15 +364,16 @@ export function Composer({
     const request = ++fileRequest.current;
     if (trigger?.kind !== "file") {
       setFiles([]);
+      setFilesFailed(false);
       return;
     }
     const timer = window.setTimeout(() => {
       void fetchPaneFiles(paneId, trigger.query, 20)
         .then((next) => {
-          if (request === fileRequest.current) setFiles(next);
+          if (request === fileRequest.current) { setFiles(next); setFilesFailed(false); }
         })
         .catch(() => {
-          if (request === fileRequest.current) setFiles([]);
+          if (request === fileRequest.current) { setFiles([]); setFilesFailed(true); }
         });
     }, 150);
     return () => window.clearTimeout(timer);
@@ -423,17 +401,9 @@ export function Composer({
   const sizeTextarea = useCallback(() => {
     const element = textareaRef.current;
     if (!element) return;
-    const floor = Math.round(parseFloat(getComputedStyle(element).minHeight)) || 0;
-    setMinHeight((current) => current === floor ? current : floor);
-    if (manualHeight !== null) {
-      element.style.height = `${manualHeight}px`;
-      return;
-    }
     element.style.height = "auto";
     element.style.height = `${element.scrollHeight}px`;
-    const height = Math.round(element.getBoundingClientRect().height);
-    setAutoHeight((current) => current === height ? current : height);
-  }, [manualHeight]);
+  }, []);
 
   // A suggestion or prompt hint changes only the placeholder of a populated draft.
   // Collapsing it to measure unused placeholder text can scroll iOS's focused caret.
@@ -542,79 +512,6 @@ export function Composer({
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
   }, []);
 
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    const update = (): void => setHeightLimit(composerHeightLimit());
-    viewport?.addEventListener("resize", update);
-    window.addEventListener("resize", update);
-    return () => {
-      viewport?.removeEventListener("resize", update);
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
-  const maxHeight = Math.max(minHeight, heightLimit);
-  /** A grip height within the limits; at or below the automatic floor it is the automatic height again. */
-  const gripHeight = (value: number): number | null => value <= minHeight ? null : Math.round(Math.min(maxHeight, value));
-
-  /**
-   * Dragging the grip up grows the box; the pointer stays captured, so a finger may leave the grip.
-   * The height changes only once the press has moved past the slack, and is saved when it lets go.
-   */
-  const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const element = textareaRef.current;
-    if (!element || event.button !== 0) return;
-    event.preventDefault();
-    const grip = event.currentTarget;
-    grip.setPointerCapture(event.pointerId);
-    const slack = event.pointerType === "mouse" ? RESIZE_SLACK.mouse : RESIZE_SLACK.touch;
-    const startHeight = element.getBoundingClientRect().height;
-    const startY = event.clientY;
-    let resizing = false;
-    let height = manualHeight;
-    const move = (next: PointerEvent): void => {
-      if (!resizing && Math.abs(next.clientY - startY) < slack) return;
-      resizing = true;
-      height = gripHeight(startHeight + startY - next.clientY);
-      setManualHeight(height);
-    };
-    const end = (finished: PointerEvent): void => {
-      grip.removeEventListener("pointermove", move);
-      grip.removeEventListener("pointerup", end);
-      grip.removeEventListener("pointercancel", end);
-      if (resizing) {
-        lastGripTap.current = 0;
-        saveComposerHeight(height);
-      } else if (finished.type === "pointerup") {
-        // a tap: the second of two quick ones returns the automatic height
-        if (finished.timeStamp - lastGripTap.current < DOUBLE_TAP_MS) {
-          lastGripTap.current = 0;
-          setManualHeight(null);
-          saveComposerHeight(null);
-        } else {
-          lastGripTap.current = finished.timeStamp;
-        }
-      }
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", end);
-    grip.addEventListener("pointercancel", end);
-  };
-
-  const onResizeKey = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const current = manualHeight ?? textareaRef.current?.getBoundingClientRect().height ?? minHeight;
-    const step = event.shiftKey ? COMPOSER_HEIGHT_STEP * 2 : COMPOSER_HEIGHT_STEP;
-    let next: number | null;
-    if (event.key === "ArrowUp") next = gripHeight(current + step);
-    else if (event.key === "ArrowDown") next = gripHeight(current - step);
-    else if (event.key === "Home") next = null;
-    else return;
-    event.preventDefault();
-    setManualHeight(next);
-    saveComposerHeight(next);
-  };
-  const gripValue = Math.round(Math.min(maxHeight, Math.max(minHeight, manualHeight ?? autoHeight)));
-
   const filteredCommands = useMemo(
     () => (trigger?.kind === "slash"
       ? rankSlashCommands(commandsForTrigger(commands, agent, trigger), trigger.query, slashUsage, trigger.start > 0 && text[trigger.start - 1] !== "\n")
@@ -631,6 +528,8 @@ export function Composer({
   );
   const choices: readonly (SlashCommand | string)[] = trigger?.kind === "slash" ? orderedCommands : files;
   const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
+  // a failed listing opens the menu on its one line, which no key picks
+  const filesFailedShown = !menuDismissed && trigger?.kind === "file" && filesFailed && files.length === 0;
   // clamped as the list is drawn, not by an effect after it: a Tab or Enter typed before that
   // effect's render found no row at the old index and did nothing
   const choiceIds = choices.map((choice) => trigger?.kind === "slash"
@@ -679,6 +578,15 @@ export function Composer({
   /** the note for a paste the box cut, held across the change event that follows it */
   const pasteCutNote = useRef<string | null>(null);
 
+  // the box clamps at its cap without a word: the cap is said once, as it is reached, through the
+  // polite region (the status line shows it; a line that appears with its words is not announced)
+  const wasFull = useRef(false);
+  useEffect(() => {
+    const full = composerFull(text.length, MAX_COMPOSER_CHARS);
+    if (full && !wasFull.current) announce(t("{max}-character limit", { max: formatChars(MAX_COMPOSER_CHARS) }));
+    wasFull.current = full;
+  }, [announce, t, text]);
+
   const setTextAndCaret = useCallback((nextText: string, nextCaret: number) => {
     const limitedText = nextText.slice(0, MAX_COMPOSER_CHARS);
     const clampedCaret = Math.min(nextCaret, MAX_COMPOSER_CHARS);
@@ -726,14 +634,15 @@ export function Composer({
   /** paths placed so far, by attachment id: ids follow pick order */
   const placedMentions = useRef(new Map<number, string>());
   /** finished uploads whose paths wait for a /command or an IME composition to end, or for room */
-  const waitingMentions = useRef<{ id: number; path: string }[]>([]);
+  const waitingMentions = useRef<{ id: number; path: string; name: string }[]>([]);
 
   const placeWaitingMentions = useCallback(() => {
     if (waitingMentions.current.length === 0) return;
     if (composingRef.current || /^\/\S*$/u.test(textRef.current)) return;
     const waiting = waitingMentions.current.sort((a, b) => a.id - b.id);
     waitingMentions.current = [];
-    for (const [index, { id, path }] of waiting.entries()) {
+    const attached: string[] = [];
+    for (const [index, { id, path, name }] of waiting.entries()) {
       if (removedAttachments.current.has(id)) continue;
       const mention = imageMention(path);
       const earlier = [...placedMentions.current].filter(([placed]) => placed < id).map(([, placed]) => placed);
@@ -748,8 +657,10 @@ export function Composer({
       }
       placedMentions.current.set(id, mention);
       setAttachments((current) => current.map((item) => (item.id === id ? { ...item, path, state: "ready" } : item)));
+      attached.push(t("{name} attached", { name }));
     }
-  }, [insertMentionAtStart]);
+    if (attached.length > 0) announce(attached.join(" "));
+  }, [announce, insertMentionAtStart, t]);
 
   // whatever wrote the text (typing, a completion, dictation, a cleared draft), a waiting path tries
   // again in the next frame, after that write's own caret placement has landed
@@ -791,7 +702,7 @@ export function Composer({
         .then(
           (path) => {
             if (!mounted.current || removedAttachments.current.has(attachment.id)) return;
-            waitingMentions.current.push({ id: attachment.id, path });
+            waitingMentions.current.push({ id: attachment.id, path, name: attachment.file.name });
             placeWaitingMentions();
           },
           (error: unknown) => {
@@ -799,8 +710,14 @@ export function Composer({
             setAttachments((current) =>
               current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
             );
-            const failed = error instanceof Error ? error.message : String(error);
-            setNote(attachment.leftOut ? `${failed} ${attachment.leftOut}` : failed);
+            // the size limit's own sentence is already plain and is the note; anything else is one line
+            // naming what failed and the cause it knows, the rest behind Details
+            if (error instanceof AttachmentTooLargeError) {
+              setNote(attachment.leftOut ? `${error.message} ${attachment.leftOut}` : error.message);
+              return;
+            }
+            const failure = userFailure(error);
+            setNote({ attachment, failure });
           },
         )
         .finally(() => {
@@ -840,11 +757,21 @@ export function Composer({
     [pumpUploads, t],
   );
 
+  /** Try again on a failed upload: the tile uploads once more, its note gone */
+  const retryUpload = useCallback((attachment: Attachment) => {
+    setNote(null);
+    setAttachments((current) => current.map((item) => (item.id === attachment.id ? { ...item, state: "uploading" } : item)));
+    uploadQueue.current.push(attachment);
+    pumpUploads();
+  }, [pumpUploads]);
+
   const removeAttachment = useCallback((attachment: Attachment) => {
     removedAttachments.current.add(attachment.id);
     placedMentions.current.delete(attachment.id);
     URL.revokeObjectURL(attachment.previewUrl);
     setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+    // the note about this tile's failed upload goes with the tile
+    setNote((current) => typeof current === "object" && current !== null && "failure" in current && current.attachment.id === attachment.id ? null : current);
     if (attachment.path) {
       const mention = imageMention(attachment.path);
       setText((current) => {
@@ -1079,9 +1006,13 @@ export function Composer({
   const usageCaption = usageLimit === undefined ? "" : `${usageLimit.kind === "session" ? "5h" : windowLabel(usageLimit)} ${formatPercent(meterPercent(usageLimit, settings.usageCount))}`;
   const usageAccessible = usage === undefined ? "" : `${t("Subscription usage")}: ${usageName(usage)}, ${usageDetail.replaceAll("\n", ", ")}`;
   const hintText = hint === null ? null
-    : hint === "no-room" ? t("No room for {file}: remove {count} characters", { file: roomless?.file.name ?? "", count: roomless?.missing ?? 0 })
-    : hint === "near-limit" ? t("{count} characters left", { count: MAX_COMPOSER_CHARS - text.length })
-    : t(hint === "uploading" ? "Uploading file…" : "Reconnecting… message held here, never queued");
+    : hint === "no-room" ? t("{max}-character limit · {count} over", { max: formatChars(MAX_COMPOSER_CHARS), count: formatChars(roomless?.missing ?? 0) })
+    : hint === "near-limit" ? composerFull(text.length, MAX_COMPOSER_CHARS) ? t("{max}-character limit", { max: formatChars(MAX_COMPOSER_CHARS) }) : t("{count} characters left", { count: MAX_COMPOSER_CHARS - text.length })
+    : hint === "uploading" ? t("Uploading file…") : offlineSentence;
+  /** an upload's failure as one line: what failed and the cause it knows, then what the pick left out */
+  const noteLine = note === null ? null : typeof note === "string" ? note : "failure" in note
+    ? [note.failure.cause === null ? t("{name} could not be attached", { name: note.attachment.file.name }) : t("{name} could not be attached: {reason}", { name: note.attachment.file.name, reason: note.failure.cause }), note.attachment.leftOut].filter((part) => part !== null).join(" ")
+    : note.note;
   /** the strip under the card: the folder and the branch the caller knows; none, or a phone's screen, no strip */
   const strip = mobile ? null : composerStrip({ cwd, branch, repo: worktreeRepo });
   const worktree = worktreeRepo !== null;
@@ -1092,6 +1023,15 @@ export function Composer({
     contextShown, mobile, usageCaption, usage?.problem, hintText, dictation.shown, backgroundTasks,
     plan?.done, plan?.total, statusCompact, compactNow !== undefined, facesLoaded, t]);
   const menuId = `composer-menu-${paneId}`;
+  // the suggestions' own close, for a pointer or a phone, which has no Escape: it does what Escape does, and the
+  // text and the focus stay in the box (a press never takes the focus; a key on it hands it back)
+  const menuClose = (
+    <button type="button" className="composer-menu-close" aria-label={t("Close suggestions")} title={t("Close suggestions")}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={(event) => { setMenuDismissed(true); if (event.detail === 0) textareaRef.current?.focus({ preventScroll: true }); }}>
+      <X aria-hidden="true" />
+    </button>
+  );
   // the arrow keys move the selection, not the focus (it stays in the box), so the browser does not scroll to it
   useEffect(() => {
     if (menuOpen) document.getElementById(`${menuId}-${selectedIndex}`)?.scrollIntoView({ block: "nearest" });
@@ -1128,14 +1068,23 @@ export function Composer({
       )}
 
       {/* why the message in the box did not go: on the box's top edge, read with it, its one way on beside it */}
-      {note !== null && (
-        <div className={`composer-note${typeof note === "object" ? " composer-note-offer" : ""}`} role="alert">
+      {note !== null && noteLine !== null && (
+        <div className={`composer-note${typeof note === "object" && !("failure" in note) ? " composer-note-offer" : ""}`} role="alert">
           <TriangleAlert className="composer-note-icon" aria-hidden="true" />
-          <span className="composer-note-text">{typeof note === "string" ? note : note.note}</span>
+          <div className="composer-note-text">
+            {noteLine}
+            {typeof note === "object" && "failure" in note && (note.failure.advice !== null || note.failure.detail !== null) && <details className="composer-note-details">
+              <summary>{t("Details")}</summary>
+              {note.failure.advice !== null && <p>{note.failure.advice}</p>}
+              {note.failure.detail !== null && <code>{note.failure.detail}</code>}
+            </details>}
+          </div>
           {/* the draft named above, never what has replaced it since: the server checks; a box it could
               not tell empty, sent over only in the same Claude terminal the refusal was for */}
-          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
-            onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>}
+          {typeof note === "object" && ("failure" in note
+            ? offersRetry(note.failure) && <button type="button" className="composer-note-action" disabled={!connected} onClick={() => retryUpload(note.attachment)}>{t("Try again")}</button>
+            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+              onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>)}
         </div>
       )}
 
@@ -1153,22 +1102,10 @@ export function Composer({
         }}
         onDrop={onDrop}
       >
-        <div
-          className={`composer-resize${manualHeight !== null ? " is-sized" : ""}`}
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label={t("Resize message box")}
-          aria-valuemin={minHeight}
-          aria-valuemax={maxHeight}
-          aria-valuenow={gripValue}
-          aria-valuetext={manualHeight === null ? "automatic height" : `${gripValue} pixels`}
-          tabIndex={0}
-          title={t("Drag to resize · double-click to reset")}
-          onPointerDown={startResize}
-          onKeyDown={onResizeKey}
-        />
         {menuOpen && trigger && (
-          <div id={menuId} className="menu composer-menu" role="listbox" aria-label={t(trigger.kind === "slash" ? "Slash commands" : "Files")}>
+          <div className="menu composer-menu">
+            {menuClose}
+            <div id={menuId} className="composer-menu-list" role="listbox" aria-label={t(trigger.kind === "slash" ? "Slash commands" : "Files")}>
             {trigger.kind === "slash" ? (
               (() => {
                 // a row says what a command does in one sentence (the full text is the row's
@@ -1247,8 +1184,23 @@ export function Composer({
                 ))}
               </div>
             )}
+            </div>
           </div>
         )}
+
+        {filesFailedShown && (
+          <div className="menu composer-menu">
+            {menuClose}
+            <div className="composer-menu-group">
+              <div className="menu-heading">{t("Files")}</div>
+              <p className="chat-inline-state chat-inline-error">{t("Couldn't load suggestions. Keep typing to try again.")}</p>
+            </div>
+          </div>
+        )}
+
+        {/* mounted before anything settles: a live region that appears with its text is not read */}
+        <p className="visually-hidden" role="alert">{filesFailedShown ? t("Couldn't load suggestions. Keep typing to try again.") : null}</p>
+        <p className="visually-hidden" aria-live="polite">{announcement && <span key={announcement.id}>{announcement.text}</span>}</p>
 
         {attachments.length > 0 && (
           <div className="composer-attachments" aria-label={t("Attached files")}>
@@ -1257,7 +1209,11 @@ export function Composer({
                 {attachment.previewUrl ? <img src={attachment.previewUrl} alt={attachment.file.name} />
                   : <span className="composer-attachment-file" title={attachment.file.name}><FileText aria-hidden="true" /><span>{attachment.file.name}</span></span>}
                 <span className="composer-attachment-state">
-                  {t(attachment.state === "uploading" ? "Uploading" : attachment.state === "error" ? "Failed" : attachment.state === "no-room" ? "No room" : "Attached")}
+                  {/* a tile that failed or has no room shows the glyph alone: the line above or below the box
+                      already says what happened, once */}
+                  {attachment.state === "no-room" || attachment.state === "error"
+                    ? <><TriangleAlert aria-hidden="true" /><span className="visually-hidden">{t(attachment.state === "error" ? "Failed" : "No room")}</span></>
+                    : t(attachment.state === "uploading" ? "Uploading" : "Attached")}
                 </span>
                 <button type="button" aria-label={t("Remove {file}", { file: attachment.file.name })} onClick={() => removeAttachment(attachment)}>
                   <X aria-hidden="true" />
@@ -1283,7 +1239,7 @@ export function Composer({
           // in a frame, after the caret of dictation held through the composition has landed
           setTimeout(() => requestAnimationFrame(() => { if (mounted.current) placeWaitingMentions(); }), 0);
         }}
-          className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
+          className="composer-text"
           rows={1}
           maxLength={MAX_COMPOSER_CHARS}
           value={text}
@@ -1311,7 +1267,7 @@ export function Composer({
             setText(event.target.value);
             setCaret(event.target.selectionStart);
             setMenuDismissed(false);
-            setNote(pasteCutNote.current);
+            setNote((current) => typeof current === "object" && current !== null && "failure" in current ? current : pasteCutNote.current);
           }}
         />
 
@@ -1383,7 +1339,7 @@ export function Composer({
             {backgroundTasks > 0 && <span className="composer-task-count visually-hidden">{t(backgroundTasks === 1 ? "{n} background task" : "{n} background tasks", { n: backgroundTasks })}</span>}
           </span>
           {hintText !== null && (
-            <span ref={hintRef} className="composer-status-hint" title={hintText}>
+            <span ref={hintRef} className={`composer-status-hint${hint === "no-room" ? " is-over" : ""}`} title={hintText}>
               <span className="composer-status-hint-dot" aria-hidden="true">· </span>{hintText}
             </span>
           )}
@@ -1438,10 +1394,6 @@ export function Composer({
       {/* said while typing, before the send: after it the browser is already open and the reader is
           already in the state the words describe. Not a block — the text still goes, and pi runs the
           command in the terminal the way its own palette would */}
-      {/* why typing stopped: the box clamps at its cap without a word, so the box says it */}
-      {!note && composerFull(text.length, MAX_COMPOSER_CHARS) && (
-        <div className="composer-hint composer-limit" role="status">{t("Message limit reached: {max} characters. Nothing more can be added.", { max: formatChars(MAX_COMPOSER_CHARS) })}</div>
-      )}
       {!note && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}

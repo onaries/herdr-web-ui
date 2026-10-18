@@ -118,15 +118,84 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
 
     const tab = page.getByRole("tab", { name: TAB, exact: true });
     const strip = page.locator(".tab-strip");
+    const stripMenu = strip.locator(".tab-strip-item.is-active .tab-strip-menu");
+    const opacity = (locator: Locator) => locator.evaluate((node) => getComputedStyle(node).opacity);
+    const pointerOffStrip = () => page.mouse.move(640, 600);
     assert.equal(await strip.locator(".tab-strip-close, .tab-strip-panes").count(), 0, "tabs render neither close buttons nor chevrons");
-    assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 0, "a desktop split tab exposes no menu button");
-    await tab.hover();
-    await tab.focus();
-    assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 0, "hover and keyboard focus do not reveal a desktop menu button");
-    await tab.click({ button: "right" });
+    // The selected tab's menu button holds its place hidden until the pointer is over the strip or
+    // the tab has keyboard focus, and opens the trimmed menu a touch screen's button does.
+    await pointerOffStrip();
+    assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 0, "a desktop tab's menu button stays hidden at rest");
+    await strip.hover();
+    await stripMenu.waitFor({ state: "visible" });
+    await until(async () => await opacity(stripMenu) === "1", "the pointer over the strip fades the selected tab's menu button in");
+    assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 1, "only the selected tab shows a menu button");
+    assert.equal(await stripMenu.getAttribute("aria-haspopup"), "menu");
+    await screenshot(page, "desktop-hover-button");
+    await pointerOffStrip();
+    await stripMenu.waitFor({ state: "hidden" });
+    await strip.hover();
+    await stripMenu.waitFor({ state: "visible" });
+    await stripMenu.click();
     const tabMenu = page.getByRole("menu", { name: TAB, exact: true });
+    // as paneMenu above: the menu takes the focus a frame after it opens, and Escape comes after that
+    const tabMenuFocused = () => until(() => tabMenu.evaluate((node) => node.contains(document.activeElement)), "the tab menu takes keyboard focus");
     await tabMenu.waitFor();
-    assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab with agent…", "Rename tab", "Close tab"], "the tab menu contains only tab actions");
+    await tabMenuFocused();
+    assert.deepEqual((await tabMenu.getByRole("menuitem").allTextContents()).filter((item) => item !== "Clear pane name"),
+      ["Rename pane", "Split right", "Split down", "Zoom pane", "Close pane", "New tab with agent…", "Rename tab", "Close tab"], "the button's menu carries the open pane's actions and the tab's (the + is a shell tab, so the agent's dialog stays here)");
+    await page.keyboard.press("Escape");
+    await tabMenu.waitFor({ state: "detached" });
+    assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "the button's menu returns focus to the tab");
+    // Escape leaves keyboard focus on the tab, which keeps its button in view until the focus moves on.
+    await frame(page, first).locator(".xterm-helper-textarea").focus();
+    await pointerOffStrip();
+    await stripMenu.waitFor({ state: "hidden" });
+    await page.locator(".tab-strip-add").focus();
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "Shift+Tab from the + lands on the selected tab");
+    await stripMenu.waitFor({ state: "visible" });
+    await until(async () => await opacity(stripMenu) === "1", "keyboard focus on the tab reveals its menu button");
+    await screenshot(page, "desktop-keyboard-button");
+    await page.keyboard.press("Tab");
+    assert.equal(await stripMenu.evaluate((node) => node === document.activeElement), true, "Tab reaches the menu button");
+    await page.keyboard.press("Enter");
+    await tabMenu.waitFor();
+    await tabMenuFocused();
+    await tabMenu.getByRole("menuitem", { name: "Rename tab", exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await tabMenu.waitFor({ state: "detached" });
+    assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "Escape returns focus to the tab");
+    // Reduced motion takes the fade away, and with it the delay that kept the button in view while
+    // the focus crossed from the tab to it: the same keyboard route must hold without any transition.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    try {
+      await frame(page, first).locator(".xterm-helper-textarea").focus();
+      await pointerOffStrip();
+      await stripMenu.waitFor({ state: "hidden" });
+      assert.equal(await stripMenu.evaluate((node) => getComputedStyle(node).transitionDuration), "0s", "reduced motion leaves the menu button no transition");
+      await page.locator(".tab-strip-add").focus();
+      await page.keyboard.press("Shift+Tab");
+      assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "reduced motion: Shift+Tab from the + lands on the selected tab");
+      await stripMenu.waitFor({ state: "visible" });
+      await page.keyboard.press("Tab");
+      assert.equal(await stripMenu.evaluate((node) => node === document.activeElement), true, "reduced motion: Tab reaches the menu button");
+      assert.equal(await opacity(stripMenu), "1", "reduced motion: the focused menu button is in view");
+      await screenshot(page, "desktop-keyboard-button-reduced");
+      await page.keyboard.press("Enter");
+      await tabMenu.waitFor();
+      await tabMenuFocused();
+      await tabMenu.getByRole("menuitem", { name: "Rename tab", exact: true }).waitFor();
+      await page.keyboard.press("Escape");
+      await tabMenu.waitFor({ state: "detached" });
+      assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "reduced motion: Escape returns focus to the tab");
+    } finally { await page.emulateMedia({ reducedMotion: null }); }
+    await frame(page, first).locator(".xterm-helper-textarea").focus();
+    await pointerOffStrip();
+    await stripMenu.waitFor({ state: "hidden" });
+    await tab.click({ button: "right" });
+    await tabMenu.waitFor();
+    assert.deepEqual(await tabMenu.getByRole("menuitem").allTextContents(), ["New tab with agent…", "Rename tab", "Close tab"], "right-click keeps the full tab menu: only tab actions");
     assert.equal(await tabMenu.locator(".layout-map").count(), 0, "the canvas replaces the miniature pane picker");
     await page.keyboard.press("Escape");
     await tabMenu.waitFor({ state: "detached" });
@@ -142,7 +211,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
       assert.equal(await tab.evaluate((node) => node === document.activeElement), true, `${key}: dismissal returns focus to the tab`);
     }
 
-    // Narrow windows also need an explicit route, even with a mouse. Returning to desktop hides it.
+    // Narrow windows keep an explicit route in view, even with a mouse. Back on a desktop it waits hidden again.
     await page.setViewportSize({ width: 700, height: 800 });
     const narrowMenu = page.getByRole("button", { name: `Actions for ${TAB}`, exact: true });
     await narrowMenu.waitFor();
@@ -150,6 +219,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     await until(async () => await page.locator(".pane-frame:visible").count() === 1, "a narrow window shows the split tab's open pane alone");
     await narrowMenu.click();
     await tabMenu.waitFor();
+    await tabMenuFocused();
     const narrowItems = await tabMenu.getByRole("menuitem").allTextContents();
     assert.deepEqual(narrowItems.slice(0, 2).sort(), ["canvas-first", "canvas-second"], "a narrow window's tab menu lists the tab's panes first");
     assert.deepEqual(narrowItems.slice(-3), ["New tab with agent…", "Rename tab", "Close tab"], "the strip's + is a shell tab: the menu keeps the agent's dialog");
@@ -157,14 +227,18 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
       ["Rename pane", "Close pane"], "the touch menu carries the open pane's actions but no split or zoom, between its panes and the tab's");
     await page.setViewportSize({ width: 1280, height: 800 });
     await tabMenu.waitFor({ state: "detached" });
+    await pointerOffStrip();
     await narrowMenu.waitFor({ state: "hidden" });
-    assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "removing the touch trigger restores a visible tab");
+    assert.equal(await tab.evaluate((node) => node === document.activeElement), true, "the resize closes the menu and restores a visible tab");
 
     // Right-click targets an inactive tab without activating it; Close removes only that target.
     const nativeTab = (await sessionSnapshot()).tabs.find((candidate) => candidate.tab_id === tabId)!;
     const target = await tabCreate({ workspaceId: nativeTab.workspace_id, label: "menu-target" });
     const inactive = page.getByRole("tab", { name: "menu-target", exact: true });
     await inactive.waitFor();
+    await strip.hover();
+    assert.equal(await strip.locator(".tab-strip-item:not(.is-active) .tab-strip-menu").count(), 0, "an unselected tab draws no menu button, hovered or not");
+    await pointerOffStrip();
     const order = () => strip.getByRole("tab").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset["tabId"]));
     const originalOrder = [tabId, target.tab.tab_id];
     const movedOrder = [target.tab.tab_id, tabId];

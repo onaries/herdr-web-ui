@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 
-import { minimapCurrent, minimapFits, minimapStep, minimapTop, MINIMAP_MIN_TURNS, type MinimapTurn } from "../lib/chatMinimap.ts";
+import { minimapCurrent, minimapFits, minimapSlots, minimapSlotTarget, minimapStep, minimapTop, minimapTurnSlot, MINIMAP_MIN_TURNS, type MinimapTurn } from "../lib/chatMinimap.ts";
 import { useT } from "../lib/i18n.ts";
 import "./ChatMinimap.css";
 
@@ -13,12 +13,18 @@ export interface ChatMinimapProps {
 }
 
 const SPACING_PX = 8;
+/** the room the rail leaves above and below it, as in its height below */
+const MARGIN_REM = 12;
 
-/** A tick per turn the user sent, beside the chat column; the turn in view is marked. */
+/**
+ * A tick per turn the user sent, beside the chat column; the turn in view is marked. A rail too
+ * short for every turn gives a tick to each run of turns, so loading older history adds no buttons.
+ */
 export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapProps) {
   const t = useT();
   const [current, setCurrent] = useState<number | null>(null);
   const [fits, setFits] = useState(false);
+  const [railPx, setRailPx] = useState(0);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const ticks = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -43,6 +49,9 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
       const column = node.querySelector<HTMLElement>(".chat-transcript");
       const nextFits = column !== null && minimapFits(view.width, column.getBoundingClientRect().width);
       setFits((previous) => previous === nextFits ? previous : nextFits);
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const nextRail = Math.max(0, Math.min((turns.length - 1) * SPACING_PX, view.height - MARGIN_REM * rem));
+      setRailPx((previous) => previous === nextRail ? previous : nextRail);
     };
     const schedule = (): void => { if (frame === 0) frame = requestAnimationFrame(measure); };
     schedule();
@@ -56,10 +65,14 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
     };
   }, [scroller, rowKeys, turns]);
 
-  if (turns.length < MINIMAP_MIN_TURNS || !fits) return null;
-  const stop = Math.min(focusIndex ?? current ?? turns.length - 1, turns.length - 1);
+  // a rail with no height to stand on draws nothing, rather than a button per turn
+  if (turns.length < MINIMAP_MIN_TURNS || !fits || railPx <= 0) return null;
+  const count = turns.length;
+  const slots = minimapSlots(count, railPx);
+  const currentSlot = current === null ? null : minimapTurnSlot(current, slots, count);
+  const stop = Math.min(focusIndex ?? currentSlot ?? slots - 1, slots - 1);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
-    const next = minimapStep(stop, turns.length, event.key);
+    const next = minimapStep(stop, slots, event.key);
     if (next === null) return;
     event.preventDefault();
     setFocusIndex(next);
@@ -68,23 +81,27 @@ export function ChatMinimap({ turns, rowKeys, scroller, onJump }: ChatMinimapPro
   return <nav
     className="chat-minimap"
     aria-label={t("Conversation turns")}
-    style={{ height: `min(${(turns.length - 1) * SPACING_PX}px, calc(100% - 12rem))`, "--minimap-steps": turns.length - 1 } as CSSProperties}
+    style={{ height: `min(${(count - 1) * SPACING_PX}px, calc(100% - ${MARGIN_REM}rem))`, "--minimap-steps": slots - 1 } as CSSProperties}
     onKeyDown={onKeyDown}
     onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusIndex(null); }}
     onWheel={(event) => scroller.current?.scrollBy({ top: event.deltaY })}
   >
-    {turns.map((turn, index) => <button
-      key={turn.row}
-      ref={(element) => { ticks.current[index] = element; }}
-      type="button"
-      className="chat-minimap-tick"
-      style={{ top: `${minimapTop(index, turns.length)}%` }}
-      tabIndex={index === stop ? 0 : -1}
-      aria-label={t("Go to turn {n}", { n: index + 1 })}
-      aria-current={index === current ? "true" : undefined}
-      title={turn.preview || undefined}
-      onFocus={() => setFocusIndex(index)}
-      onClick={() => onJump(turn.row)}
-    />)}
+    {Array.from({ length: slots }, (_, index) => {
+      const turnIndex = minimapSlotTarget(index, slots, count);
+      const turn = turns[turnIndex]!;
+      return <button
+        key={turn.row}
+        ref={(element) => { ticks.current[index] = element; }}
+        type="button"
+        className="chat-minimap-tick"
+        style={{ top: `${minimapTop(index, slots)}%` }}
+        tabIndex={index === stop ? 0 : -1}
+        aria-label={t("Go to turn {n}", { n: turnIndex + 1 })}
+        aria-current={index === currentSlot ? "true" : undefined}
+        title={turn.preview || undefined}
+        onFocus={() => setFocusIndex(index)}
+        onClick={() => onJump(turn.row)}
+      />;
+    })}
   </nav>;
 }

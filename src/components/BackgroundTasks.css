@@ -73,6 +73,21 @@
   }
 }
 
+/* a finger gets the target's height through an invisible expander: the chip itself stays the
+   --chip-h pill it is beside a mouse, not a --touch-target badge heavier than the buttons around it
+   (the border is 0, so the expander is measured from the chip's own box) */
+@media (pointer: coarse) {
+  .composer-surface[data-compact] .bg-tasks-toggle {
+    position: relative;
+  }
+
+  .composer-surface[data-compact] .bg-tasks-toggle::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--chip-h) - var(--touch-target)) / 2) 0;
+  }
+}
+
 /* nothing running: the list of what ran stays at hand, without the working tint */
 .bg-tasks-toggle.is-idle {
   background: transparent;

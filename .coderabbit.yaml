@@ -10,8 +10,9 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
-    # Review once when a PR opens; ask again with `@coderabbitai review` before merging,
-    # so each push does not spend the per-developer review allowance.
+    # Review once when a PR opens, so each push does not spend the per-developer review
+    # allowance. Ask again with `@coderabbitai review` only after a behaviour change
+    # (AGENTS.md, Maintainer workflow).
     auto_incremental_review: false
   path_filters:
     - '!shared/herdr-api.generated.ts'

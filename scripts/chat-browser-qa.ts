@@ -75,7 +75,7 @@ try {
   page.setDefaultTimeout(10_000);
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(paneId)}`);
   await page.locator(".conn-live").waitFor();
-  const log = page.getByRole("log", { name: `conversation of ${paneId}` });
+  const log = page.locator(`.pane-frame[data-layout-pane="${paneId}"]`).getByRole("log");
   await log.getByText(answer, { exact: true }).waitFor();
   assert.equal(await log.locator(".chat-turn-user").count(), 1);
   assert.equal((await log.innerText()).includes("PRIVATE"), false);
@@ -137,7 +137,8 @@ try {
   const failedRow = log.getByRole("button", { name: "Ran bun test failed", exact: true });
   assert.equal(await failedRow.evaluate((node) => node.lastElementChild?.className), "work-row-failed");
   assert.equal(await failedRow.getAttribute("title"), "exec_command · bun test");
-  await row.click();
+  // the row opened while the turn ran stays open through fold and unfold: a click would close it
+  if (await row.getAttribute("aria-expanded") !== "true") await row.click();
   assert.equal(await log.locator(".work-row-detail > :first-child").innerText(), "exec_command");
   await log.getByText("git status", { exact: true }).last().waitFor();
   assert.equal(await log.locator(".chat-agent-meta").count(), 1);
@@ -175,6 +176,39 @@ try {
   });
   assert.equal(await nativeImage.count(), 1);
   console.log("PASS native Codex image-only turn loads its pane-scoped thumbnail");
+
+  // a turn that has written nothing yet (Claude Code's spinner): the activity wears a live block's
+  // head, and the block the first tool row draws takes its place with its title where the line's was
+  await report("working");
+  const placeholder = log.locator(".chat-activity .work-block-title", { hasText: "Working…" });
+  await placeholder.waitFor();
+  const placeholderX = (await placeholder.boundingBox())!.x;
+  add({ type: "function_call", name: "exec_command", call_id: "c3", arguments: '{"cmd":"git diff"}' }, 23); persist();
+  const liveTitle = log.locator(".work-block.is-live:not(.is-pending) .work-block-title", { hasText: "Working…" });
+  await liveTitle.waitFor();
+  await placeholder.waitFor({ state: "detached" });
+  assert.ok(Math.abs((await liveTitle.boundingBox())!.x - placeholderX) < 1, "the block's title starts where the activity line's did");
+  await report("idle");
+  await log.locator(".work-block-title", { hasText: "Worked" }).last().waitFor();
+  // a running turn with only words so far: the activity is a line under them, not a head over
+  // them, so the words stay put when the turn ends and the line goes
+  add(message("user", "A third request."), 24);
+  add(message("assistant", "Let me look first."), 25); persist();
+  const words = log.getByText("Let me look first.", { exact: true });
+  await words.waitFor();
+  await report("working");
+  const line = log.locator(".chat-activity.chat-activity-line", { hasText: "Working…" });
+  await line.waitFor();
+  assert.equal(await log.locator(".chat-turn-agent .work-block.is-pending").count(), 0, "no head over the words");
+  assert.equal(await log.locator(".chat-activity").count(), 1, "one Working at a time");
+  assert.ok((await line.boundingBox())!.y > (await words.boundingBox())!.y, "the line is under the words");
+  // measured from its turn: the follow scroll moves the whole turn when the line goes
+  const inTurn = () => words.evaluate((node) => node.getBoundingClientRect().top - node.closest(".chat-turn-agent")!.getBoundingClientRect().top);
+  const wordsAt = await inTurn();
+  await report("idle");
+  await line.waitFor({ state: "detached" });
+  assert.equal(await inTurn(), wordsAt, "the words stay put when the turn ends");
+  console.log("PASS the activity before a turn's first row is the live head its work block takes over, and a line under a turn's words");
 
   const { promise: gate, resolve } = Promise.withResolvers<void>();
   release = resolve;
@@ -226,7 +260,7 @@ try {
   await insecure.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
   insecure.on("pageerror", (error) => errors.push(error.message));
   await insecure.goto(`http://clipboard.test:${server.port}/?pane=${encodeURIComponent(paneId)}`);
-  const insecureLog = insecure.getByRole("log", { name: `conversation of ${paneId}` });
+  const insecureLog = insecure.locator(`.pane-frame[data-layout-pane="${paneId}"]`).getByRole("log");
   await insecureLog.getByText(answer, { exact: true }).waitFor();
   assert.equal(await insecure.evaluate(() => window.isSecureContext), false);
   assert.equal(await insecure.evaluate(() => typeof navigator.clipboard), "undefined");

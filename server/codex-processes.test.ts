@@ -525,3 +525,19 @@ for (const executable of [
     expect(await resolve()).toBe(path);
   });
 }
+
+shortIt("finds a profile's short conversation after native completion footers", async () => {
+  await shortSession();
+  const db = new Database(join(home, "state_5.sqlite"));
+  db.query("UPDATE threads SET source = 'vscode', first_user_message = 'hi'").run();
+  db.close();
+  shortRollout(path, "hi", "Hi! What would you like to work on?");
+  appendFileSync(path, [
+    { type: "event_msg", payload: { type: "user_message", message: "hi" } },
+    { type: "event_msg", payload: { type: "agent_message", message: "Hi again! How can I help?" } },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  screen = "OpenAI Codex (v0.163.0)\n• Model changed to gpt-6-luna medium\n\n"
+    + "› hi\n\n• Hi! What would you like to work on?\n\n  Worked for 1s • 11:11 AM\n\n"
+    + "› hi\n\n• Hi again! How can I help?\n\n  Worked for 2s • 11:11 AM\n\n› Ask Codex to do anything";
+  expect(await resolve()).toBe(path);
+});

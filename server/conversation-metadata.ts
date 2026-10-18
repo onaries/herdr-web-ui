@@ -70,7 +70,14 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       // A new complete context without effort must not retain an older value.
       if (model || effort !== undefined) metadata.reasoning_effort = label(effort);
     } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "pi-transcript") {
-      if (entry.type === "model_change") { metadata.model = label(entry.modelId); piProvider = label(entry.provider); }
+      if (entry.type === "model_change") {
+        // pi and omo name `provider` and `modelId`; omp names one `model`, "provider/id", where
+        // the id is what its answers name as their model
+        const named = label(entry.model);
+        const slash = named?.indexOf("/") ?? -1;
+        metadata.model = label(entry.modelId) ?? (slash > 0 ? named!.slice(slash + 1) : named);
+        piProvider = label(entry.provider) ?? (slash > 0 ? named!.slice(0, slash) : null);
+      }
       if (entry.type === "thinking_level_change") metadata.reasoning_effort = label(entry.thinkingLevel);
       const message = piMessage(entry) ?? {};
       // a turn answers at whatever model it ran at, and that is the one the window belongs to

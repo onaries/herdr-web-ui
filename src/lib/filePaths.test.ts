@@ -20,6 +20,24 @@ describe("file paths in chat text", () => {
     expect(splitFilePaths("open src/a.ts now")).toEqual(["open ", { path: "src/a.ts" }, " now"]);
   });
 
+  it("finds a path named in any script, and stops at a particle written onto it", () => {
+    expect(paths("열면 docs/스플릿뷰-결과.html 이 보여요, ~/사진/화면.png")).toEqual(["docs/스플릿뷰-결과.html", "~/사진/화면.png"]);
+    expect(paths("docs/a.md를 열고 src/앱.ts에서 확인")).toEqual(["docs/a.md", "src/앱.ts"]);
+    expect(paths("한글/폴더/파일.txt:12")).toEqual(["한글/폴더/파일.txt:12"]);
+    // a name with spaces in prose is not guessed at: only its last word would match
+    expect(paths("docs/합치기 결과-mvck6xdy.html")).toEqual([]);
+  });
+
+  it("takes a Latin path written straight onto Chinese, Japanese or Korean words", () => {
+    expect(paths("请打开src/app.ts文件")).toEqual(["src/app.ts"]);
+    expect(paths("まずsrc/app.tsを開いて")).toEqual(["src/app.ts"]);
+    expect(paths("파일src/a.ts를 열어")).toEqual(["src/a.ts"]);
+    expect(paths("修改了src/lib/filePaths.ts和src/a.ts")).toEqual(["src/lib/filePaths.ts", "src/a.ts"]);
+    expect(splitFilePaths("请打开src/app.ts文件")).toEqual(["请打开", { path: "src/app.ts" }, "文件"]);
+    // a digit next to a Hangul name stays part of it
+    expect(paths("docs/결과2.html")).toEqual(["docs/결과2.html"]);
+  });
+
   it("leaves words, versions and bare names as text", () => {
     expect(paths("and/or, e.g. v1.2.3, 1.0/2.5, README.md, TCP/IP")).toEqual([]);
   });
@@ -33,6 +51,12 @@ describe("file paths in chat text", () => {
     // a plus sign before or inside a path reads as it did
     expect(paths("+src/app.ts and c++/x/y.cc, a+b/c.ts")).toEqual(["+src/app.ts", "c++/x/y.cc", "a+b/c.ts"]);
     expect(splitFilePaths("+~/notes/a.md")).toEqual(["+", { path: "~/notes/a.md" }]);
+  });
+
+  it("takes a code span named in any script, with spaces past its first folder", () => {
+    for (const code of [".senpi/html-pages/스플릿뷰 한 줄 합치기 결과-mvck6xdy.html", "스플릿뷰.html", "/tmp/a b/x.html", "~/My Docs/notes v2.md:3", "docs/화면 캡처.png"]) expect(codeIsFilePath(code)).toBe(true);
+    // a command, a phrase or two files in one span is not one path
+    for (const code of ["bun scripts/check.ts", "run a.ts", "git add src/a.ts", "src/App.tsx src/styles.css", "a.ts b.ts", " /tmp/a.log", "/tmp/a  b/x.html", "my notes.md"]) expect(codeIsFilePath(code)).toBe(false);
   });
 
   it("takes a code span that is one file name or path", () => {

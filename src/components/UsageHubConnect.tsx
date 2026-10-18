@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import type { CLIProxyStatus } from "../../shared/protocol.ts";
 import { cliProxyRequest, fetchUsage } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
@@ -14,6 +15,7 @@ export function UsageHubConnect({ hub, onConnected, onDone }: {
   const [url, setUrl] = useState(hub?.url ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keyShown, setKeyShown] = useState(false);
   const [connected, setConnected] = useState<{ readonly count: number | null } | null>(null);
   const key = useRef<HTMLInputElement>(null);
   if (connected) return <div className="account-auth-form">
@@ -41,7 +43,12 @@ export function UsageHubConnect({ hub, onConnected, onDone }: {
     <label className="settings-label" htmlFor="usage-hub-url">{t("Hub URL")}</label>
     <input id="usage-hub-url" className="input" type="url" placeholder="http://localhost:8317" value={url} onChange={(event) => setUrl(event.target.value)} required disabled={busy} />
     <label className="settings-label" htmlFor="usage-hub-key">{t("Management key")}</label>
-    <input ref={key} id="usage-hub-key" className="input" type="password" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} disabled={busy} placeholder={hub?.configured ? t("Blank keeps the saved key") : undefined} />
+    <div className="usage-hub-key">
+      <input ref={key} id="usage-hub-key" className="input" type={keyShown ? "text" : "password"} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} disabled={busy} placeholder={hub?.configured ? t("Blank keeps the saved key") : undefined} />
+      <button type="button" className="icon-button" aria-pressed={keyShown} aria-controls="usage-hub-key" aria-label={t("Show key")} title={t("Show key")} onClick={() => setKeyShown(!keyShown)}>
+        {keyShown ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+      </button>
+    </div>
     {error && <p className="settings-hint account-error" role="alert">{error}</p>}
     <button className="btn" type="submit" disabled={busy || !url}>{busy ? t("Connecting…") : t("Connect")}</button>
   </form>;

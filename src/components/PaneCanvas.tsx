@@ -7,10 +7,11 @@ import { PANE_DRAG_TYPE, paneDragData, type SplitSide } from "../lib/split.ts";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
 import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitContext } from "../lib/paneSubmitContext.ts";
 import { cachedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
-import { ApiError, routeMissing } from "../lib/api.ts";
+import { routeMissing } from "../lib/api.ts";
 import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
-import { layoutTopology, paneContextPress, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
+import { layoutTopology, paneContextPress, paneFieldTarget, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
 import { useT } from "../lib/i18n.ts";
+import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -74,7 +75,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<HerdrPane | null>(null);
   const [closing, setClosing] = useState<HerdrPane | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserError | null>(null);
   // A new pane can be selected before its snapshot arrives, and a selected pane can close
   // before App confirms its replacement. Keep the prior tab's surviving mounts (and their
   // connection-owned pending sends) through either gap, with selection/input still pending.
@@ -97,8 +98,9 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const closeMenu = useCallback(() => setMenu(null), []);
   const fail = (reason: unknown): void => {
     if (!alive.current) return;
-    setError(routeMissing(reason) ? t("This PC's bridge does not offer this yet")
-      : t("Layout change failed: {reason}", { reason: reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason) }));
+    if (routeMissing(reason)) { setError({ message: t("This PC's bridge does not offer this yet"), detail: null }); return; }
+    const failure = userErrorMessage(reason);
+    setError({ message: t("Layout change failed: {reason}", { reason: failure.message }), detail: failure.detail });
   };
   const cancelDrag = (): void => {
     const current = drag.current;
@@ -133,7 +135,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     const pointer = (event.nativeEvent as Partial<globalThis.PointerEvent>).pointerType;
     // Android Chrome ends a dragged text selection with a second contextmenu typed "mouse" and no
     // press of its own: only a mouse or the keyboard pressing since the touch makes it the app's
-    if (pointer === "touch" || pointer === "pen" || touchPress.current) return;
+    if (pointer === "touch" || pointer === "pen" || touchPress.current || paneFieldTarget(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
@@ -278,10 +280,10 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         onDropCapture={() => { if (!active) onSelect(item.pane_id, false); }}
         onFocusCapture={(event) => { if (!active && event.currentTarget.contains(event.target)) onSelect(item.pane_id, false); }}
         onMouseDownCapture={(event) => {
-          if (paneContextPress(event, apple)) { event.preventDefault(); event.stopPropagation(); }
+          if (paneContextPress(event, apple) && !paneFieldTarget(event.target)) { event.preventDefault(); event.stopPropagation(); }
         }}
         onMouseUpCapture={(event) => {
-          if (paneContextPress(event, apple)) { event.preventDefault(); event.stopPropagation(); }
+          if (paneContextPress(event, apple) && !paneFieldTarget(event.target)) { event.preventDefault(); event.stopPropagation(); }
         }}
         onContextMenuCapture={(event) => context(event, item)}>
         <div className="pane-frame-head" draggable={onOpenInHalf !== undefined && !coarse}
@@ -328,7 +330,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           run(() => api.setSplitRatio(layout.tab_id, path, Math.max(0.1, Math.min(0.9, item.ratio + step))));
         }} />;
     })}
-    {error && <div className="pane-canvas-error" role="alert">{error}<button className="icon-button" aria-label={t("Dismiss")} onClick={() => setError(null)}><X /></button></div>}
+    {error && <div className="pane-canvas-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}<button className="icon-button" aria-label={t("Dismiss")} onClick={() => setError(null)}><X /></button></div>}
     {menu && target && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={t("Pane actions for {name}", { name: displayPaneTitle(target) })} items={items} onClose={closeMenu} />}
     {renaming && <PaneRename pane={renaming} onClose={() => setRenaming(null)} onSave={async (label) => { await api.renamePane(renaming.pane_id, label); onChanged(); }} />}
     {closing && <ConfirmDialog title={t("Close pane {name}?", { name: displayPaneTitle(closing) })}
@@ -343,7 +345,7 @@ function PaneRename({ pane, onClose, onSave }: { pane: HerdrPane; onClose: () =>
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: input });
   const [value, setValue] = useState(pane.label ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserError | null>(null);
   usePhoneSheetBack(() => { if (busy) return false; onClose(); });
   useEffect(() => {
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); } };
@@ -352,9 +354,9 @@ function PaneRename({ pane, onClose, onSave }: { pane: HerdrPane; onClose: () =>
   }, [busy, onClose]);
   return createPortal(<div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={t("Rename pane")}>
-      <form className="pane-rename-form" onSubmit={(event) => { event.preventDefault(); if (busy) return; setBusy(true); void onSave(value.trim()).then(onClose, (reason) => { setError(String(reason)); setBusy(false); }); }}>
+      <form className="pane-rename-form" onSubmit={(event) => { event.preventDefault(); if (busy) return; setBusy(true); void onSave(value.trim()).then(onClose, (reason) => { setError(userErrorMessage(reason)); setBusy(false); }); }}>
         <header className="modal-header"><h2 className="modal-title">{t("Rename pane")}</h2></header>
-        <div className="modal-body"><label>{t("Pane name")}<input ref={input} className="input" value={value} disabled={busy} maxLength={80} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} /></label>{error && <p role="alert">{error}</p>}</div>
+        <div className="modal-body"><label>{t("Pane name")}<input ref={input} className="input" value={value} disabled={busy} maxLength={80} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} /></label>{error && <p role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}</div>
         <footer className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{t("Cancel")}</button><button className="btn btn-primary" disabled={busy}>{t("Save")}</button></footer>
       </form>
     </div>

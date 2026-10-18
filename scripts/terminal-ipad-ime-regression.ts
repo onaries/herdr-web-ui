@@ -1,4 +1,4 @@
-/** Replay the native iPadOS Safari + hardware keyboard trace (Korean 2-set), not a claim to automate the OS IME. */
+/** Replay the native iPadOS Safari + hardware keyboard and iPhone on-screen keyboard traces (Korean 2-set), not a claim to automate the OS IME. */
 import assert from "node:assert/strict";
 import type { Browser } from "playwright-core";
 
@@ -7,17 +7,25 @@ import type { Browser } from "playwright-core";
  * not 229, isComposing false), then a keypress, then composes in the editor: a new syllable is an
  * insertText, a changed one is deleteContentBackward followed by insertText of the whole result.
  * There are no composition events. Recorded with scripts/terminal-ime-diagnostic.ts on 2026-10-13.
+ * The iPhone's on-screen Korean keyboard (iOS 27 simulator, Safari, 2026-10-18) edits the same way,
+ * with keyCode 0 on each jamo's keydown.
  */
 export async function checkIpadIme(browser: Browser, origin: string, pane: string, otherPane: string): Promise<void> {
-  // one context for both platforms: the page, not the context, carries the platform it reports
+  // one context for both iPad platforms: the page, not the context, carries the platform it reports
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15",
     viewport: { width: 1100, height: 700 },
   });
+  // an iPhone's user agent: the terminal also keeps a space in its field there (#862)
+  const iphone = await browser.newContext({
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1",
+    viewport: { width: 1100, height: 700 },
+  });
   try {
-  // the platform iPadOS Safari reports by default (desktop site), and the one it reports otherwise
-  for (const platform of ["MacIntel", "iPad"]) {
-    const page = await context.newPage();
+  // the platform iPadOS Safari reports by default (desktop site), the one it reports otherwise,
+  // and an iPhone's
+  for (const platform of ["MacIntel", "iPad", "iPhone"]) {
+    const page = await (platform === "iPhone" ? iphone : context).newPage();
     await page.addInitScript(({ pane, platform }) => {
       Object.defineProperty(navigator, "platform", { get: () => platform });
       localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
@@ -81,7 +89,7 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
         box.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: jamo, keyCode, isComposing: false }));
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         return down;
-      }, { jamo, keyCode: KEYCODES[jamo] ?? 65, edits });
+      }, { jamo, keyCode: platform === "iPhone" ? 0 : KEYCODES[jamo] ?? 65, edits });
     };
     const fresh = (jamo: string) => key(jamo, [["insert", jamo]]);
     const replace = (jamo: string, result: string) => key(jamo, [["delete"], ["insert", result]]);
@@ -126,6 +134,13 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
         await check("한" + expected, `iPad commit precedes ${press}`);
       }
 
+      // the key bar's keys reach xterm through term.input, not a keydown: they follow the syllable too
+      await reset(); await fresh("ㅎ"); await replace("ㅏ", "하"); await replace("ㄴ", "한");
+      const escape = page.locator('.key-bar .key[data-key="Escape"]');
+      await until(() => escape.evaluate((node) => !(node as HTMLButtonElement).disabled).catch(() => false));
+      await escape.evaluate((node: HTMLElement) => node.click());
+      await check("한\x1b", "the pending syllable precedes a key-bar key");
+
       await reset(); await fresh("ㅎ"); await replace("ㅏ", "하"); await replace("ㄴ", "한");
       await input.evaluate((box) => (box as HTMLTextAreaElement).blur());
       await until(() => sent.length > 0);
@@ -147,8 +162,8 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
       await page.goto("about:blank").catch(() => {});
     }
   }
-  } finally { await context.close(); }
-  console.log("PASS iPad hardware-keyboard replay: jamo keys composed in the editor, pending syllable at its row's size, commit keys, two-syllable replacement, blur and pane reset");
+  } finally { await context.close(); await iphone.close(); }
+  console.log("PASS iPad hardware-keyboard and iPhone keyboard replay: jamo keys composed in the editor, pending syllable at its row's size, commit keys, two-syllable replacement, blur and pane reset");
 }
 
 if (import.meta.main) {

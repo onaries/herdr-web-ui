@@ -44,7 +44,7 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), pane);
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
-  const log = page.getByRole("log", { name: `conversation of ${pane}` });
+  const log = page.locator(`.pane-frame[data-layout-pane="${pane}"]`).getByRole("log");
   await log.getByText("Fictional Grok answer.", { exact: true }).waitFor();
   const head = log.locator(".work-block-head");
   if (await head.getAttribute("aria-expanded") !== "true") await head.click();

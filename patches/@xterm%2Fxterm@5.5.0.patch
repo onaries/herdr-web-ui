@@ -2,7 +2,7 @@ diff --git a/node_modules/@xterm/xterm/.bun-tag-e1949dc8b8c7d718 b/.bun-tag-e194
 new file mode 100644
 index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/src/browser/Terminal.ts b/src/browser/Terminal.ts
-index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..2c6e3353e162aa36cd37f3850d711f29bb266a95 100644
+index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a4044475512088d40 100644
 --- a/src/browser/Terminal.ts
 +++ b/src/browser/Terminal.ts
 @@ -339,7 +339,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
@@ -45,19 +45,26 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..2c6e3353e162aa36cd37f3850d711f29
      this._helperContainer.appendChild(this._compositionView);
  
      this._mouseService = this._instantiationService.createInstance(MouseService);
-@@ -888,6 +896,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -887,7 +895,14 @@ export class Terminal extends CoreTerminal implements ITerminal {
+     }
    }
  
++  /** Input from the embedder (an on-screen key bar's Esc, arrows, Tab, ^C) follows the syllable being typed. */
++  public override input(data: string, wasUserInput: boolean = true): void {
++    this._compositionHelper?.finishReplacement();
++    super.input(data, wasUserInput);
++  }
++
    public paste(data: string): void {
 +    this._compositionHelper?.finishReplacement();
      paste(data, this.textarea!, this.coreService, this.optionsService);
    }
  
-@@ -1006,9 +1015,16 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1006,9 +1021,16 @@ export class Terminal extends CoreTerminal implements ITerminal {
        return false;
      }
  
-+    // An iPad's Korean input method composes this key in the editor; keypress must not send it either
++    // An iPad's or iPhone's Korean input method composes this key in the editor; keypress must not send it either
 +    if (this._compositionHelper!.passHangulKey(event)) {
 +      this._keyDownHandled = true;
 +      return false;
@@ -70,7 +77,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..2c6e3353e162aa36cd37f3850d711f29
      if (!shouldIgnoreComposition && !this._compositionHelper!.keydown(event)) {
        if (this.options.scrollOnUserInput && this.buffer.ybase !== this.buffer.ydisp) {
          this.scrollToBottom();
-@@ -1063,7 +1079,13 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1063,7 +1085,13 @@ export class Terminal extends CoreTerminal implements ITerminal {
      // If ctrl+c or enter is being sent, clear out the textarea. This is done so that screen readers
      // will announce deleted characters. This will not work 100% of the time but it should cover
      // most scenarios.
@@ -85,7 +92,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..2c6e3353e162aa36cd37f3850d711f29
        this.textarea!.value = '';
      }
  
-@@ -1170,10 +1192,11 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1170,10 +1198,11 @@ export class Terminal extends CoreTerminal implements ITerminal {
     * @param ev The input event to be handled.
     */
    protected _inputEvent(ev: InputEvent): boolean {
@@ -98,7 +105,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..2c6e3353e162aa36cd37f3850d711f29
        if (this._keyPressHandled) {
          return false;
        }
-@@ -1251,6 +1274,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1251,6 +1280,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
     * using DECSTR (soft reset, CSI ! p) or RIS instead (hard reset, ESC c).
     */
    public reset(): void {
@@ -124,14 +131,14 @@ index 9ebc55d96f328720dcb87cc31147c6d5a76ebebe..8ad922b9f033f878da81e81d33725c66
    compositionstart(): void;
    compositionupdate(ev: CompositionEvent): void;
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94759d3b70 100644
+index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596f7df58fe 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -6,6 +6,11 @@
  import { IRenderService } from 'browser/services/Services';
  import { IBufferService, ICoreService, IOptionsService } from 'common/services/Services';
  import { C0 } from 'common/data/EscapeSequences';
-+import { isIpad, isMac, isSafari } from 'common/Platform';
++import { isIpad, isIphone, isMac, isSafari } from 'common/Platform';
 +
 +/** Hangul jamo and syllables: a key or an edit that a Korean input method composes. */
 +const HANGUL_KEY = /^[ᄀ-ᇿ㄰-㆏가-힯]$/;
@@ -161,7 +168,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
  
    /**
     * Data already sent due to keydown event.
-@@ -50,17 +60,101 @@ export class CompositionHelper {
+@@ -50,17 +60,102 @@ export class CompositionHelper {
      @IRenderService private readonly _renderService: IRenderService
    ) {
      this._isComposing = false;
@@ -189,7 +196,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
 +  /** Safari #432: beforeinput supplies the pre-edit range; keydown 229 arrives AFTER input. */
 +  public beforeinput(ev: InputEvent, keyDownSeen = false): void {
 +    if (!this._replacementComposition) this._editAwaitingKey = false;
-+    if (!(isMac || isIpad) || !isSafari || ev.isComposing || this._optionsService.rawOptions.screenReaderMode
++    if (!(isMac || isIpad || isIphone) || !isSafari || ev.isComposing || this._optionsService.rawOptions.screenReaderMode
 +      || (this._isComposing && !this._replacementComposition)) return;
 +    if (this._replacementComposition && (ev.inputType === 'insertReplacementText'
 +      || ev.inputType === 'deleteContentBackward' || ev.inputType === 'deleteContentForward')) return;
@@ -209,14 +216,15 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
 +  }
 +
 +  /**
-+   * iPadOS Safari with a hardware keyboard reports each Hangul jamo as a printable keydown (its own
-+   * keyCode, not 229) and then composes in the editor with deleteContentBackward and insertText,
-+   * never with composition events. Sending the key on keydown cancels that edit, so every jamo
-+   * reached the PTY on its own (한 as ㅎㅏㄴ). Such a key is left to the editor: beforeinput takes
-+   * its insertion as a replacement preedit, which the next other key, paste or blur commits.
++   * iPadOS Safari with a hardware keyboard and the iPhone's on-screen keyboard report each Hangul
++   * jamo as a printable keydown (its own keyCode on an iPad, 0 on an iPhone, never 229) and then
++   * compose in the editor with deleteContentBackward and insertText, never with composition
++   * events. Sending the key on keydown cancels that edit, so every jamo reached the PTY on its own
++   * (한 as ㅎㅏㄴ). Such a key is left to the editor: beforeinput takes its insertion as a
++   * replacement preedit, which the next other key, paste or blur commits.
 +   */
 +  public passHangulKey(ev: KeyboardEvent): boolean {
-+    if (!isSafari || !(isMac || isIpad) || ev.keyCode === 229 || ev.isComposing || ev.ctrlKey || ev.altKey || ev.metaKey
++    if (!isSafari || !(isMac || isIpad || isIphone) || ev.keyCode === 229 || ev.isComposing || ev.ctrlKey || ev.altKey || ev.metaKey
 +      || this._optionsService.rawOptions.screenReaderMode || (this._isComposing && !this._replacementComposition)
 +      || !HANGUL_KEY.test(ev.key)) return false;
 +    this._editAwaitingKey = false;
@@ -265,7 +273,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
      this._compositionView.textContent = '';
      this._dataAlreadySent = '';
      this._compositionView.classList.add('active');
-@@ -71,9 +165,12 @@ export class CompositionHelper {
+@@ -71,9 +166,12 @@ export class CompositionHelper {
     * @param ev The event.
     */
    public compositionupdate(ev: Pick<CompositionEvent, 'data'>): void {
@@ -278,7 +286,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
        this._compositionPosition.end = this._textarea.value.length;
      }, 0);
    }
-@@ -83,6 +180,7 @@ export class CompositionHelper {
+@@ -83,6 +181,7 @@ export class CompositionHelper {
     * the handler.
     */
    public compositionend(): void {
@@ -286,7 +294,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
      this._finalizeComposition(true);
    }
  
-@@ -92,7 +190,24 @@ export class CompositionHelper {
+@@ -92,7 +191,24 @@ export class CompositionHelper {
     * @returns Whether the Terminal should continue processing the keydown event.
     */
    public keydown(ev: KeyboardEvent): boolean {
@@ -312,7 +320,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
        if (ev.keyCode === 229) {
          // Continue composing if the keyCode is the "composition character"
          return false;
-@@ -125,56 +240,45 @@ export class CompositionHelper {
+@@ -125,56 +241,45 @@ export class CompositionHelper {
     *   the command is executed.
     */
    private _finalizeComposition(waitForPropagation: boolean): void {
@@ -396,7 +404,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
    /**
     * Apply any changes made to the textarea after the current event chain is allowed to complete.
     * This should be called when not currently composing but a keydown event with the "composition
-@@ -183,7 +287,9 @@ export class CompositionHelper {
+@@ -183,7 +288,9 @@ export class CompositionHelper {
     */
    private _handleAnyTextareaChanges(): void {
      const oldValue = this._textarea.value;
@@ -406,3 +414,16 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..02aa336427b5ff240820dd122d2d7b94
        // Ignore if a composition has started since the timeout
        if (!this._isComposing) {
          const newValue = this._textarea.value;
+diff --git a/src/browser/services/CoreBrowserService.ts b/src/browser/services/CoreBrowserService.ts
+index 575b62b63c647356378a55919a3c9c18eb8da11e..27e0b787b0000550f9806c0ecc3a95e65ff017d4 100644
+--- a/src/browser/services/CoreBrowserService.ts
++++ b/src/browser/services/CoreBrowserService.ts
+@@ -13,7 +13,7 @@ export class CoreBrowserService extends Disposable implements ICoreBrowserServic
+ 
+   private _isFocused = false;
+   private _cachedIsFocused: boolean | undefined = undefined;
+-  private _screenDprMonitor = new ScreenDprMonitor(this._window);
++  private _screenDprMonitor = this.register(new ScreenDprMonitor(this._window));
+ 
+   private readonly _onDprChange = this.register(new EventEmitter<number>());
+   public readonly onDprChange = this._onDprChange.event;

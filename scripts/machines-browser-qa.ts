@@ -58,13 +58,14 @@ try {
   await page.route(`**/api/machines/${a}/pane/image`, async (route) => { uploads.push(route.request().url()); await gate; await route.continue(); });
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1kAAAAASUVORK5CYII=", "base64");
   await page.locator('input[type="file"]').setInputFiles([{ name: "first.png", mimeType: "image/png", buffer: png }, { name: "second.png", mimeType: "image/png", buffer: png }]);
-  for (let i = 0; i < 100 && !uploads.length; i++) await new Promise((r) => setTimeout(r, 20));
-  assert.equal(uploads.length, 1);
+  // attached files upload in parallel (#864), so both picked files are in flight at once
+  for (let i = 0; i < 100 && uploads.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(uploads.length, 2);
   await select("QA second PC");
   const uploaded = page.waitForResponse((r) => r.url().endsWith(`${a}/pane/image`));
   releaseUpload(); assert.equal((await uploaded).status(), 200);
   assert.equal(await composer.inputValue(), "PC B draft");
-  assert.equal(uploads.length, 1);
+  assert.equal(uploads.length, 2, "both late uploads went to PC A, none to PC B");
   console.log("PASS late image response and upload batch stay on their original PC");
 
   await composer.fill("printf 'browser_pc_b_ok\\n'");
@@ -126,6 +127,9 @@ try {
   assert.equal(await page.locator(".composer-queue-text").count(), 0);
   await select("QA remote");
   assert.equal(await page.locator(".composer-queue-text").inputValue(), "HELD_A_MUST_NOT_SEND");
+  // with the prompt dock open the held rows are folded behind their caption (#466): open it first
+  const heldToggle = page.locator(".composer-queue-toggle");
+  if (await heldToggle.count() && await heldToggle.getAttribute("aria-expanded") !== "true") await heldToggle.click();
   await page.getByRole("button", { name: "Discard", exact: true }).click();
   await herdrRpc("pane.send_text", { pane_id: paneId, text: "\u0003" }, socket); pendingProgramRunning = false;
   console.log("PASS remote Send/Send now targets its PC once; saved pending and legacy held input never replay or cross PCs");

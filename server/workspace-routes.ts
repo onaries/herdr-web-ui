@@ -1,0 +1,301 @@
+/**
+ * The workspace routes: a folder's listing and a new folder, a repository's changes, and the
+ * workspaces, tabs and worktrees herdr makes, renames, moves and closes. They answer from herdr
+ * and the disk; the dispatcher in index.ts runs the access gate first.
+ */
+import type { Server } from "bun";
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
+import { MAX_LABEL_CHARS } from "../shared/labels.ts";
+import type { DirectoryCreated, ServerMessage, TabMoved } from "../shared/protocol.ts";
+import { agentFault, agentLaunch, type AgentPayload } from "./agent-launch.ts";
+import { createDirectory, listDirectories } from "./directories.ts";
+import { HerdrError, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceMove, workspaceRename, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "./herdr/client.ts";
+import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse, readJsonObject } from "./http.ts";
+import { paneContext } from "./pane-routes.ts";
+import { repoDiffResponse } from "./repo-diff.ts";
+
+function expandedDirectory(value: string): string | null {
+  const expanded = value === "~" ? homedir() : value.startsWith("~/") ? resolve(homedir(), value.slice(2)) : resolve(value);
+  try {
+    return statSync(expanded).isDirectory() ? expanded : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The answer for a workspace route, or null when the path is not one. */
+export async function handleWorkspaceRequest(request: Request, url: URL, pathname: string, bunServer: Pick<Server<unknown>, "timeout">, broadcastAll: (message: ServerMessage) => void): Promise<Response | null> {
+  if (pathname === "/api/workspace/directories" && request.method === "POST") {
+    let payload: unknown;
+    try { payload = await request.json(); } catch { return badRequest("invalid_json", "request body must be JSON"); }
+    if (!isJsonObject(payload) || typeof payload["path"] !== "string" || typeof payload["name"] !== "string") return badRequest("invalid_body", "path and name must be strings");
+    let made;
+    try { made = createDirectory(payload["path"], payload["name"]); } catch (error) { return errorResponse(error); }
+    if ("path" in made) return jsonResponse({ path: made.path } satisfies DirectoryCreated, 201);
+    if (made.error === "folder_exists") return conflictResponse("folder_exists", "a file or folder with that name is already there");
+    if (made.error === "permission_denied") return jsonResponse({ error: { code: "permission_denied", message: "this user cannot make a folder there" } }, 403);
+    return made.error === "invalid_cwd"
+      ? badRequest("invalid_cwd", "path must be a directory this user can read")
+      : badRequest("invalid_name", "name must be one folder name: not empty, `.` or `..`, without a slash, at most 255 bytes");
+  }
+
+  if (pathname === "/api/workspace/directories") {
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET or POST");
+    // a folder a pane's chat names is read from that pane's folder, as a file it names is
+    const paneId = url.searchParams.get("pane_id");
+    let base: string | undefined;
+    if (paneId) {
+      try { base = (await paneContext(paneId)).cwd; } catch { /* an absolute path still lists */ }
+      // a relative path whose pane is gone has no folder to be read from: not the server's own
+      const path = (url.searchParams.get("path") ?? "").trim();
+      if (base === undefined && path !== "" && path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) return badRequest("invalid_cwd", "the pane a relative path belongs to is gone");
+    }
+    const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1", url.searchParams.get("files") === "1", base);
+    return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
+  }
+
+  if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file") {
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    // file contents, like /api/fs/file: this app reads them, another site's page does not
+    if (request.headers.get("sec-fetch-site") === "cross-site") return jsonResponse({ error: { code: "cross_site", message: "A repository's changes are read from this app" } }, 403);
+    const paneId = url.searchParams.get("pane_id");
+    const directory = (url.searchParams.get("directory") ?? "").trim();
+    if (!paneId && directory === "") return badRequest("missing_directory", "pane_id or directory query parameter is required");
+    let base: string | undefined;
+    if (paneId) {
+      try { base = (await paneContext(paneId)).cwd; } catch (error) {
+        // a named folder is still read; the pane's own folder is gone with the pane
+        if (directory === "") return errorResponse(error);
+      }
+    }
+    let cwd = base;
+    if (directory !== "") {
+      const relative = directory !== "~" && !directory.startsWith("~/") && !isAbsolute(directory);
+      if (relative && base === undefined) return badRequest("invalid_cwd", "a relative directory needs the pane it belongs to");
+      cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
+    }
+    if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
+    return repoDiffResponse(pathname.endsWith("/files") ? "files" : "file", cwd, url.searchParams);
+  }
+
+  // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and
+  // the agent (if any) starts there through the one launch path, so names, retries and a
+  // partial failure read the same for both.
+  if (pathname === "/api/workspace/create" || pathname === "/api/tab/create") {
+    const inWorkspace = pathname === "/api/tab/create";
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    const payload = await readJsonObject<{ workspace_id?: unknown; cwd?: unknown; label?: unknown; agent?: { kind?: unknown; name?: unknown; args?: unknown } | null }>(request);
+    if (payload instanceof Response) return payload;
+    if (inWorkspace && (typeof payload.workspace_id !== "string" || payload.workspace_id.trim() === "")) {
+      return badRequest("missing_workspace_id", "workspace_id is required");
+    }
+    // the client sends null for "not given": treat it exactly like an absent field
+    if (payload.cwd === null) delete payload.cwd;
+    if (payload.label === null) delete payload.label;
+    if (payload.agent === null) delete payload.agent;
+    if (payload.cwd !== undefined && typeof payload.cwd !== "string") return badRequest("invalid_cwd", "cwd must be an existing directory");
+    const cwd = payload.cwd === undefined ? undefined : expandedDirectory(payload.cwd);
+    if (payload.cwd !== undefined && cwd === null) return badRequest("invalid_cwd", "cwd must be an existing directory");
+    if (payload.label !== undefined && typeof payload.label !== "string") return badRequest("missing_label", "label must be a string");
+    if (typeof payload.label === "string") {
+      // a blank name is no name: herdr names the workspace after its folder, the tab by its number
+      const label = payload.label.trim();
+      if (label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
+      if (label === "") delete payload.label;
+      else payload.label = label;
+    }
+    const fault = agentFault(payload.agent);
+    if (fault !== null) return badRequest("invalid_agent", fault);
+    // agent.start can legitimately take a minute; Bun's default idle timeout is shorter.
+    if (payload.agent) bunServer.timeout(request, 75);
+    try {
+      const options = {
+        ...(cwd === undefined || cwd === null ? {} : { cwd }),
+        ...(typeof payload.label === "string" ? { label: payload.label } : {}),
+      };
+      const created = inWorkspace
+        ? await tabCreate({ ...options, workspaceId: payload.workspace_id as string })
+        : await workspaceCreate(options);
+      const workspaceId = created.tab.workspace_id;
+      if (!payload.agent) {
+        return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, agent_started: false });
+      }
+      return jsonResponse({ workspace_id: workspaceId, pane_id: created.root_pane.pane_id, ...(await agentLaunch(created.root_pane.pane_id, payload.agent)) });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
+
+  // A worktree is a git checkout herdr opens as a workspace grouped with its repository's.
+  // The workspace names the repository; herdr finds the checkout root from its folder.
+  if (pathname === "/api/worktree/list") {
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    const workspaceId = url.searchParams.get("workspace_id") ?? "";
+    if (workspaceId === "") return badRequest("missing_workspace_id", "workspace_id is required");
+    try {
+      const listing = await worktreeList(workspaceId);
+      return jsonResponse({ source: listing.source, worktrees: listing.worktrees });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
+
+  if (pathname === "/api/worktree/remove") {
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    const payload = await readJsonObject<{ workspace_id?: unknown; force?: unknown }>(request);
+    if (payload instanceof Response) return payload;
+    if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
+      return badRequest("missing_workspace_id", "workspace_id is required");
+    }
+    if (payload.force !== undefined && typeof payload.force !== "boolean") return badRequest("invalid_force", "force must be a boolean");
+    // git can take a while to delete a large checkout; Bun's default idle timeout is shorter.
+    bunServer.timeout(request, 75);
+    try {
+      const removed = await worktreeRemove(payload.workspace_id, payload.force === true);
+      // herdr closed the worktree's workspace: tell clients now, as the workspace close route does
+      broadcastAll({ type: "session-changed" });
+      return jsonResponse({ ok: true, path: removed.path, forced: removed.forced });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
+
+  if (pathname === "/api/worktree/create" || pathname === "/api/worktree/open") {
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    const payload = await readJsonObject<{ workspace_id?: unknown; branch?: unknown; base?: unknown; label?: unknown; path?: unknown; agent?: AgentPayload | null }>(request);
+    if (payload instanceof Response) return payload;
+    if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
+      return badRequest("missing_workspace_id", "workspace_id is required");
+    }
+    // the client sends null for "not given": an empty string is not given either
+    const text = (value: unknown, name: string): string | undefined => {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value !== "string") throw badRequest(`invalid_${name}`, `${name} must be a string`);
+      const trimmed = value.trim();
+      return trimmed === "" ? undefined : trimmed;
+    };
+    let branch: string | undefined, base: string | undefined, label: string | undefined;
+    try {
+      branch = text(payload.branch, "branch"); base = text(payload.base, "base"); label = text(payload.label, "label");
+    } catch (response) {
+      return response as Response;
+    }
+    if (label !== undefined && label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
+    // a checkout path is taken as git names it, spaces and all
+    let path: string | undefined;
+    if (payload.path !== undefined && payload.path !== null) {
+      if (typeof payload.path !== "string") return badRequest("invalid_path", "path must be a string");
+      if (payload.path !== "") path = payload.path;
+    }
+    if (path !== undefined && !isAbsolute(path)) return badRequest("invalid_path", "path must be absolute");
+    const creating = pathname === "/api/worktree/create";
+    // a new checkout can start an agent in its pane, as a new workspace can; null is "not given"
+    const agent = creating ? payload.agent ?? undefined : undefined;
+    const fault = agentFault(agent);
+    if (fault !== null) return badRequest("invalid_agent", fault);
+    if (creating && branch === undefined) return badRequest("missing_branch", "branch is required");
+    if (!creating && branch === undefined && path === undefined) return badRequest("missing_target", "path or branch is required");
+    // a checkout of a large repository can take a while; Bun's default idle timeout is shorter.
+    // and agent.start after it can take a minute more.
+    if (creating) bunServer.timeout(request, agent ? 150 : 75);
+    try {
+      const asked = payload.workspace_id;
+      const from = (workspaceId: string) => creating
+        ? worktreeCreate({ workspaceId, branch: branch as string, base, label, path })
+        : worktreeOpen({ workspaceId, path, branch, label });
+      // herdr starts a worktree only from the workspace on the repository's main checkout. Asked
+      // from a workspace on another checkout (herdr does not mark one it did not open as a
+      // worktree, so the row offers the action), the call goes to that workspace when it is open.
+      const opened = await from(asked).catch(async (error: unknown) => {
+        if (!(error instanceof HerdrError) || error.code !== "linked_worktree_source") throw error;
+        const parent = await worktreeList(asked).then((listing) => listing.source.source_workspace_id, () => null);
+        if (!parent || parent === asked) throw error;
+        return from(parent);
+      });
+      return jsonResponse({
+        workspace_id: opened.workspace.workspace_id,
+        pane_id: opened.root_pane.pane_id,
+        already_open: opened.already_open === true,
+        path: opened.worktree.path,
+        branch: opened.worktree.branch,
+        ...(agent ? await agentLaunch(opened.root_pane.pane_id, agent) : {}),
+      });
+    } catch (error) {
+      // git's own words for a branch that has no commit yet (a folder just `git init`ed): with no
+      // base named there is nothing to check out from, which the dialog says in its own words
+      if (creating && base === undefined && error instanceof HerdrError && error.code === "worktree_create_failed" && /invalid reference: HEAD\b/u.test(error.message)) {
+        return conflictResponse("repository_without_commits", "the repository has no commits yet");
+      }
+      return errorResponse(error);
+    }
+  }
+
+  if (pathname === "/api/workspace/rename" || pathname === "/api/workspace/move" || pathname === "/api/workspace/close") {
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    const payload = await readJsonObject<{ workspace_id?: unknown; label?: unknown; insert_index?: unknown; close_group?: unknown }>(request);
+    if (payload instanceof Response) return payload;
+    if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
+      return badRequest("missing_workspace_id", "workspace_id is required");
+    }
+    if (pathname === "/api/workspace/close" && payload.close_group !== undefined && typeof payload.close_group !== "boolean") {
+      return badRequest("invalid_close_group", "close_group must be a boolean");
+    }
+    if (pathname === "/api/workspace/rename") {
+      // herdr would keep an empty label, and the sidebar row would show no name
+      const label = typeof payload.label === "string" ? payload.label.trim() : "";
+      if (label === "") return badRequest("missing_label", "label is required");
+      if (label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
+      payload.label = label;
+    }
+    if (pathname === "/api/workspace/move" && (typeof payload.insert_index !== "number" || !Number.isInteger(payload.insert_index) || payload.insert_index < 0)) {
+      return badRequest("invalid_index", "insert_index must be a non-negative integer");
+    }
+    try {
+      if (pathname === "/api/workspace/rename") await workspaceRename(payload.workspace_id, payload.label as string);
+      else if (pathname === "/api/workspace/move") await workspaceMove(payload.workspace_id, payload.insert_index as number);
+      else await workspaceClose(payload.workspace_id, undefined, payload.close_group === true);
+      // a closed workspace's panes send no exit: without this, clients learn of it only after
+      // the collector's structure debounce, and the closed workspace stays on screen meanwhile
+      if (pathname === "/api/workspace/close") broadcastAll({ type: "session-changed" });
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
+
+  // herdr's prefix+shift+t and prefix+shift+x: a tab's name, and a tab closed with every pane in it
+  if (pathname === "/api/tab/rename" || pathname === "/api/tab/close" || pathname === "/api/tab/move") {
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    const payload = await readJsonObject<{ tab_id?: unknown; label?: unknown; insert_index?: unknown }>(request);
+    if (payload instanceof Response) return payload;
+    if (typeof payload.tab_id !== "string" || payload.tab_id.length === 0) return badRequest("missing_tab_id", "tab_id is required");
+    if (pathname === "/api/tab/move" && (typeof payload.insert_index !== "number" || !Number.isSafeInteger(payload.insert_index) || payload.insert_index < 0)) {
+      return badRequest("invalid_index", "insert_index must be a non-negative safe integer");
+    }
+    try {
+      if (pathname === "/api/tab/move") {
+        const moved = await tabMove(payload.tab_id, payload.insert_index as number);
+        broadcastAll({ type: "session-changed" });
+        return jsonResponse({ ok: true, tabs: moved.tabs } satisfies TabMoved);
+      }
+      if (pathname === "/api/tab/rename") {
+        // herdr would keep an empty label as the tab's name, and its own tab row would show nothing
+        const label = typeof payload.label === "string" ? payload.label.trim() : "";
+        if (label === "") return badRequest("missing_label", "label is required");
+        if (label.length > MAX_LABEL_CHARS) return badRequest("label_too_long", `label must be at most ${MAX_LABEL_CHARS} characters`);
+        await tabRename(payload.tab_id, label);
+        // no pane event follows a rename, so the clients are told here
+        broadcastAll({ type: "session-changed" });
+      } else {
+        // herdr emits pane.closed for the tab's panes, and the collector tells the clients
+        await tabClose(payload.tab_id);
+      }
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
+  return null;
+}

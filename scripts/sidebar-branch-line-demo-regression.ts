@@ -7,9 +7,10 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
-// The demo roster as herdr's sidebar would draw it: checkout-api is a repository with web-dashboard
-// and docs-site as its linked worktrees, infra a git folder herdr has not marked, release no git at
-// all. Only this disposable demo fixture is rewritten; no live session is read.
+// The demo roster as herdr's sidebar would draw it: checkout-api is a repository with export-guard
+// and flaky-retry-test as its linked worktrees, cli-tools is rewritten into a git folder herdr has
+// not marked, and retry-flag and changelog into folders with no git at all. Only this disposable demo
+// fixture is rewritten; no live session is read.
 const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-branch-line-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 const patch = `(() => {
@@ -18,8 +19,8 @@ const patch = `(() => {
   const marks = {
     w1C: { repo_key: "api", repo_name: "checkout-api", repo_root: "/tmp/checkout-api", checkout_path: "/tmp/checkout-api", is_linked_worktree: false },
     w1D: { repo_key: "api", repo_name: "checkout-api", repo_root: "/tmp/checkout-api", checkout_path: "/tmp/checkout-api-web", is_linked_worktree: true },
-    w1F: { repo_key: "api", repo_name: "checkout-api", repo_root: "/tmp/checkout-api", checkout_path: "/tmp/checkout-api-docs", is_linked_worktree: true },
-    w1E: null, w1G: null,
+    w1H: { repo_key: "api", repo_name: "checkout-api", repo_root: "/tmp/checkout-api", checkout_path: "/tmp/checkout-api-flaky", is_linked_worktree: true },
+    w1J: null, w1K: null, w1L: null,
   };
   const roster = (machines) => machines.map((machine) => {
     const copy = structuredClone(machine);
@@ -46,11 +47,11 @@ const patch = `(() => {
     if (path === "/api/worktree/list") {
       const id = url.searchParams.get("workspace_id");
       const entry = (open, checkout, branch, linked) => ({ path: checkout, branch, label: checkout, is_linked_worktree: linked, is_bare: false, is_detached: false, is_prunable: false, open_workspace_id: open });
-      if (id === "w1C" || id === "w1D" || id === "w1F") return json({
+      if (id === "w1C" || id === "w1D" || id === "w1H") return json({
         source: { repo_key: "api", repo_name: "checkout-api", repo_root: "/tmp/checkout-api", source_checkout_path: marks[id].checkout_path, source_workspace_id: id },
-        worktrees: [entry("w1C", "/tmp/checkout-api", "main", false), entry("w1D", "/tmp/checkout-api-web", "feature/web", true), entry("w1F", "/tmp/checkout-api-docs", "docs-site", true)],
+        worktrees: [entry("w1C", "/tmp/checkout-api", "main", false), entry("w1D", "/tmp/checkout-api-web", "feature/web", true), entry("w1H", "/tmp/checkout-api-flaky", "flaky-retry-test", true)],
       });
-      if (id === "w1E") return json({
+      if (id === "w1J") return json({
         source: { repo_key: "infra", repo_name: "infra", repo_root: "/tmp/infra", source_checkout_path: "/tmp/infra/", source_workspace_id: null },
         worktrees: [entry(null, "/tmp/infra", "develop", false)],
       });
@@ -93,15 +94,15 @@ try {
           if (phone) await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
           const branchOf = (id: string) => row(page, id).locator(":scope > .workspace-header .workspace-branch");
           await branchOf("w1C").waitFor();
-          await branchOf("w1E").waitFor();
+          await branchOf("w1J").waitFor();
           assert.equal(await branchOf("w1C").textContent(), "main", "a repository says its branch under its name");
-          assert.equal(await branchOf("w1E").textContent(), "develop", "a git folder herdr has not marked says its branch too");
-          for (const id of ["w1D", "w1F"]) {
+          assert.equal(await branchOf("w1J").textContent(), "develop", "a git folder herdr has not marked says its branch too");
+          for (const id of ["w1D", "w1H"]) {
             assert.equal(await row(page, id).locator(".is-branch-line").count(), 0, `${id}, an indented worktree, stays one line`);
             assert.equal(await page.locator(`.worktree-children .workspace-group[data-workspace="${id}"]`).count(), 1, `${id} sits under its repository`);
           }
-          assert.equal(await row(page, "w1G").locator(".is-branch-line").count(), 0, "a folder outside git stays one line");
-          const one = await height(page, "w1G");
+          assert.equal(await row(page, "w1K").locator(".is-branch-line").count(), 0, "a folder outside git stays one line");
+          const one = await height(page, "w1K");
           assert.ok(await height(page, "w1C") > one, "a branch line makes the row taller");
           assert.equal(await height(page, "w1D"), one, "a worktree row keeps one line's height");
           // herdr's tree: the first worktree's branch runs on (a tee), the last one's stops halfway (an elbow)
@@ -110,7 +111,7 @@ try {
             const box = header.getBoundingClientRect();
             return { stem: box.height - parseFloat(stem.bottom) - parseFloat(stem.top), arm: parseFloat(arm.width), height: box.height };
           });
-          const tee = await branch("w1D"), elbow = await branch("w1F");
+          const tee = await branch("w1D"), elbow = await branch("w1H");
           assert.equal(tee.stem, tee.height, "a worktree with a sibling below draws its branch the row's full height");
           assert.equal(elbow.stem, elbow.height / 2, "the last worktree's branch stops at its middle");
           assert.ok(tee.arm > 0 && elbow.arm > 0, "each worktree's branch reaches toward its row");

@@ -76,7 +76,7 @@ try {
   // wait for an answer to have landed. Everything else is the demo's.
   const restoredRead = `<script>(() => {
     const demo = window.fetch;
-    const infra = ${JSON.stringify(panes.infra)};
+    const infra = ${JSON.stringify(panes.omp)};
     window.restoredText = null;
     window.extraTurn = null;
     window.extraServed = 0;
@@ -133,7 +133,7 @@ try {
     const body = Bun.file(join(app, file));
     return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
   } });
-  const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.infra)}`;
+  const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.omp)}`;
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
@@ -142,7 +142,7 @@ try {
         await desktop.addInitScript((paneId) => {
           localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
           localStorage.setItem(`herdr-web-ui:view:${paneId}`, "chat");
-        }, panes.infra);
+        }, panes.omp);
         const page = await desktop.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));

@@ -6,6 +6,7 @@ import type { UsageLoginStarted } from "../shared/usage-login.ts";
 import { createServer } from "./index.ts";
 import { paneClose, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import * as herdr from "./herdr/client.ts";
+import * as collector from "./collector.ts";
 import { isJsonObject } from "./http.ts";
 import { UsageLoginService } from "./usage-login.ts";
 import { UsageService, USAGE_PROVIDERS, type UsageContext } from "./usage.ts";
@@ -15,6 +16,7 @@ const bin = join(root, "bin");
 let workspaceId: string;
 let server: ReturnType<typeof createServer>;
 const openedPanes: string[] = [];
+const missedExit = Promise.withResolvers<string>();
 const ctx: UsageContext = {
   home: root, env: {}, platform: "linux", now: Date.now,
   fetch: async () => Response.json({ five_hour: { utilization: 20 }, plan_type: "plus", rate_limit: {} }),
@@ -45,13 +47,43 @@ console.log("Signed in to the isolated fixture.");
 `, { mode: 0o755 });
   }
   workspaceId = (await workspaceCreate({ cwd: root, label: "usage-login-test" })).workspace.workspace_id;
-  server = createServer({
-    port: 0, stateDir: mkdtempSync(join(root, "state-")), machines: false, registerBridge: false,
-    sidecar: false, terminalAttach: false, usageLogin: new UsageLoginService(root, {
-      ...process.env, PATH: bin, XDG_CONFIG_HOME: join(root, "xdg-config"), XDG_DATA_HOME: join(root, "xdg-data"),
-    }, ctx),
-    usage: new UsageService(ctx, USAGE_PROVIDERS.filter((provider) => provider.id === "claude" || provider.id === "codex")),
-  });
+  // Force the first login to finish before the collector's lifecycle connection starts.
+  // The probe observes the real exit, but does not deliver it to the server; the replacement
+  // subscribes only afterwards, just like a slow initial connection (or a reconnect gap).
+  const subscribe = herdr.subscribeEvents;
+  const startCollector = collector.startStatusCollector;
+  const probeReady = Promise.withResolvers<void>();
+  const delayed = spyOn(collector, "startStatusCollector").mockImplementation((handlers, overrides) => startCollector(handlers, {
+    ...overrides,
+    subscribe: (subscriptions, handlers, socketPath) => {
+      if (!subscriptions.some((subscription) => subscription.type === "pane.exited")) {
+        return subscribe(subscriptions, handlers, socketPath);
+      }
+      let live: ReturnType<typeof subscribe> | undefined;
+      const probe = subscribe(subscriptions, {
+        onStarted: () => probeReady.resolve(),
+        onEvent: (frame) => {
+          if (frame.data?.["type"] === "pane_exited" && typeof frame.data["pane_id"] === "string") {
+            missedExit.resolve(frame.data["pane_id"]);
+            probe.close();
+            live = subscribe(subscriptions, handlers, socketPath);
+          }
+        },
+        onError: handlers.onError,
+      }, socketPath);
+      return { close: () => { probe.close(); live?.close(); } };
+    },
+  }));
+  try {
+    server = createServer({
+      port: 0, stateDir: mkdtempSync(join(root, "state-")), machines: false, registerBridge: false,
+      sidecar: false, terminalAttach: false, usageLogin: new UsageLoginService(root, {
+        ...process.env, PATH: bin, XDG_CONFIG_HOME: join(root, "xdg-config"), XDG_DATA_HOME: join(root, "xdg-data"),
+      }, ctx),
+      usage: new UsageService(ctx, USAGE_PROVIDERS.filter((provider) => provider.id === "claude" || provider.id === "codex")),
+    });
+  } finally { delayed.mockRestore(); }
+  await probeReady.promise;
 });
 afterAll(async () => {
   server?.stop();
@@ -83,9 +115,15 @@ for (const provider of ["claude", "codex"] as const) {
       }
     };
     const watcher = watch(root, (_event, filename) => { if (filename === receipt) signal.resolve(); });
-    const timer = setTimeout(() => {
-      const error = new Error("login did not finish");
+    const timer = setTimeout(async () => {
+      // Say which signal never came and what the pane showed, so a CI failure tells a CLI that
+      // never started from one whose receipt or exit went unseen (#1260).
+      const screen = opened
+        ? await herdr.paneRead({ paneId: opened.pane_id, source: "visible", format: "text" }).then((read) => read.text.trimEnd(), (error: unknown) => `unreadable: ${String(error)}`)
+        : "no pane was opened";
+      const error = new Error(`login did not finish: receipt ${existsSync(join(root, receipt)) ? "written" : "missing"}, pane ${opened && exits.has(opened.pane_id) ? "exited" : "not exited"}; the pane shows:\n${screen}`);
       signal.reject(error); ended.reject(error); connected.reject(error);
+      if (provider === "claude") missedExit.reject(error);
     }, 10_000);
     try {
       await connected.promise;
@@ -98,6 +136,7 @@ for (const provider of ["claude", "codex"] as const) {
       if (!opened) throw new Error("login response missing");
       openedPanes.push(opened.pane_id);
       await signal.promise;
+      if (provider === "claude") expect(await missedExit.promise).toBe(opened.pane_id);
       if (!exits.has(opened.pane_id)) await ended.promise;
       // Then: real herdr ran the quoted executable with exactly the official argv and isolated env.
       expect(opened.pane_id).toBeString();
@@ -105,7 +144,7 @@ for (const provider of ["claude", "codex"] as const) {
         argv: provider === "claude" ? ["auth", "login"] : ["login", "--device-auth"],
         home: join(root, `.${provider}-work`),
       });
-      const usage: { providers: { account: string }[] } = await (await fetch(`http://127.0.0.1:${server.port}/api/usage?refresh=1`)).json();
+      const usage: { providers: { account: string }[] } = await (await fetch(`http://127.0.0.1:${server.port}/api/usage`)).json();
       expect(usage.providers.map((entry) => entry.account)).toContain(provider === "claude" ? "work@example.test" : "codex@example.test");
     } finally { clearTimeout(timer); watcher.close(); socket.close(); }
   });

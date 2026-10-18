@@ -49,7 +49,7 @@ try {
   page.on("pageerror", error => errors.push(error.message));
   await page.addInitScript(id => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), pane);
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
-  const log = page.getByRole("log", { name: `conversation of ${pane}` });
+  const log = page.locator(`.pane-frame[data-layout-pane="${pane}"]`).getByRole("log");
   const activity = log.locator(".chat-activity");
   for (const viewport of [{ width: 1100, height: 800 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);

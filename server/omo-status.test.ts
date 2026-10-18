@@ -170,6 +170,144 @@ describe("OmO panes' status in place of herdr's", () => {
   }
   const statuses = (snapshot: SessionSnapshot) => Object.fromEntries(snapshot.panes.map((p) => [p.pane_id, `${p.agent}/${p.agent_status}`]));
 
+  const detached = (id = "cell-one", at = "2026-10-02T00:00:40.000Z", queued = false) => JSON.stringify({
+    type: "message", timestamp: at, message: { role: "toolResult", toolName: "eval", content: [{
+      type: "text", text: queued ? `Eval cell ${id} is queued behind cell-one in the js kernel and detached; it runs after cell-one and completes as one notification.`
+        : `Eval cell ${id} detached and is running in the js kernel (0 other live cells).`,
+    }] },
+  });
+  const cellEnded = (id: string, outcome = "completed") => JSON.stringify({
+    type: "custom_message", customType: "senpi-codemode:notification",
+    timestamp: "2026-10-02T00:01:00.000Z",
+    content: `<system-reminder>Detached eval cell ${id} (js) ${outcome}.\n(no output)</system-reminder>`,
+  });
+
+  it("reports background work when a detached eval cell outlives the turn", async () => {
+    // Given a running turn and an independent task.
+    const { omo, append, told, state } = setup(lines(message("user")));
+    state.background = 1;
+    await omo.refresh(herdr().panes);
+    // When the eval detaches and the assistant stops.
+    append(detached(), message("assistant", "stop", LATER));
+    omo.poll();
+    // Then both kinds of background work hold the turn's finish.
+    expect(told.at(-1)).toEqual(["omo", "idle", 2, true]);
+    expect(omo.backgroundOf("omo")).toBe(2);
+  });
+
+  for (const outcome of ["completed", "failed", "cancelled", "was killed at the 300s hard limit", "was killed after exhausting its 200s run budget (own execution time; host tool calls excluded)"]) {
+    it(`clears a detached eval cell when its notification says ${outcome}`, async () => {
+      // Given a detached cell and a turn already at rest.
+      const { omo, append, told } = setup(lines(message("user"), detached(), message("assistant", "stop")));
+      await omo.refresh(herdr().panes);
+      expect(omo.backgroundOf("omo")).toBe(1);
+      // When the terminal notification starts a turn and its answer stops.
+      append(cellEnded("cell-one", outcome));
+      omo.poll();
+      append(message("assistant", "stop", LATER));
+      omo.poll();
+      // Then the count is zero and that turn can finish.
+      expect(told.slice(-2)).toEqual([["omo", "working", 0, true], ["omo", "idle", 0, true]]);
+      expect(omo.backgroundOf("omo")).toBe(0);
+    });
+  }
+
+  it("counts queued detached cells independently when one finishes", async () => {
+    // Given two cells, one queued behind the other.
+    const { omo, append, told } = setup(lines(message("user")));
+    await omo.refresh(herdr().panes);
+    append(detached(), detached("cell-two", undefined, true), detached(), message("assistant", "stop"));
+    omo.poll();
+    expect(omo.backgroundOf("omo")).toBe(2);
+    // When the first finishes and the notification turn stops.
+    append(cellEnded("cell-one"), message("assistant", "stop", LATER));
+    omo.poll();
+    // Then the queued cell still holds the finish.
+    expect(told.at(-1)).toEqual(["omo", "idle", 1, false]);
+  });
+
+  it("tracks a cell that detached while waiting for its kernel or queued behind an empty list", () => {
+    // Given the runtime's other detach wordings.
+    const waiting = JSON.stringify({ type: "message", timestamp: "2026-10-02T00:00:40.000Z", message: { role: "toolResult", toolName: "eval", content: [
+      { type: "text", text: "Eval cell cell-wait is detached and waiting for the js kernel to be ready; it runs first once the kernel is ready and completes as one notification." },
+    ] } });
+    const queuedEmpty = JSON.stringify({ type: "message", timestamp: "2026-10-02T00:00:41.000Z", message: { role: "toolResult", toolName: "eval", content: [
+      { type: "text", text: "Eval cell cell-q is queued behind  in the py kernel and detached; it runs after them and completes as one notification." },
+    ] } });
+    // When both are read.
+    const turn = [waiting, queuedEmpty].reduce((current, text) => omoTurnAfter(current, { text }), noTurn());
+    // Then both cells hold the finish.
+    expect(turn.detached?.map((cell) => cell.id)).toEqual(["cell-wait", "cell-q"]);
+  });
+
+  it("settles every cell a combined or image-carrying notification reports", () => {
+    // Given three detached cells.
+    const open = ["cell-one", "cell-two", "cell-three"].map((id) => detached(id));
+    const start = open.reduce((current, text) => omoTurnAfter(current, { text }), noTurn());
+    // When one notice ends two cells together and another carries an image beside its text.
+    const combined = JSON.stringify({ type: "custom_message", customType: "senpi-codemode:notification", timestamp: "2026-10-02T00:01:00.000Z",
+      content: "<system-reminder>Detached eval cell cell-one (js) cancelled.\n(no output)</system-reminder>\n\n<system-reminder>Detached eval cell cell-two (js) cancelled.\n(no output)</system-reminder>" });
+    const withImage = JSON.stringify({ type: "custom_message", customType: "senpi-codemode:notification", timestamp: "2026-10-02T00:01:01.000Z",
+      content: [{ type: "text", text: "<system-reminder>Detached eval cell cell-three (js) completed.</system-reminder>" }, { type: "image", data: "AAAA", mimeType: "image/png" }] });
+    // Then all three are settled.
+    expect(omoTurnAfter(start, { text: combined }).detached?.map((cell) => cell.id)).toEqual(["cell-three"]);
+    expect(omoTurnAfter(omoTurnAfter(start, { text: combined }), { text: withImage }).detached).toEqual([]);
+  });
+
+  it("ignores detached cells from before the process holding the session", async () => {
+    // Given an old cell followed by a recent answer in a resumed session.
+    const { omo, state } = setup(lines(detached(), message("assistant", "stop", LATER)));
+    state.discovered.set("omo", { path: FILE, startedAt: Date.parse("2026-10-02T00:00:40.001Z") });
+    // When the current process is discovered.
+    await omo.refresh(herdr().panes);
+    // Then the old kernel's cell cannot hold this process's finish.
+    expect(omo.backgroundOf("omo")).toBe(0);
+  });
+
+  it("ignores monitors and quoted detach notices when a plain turn stops", async () => {
+    // Given a running turn with no eval work.
+    const { omo, append, told } = setup(lines(message("user")));
+    await omo.refresh(herdr().panes);
+    // When unrelated tool output and user text mention cells before the answer stops.
+    append(
+      message("user", undefined, undefined, "Eval cell fake detached and is running in the js kernel"),
+      JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "monitor", content: [
+        { type: "text", text: "Eval cell fake detached and is running in the js kernel" },
+      ] } }),
+      runtime("senpi-monitor:notification"), message("assistant", "stop"),
+    );
+    omo.poll();
+    // Then the plain stop has no background hold.
+    expect(told.at(-1)).toEqual(["omo", "idle", 0, true]);
+  });
+
+  it("replays detached cells when a session file is replaced", async () => {
+    // Given a tracked cell whose old session file held it open.
+    const { omo, replace } = setup(lines(message("user"), detached(), message("assistant", "stop")));
+    await omo.refresh(herdr().panes);
+    expect(omo.backgroundOf("omo")).toBe(1);
+    // When compaction replaces the file with its settled history.
+    replace(message("user"), detached(), cellEnded("cell-one"), message("assistant", "stop", LATER));
+    omo.poll();
+    // Then replay reconstructs the settled state, rather than retaining the old cell.
+    expect(omo.backgroundOf("omo")).toBe(0);
+  });
+
+  it("retains detached cell lifecycle through projected long records", () => {
+    // Given a tool result and notification larger than the reader holds whole.
+    const path = join(root, "detached-long.jsonl");
+    writeFileSync(path, lines(detached().replace("(0 other live cells).", "(0 other live cells)." + "x".repeat(200_000)),
+      cellEnded("cell-one").replace("(no output)", "x".repeat(200_000))));
+    const fd = openSync(path, "r");
+    const turns = [noTurn()];
+    try { readLines(fd, 0, statSync(path).size, (line) => {
+      // When the file reader projects each complete record.
+      turns.push(omoTurnAfter(turns.at(-1) ?? noTurn(), line));
+    }); } finally { closeSync(fd); }
+    // Then both the detach and its settlement survive projection.
+    expect(turns.map((turn) => turn.detached?.length ?? 0)).toEqual([0, 1, 0]);
+  });
+
   it("uses the session header cwd for counts and lists, falling back to the pane cwd", async () => {
     const { omo, replace, backgroundCwds } = setup(lines(JSON.stringify({ type: "session", cwd: "/session-project" }), message("assistant", "stop")));
     await omo.refresh(herdr().panes);

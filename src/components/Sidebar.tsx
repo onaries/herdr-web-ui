@@ -18,13 +18,15 @@ import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { folderName, shortPathTitle, stripPaneChrome, taskRowLines } from "../lib/paneName.ts";
 import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
+import { userErrorMessage } from "../lib/userError.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
+import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { watchTouchReorder } from "../lib/touchReorder.ts";
-import { placeBlock, workspaceMoves } from "../lib/workspaceOrder.ts";
+import { placeBlock, workspaceMoves, worktreeGroups as groupWorktrees } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
@@ -142,6 +144,7 @@ function cwdBasename(cwd: string | null | undefined): string {
 interface InlineError {
   workspaceId?: string;
   message: string;
+  detail: string | null;
 }
 
 /**
@@ -185,6 +188,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const machineId = useMachineId();
   const activity = useSidebarActivity();
   const { closeWorkspace, listWorktrees, moveWorkspace, removeWorktree, renameWorkspace } = useMachineApi();
+  // the roster's wait is a live region in the list from its first render, clipped while empty (never
+  // display: none); its words land a frame after it (lib/useAnnouncedText.ts)
+  const loadingWords = useAnnouncedText(snapshot ? null : t("Loading workspaces…"));
   // herdr marks only a workspace it opened as a worktree. One made on a repository's folder has no
   // `worktree`, and it is where the first worktree starts: each is asked once whether git answers
   // for it. A refusal (4xx) is an answer and is kept; a failure to ask is not, so that workspace
@@ -274,24 +280,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
   const agentRows = useMemo(() => sidebarAgents(snapshot), [snapshot]);
   const agentByPane = useMemo(() => new Map(agentRows.map((entry) => [entry.pane.pane_id, entry])), [agentRows]);
   const agentNames = useMemo(() => workspaceAgentLabels(agentRows), [agentRows]);
-  // herdr packs a repository's worktree workspaces under the one on its main checkout; a worktree
-  // whose repository workspace is not open stays at the top level, in its own place
-  const worktreeGroups = useMemo(() => {
-    const parentByRepo = new Map<string, WorkspaceInfo>();
-    for (const workspace of orderedWorkspaces) {
-      if (workspace.worktree && !workspace.worktree.is_linked_worktree && !parentByRepo.has(workspace.worktree.repo_key)) parentByRepo.set(workspace.worktree.repo_key, workspace);
-    }
-    const childrenOf = new Map<string, WorkspaceInfo[]>();
-    const top: WorkspaceInfo[] = [];
-    for (const workspace of orderedWorkspaces) {
-      const parent = workspace.worktree?.is_linked_worktree ? parentByRepo.get(workspace.worktree.repo_key) : undefined;
-      if (!parent) { top.push(workspace); continue; }
-      const children = childrenOf.get(parent.workspace_id) ?? [];
-      children.push(workspace);
-      childrenOf.set(parent.workspace_id, children);
-    }
-    return top.map((workspace) => ({ workspace, children: childrenOf.get(workspace.workspace_id) ?? [] }));
-  }, [orderedWorkspaces]);
+  // a repository's worktree workspaces hang under one on its main checkout (lib/workspaceOrder.ts)
+  const worktreeGroups = useMemo(() => groupWorktrees(orderedWorkspaces), [orderedWorkspaces]);
   // pinned workspaces stand first, in a card, in pin order (shared with the other browsers,
   // lib/preferencesSync.ts); their moves change pins, while the rest change herdr's order
   const pins = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
@@ -331,7 +321,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     revealOpenedWorkspace.current = null;
   }, [snapshot, selectedPaneId, branches]);
 
-  const noteError = (message: string, workspaceId?: string): void => setInlineError({ message, workspaceId });
+  const noteError = (message: string, workspaceId?: string, detail: string | null = null): void => setInlineError({ message, workspaceId, detail });
 
   /** the pane a workspace's row shows and opens, among the panes the row stands for */
   const currentPane = (workspace: WorkspaceInfo, panes: PaneInfo[]): PaneInfo => {
@@ -381,10 +371,14 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const workspace = snapshot?.workspaces.find((candidate) => candidate.workspace_id === state.workspace.workspace_id) ?? state.workspace;
     const panes = snapshot?.panes.filter((pane) => pane.workspace_id === workspace.workspace_id) ?? [];
     const paneCount = Math.max(1, panes.length);
-    // a worktree workspace: its checkout can be deleted; the repository's workspace: its open
-    // worktree workspaces close with it, which herdr refuses without close_group
+    // a worktree workspace: its checkout can be deleted; the repository's workspace: herdr closes
+    // every workspace of the repository with it (any other one on the main checkout too, whatever
+    // group it shows under here), and refuses without close_group
     const linked = workspace.worktree?.is_linked_worktree === true;
-    const worktrees = linked ? [] : (snapshot?.workspaces.filter((candidate) => candidate.worktree?.is_linked_worktree && candidate.worktree.repo_key === workspace.worktree?.repo_key) ?? []);
+    const repoKey = workspace.worktree?.repo_key;
+    const sameRepo = linked || repoKey === undefined ? [] : (snapshot?.workspaces.filter((candidate) => candidate.workspace_id !== workspace.workspace_id && candidate.worktree?.repo_key === repoKey) ?? []);
+    const worktrees = sameRepo.filter((candidate) => candidate.worktree?.is_linked_worktree);
+    const otherHeads = sameRepo.length > worktrees.length;
     const worktreeItems: RowMenuItem[] = (workspace.worktree || repositoryWorkspaces.has(workspace.workspace_id)) && !linked ? [
       { id: "new-worktree", label: t("New worktree"), icon: GitBranch, run: () => setWorktreeDialog({ mode: "create", workspace }) },
       { id: "open-worktree", label: t("Open worktree…"), icon: FolderOpen, run: () => setWorktreeDialog({ mode: "open", workspace }) },
@@ -400,18 +394,18 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
         escalation: { label: t("Delete anyway"), code: "dirty_worktree_requires_force", run: () => leave(async () => { await removeWorktree({ workspace_id: workspace.workspace_id, force: true }); }) },
       }),
     }] : [];
-    // a repository's open worktree workspaces go with it
+    // a repository's other open workspaces go with it
     const closeItem: RowMenuItem = { id: "close", label: t("Close workspace"), icon: X, danger: true, divider: true, run: () => setConfirm({
       title: t("Close workspace {name}?", { name: workspace.label }),
-      body: worktrees.length > 0
+      body: (worktrees.length > 0
         ? t(paneCount === 1
           ? (worktrees.length === 1 ? "{n} pane and {m} worktree workspace close with it; the agents in them stop, and the checkout stays." : "{n} pane and {m} worktree workspaces close with it; the agents in them stop, and the checkouts stay.")
           : (worktrees.length === 1 ? "{n} panes and {m} worktree workspace close with it; the agents in them stop, and the checkout stays." : "{n} panes and {m} worktree workspaces close with it; the agents in them stop, and the checkouts stay."), { n: paneCount, m: worktrees.length })
-        : t(paneCount === 1 ? "{n} pane closes with it, and the agent in it stops." : "{n} panes close with it, and the agents in them stop.", { n: paneCount }),
-      run: () => leave(() => closeWorkspace(workspace.workspace_id, worktrees.length > 0)),
+        : t(paneCount === 1 ? "{n} pane closes with it, and the agent in it stops." : "{n} panes close with it, and the agents in them stop.", { n: paneCount }))
+        + (otherHeads ? ` ${t("The other workspaces open on this repository's main checkout close too.")}` : ""),
+      run: () => leave(() => closeWorkspace(workspace.workspace_id, sameRepo.length > 0)),
     }) };
     // One native workspace menu for both the pointer and the explicit ⋯ button.
-    const repoKey = workspace.worktree?.repo_key;
     const folded = repoKey !== undefined && collapsedWorktrees.has(repoKey);
     const pinned = pinnedIds.includes(workspace.workspace_id);
     return [
@@ -419,7 +413,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
         ? { id: "unpin-workspace", label: t("Unpin workspace"), icon: PinOff, run: () => togglePin(state) }
         : { id: "pin-workspace", label: t("Pin workspace"), icon: Pin, run: () => togglePin(state) },
       { id: "rename-workspace", label: t("Rename workspace"), icon: Pencil, run: () => beginWorkspaceRename(workspace) },
-      { ...closeItem, label: t(worktrees.length > 0 ? "Close group" : "Close workspace"), divider: false },
+      { ...closeItem, label: t(sameRepo.length > 0 ? "Close group" : "Close workspace"), divider: false },
       ...worktreeItems, ...deleteItems,
       ...(worktrees.length > 0 && repoKey ? [{ id: "fold", label: t(folded ? "Expand" : "Collapse"), icon: folded ? ChevronRight : ChevronDown, run: () => setWorktreeCollapsed(repoKey, !folded) }] : []),
     ];
@@ -461,7 +455,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
         setEditingWorkspaceId(workspaceId);
         setWorkspaceLabel(typed);
       }
-      noteError(t("Rename failed: {reason}", { reason: reason instanceof Error ? reason.message : String(reason) }), workspaceId);
+      const failure = userErrorMessage(reason);
+      noteError(t("Rename failed: {reason}", { reason: failure.message }), workspaceId, failure.detail);
     });
   };
 
@@ -476,7 +471,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
       // only this move's own optimistic order is rolled back: if a later reorder has landed in
       // the meantime, its order is the newer one and reverting to `previous` would undo it
       setWorkspaceOrder((current) => (current.length === next.length && current.every((id, index) => id === next[index]) ? previous : current));
-      noteError(t("Reorder failed: {reason}", { reason: reason instanceof Error ? reason.message : String(reason) }));
+      const failure = userErrorMessage(reason);
+      noteError(t("Reorder failed: {reason}", { reason: failure.message }), undefined, failure.detail);
     });
   };
 
@@ -622,8 +618,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const rowTitle = workspace.label;
     const secondaryBranch = linked && branchTitle && workspace.label !== branchTitle && workspace.label !== worktreeLabel(branchTitle) ? branchTitle : null;
     // as herdr's own sidebar: a top-level git workspace says its branch on a second line, while an
-    // indented worktree (its name already the branch's) and a folder outside git keep one line
-    const branchLine = !twoLine && !nested && branchTitle ? branchTitle : null;
+    // indented worktree (its name already the branch's), a pinned row (the card stays compact; the
+    // branch is in its tooltip and menu) and a folder outside git keep one line
+    const branchLine = !twoLine && !nested && !pinnedIds.includes(workspace.workspace_id) && branchTitle ? branchTitle : null;
     // the tooltip and the menu keep the exact branch (its slashes) even where the row does not repeat it
     const branchNote = branchTitle && branchTitle !== workspace.label ? branchTitle : null;
     const paths = [...new Set([workspace.worktree?.checkout_path, pane.cwd].filter((path): path is string => Boolean(path)))];
@@ -638,7 +635,10 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     const editingWorkspace = editingWorkspaceId === workspace.workspace_id;
     const fixed = fixedIds.has(workspace.workspace_id);
     const menuOpen = menu?.workspace.workspace_id === workspace.workspace_id;
-    const contentsId = `${rosterId}-worktrees-${encodeURIComponent(repoKey ?? workspace.workspace_id)}`;
+    const contentsId = `${rosterId}-worktrees-${encodeURIComponent(workspace.workspace_id)}`;
+    // without a project icon the folder itself says the fold's state: open while the worktrees show
+    const unfolded = children.length > 0 && repoKey !== undefined && !collapsed;
+    const face = <WorkspaceFavicon root={workspace.worktree?.checkout_path ?? pane.cwd ?? null} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true">{unfolded ? <FolderOpen /> : <Folder />}</span>} />;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setMenu(menuOpen ? null : { anchor, point, previousFocus, workspace, title: rowTitle, place: [branchNote, ...paths].filter(Boolean).join(" · ") || workspace.label });
     return <li
       className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${collapsed ? " is-collapsed" : ""}${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}${touchDrag?.source === workspace.workspace_id ? " is-lifted" : ""}`}
@@ -652,7 +652,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
       <div className="workspace-header"
         onMouseDownCapture={(event) => { if ((event.button === 2 || (event.button === 0 && event.ctrlKey)) && !(event.target as HTMLElement).closest("input")) event.preventDefault(); }}
         onContextMenu={(event) => onRowContextMenu(event, toggleMenu)}>
-        {/* a workspace leads with its folder, which is the fold when linked worktrees sit under it */}
+        {/* a workspace leads with its own face, the project's icon or else a folder; when linked
+            worktrees sit under it, that face is also the fold, and turns to an open or closed folder under a pointer */}
         {nested ? null : children.length > 0 && repoKey !== undefined ? <button
           type="button"
           className="sidebar-row-action workspace-toggle"
@@ -661,7 +662,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           aria-expanded={!collapsed}
           aria-controls={contentsId}
           onClick={() => setWorktreeCollapsed(repoKey, !collapsed)}
-        >{collapsed ? <Folder aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}</button> : <WorkspaceFavicon root={workspace.worktree?.checkout_path ?? pane.cwd ?? null} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true"><Folder /></span>} />}
+        >{face}<span className="workspace-toggle-fold" aria-hidden="true">{collapsed ? <Folder /> : <FolderOpen />}</span></button> : face}
         <div
           className="pane-select workspace-select"
           role="button"
@@ -727,7 +728,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           </button>
         </div>
       </div>
-      {inlineError?.workspaceId === workspace.workspace_id && <p className="sidebar-inline-error" role="alert">{inlineError.message}</p>}
+      {inlineError?.workspaceId === workspace.workspace_id && <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>}
     </li>;
   };
 
@@ -740,7 +741,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
       {renderWorkspaceRow(workspace, children, false, dropMark?.id === workspace.workspace_id && (!dropMark.children || childrenHidden) ? dropMark.side : undefined)}
       {children.length > 0 && <li
         className="worktree-children"
-        id={`${rosterId}-worktrees-${encodeURIComponent(workspace.worktree!.repo_key)}`}
+        id={`${rosterId}-worktrees-${encodeURIComponent(workspace.workspace_id)}`}
         hidden={childrenHidden}
         data-drop={afterChildren && !childrenHidden ? "after" : undefined}
       ><ul className="workspace-list">
@@ -753,17 +754,20 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     <div className={`machine-workspaces${twoLine ? " is-two-line" : ""}`} ref={workspaceRoot}>
       <nav className="sidebar-list" aria-label={t("Herdr workspaces")}>
         <>
-          {!snapshot && <p className="tree-state" role="status">{t("Loading workspaces…")}</p>}
+          <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
           {snapshot && snapshot.workspaces.length === 0 && (
             <div className="tree-state-empty">
               <p className="tree-state" role="status">{t("No workspaces yet")}</p>
               <button type="button" className="btn" onClick={actions.openNewSession}><Plus aria-hidden="true" />{t("New workspace")}</button>
             </div>
           )}
-          {shownGroups.pinned.some(({ workspace }) => roster.some((pane) => pane.workspace_id === workspace.workspace_id)) && <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{shownGroups.pinned.map(renderGroup)}</ul>}
+          {shownGroups.pinned.some(({ workspace }) => roster.some((pane) => pane.workspace_id === workspace.workspace_id)) && <>
+            <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
+            <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{shownGroups.pinned.map(renderGroup)}</ul>
+          </>}
           <ul className="workspace-list">{shownGroups.rest.map(renderGroup)}</ul>
           {inlineError && inlineError.workspaceId === undefined && (
-            <p className="sidebar-inline-error" role="alert">{inlineError.message}</p>
+            <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>
           )}
         </>
       </nav>

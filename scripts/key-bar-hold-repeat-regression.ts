@@ -228,12 +228,55 @@ try {
         });
         console.log("PASS a held arrow prevents the contextmenu default");
 
+        // 8. Outside iOS the terminal's helper textarea keeps xterm's own empty, unwrapped field.
+        const helper = page.locator(".xterm-helper-textarea");
+        assert.deepEqual(await helper.evaluate((field: HTMLTextAreaElement) => ({ value: field.value, wrap: getComputedStyle(field).whiteSpace })),
+          { value: "", wrap: "nowrap" }, "a non-iOS phone keeps xterm's helper textarea as it was");
+        console.log("PASS outside iOS the helper textarea stays empty and unwrapped");
+
         if (evidence) {
           mkdirSync(evidence, { recursive: true });
           await page.screenshot({ path: join(evidence, "key-bar-hold-repeat-phone.png") });
         }
         assert.deepEqual(errors, [], "the phone demo has no page errors");
       } finally { await context.close(); }
+
+      // 9. iOS repeats its keyboard's held ⌫ only while the focused field has text and wraps
+      // (#862): the helper textarea keeps one space and pre-wrap, and the space never reaches the pane.
+      const iphone = await browser.newContext({
+        viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, locale: "en-US",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1",
+      });
+      try {
+        await iphone.addInitScript(({ pane }) => {
+          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+          localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+        }, { pane: panes.api });
+        const page = await iphone.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.api)}`);
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.key-bar .key[data-key="ArrowLeft"]')?.disabled === false, undefined, { timeout: 5_000 });
+        const helper = page.locator(".pane-frame.is-current .xterm-helper-textarea");
+        await helper.focus();
+        const field = () => helper.evaluate((element: HTMLTextAreaElement) => ({ value: element.value, caret: element.selectionStart, wrap: getComputedStyle(element).whiteSpace }));
+        assert.deepEqual(await field(), { value: " ", caret: 1, wrap: "pre-wrap" }, "focus leaves one space before the caret in a wrapping field");
+        const before = (await framesOf(page)).length;
+        for (let press = 0; press < 3; press += 1) {
+          await page.keyboard.press("Backspace");
+          assert.deepEqual(await field(), { value: " ", caret: 1, wrap: "pre-wrap" }, "the field still holds its space after each Backspace");
+        }
+        await page.keyboard.type("ab");
+        await page.keyboard.press("Enter");
+        assert.equal((await field()).value, " ", "Enter empties the field back to its one space");
+        // fixed wait: proves the space never follows the typed input out
+        await Bun.sleep(NO_SEND_WAIT_MS);
+        const sent = (await framesSince(page, before)).flatMap((frame) => frame.type === "input" ? [...frame.text] : frame.keys);
+        assert.deepEqual(sent, ["\x7f", "\x7f", "\x7f", "a", "b", "\r"], `only the typed keys reach the pane: ${JSON.stringify(sent)}`);
+        assert.deepEqual(errors, [], "the iPhone demo has no page errors");
+        console.log("PASS on iOS the helper textarea keeps one space and wraps, and only typed keys reach the pane");
+      } finally { await iphone.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(true); }
 } finally { rmSync(app, { recursive: true, force: true }); }

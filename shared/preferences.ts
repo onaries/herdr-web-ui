@@ -7,9 +7,9 @@
  * which the server lays over what it holds, so a setting nobody changed stays each device's own.
  */
 export const SHARED_SETTING_KEYS = [
-  "theme", "palette", "language", "sidebarRows", "agentOrder", "agentMarks", "autoSendQueued",
+  "theme", "palette", "darkTheme", "lightTheme", "language", "sidebarRows", "agentOrder", "agentMarks", "autoSendQueued",
   "showThinking", "quickReplies", "showQuickReplies", "showUsage", "usageCount",
-  "usageGlance", "usageOrder", "usageHidden",
+  "usageGlance", "usageOrder", "usageHidden", "claudeLaunchMode", "codexLaunchMode",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];
 
@@ -31,6 +31,34 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 
 /** What a browser sends: the settings it changed, and the pins when they changed */
 export interface PreferencesChange { settings: SharedPreferences["settings"]; pins?: string[] }
+
+/** System's legacy single palette is the dark side, independent of this browser's OS. */
+export function mirrorPalette<T>(theme: unknown, darkTheme: T, lightTheme: T): T {
+  return theme === "light" ? lightTheme : darkTheme;
+}
+
+/** Only the server writer interprets legacy changes; provenance is the incoming key set. */
+export function normalizeThemeChange(stored: SharedPreferences["settings"], change: PreferencesChange): PreferencesChange {
+  const settings = { ...change.settings };
+  if (!("darkTheme" in settings) && !("lightTheme" in settings) && "palette" in settings) {
+    const mode = settings.theme ?? stored.theme;
+    if (mode === "dark") settings.darkTheme = settings.palette;
+    if (mode === "light") settings.lightTheme = settings.palette;
+  }
+  // A legacy document has only `palette`. Once this change brings in a side, the stored palette
+  // first takes the side it was drawn on (light only in light mode, as mirrorPalette reads it), so
+  // the side nobody picked is not filled with amber and the user's synced look is not lost.
+  const legacyStored = !("darkTheme" in stored) && !("lightTheme" in stored) && "palette" in stored;
+  if (legacyStored && ("darkTheme" in settings || "lightTheme" in settings)) {
+    const side = stored.theme === "light" ? "lightTheme" : "darkTheme";
+    if (!(side in settings)) settings[side] = stored.palette;
+  }
+  const merged = { ...stored, ...settings };
+  if ("darkTheme" in merged || "lightTheme" in merged) {
+    settings.palette = mirrorPalette(merged.theme, merged.darkTheme ?? "amber", merged.lightTheme ?? "amber");
+  }
+  return { ...change, settings };
+}
 
 /** The settings and pins of a body or a stored file, cut to the shared names and the limits; null when the shape is wrong. */
 export function sharedPreferencesBody(raw: unknown): PreferencesChange | null {

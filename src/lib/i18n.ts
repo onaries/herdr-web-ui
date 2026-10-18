@@ -47,10 +47,6 @@ export function setCurrentLanguage(language: Language): void {
   current = language;
 }
 
-export function currentLanguage(): Language {
-  return current;
-}
-
 /** The BCP 47 tag of the language the SettingsProvider last set, for Intl outside React. */
 export function currentLocale(): string {
   return LOCALE_TAGS[current];

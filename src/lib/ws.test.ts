@@ -445,6 +445,21 @@ it("refuses unsupported pending actions and never replays an action after discon
   client.close();
 });
 
+it("settles a pending action whose connection dropped before it was sent as not transmitted (regression #541)", async () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  // waiting for the snapshot that says the bridge takes pending actions
+  const result = client.pendingAction("w1:p1", "pending-1", "steer");
+  const submit = client.submit("w1:p1", "held copy", "held copy", false, "immediate", undefined, false, "pending-2", 0);
+  socket.disconnect();
+  expect(await result).toMatchObject({ ok: false, code: "not_transmitted" });
+  expect(await submit).toMatchObject({ ok: false, code: "not_transmitted" });
+  expect(socket.sent.filter((frame) => ["pending-action", "submit"].includes(frame.type))).toEqual([]);
+  client.close();
+});
+
 it("keeps existing Enter submits and the older bridge's input fallback compatible", async () => {
   for (const features of [[], ["submit"], ["submit", "pending-input"]]) {
     const client = new HerdrSocket("ws://test/ws");
@@ -474,7 +489,8 @@ it("never replays a queued submit after disconnecting, including before its capa
     const result = client.submit("w1:p1", "do not replay", "do not replay", false, "queue");
     for (let turn = 0; turn < 10 && known && submissions(socket).length === 0; turn++) await Promise.resolve();
     socket.disconnect();
-    expect(await result).toMatchObject({ ok: false, code: "disconnected" });
+    // regression #541: before its snapshot no frame left, so it is not sent rather than not confirmed
+    expect(await result).toMatchObject({ ok: false, code: known ? "disconnected" : "not_transmitted" });
     expect(client.canQueueMessages()).toBe(false);
     expect(client.submit("w1:p1", "offline", "offline", false, "queue")).toBeNull();
     client.connect();
@@ -1353,7 +1369,7 @@ it("holds a submit, a pending action and a secret until the probe's pong, then s
   }
 });
 
-it("settles a submit that waited on a probe as disconnected when the socket is dropped, having sent nothing", async () => {
+it("settles a submit that waited on a probe as not transmitted when the socket is dropped, having sent nothing", async () => {
   jest.useFakeTimers();
   const { client, socket } = liveClient(["submit", "secret-input", "ping"]);
   try {
@@ -1364,7 +1380,7 @@ it("settles a submit that waited on a probe as disconnected when the socket is d
     await settle();
     jest.advanceTimersByTime(6_000);
     expect(FakeSocket.last).not.toBe(socket);
-    expect(await submit).toMatchObject({ ok: false, code: "disconnected" });
+    expect(await submit).toMatchObject({ ok: false, code: "not_transmitted" });
     expect(await secret).toMatchObject({ ok: false, code: "disconnected" });
     expect(socket.sent.filter((frame) => ["submit", "secret"].includes(frame.type))).toEqual([]);
   } finally {
@@ -1683,7 +1699,7 @@ it("settles a submit waiting on a probe when a CLOSING socket is replaced, and t
     const fresh = FakeSocket.last;
     expect(fresh).not.toBe(socket);
     await settle();
-    expect(outcome).toMatchObject({ ok: false, code: "disconnected" });
+    expect(outcome).toMatchObject({ ok: false, code: "not_transmitted" });
     expect(disconnects).toBe(1);
     fresh.open();
     fresh.receive(snapshot(["input-ready", "submit", "ping"]));

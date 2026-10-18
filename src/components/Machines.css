@@ -124,6 +124,7 @@
 
   .machine-new {
     width: var(--touch-target);
+    height: var(--touch-target);
     margin-right: calc((var(--side-box) - var(--touch-target)) / 2);
   }
 }
@@ -249,6 +250,47 @@
   font-size: var(--fs-sm);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* the host-key question: the fingerprint to compare, one sentence, ssh's own words folded */
+.machine-fingerprint-label {
+  margin: 0 0 var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.machine-fingerprint {
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  overflow-wrap: anywhere;
+}
+
+.machine-challenge > .field-hint {
+  margin: var(--space-3) 0 0;
+}
+
+.machine-ssh-fold > summary {
+  position: relative;
+  width: fit-content;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+/* a finger's floor: the toggle keeps its one line and takes a --touch-target hit area, both ways,
+   through an invisible expander around it */
+@media (pointer: coarse) {
+  .machine-ssh-fold > summary::before {
+    content: "";
+    position: absolute;
+    inset: calc((1lh - var(--touch-target)) / 2) min(0px, calc((100% - var(--touch-target)) / 2));
+  }
+}
+
+.machine-ssh-fold pre {
+  margin: var(--space-1) 0 0;
 }
 
 .machine-progress {

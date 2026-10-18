@@ -6,6 +6,7 @@ import { herdrRpc, herdrSocketPath, sessionSnapshot, workspaceClose, workspaceCr
 import { ConversationUnavailable, gjcTranscriptPath, paneConversation } from "./conversation.ts";
 import { isGjcProcess } from "./gjc-runtime.ts";
 import { startShellAgent } from "./shell-agent.ts";
+import { createServer } from "./index.ts";
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), "herdr-gjc-binding-")));
 const agentDir = join(home, ".gjc", "agent");
@@ -39,6 +40,7 @@ if (state.kind === "unavailable") {
   process.exit(1);
 }
 if (state.kind === "malformed") { process.stdout.write("not-json"); process.exit(0); }
+if (state.kind === "timeout") await new Promise(() => { setInterval(() => {}, 1000); });
 let input;
 try { if (value("--json-input") !== undefined) input = JSON.parse(value("--json-input")); }
 catch { process.exit(64); }
@@ -232,6 +234,54 @@ it("SDK follows /new or resume when the same GJC PID changes from A to B without
   expect((await paneRead({ paneId: id })).text).toContain("A");
   expect(await gjcTranscriptPath(id, home, home)).toBe(b);
   await expectConversation(id, "B");
+}));
+
+it("conversation API distinguishes a temporary SDK failure from a replaced or missing session", async () => withSdkFixture(async () => {
+  const a = join(dir, "transient-a.jsonl"), b = join(dir, "transient-b.jsonl");
+  writeFileSync(a, record(home, "Original session answer", "transient-a"));
+  writeFileSync(b, record(home, "Replacement session answer", "transient-b"));
+  const id = await pane([dir]);
+  const { pid } = await gjcProcess(id);
+  await setAgent(id, "gjc");
+  const row = sdkRow(pid, home, "transient-a");
+  const paths = { "transient-a": a, "transient-b": b };
+  writeRegistry([row], paths);
+  const app = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(home, "transient-api-state") });
+  const url = `http://127.0.0.1:${app.port}/api/pane/conversation?pane_id=${encodeURIComponent(id)}`;
+  try {
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    expect((await first.json()).turns[0].parts[0].text).toBe("Original session answer");
+
+    writeRegistry([row], paths, "timeout");
+    const timeout = await fetch(url);
+    expect(timeout.status).toBe(504);
+    expect(await timeout.json()).toMatchObject({ error: { code: "gjc_sdk_timeout" } });
+
+    // a gjc that fails outright (not installed, too old, broker down) does not clear by
+    // retrying: it keeps the terminal fallback it had before
+    writeRegistry([row], paths, "unavailable");
+    const unavailable = await fetch(url);
+    expect(unavailable.status).toBe(200);
+    expect(await unavailable.json()).toMatchObject({ source: "scrollback" });
+
+    writeRegistry([row], paths);
+    const recovered = await fetch(url);
+    expect(recovered.status).toBe(200);
+    expect((await recovered.json()).turns[0].parts[0].text).toBe("Original session answer");
+
+    writeRegistry([sdkRow(pid, home, "transient-b")], paths);
+    const replaced = await fetch(url);
+    expect(replaced.status).toBe(200);
+    expect((await replaced.json()).turns[0].parts[0].text).toBe("Replacement session answer");
+
+    writeRegistry([], paths);
+    const missing = await fetch(url);
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({ source: "scrollback", turns: [] });
+  } finally {
+    app.stop();
+  }
 }));
 
 it("SDK scopes discovery so unrelated retired history cannot exhaust the pane's page budget", async () => withSdkFixture(async () => {

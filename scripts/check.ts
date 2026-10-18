@@ -39,6 +39,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { finished } from "node:stream/promises";
 import { DISPOSABLE_CONFIG_ENV, DISPOSABLE_CONFIG_FILE } from "./disposable-config.ts";
+import { testShellEnv } from "./test-shell.ts";
 import {
   artifactIdentity,
   artifactUnchangedAfterBuild,
@@ -156,6 +157,10 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
   // not what names the herdr this was started from (a pane of the user's): its socket, its pane
   for (const [name, value] of Object.entries(base)) if (value !== undefined && !LIVE_HERDR.includes(name)) env[name] = value;
   Object.assign(env, {
+    ...testShellEnv(dir),
+    // the browser scripts assert the English copy, and headless Chromium takes its locale from
+    // LANGUAGE first: a desktop set to another language would draw the app in that one
+    LANGUAGE: "en_US:en",
     XDG_CONFIG_HOME: config,
     [DISPOSABLE_CONFIG_ENV]: config,
     XDG_STATE_HOME: join(dir, "state"),
@@ -443,6 +448,7 @@ async function main(): Promise<void> {
   if (todo.fast || todo.concurrent) {
     specs.push({ name: "workflow syntax", command: null });
     specs.push({ name: "generated types are fresh", command: [bun, "run", "generate:types", "--check"] });
+    specs.push({ name: "generated themes are fresh", command: [bun, "run", "generate:themes", "--check"] });
     specs.push({ name: "typecheck", command: [bun, "run", "typecheck"] });
     specs.push({ name: "build", command: [bun, "run", "build"] });
     specs.push({ name: "unit tests", command: [bun, "run", "test:unit"] });
@@ -795,6 +801,7 @@ async function main(): Promise<void> {
       code = actionlintResult;
       for (const [label, command] of [
         ["generated types are fresh", [bun, "run", "generate:types", "--check"]],
+        ["generated themes are fresh", [bun, "run", "generate:themes", "--check"]],
         ["typecheck", [bun, "run", "typecheck"]],
       ] as const) {
         if (code !== 0 || ending) break;

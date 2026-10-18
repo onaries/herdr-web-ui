@@ -9,7 +9,7 @@ import type { SlashCommand } from "../shared/protocol.ts";
 // scripts/agent-skill-menu-demo-regression.ts hands its scenarios on the page it opened.
 
 /** the demo's docs pane's folder: no agent's loader finds anything of this machine's there */
-const DEMO_CWD = "/home/demo/docs-site";
+const DEMO_CWD = "/home/demo/.herdr/worktrees/cli-tools/changelog";
 
 /** An agent's own builtins, as its loader answers over a home that does not exist: none of this machine's skills. */
 export function agentBuiltins(agent: string): SlashCommand[] {

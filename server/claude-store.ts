@@ -353,6 +353,27 @@ export async function claudeProcessSession(
 }
 
 /**
+ * The session a pane's one Claude process names in its own PID record, which Claude rewrites when
+ * /clear or /resume switches it to another session in the same process; null when the pane has no
+ * single Claude process or the record cannot be trusted (claudeProcessSession).
+ */
+export async function claudeForegroundSession(
+  processes: readonly { pid: number; name?: string | null; argv0?: string | null; argv?: readonly string[] | null }[],
+  home = process.env["HOME"] ?? "",
+): Promise<string | null> {
+  const claude = processes.filter((entry) => isClaudeProcess({ name: entry.name ?? undefined, argv0: entry.argv0 ?? undefined, argv: entry.argv ?? undefined }));
+  if (claude.length !== 1) return null;
+  const only = claude[0]!;
+  try {
+    const dir = await processClaudeConfigDir(only.pid, only.argv ?? [only.argv0 ?? only.name ?? ""], home);
+    return await claudeProcessSession(home, only.pid, dir || defaultClaudeConfigDir(home));
+  } catch {
+    // two stores claim the process, or one cannot be read: no session to pin
+    return null;
+  }
+}
+
+/**
  * The transcript of `session` (a UUID, validated by the caller): under the project of each cwd
  * in turn, else in whichever project holds it. Null when no project does (a session that has not
  * written its first message yet). Such a session is scanned again on every poll, so the scan

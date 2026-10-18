@@ -89,6 +89,62 @@
   max-width: 54ch;
 }
 
+/* a condition that applies right now, on its own line under the sentence */
+.settings-condition {
+  display: block;
+  color: var(--text);
+}
+
+/* one sentence at rest; its conditions and exceptions open under it (DESIGN.md: messages say
+   only what the person needs now). The toggle word stands in for the marker. */
+.settings-details {
+  margin: 0;
+}
+
+.settings-details > summary {
+  width: fit-content;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  list-style: none;
+  cursor: pointer;
+}
+
+.settings-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-details-toggle {
+  color: var(--accent);
+}
+
+/* no-break spaces: the dot and the word stay with the sentence's last word */
+.settings-details-toggle::before {
+  content: "\00a0\00b7\00a0";
+  color: var(--text-dim);
+}
+
+.settings-details[open] > summary {
+  margin-bottom: var(--space-1);
+}
+
+/* fingers: the line keeps its height; an invisible expander reaches the target's height, as the
+   segmented options do (styles.css). The opened text is positioned so its link stays on top. */
+@media (pointer: coarse) {
+  .settings-details > summary {
+    position: relative;
+  }
+
+  .settings-details > summary::after {
+    content: "";
+    position: absolute;
+    inset: calc((var(--fs-xs) * var(--lh-base) - var(--touch-target)) / 2) 0;
+  }
+
+  .settings-details > summary + * {
+    position: relative;
+  }
+}
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;
@@ -120,6 +176,13 @@
   max-width: 100%;
 }
 
+/* fingers: a select is a finger-sized target, like the file viewer's controls */
+@media (pointer: coarse) {
+  .settings-select {
+    height: max(44px, var(--touch-target));
+  }
+}
+
 .settings-font-input {
   flex: 0 1 16rem;
   min-width: 0;
@@ -147,10 +210,11 @@
   transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 
+/* the thumb sits 2px inside the track's edge, off and on */
 .settings-toggle-thumb {
   position: absolute;
-  top: var(--space-3);
-  left: var(--space-1);
+  top: calc(var(--space-3) + 2px);
+  left: calc(var(--space-1) + 2px);
   width: var(--space-4);
   height: var(--space-4);
   background: var(--text-dim);
@@ -165,7 +229,7 @@
 
 .settings-toggle[aria-checked="true"] .settings-toggle-thumb {
   background: var(--primary);
-  transform: translateX(var(--space-5));
+  transform: translateX(var(--space-6));
 }
 
 @media (max-width: 640px) {

@@ -5,9 +5,9 @@
  * session) instead of the network. The app's own code is unchanged: it believes it talks to a
  * herdr web ui server on a PC called "workstation".
  *
- * What works: the sidebar and its live statuses, every chat, the Codex approval card (answering it
- * sets Codex to work and ends the turn), the command palette, settings, and the terminal: the shell
- * pane replays a recording of `git log` and `bun test`, then a small pretend shell answers what you
+ * What works: the sidebar (two repositories, each with two agent worktrees) and its live statuses,
+ * every chat, the Codex approval card (answering it sets Codex to work and ends the turn), the
+ * command palette, settings, and the terminal: the release shell tab replays a recording of `git log` and `bun test`, then a small pretend shell answers what you
  * type. `demo logs` loads fictional retained history for scrolling and search; agent panes show
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
@@ -20,7 +20,7 @@ import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { movedTabOrder } from "../../src/lib/tabOrder.ts";
-import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
+import { CHATS, PROMPT, SPECS, type DemoSpec } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
@@ -90,69 +90,17 @@ function addAgent(pane: Pane): void {
     agent: pane.agent, agent_status: pane.agent_status, cwd: pane.cwd, foreground_cwd: pane.foreground_cwd, state_change_seq: nextStateSeq() });
 }
 
-/** The OmO pane's background tasks (the composer's "2 background tasks"), timed from now. */
-const OMO_TASKS_PANE = "docs";
 const ago = (minutes: number): string => new Date(Date.now() - minutes * 60_000).toISOString();
 const planSteps: PlanStep[] = [
   { id: "1", label: "Trace replayed requests", active: null, status: "completed", blocked_by: [], owner: null, started_at: ago(8), ended_at: ago(6) },
   { id: "2", label: "Count idempotent replays", active: "Adding the replay metric", status: "in_progress", blocked_by: ["1"], owner: null, started_at: ago(5), ended_at: null },
   { id: "3", label: "Cover the metric with tests", active: null, status: "pending", blocked_by: ["2"], owner: null, started_at: null, ended_at: null },
 ];
-const omoTasks = () => [
-  { id: "st_demo1", title: "Check every link in the guide", category: "quick", model: "Claude Haiku 4.5", status: "running", started_at: ago(3), ended_at: null, turns: 6, tool_calls: 41, tokens: 52_300 },
-  { id: "st_demo2", title: "Rewrite the install section for Windows", category: "writing", model: "Claude Opus 5.5", status: "running", started_at: ago(1), ended_at: null, turns: 2, tool_calls: 7, tokens: 18_900 },
-  { id: "st_demo3", title: "Find pages that still say v0.2", category: "quick", model: "Claude Haiku 4.5", status: "completed", started_at: ago(26), ended_at: ago(22), turns: 9, tool_calls: 33, tokens: 61_200 },
-  { id: "st_demo4", title: "Translate the FAQ to Korean", category: "writing", model: "GPT-6.1", status: "failed", started_at: ago(48), ended_at: ago(44), turns: 3, tool_calls: 5, tokens: 12_000 },
-];
-const step = (id: string, state: string, error: string | null = null) => ({ id, label: id, state, error });
-const omoRuns = () => [
-  { id: "dag_demo1", name: "Guide release check", status: "running", started_at: ago(6), ended_at: null, waves: [
-    [step("find stale pages", "completed"), step("check links", "running"), step("rewrite install", "running")],
-    [step("proofread", "pending")],
-    [step("open PR", "pending")],
-  ] },
-  { id: "dag_demo2", name: "FAQ translations", status: "failed", started_at: ago(50), ended_at: ago(43), waves: [
-    [step("ko", "failed", "the glossary file was missing"), step("ja", "completed")],
-    [step("review", "skipped")],
-  ] },
-];
-
-/**
- * A pane the fixtures predate. `fixtures/panes.json` and `fixtures/machines.json` are recorded
- * together by `bun scripts/demo-fixtures.ts`, which drives a live herdr and renumbers every pane,
- * so a fixture is rarely re-cut for one pane's sake. A SPECS entry with no recorded pane gets one
- * here instead, which keeps adding an agent to the demo to a change in `fixtures.ts` alone. Panes
- * the fixtures do record are left exactly as they were recorded.
- */
 /** herdr lays a new tab out as its one pane over the whole area: the demo's layout for it, so the layout operations find the pane. */
 function addDemoLayout(workspaceId: string, tabId: string, paneId: string): void {
   const area = { x: 0, y: 0, width: 120, height: 40 };
   snapshot().layouts.push({ workspace_id: workspaceId, tab_id: tabId, zoomed: false, area, focused_pane_id: paneId, panes: [{ pane_id: paneId, focused: true, rect: { ...area } }], splits: [] });
 }
-
-function backfillPanes(): void {
-  const snap = snapshot();
-  const recorded = new Set<string>(keyOfPane.values());
-  const template = snap.workspaces[0];
-  const paneTemplate = snap.panes[0];
-  if (!template || !paneTemplate) return;
-  for (const spec of SPECS) {
-    if (recorded.has(spec.key)) continue;
-    const id = `w${(nextWorkspace++).toString(36)}`;
-    const pane: Pane = { ...structuredClone(paneTemplate), pane_id: `${id}:p1`, tab_id: `${id}:t1`, terminal_id: `${id}:term`, workspace_id: id, label: spec.title, title: spec.title, agent: spec.agent, agent_status: spec.agent ? spec.state ?? "idle" : "unknown", cwd: `/home/demo/${spec.label}`, foreground_cwd: `/home/demo/${spec.label}` };
-    snap.panes.push(pane);
-    addAgent(pane);
-    snap.tabs.push({ ...structuredClone(snap.tabs[0]!), tab_id: `${id}:t1`, workspace_id: id, label: spec.label, number: 1, agent_status: pane.agent_status, focused: false, pane_count: 1 });
-    snap.workspaces.push({ ...structuredClone(template), workspace_id: id, label: spec.label, number: snap.workspaces.length + 1, active_tab_id: `${id}:t1`, agent_status: pane.agent_status, focused: false, pane_count: 1, tab_count: 1 });
-    addDemoLayout(id, `${id}:t1`, pane.pane_id);
-    keyOfPane.set(pane.pane_id, spec.key);
-  }
-  // the fixture's own order is kept; a backfilled pane joins at the end of the list
-  snap.workspaces.forEach((workspace, index) => { workspace.number = index + 1; });
-}
-backfillPanes();
-for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === OMO_TASKS_PANE) Object.assign(pane, { background_tasks: 2 });
-for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === "api") Object.assign(pane, { plan: { done: 1, total: planSteps.length, current: "Adding the replay metric" } });
 
 // Fictional repositories keep their checkout catalog after a workspace closes. The list joins
 // each checkout to the current snapshot, so closed checkouts can be opened again without git.
@@ -176,10 +124,105 @@ function repositoryAt(path: string): DemoRepository {
 function worktreeMetadata(repo: DemoRepository, path = repo.repoRoot): NonNullable<WorkspaceInfo["worktree"]> {
   return { repo_key: repo.repoKey, repo_name: repo.repoName, repo_root: repo.repoRoot, checkout_path: path, is_linked_worktree: path !== repo.repoRoot };
 }
-for (const workspace of snapshot().workspaces) {
-  const cwd = snapshot().panes.find((pane) => pane.workspace_id === workspace.workspace_id)?.cwd;
-  if (cwd) workspace.worktree = worktreeMetadata(repositoryAt(cwd));
+
+/**
+ * The demo's roster, laid out from SPECS over what the fixtures recorded. `fixtures/machines.json`
+ * is recorded by `bun scripts/demo-fixtures.ts`, which drives a live herdr, so it is rarely re-cut
+ * for the roster's sake: `fixtures/panes.json` names the pane each spec has, a recorded pane no spec
+ * names is dropped, a spec the recording lacks gets a pane cloned from a recorded one (with the ID
+ * panes.json gives it, so the browser checks can name it), a `tabOf` spec moves into its parent's
+ * workspace as a second tab, and a `worktreeOf` spec becomes a linked checkout of its parent's
+ * repository. Each workspace takes its spec's label and folder; the recorded panes keep their own
+ * terminals and state counters.
+ */
+function layOutRoster(): void {
+  const snap = snapshot();
+  const paneTemplate = snap.panes.find((pane) => pane.agent) ?? snap.panes[0];
+  const tabTemplate = snap.tabs[0];
+  const workspaceTemplate = snap.workspaces[0];
+  if (!paneTemplate || !tabTemplate || !workspaceTemplate) return;
+  const named = new Set(SPECS.map((spec) => spec.key));
+  const dropped = new Set(snap.panes.filter((pane) => !named.has(keyOfPane.get(pane.pane_id) ?? "")).map((pane) => pane.workspace_id));
+  if (dropped.size > 0) {
+    snap.panes = snap.panes.filter((pane) => !dropped.has(pane.workspace_id));
+    snap.tabs = snap.tabs.filter((tab) => !dropped.has(tab.workspace_id));
+    snap.workspaces = snap.workspaces.filter((workspace) => !dropped.has(workspace.workspace_id));
+    snap.layouts = snap.layouts.filter((layout) => !dropped.has(layout.workspace_id));
+    snap.agents = snap.agents.filter((agent) => !dropped.has(agent.workspace_id));
+  }
+  const paneOfKey = (key: string) => snap.panes.find((pane) => keyOfPane.get(pane.pane_id) === key);
+  const pathOf = (spec: DemoSpec): string => {
+    const parent = spec.worktreeOf ? SPECS.find((candidate) => candidate.key === spec.worktreeOf) : undefined;
+    return parent ? `/home/demo/.herdr/worktrees/${parent.label}/${spec.label}` : `/home/demo/${spec.label}`;
+  };
+  // a pane for every spec, in a workspace of its own for now
+  for (const spec of SPECS) {
+    if (paneOfKey(spec.key)) continue;
+    const recordedId = (panesFixture as Record<string, string>)[spec.key];
+    const id = recordedId?.split(":")[0] ?? `w${(nextWorkspace++).toString(36)}`;
+    const paneId = recordedId ?? `${id}:p1`;
+    const pane: Pane = { ...structuredClone(paneTemplate), pane_id: paneId, tab_id: `${id}:t1`, terminal_id: `${id}:term`, workspace_id: id, focused: false, agent: spec.agent, agent_status: spec.agent ? spec.state ?? "idle" : "unknown", revision: 1 };
+    snap.panes.push(pane);
+    addAgent(pane);
+    snap.tabs.push({ ...structuredClone(tabTemplate), tab_id: pane.tab_id, workspace_id: id, number: 1, label: "1", agent_status: pane.agent_status, focused: false, pane_count: 1 });
+    snap.workspaces.push({ ...structuredClone(workspaceTemplate), workspace_id: id, active_tab_id: pane.tab_id, agent_status: pane.agent_status, focused: false, pane_count: 1, tab_count: 1 });
+    addDemoLayout(id, pane.tab_id, paneId);
+    keyOfPane.set(paneId, spec.key);
+  }
+  for (const spec of SPECS) {
+    const pane = paneOfKey(spec.key)!;
+    const parent = spec.tabOf ? paneOfKey(spec.tabOf) : undefined;
+    const cwd = pathOf(parent ? SPECS.find((candidate) => candidate.key === spec.tabOf)! : spec);
+    Object.assign(pane, { label: spec.title, cwd, foreground_cwd: cwd });
+    const agent = snap.agents.find((entry) => entry.pane_id === pane.pane_id);
+    if (agent) Object.assign(agent, { cwd, foreground_cwd: cwd });
+    const workspace = snap.workspaces.find((candidate) => candidate.workspace_id === pane.workspace_id)!;
+    if (!parent) {
+      workspace.label = spec.label;
+      continue;
+    }
+    const tab = snap.tabs.find((candidate) => candidate.tab_id === pane.tab_id)!;
+    // a recording staged with the tab already in its parent's workspace only takes the spec's label
+    if (pane.workspace_id === parent.workspace_id) {
+      tab.label = spec.label;
+      continue;
+    }
+    // the spec's own workspace folds into its parent's as the next tab
+    const own = pane.workspace_id;
+    const into = parent.workspace_id;
+    const number = snap.tabs.filter((tab) => tab.workspace_id === into).length + 1;
+    const tabId = `${into}:t${number}`;
+    const layout = snap.layouts.find((candidate) => candidate.tab_id === pane.tab_id);
+    Object.assign(tab, { tab_id: tabId, workspace_id: into, number, label: spec.label, focused: false });
+    if (layout) Object.assign(layout, { tab_id: tabId, workspace_id: into });
+    Object.assign(pane, { tab_id: tabId, workspace_id: into, focused: false });
+    if (agent) Object.assign(agent, { tab_id: tabId, workspace_id: into });
+    snap.workspaces = snap.workspaces.filter((candidate) => candidate.workspace_id !== own);
+    const host = snap.workspaces.find((candidate) => candidate.workspace_id === into)!;
+    host.tab_count = number;
+    host.pane_count = snap.panes.filter((candidate) => candidate.workspace_id === into).length;
+  }
+  // herdr's order is the specs' order: each repository, then its worktrees
+  const rank = (workspaceId: string) => SPECS.findIndex((spec) => paneOfKey(spec.key)?.workspace_id === workspaceId && !spec.tabOf);
+  snap.workspaces.sort((a, b) => rank(a.workspace_id) - rank(b.workspace_id));
+  snap.workspaces.forEach((workspace, index) => { workspace.number = index + 1; });
+  // a repository's checkouts: its own, then each linked worktree on its branch
+  for (const spec of SPECS) {
+    if (spec.tabOf) continue;
+    const workspace = snap.workspaces.find((candidate) => candidate.workspace_id === paneOfKey(spec.key)!.workspace_id)!;
+    const parent = spec.worktreeOf ? SPECS.find((candidate) => candidate.key === spec.worktreeOf) : undefined;
+    const repo = repositoryAt(pathOf(parent ?? spec));
+    if (spec.worktreeOf && spec.branch) {
+      const path = pathOf(spec);
+      repo.branches.add(spec.branch);
+      repo.checkouts.push({ path, branch: spec.branch, label: spec.label, is_linked_worktree: true, is_bare: false, is_detached: false, is_prunable: false });
+      workspace.worktree = worktreeMetadata(repo, path);
+    } else workspace.worktree = worktreeMetadata(repo);
+  }
 }
+layOutRoster();
+for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === "api") Object.assign(pane, { plan: { done: 1, total: planSteps.length, current: "Adding the replay metric" } });
+
 // The last workspace can be closed in a demo, so creation keeps templates independent of it.
 const newPaneTemplate = structuredClone(snapshot().panes[0]!);
 const newTabTemplate = structuredClone(snapshot().tabs[0]!);
@@ -342,7 +385,7 @@ function answerPrompt(paneId: string, optionIndex: number | undefined): void {
       role: "assistant", ts: now(), end_ts: now(),
       parts: declined
         ? [{ kind: "text", text: "Understood, I won't push. The changes stay on `feat/export-guard` locally; tell me what to do differently." }]
-        : [{ kind: "tool", name: "exec", summary: "git push origin feat/export-guard", input: JSON.stringify({ cmd: "git push origin feat/export-guard" }, null, 2), output: "To github.com:acme/web-dashboard.git\n * [new branch]      feat/export-guard -> feat/export-guard" },
+        : [{ kind: "tool", name: "exec", summary: "git push origin feat/export-guard", input: JSON.stringify({ cmd: "git push origin feat/export-guard" }, null, 2), output: "To github.com:acme/checkout-api.git\n * [new branch]      feat/export-guard -> feat/export-guard" },
           { kind: "text", text: "Pushed `feat/export-guard`. The export button is guarded and the branch is ready for a pull request." }],
     });
     if (chat) conversationChanged(paneId);
@@ -648,7 +691,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (request.jump !== false && result.match) redrawHistory(target);
     return json(result);
   }
-  if (path === "/api/pane/omo-tasks") return json(keyOfPane.get(paneId) === OMO_TASKS_PANE ? { tasks: omoTasks(), runs: omoRuns() } : { tasks: [], runs: [] });
+  if (path === "/api/pane/omo-tasks") return json({ tasks: [], runs: [] });
   if (path === "/api/pane/files") {
     const q = (query.get("q") ?? "").toLowerCase();
     return json({ files: DEMO_FILES.filter((file) => file.toLowerCase().includes(q)).slice(0, Number(query.get("limit") ?? 20)) });
@@ -939,7 +982,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
-    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, files: [] });
+    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "cli-tools"] : [], truncated: false, files: [] });
   }
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);
@@ -993,7 +1036,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     // the demo keeps no history to name commits in
     if (scope === "commit") return error("revision_not_found", "the demo repository has no commits to compare", 404);
     const root = snapshot().panes.find((pane) => pane.pane_id === paneId)?.cwd ?? query.get("directory") ?? "/home/demo/checkout-api";
-    const repository: RepoDiffRepository = { root, branch: "main", head: "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c", detached: false, unborn: false };
+    // a worktree's checkout is on its own branch, as the sidebar and the footer say
+    const branch = [...repositories.values()].flatMap((repo) => repo.checkouts).find((checkout) => checkout.path === root)?.branch ?? "main";
+    const repository: RepoDiffRepository = { root, branch, head: "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c", detached: false, unborn: false };
     // everything in the demo is unstaged work
     const changed = scope === "workspace" ? DEMO_DIFF : [];
     const compared: RepoDiffScope = scope;

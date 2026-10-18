@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
+import { formatWorkDuration, splitTurn, visibleWorkParts, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
 import type { ConversationPart } from "../../shared/protocol.ts";
 
 const tool = (name: string, summary = name): Extract<ConversationPart, { kind: "tool" }> => ({ kind: "tool", name, summary, input: "{}", output: "" });
@@ -153,4 +153,13 @@ it("says the open block waits for the user while the agent is blocked, and only 
   // a settled turn keeps "Worked for …" whatever the pane's status
   expect(isWaitingWorkTurn(false, "blocked")).toBe(false);
   expect(isWaitingWorkTurn(true, undefined)).toBe(false);
+});
+
+describe("visibleWorkParts", () => {
+  it("draws no rows for skills, nor for thinking unless it is shown", () => {
+    const skill: ConversationPart = { kind: "skill", skill: { name: "review", evidence: "invocation", status: "loaded" } };
+    expect(visibleWorkParts([skill, thinking("hm")], false)).toEqual([]);
+    expect(visibleWorkParts([skill, thinking("hm")], true)).toEqual([thinking("hm")]);
+    expect(visibleWorkParts([tool("read")], false)).toEqual([tool("read")]);
+  });
 });

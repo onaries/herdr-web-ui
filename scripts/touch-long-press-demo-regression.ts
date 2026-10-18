@@ -60,7 +60,7 @@ try {
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.infra)}&view=chat`);
+      await page.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.omp)}&view=chat`);
       await page.locator(".conn-live").waitFor({ state: "attached" });
       await page.locator(".pane-frame.is-current").waitFor();
       const paneMenu = page.getByRole("dialog", { name: /^Pane actions for / });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { ConversationTurn } from "../../shared/protocol.ts";
-import { minimapCurrent, minimapFits, minimapStep, minimapTop, minimapTurns } from "./chatMinimap.ts";
+import { minimapCurrent, minimapFits, minimapSlots, minimapSlotTarget, minimapSlotTurn, minimapStep, minimapTop, minimapTurns, minimapTurnSlot } from "./chatMinimap.ts";
 
 const user = (text: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "text", text }] });
 const agent: ConversationTurn = { role: "assistant", ts: null, parts: [{ kind: "text", text: "ok" }] };
@@ -15,6 +15,28 @@ describe("chatMinimap", () => {
       { row: 4, preview: "c" },
     ]);
     expect(minimapTurns([user("x".repeat(200))])[0]!.preview).toHaveLength(120);
+  });
+
+  test("a short rail gives one tick to each run of turns", () => {
+    expect(minimapSlots(10, 72)).toBe(10);
+    expect(minimapSlots(2000, 600)).toBe(151);
+    expect(minimapSlots(10, 0)).toBe(10);
+    expect(minimapSlots(10, 4)).toBe(4);
+    expect(minimapSlots(3, 4)).toBe(3);
+    for (const [count, slots] of [[10, 3], [2000, 151], [151, 150], [7, 7]] as const) {
+      expect(minimapSlotTurn(0, slots, count)).toBe(0);
+      for (let turn = 0; turn < count; turn++) {
+        const slot = minimapTurnSlot(turn, slots, count);
+        const next = slot + 1 < slots ? minimapSlotTurn(slot + 1, slots, count) : count;
+        expect(minimapSlotTurn(slot, slots, count) <= turn && turn < next).toBe(true);
+      }
+    }
+    expect(minimapTurnSlot(1999, 151, 2000)).toBe(150);
+    // the bottom tick (and End) reaches the newest turn on a capped rail, as on a full one
+    for (const [count, slots] of [[2000, 151], [200, 50], [80, 20], [7, 7]] as const) {
+      expect(minimapSlotTarget(slots - 1, slots, count)).toBe(count - 1);
+      expect(minimapSlotTarget(0, slots, count)).toBe(0);
+    }
   });
 
   test("ticks spread from top to bottom", () => {

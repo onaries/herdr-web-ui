@@ -8,6 +8,8 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { chromePath } from "./chrome-path.ts";
+import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
+import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
 
 // The model label in the input card's last row, fitted to what is measured there, on the
 // unmodified app over the demo's fixture transport. The demo's panes name no context window and
@@ -210,7 +212,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: "en-US" });
     try {
       await context.addInitScript((fitCase) => {
-        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false }));
+        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used" }));
         Object.assign(window, { fitCase });
       }, { agent: "claude", pending: true, status: "working", effort: "xhigh", mic: false, ring: true, ...state });
       const page = await context.newPage();
@@ -255,6 +257,52 @@ try {
         await entered;
       });
       console.log("PASS phone touch Send accepts the visible IME draft while confirmation Enter stays with the IME");
+      for (const width of [390, 1440]) await withCard(browser, width, { status: "idle", model: "gpt-5.6" }, async (page) => {
+        await page.evaluate(() => {
+          const fetchDemo = window.fetch;
+          let uploads = 0;
+          Object.assign(window, { fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+            const path = new URL(String(input), location.href).pathname;
+            if (path.endsWith("/pane/files") || (path.endsWith("/pane/image") && ++uploads === 1)) {
+              return Promise.resolve(new Response(JSON.stringify({ error: "fixture_failure", message: "fixture upload failed" }), { status: 500 }));
+            }
+            if (path.endsWith("/pane/image")) return Promise.resolve(new Response(JSON.stringify({ path: "/fixture/retry.txt" })));
+            return fetchDemo(input, init);
+          } });
+        });
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const failureAlert = page.locator('.composer-surface > [role="alert"]');
+        const persistent = await failureAlert.elementHandle();
+        assert.ok(persistent, "file-list failure alert is mounted before any request");
+        assert.equal(await failureAlert.textContent(), "");
+        await page.locator('.composer-controls-left input[type="file"]').setInputFiles({ name: "retry.txt", mimeType: "text/plain", buffer: Buffer.from("fixture") });
+        const note = page.locator(".composer-note");
+        await note.getByRole("button", { name: "Try again", exact: true }).waitFor();
+        assert.ok((await note.textContent())?.includes("retry.txt"), "the upload alert identifies the failed file");
+        assert.equal(await page.locator('.composer-surface > [aria-live="polite"]').textContent(), "", "failure is not also sent to the success live region");
+        await box.fill("Keep editing this draft");
+        await note.getByRole("button", { name: "Try again", exact: true }).click();
+        await page.locator(".composer-attachment.is-ready").waitFor();
+        assert.ok((await box.inputValue()).includes("Keep editing this draft"), "retry preserves edits");
+        assert.ok((await page.locator('.composer-surface > [aria-live="polite"]').textContent())?.includes("retry.txt"), "success is announced");
+
+        const success = await page.locator('.composer-surface > [aria-live="polite"]').textContent();
+        await page.locator('.composer-controls-left input[type="file"]').setInputFiles({ name: "too-large.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(MAX_ATTACHMENT_BYTES + 1) });
+        await note.filter({ hasText: "too-large.bin" }).waitFor();
+        assert.equal(await note.getAttribute("role"), "alert");
+        assert.equal(await page.locator('.composer-surface > [aria-live="polite"]').textContent(), success, "oversize failure is not also announced politely");
+
+        await box.fill("@missing");
+        await page.locator(".composer-menu .chat-inline-error").waitFor();
+        assert.ok(await persistent.evaluate((node) => node.isConnected && node.textContent !== ""), "the initially empty alert receives the listing failure");
+        assert.equal(await page.locator(".composer-menu [role=status]").count(), 0, "the visible failure is not a second live region");
+        await box.press("Escape");
+        await page.locator(".composer-menu .chat-inline-error").waitFor({ state: "detached" });
+        assert.equal(await failureAlert.textContent(), "", "dismissing suggestions clears the announcement");
+        await persistent.dispose();
+      });
+      console.log("PASS phone and desktop upload failure has one named alert, retry survives edits, success is announced, and file-list failures use a persistent alert");
+
       for (const width of [390, 1440]) await withCard(browser, width, { status: "idle", model: "gpt-5.6" }, async (page) => {
         await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
         const box = page.getByRole("textbox", { name: "Message", exact: true });
@@ -341,7 +389,8 @@ try {
         assert.equal(before.height, empty.height);
         assert.equal(await button.locator("[aria-live], [role=status]").count(), 0, "no repeated live announcement");
         const progress = button.locator(".composer-send-progress");
-        for (const palette of ["amber", "report", "charcoal", "catppuccin", "lilac", "forest"]) {
+        // every theme row of this mode, so each real block of styles.css is behind the button once
+        for (const { id: palette } of SUPPORTED_ENTRIES.filter((entry) => entry.mode === theme)) {
           await page.evaluate((palette) => { document.documentElement.dataset.palette = palette; }, palette);
           assert.equal(await progress.evaluate((node) => getComputedStyle(node).animationTimingFunction), "steps(8)");
           assert.equal(await button.evaluate((node) => getComputedStyle(node).opacity), "1");
@@ -793,10 +842,10 @@ try {
       console.log("PASS a drop while Send waits for the word withdraws it; the reconnect sends nothing");
 
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
-      // box grows and shrinks with it, while a height chosen with the grip stays chosen.
+      // box grows and shrinks with it.
       for (const width of [390, 1440]) await withCard(browser, width, { model: "claude-opus-5-5" }, async (page) => {
         const box = page.getByRole("textbox", { name: "Message", exact: true });
-        const grip = page.getByRole("separator", { name: "Resize message box", exact: true });
+        assert.equal(await page.getByRole("separator", { name: "Resize message box", exact: true }).count(), 0, "the message box has no resize grip");
         const text = "An unsent draft changes size with the transcript.\nIts second line stays visible.\nThe third line stays visible too.";
         const height = () => box.evaluate((node) => node.clientHeight);
         const chooseSize = async (size: number) => {
@@ -819,23 +868,8 @@ try {
         await chooseSize(11);
         await page.waitForFunction((before) => document.querySelector(".composer-text")!.clientHeight < before, large);
         assert.equal(await box.inputValue(), text, "shrinking keeps the draft whole");
-        assert.equal(await grip.getAttribute("aria-valuetext"), "automatic height");
-
-        await grip.press("ArrowUp");
-        const chosen = await height();
-        assert.equal(await box.evaluate((node) => node.classList.contains("is-sized")), true);
-        await chooseSize(20);
-        await page.waitForFunction(() => parseFloat(getComputedStyle(document.querySelector(".composer-text")!).fontSize) > 21);
-        assert.equal(await height(), chosen, "a font-size change preserves the chosen height");
-        assert.equal(await box.inputValue(), text, "a manual box keeps the draft whole too");
-        await grip.press("Home");
-        await page.waitForFunction(() => {
-          const box = document.querySelector<HTMLTextAreaElement>(".composer-text")!;
-          return !box.classList.contains("is-sized") && box.scrollHeight <= box.clientHeight + 1;
-        });
-        assert.equal(await box.inputValue(), text);
       });
-      console.log("PASS changing Chat font size grows and shrinks an existing draft's automatic box and preserves a chosen height");
+      console.log("PASS changing Chat font size grows and shrinks an existing draft's automatic box");
 
       // CSS layout zoom exercises fractional geometry and rewrapping; it is not native browser
       // zoom or mobile pinch zoom. Keep one draft mounted while changing each scale.

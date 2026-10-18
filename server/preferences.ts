@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { MAX_PREFERENCES_BYTES, sharedPreferencesBody, type PreferencesChange, type SharedPreferences } from "../shared/preferences.ts";
+import { MAX_PREFERENCES_BYTES, normalizeThemeChange, sharedPreferencesBody, type PreferencesChange, type SharedPreferences } from "../shared/preferences.ts";
 import { badRequest, isJsonObject, jsonResponse } from "./http.ts";
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
@@ -37,6 +37,7 @@ export class PreferenceStore {
   get(): SharedPreferences { return this.current; }
 
   set(change: PreferencesChange): SharedPreferences {
+    change = normalizeThemeChange(this.current.settings, change);
     const pins = change.pins ?? this.current.pins;
     const next: SharedPreferences = { revision: this.current.revision + 1, settings: { ...this.current.settings, ...change.settings }, ...(pins === undefined ? {} : { pins }) };
     const text = `${JSON.stringify(next, null, 2)}\n`;

@@ -117,6 +117,11 @@ export function isLiveWorkTurn(turn: ConversationTurn, last: boolean, status?: s
   return last && turn.role === "assistant" && (status === "working" || status === "blocked");
 }
 
+/** The rows a work block draws: skills are chips beside the prompt, thinking only when shown. */
+export function visibleWorkParts(parts: ConversationPart[], showThinking: boolean): ConversationPart[] {
+  return parts.filter((part) => part.kind !== "skill" && (showThinking || part.kind !== "thinking"));
+}
+
 /**
  * Whether the open work block's head says the agent waits for the user ("Needs you") instead of
  * "Working…". By the pane's status, not by a parsed prompt: a blocked pane whose menu no reader

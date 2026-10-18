@@ -7,8 +7,11 @@
  * the attribute); `[data-density="compact"]` overrides the type scale and row
  * heights. The base blocks are the amber palette, the default and the look before
  * settings load; `[data-palette]` blocks override them for the opt-in
- * charcoal and catppuccin palettes. xterm cannot read CSS custom
- * properties, so the --term-* group is mirrored in settings.ts `terminalTheme()`.
+ * charcoal and catppuccin palettes. These theme blocks are the single source of
+ * theme colors: `bun run generate:themes` (scripts/generate-themes.ts) reads them
+ * and writes src/lib/themes.generated.ts (xterm's --term-* colors and the panel
+ * color), DESIGN.md's amber table, index.html's theme-color and the web manifest's
+ * colors. Edit a color here and regenerate; never edit those copies.
  * Component-scoped rules live beside their component (Sidebar.css,
  * PaneTerminal.css, ...); this file owns the app shell, the header and the
  * primitives (.icon-button, .btn, .pill, .badge, .segmented, .modal, .menu, .kbd)
@@ -77,7 +80,7 @@
      (FileViewer's .file-viewer-pdf) */
   --pdf-page: #ffffff;
 
-  /* terminal theme: mirrored verbatim in src/lib/settings.ts terminalTheme() */
+  /* terminal theme: copied into src/lib/themes.generated.ts by `bun run generate:themes` for xterm */
   --term-bg: #181613;
   --term-fg: #d8d0c3;
   --term-cursor: #f0a830;
@@ -153,7 +156,13 @@
   --header-h-wide: 46px;
   --sidebar-w: 320px;
   --control-h: 34px;
-  --touch-target: 40px;
+  /* what the segmented track takes from --control-h above and below an option: its padding and
+     hairline, both sides. An option is --control-h less this, and its touch expander grows from that */
+  --segmented-inset: 6px;
+  --touch-target: 44px;
+  /* the smallest hit area a mouse gets: a glyph button under --control-h keeps its look and reaches
+     it through an invisible ::before expander (ChatView.css, Composer.css), never by growing */
+  --pointer-target: 24px;
   /* the phone header's controls: the bar (--header-h) holds them */
   --touch-target-header: 44px;
   --keybar-h: 48px;
@@ -266,6 +275,22 @@
   --term-fg: #2a251f;
   --term-cursor: #8c5000;
   --term-selection: #f0d9ae;
+  --term-black: #2a251f;
+  --term-red: #a82323;
+  --term-green: #2f6317;
+  --term-yellow: #8c5000;
+  --term-blue: #155a72;
+  --term-magenta: #8a3f7a;
+  --term-cyan: #0f6b6f;
+  --term-white: #685e52;
+  --term-bright-black: #5a5045;
+  --term-bright-red: #c42b2b;
+  --term-bright-green: #3b741c;
+  --term-bright-yellow: #9d5a00;
+  --term-bright-blue: #1d6f8c;
+  --term-bright-magenta: #a24b90;
+  --term-bright-cyan: #117676;
+  --term-bright-white: #16120d;
   --syntax-keyword: #a33a17;
   --syntax-string: #4b6b18;
   --syntax-number: #8a3f7a;
@@ -301,6 +326,22 @@
   --term-fg: #242424;
   --term-cursor: #242424;
   --term-selection: #dedad3;
+  --term-black: #242424;
+  --term-red: #b3261e;
+  --term-green: #22743a;
+  --term-yellow: #8a5300;
+  --term-blue: #0b6e8a;
+  --term-magenta: #6f42c1;
+  --term-cyan: #0f6f74;
+  --term-white: #5f5b56;
+  --term-bright-black: #4e4b47;
+  --term-bright-red: #c92d24;
+  --term-bright-green: #277d3f;
+  --term-bright-yellow: #9f6100;
+  --term-bright-blue: #1a7391;
+  --term-bright-magenta: #7f52d1;
+  --term-bright-cyan: #13767e;
+  --term-bright-white: #111111;
   --syntax-keyword: #b3261e;
   --syntax-string: #22743a;
   --syntax-number: #8a5300;
@@ -351,6 +392,120 @@
   --syntax-type: #9fb4c2;
   --syntax-variable: #dcd8d0;
   --syntax-meta: #b8a5c9;
+}
+
+/* Codex: the Codex desktop app's default theme (its codex-theme-v1 export). Light: surface
+   #ffffff, ink #1a1c1f; dark: surface #181818, ink #ffffff; accent #3a83f7 in both. The content
+   (chat canvas, terminal) is the surface, the chrome one quiet step off it, and the primary
+   control is ink on surface as Codex's send button. Agent states and code take Codex's diff
+   and skill colors (diffAdded, diffRemoved, skill), each kept in hue and moved in lightness
+   only as far as AA needs on a hovered row. */
+[data-theme="light"][data-palette="codex"] {
+  --bg: #ffffff;
+  --bg-panel: #f9f9f9;
+  --bg-elevated: #f3f3f3;
+  --bg-hover: #ebebeb;
+  --bg-input: #ffffff;
+  --border: #e5e5e5;
+  --border-strong: #d0d0d0;
+  --text: #1a1c1f;
+  --text-dim: #5d6067;
+  --text-strong: #0d0d0d;
+  --accent: #3a83f7;
+  --accent-tint: rgba(58, 131, 247, 0.1);
+  --primary: #1a1c1f;
+  --primary-hover: #33363b;
+  --primary-text: #ffffff;
+  --primary-tint: rgba(26, 28, 31, 0.08);
+  --status-idle: #5d6067;
+  --status-working: #0855cf;
+  --status-blocked: #b12421;
+  --status-done: #006c2b;
+  --status-working-tint: rgba(8, 85, 207, 0.12);
+  --status-blocked-tint: rgba(177, 36, 33, 0.12);
+  --status-done-tint: rgba(0, 108, 43, 0.12);
+  --danger-tint: rgba(177, 36, 33, 0.1);
+  --notice: #8a5300;
+  --danger-text: #b12421;
+  --scrim: rgba(26, 28, 31, 0.35);
+  --term-bg: #ffffff;
+  --term-fg: #1a1c1f;
+  --term-cursor: #1a1c1f;
+  --term-selection: #cfe0fd;
+  --term-black: #1a1c1f;
+  --term-red: #b3261e;
+  --term-green: #22743a;
+  --term-yellow: #8a5300;
+  --term-blue: #0b6e8a;
+  --term-magenta: #6f42c1;
+  --term-cyan: #0f6f74;
+  --term-white: #5f5b56;
+  --term-bright-black: #4e4b47;
+  --term-bright-red: #c92d24;
+  --term-bright-green: #277d3f;
+  --term-bright-yellow: #9f6100;
+  --term-bright-blue: #1a7391;
+  --term-bright-magenta: #7f52d1;
+  --term-bright-cyan: #13767e;
+  --term-bright-white: #0d0d0d;
+  --line-number: #5d6067;
+  --syntax-function: #0a63f2;
+  --syntax-keyword: #b12421;
+  --syntax-string: #006c2b;
+  --syntax-number: #8a5300;
+  --syntax-type: #0b6e8a;
+  --syntax-variable: #3b3b3b;
+  --syntax-meta: #873ef6;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.16);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"][data-palette="codex"] {
+  --bg: #181818;
+  --bg-panel: #1f1f1f;
+  --bg-elevated: #262626;
+  --bg-hover: #2f2f2f;
+  --bg-input: #212121;
+  --border: #2e2e2e;
+  --border-strong: #404040;
+  --text: #ececec;
+  --text-dim: #a3a3a3;
+  --text-strong: #ffffff;
+  --accent: #3a83f7;
+  --accent-tint: rgba(58, 131, 247, 0.16);
+  --primary: #ffffff;
+  --primary-hover: #e5e5e5;
+  --primary-text: #181818;
+  --primary-tint: rgba(255, 255, 255, 0.1);
+  --status-idle: #a3a3a3;
+  --status-working: #81b0fa;
+  --status-blocked: #fc8d8b;
+  --status-done: #40c977;
+  --status-working-tint: rgba(129, 176, 250, 0.14);
+  --status-blocked-tint: rgba(252, 141, 139, 0.14);
+  --status-done-tint: rgba(64, 201, 119, 0.14);
+  --danger-tint: rgba(250, 66, 62, 0.14);
+  --notice: #d9b26a;
+  --danger-text: #ffd0ce;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --term-bg: #181818;
+  --term-fg: #ececec;
+  --term-cursor: #ffffff;
+  --term-selection: #264f78;
+  --line-number: #a3a3a3;
+  --syntax-function: #81b0fa;
+  --syntax-keyword: #fc8d8b;
+  --syntax-string: #40c977;
+  --syntax-number: #e5b567;
+  --syntax-type: #9fb4c2;
+  --syntax-variable: #e6e6e6;
+  --syntax-meta: #ad7bf9;
+  --bubble-border: transparent;
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 /* Catppuccin (catppuccin.com/palette): Mocha in dark, Latte in light, mapped by the
@@ -409,7 +564,8 @@
   --syntax-function: #89b4fa;
 }
 
-[data-theme="light"][data-palette="catppuccin"] {
+[data-theme="light"][data-palette="catppuccin"],
+[data-theme="light"][data-palette="catppuccin-latte"] {
   --notice: #8a5710;
   /* subtext0, darkened to 4.5:1 on --bg */
   --line-number: #64677d;
@@ -446,6 +602,22 @@
   --term-fg: #4c4f69;
   --term-cursor: #dc8a78;
   --term-selection: #d2d4dc;
+  --term-black: #4c4f69;
+  --term-red: #ac0c2f;
+  --term-green: #28651b;
+  --term-yellow: #8a5710;
+  --term-blue: #1750bf;
+  --term-magenta: #712fc6;
+  --term-cyan: #0e6b70;
+  --term-white: #5c5f77;
+  --term-bright-black: #64677d;
+  --term-bright-red: #c41545;
+  --term-bright-green: #2f7620;
+  --term-bright-yellow: #905c13;
+  --term-bright-blue: #0b59f4;
+  --term-bright-magenta: #8839ef;
+  --term-bright-cyan: #13737a;
+  --term-bright-white: #4c4f69;
   --syntax-keyword: #712fc6;
   --syntax-string: #2f7620;
   --syntax-number: #b44201;
@@ -453,6 +625,807 @@
   --syntax-variable: #4c4f69;
   --syntax-meta: #bc1d91;
   --syntax-function: #0b59f4;
+}
+
+/* tokyo-night: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="dark"][data-palette="tokyo-night"] {
+  --bg: #1a1b26;
+  --bg-panel: #1a1b26;
+  --bg-elevated: #24283b;
+  --bg-hover: #232636;
+  --bg-input: #24283b;
+  --border: #414868;
+  --border-strong: #565f89;
+  --text: #c0caf5;
+  --text-dim: #a9b1d6;
+  --text-strong: #c0caf5;
+  --accent: #7aa2f7;
+  --accent-tint: rgba(122, 162, 247, 0.13);
+  --primary: #7aa2f7;
+  --primary-hover: #82a6f7;
+  --primary-text: #1a1b26;
+  --primary-tint: rgba(122, 162, 247, 0.16);
+  --status-idle: #697196;
+  --status-working: #7aa2f7;
+  --status-blocked: #fc7a92;
+  --status-done: #9ece6a;
+  --status-working-tint: rgba(122, 162, 247, 0.14);
+  --status-blocked-tint: rgba(252, 122, 146, 0.14);
+  --status-done-tint: rgba(158, 206, 106, 0.14);
+  --danger-tint: rgba(252, 122, 146, 0.12);
+  --notice: #e0af68;
+  --danger-text: #fc7a92;
+  --scrim: rgba(26, 27, 38, 0.5);
+  --term-bg: #1a1b26;
+  --term-fg: #c0caf5;
+  --term-cursor: #c0caf5;
+  --term-selection: #2d3650;
+  --line-number: #a9b1d6;
+  --syntax-function: #7aa2f7;
+  --syntax-keyword: #bb9af7;
+  --syntax-string: #9ece6a;
+  --syntax-number: #ff9e64;
+  --syntax-type: #e0af68;
+  --syntax-variable: #c0caf5;
+  --syntax-meta: #7dcfff;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* tokyo-night-day: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="light"][data-palette="tokyo-night-day"] {
+  --bg: #e1e2e7;
+  --bg-panel: #e1e2e7;
+  --bg-elevated: #c4c8da;
+  --bg-hover: #d2d3da;
+  --bg-input: #c4c8da;
+  --border: #a8aecb;
+  --border-strong: #8990b3;
+  --text: #274dab;
+  --text-dim: #41508a;
+  --text-strong: #274dab;
+  --accent: #2e7de9;
+  --accent-tint: rgba(46, 125, 233, 0.1);
+  --primary: #1561ca;
+  --primary-hover: #2e78e3;
+  --primary-text: #e1e2e7;
+  --primary-tint: rgba(46, 125, 233, 0.14);
+  --status-idle: #68709a;
+  --status-working: #0040a7;
+  --status-blocked: #90001b;
+  --status-done: #365013;
+  --status-working-tint: rgba(0, 64, 167, 0.12);
+  --status-blocked-tint: rgba(144, 0, 27, 0.12);
+  --status-done-tint: rgba(54, 80, 19, 0.12);
+  --danger-tint: rgba(144, 0, 27, 0.1);
+  --notice: #8c6c3e;
+  --danger-text: #90001b;
+  --scrim: rgba(39, 77, 171, 0.35);
+  --term-bg: #e1e2e7;
+  --term-fg: #3760bf;
+  --term-cursor: #3760bf;
+  --term-selection: #b6cae7;
+  --term-black: #3760bf;
+  --term-red: #90001b;
+  --term-green: #405b1f;
+  --term-yellow: #6c4d1f;
+  --term-blue: #004db6;
+  --term-magenta: #7847bd;
+  --term-cyan: #005f4a;
+  --term-white: #41508a;
+  --term-bright-black: #41508a;
+  --term-bright-red: #90001b;
+  --term-bright-green: #405b1f;
+  --term-bright-yellow: #6c4d1f;
+  --term-bright-blue: #004db6;
+  --term-bright-magenta: #7847bd;
+  --term-bright-cyan: #005f4a;
+  --term-bright-white: #3760bf;
+  --line-number: #41508a;
+  --syntax-function: #004db6;
+  --syntax-keyword: #6937ac;
+  --syntax-string: #405b1f;
+  --syntax-number: #8c3b00;
+  --syntax-type: #6c4d1f;
+  --syntax-variable: #274dab;
+  --syntax-meta: #005f4a;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(39, 77, 171, 0.22);
+  --shadow-pop: 0 16px 48px rgba(39, 77, 171, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(39, 77, 171, 0.07);
+}
+
+/* gruvbox: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="dark"][data-palette="gruvbox"] {
+  --bg: #282828;
+  --bg-panel: #282828;
+  --bg-elevated: #3c3836;
+  --bg-hover: #323130;
+  --bg-input: #3c3836;
+  --border: #504945;
+  --border-strong: #928374;
+  --text: #ebdbb2;
+  --text-dim: #d5c4a1;
+  --text-strong: #ebdbb2;
+  --accent: #d79921;
+  --accent-tint: rgba(215, 153, 33, 0.13);
+  --primary: #d79921;
+  --primary-hover: #d9a038;
+  --primary-text: #282828;
+  --primary-tint: rgba(215, 153, 33, 0.16);
+  --status-idle: #a89984;
+  --status-working: #a1c4b6;
+  --status-blocked: #ffa68a;
+  --status-done: #bfc332;
+  --status-working-tint: rgba(161, 196, 182, 0.14);
+  --status-blocked-tint: rgba(255, 166, 138, 0.14);
+  --status-done-tint: rgba(191, 195, 50, 0.14);
+  --danger-tint: rgba(255, 166, 138, 0.12);
+  --notice: #fabd2f;
+  --danger-text: #ffa68a;
+  --scrim: rgba(40, 40, 40, 0.5);
+  --term-bg: #282828;
+  --term-fg: #ebdbb2;
+  --term-cursor: #ebdbb2;
+  --term-selection: #4b3f27;
+  --line-number: #d5c4a1;
+  --syntax-function: #88ab9d;
+  --syntax-keyword: #db8da2;
+  --syntax-string: #b8bb26;
+  --syntax-number: #fe8019;
+  --syntax-type: #fabd2f;
+  --syntax-variable: #ebdbb2;
+  --syntax-meta: #8ec07c;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* gruvbox-light: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="light"][data-palette="gruvbox-light"] {
+  --bg: #fbf1c7;
+  --bg-panel: #fbf1c7;
+  --bg-elevated: #ebdbb2;
+  --bg-hover: #f2e5bc;
+  --bg-input: #ebdbb2;
+  --border: #d5c4a1;
+  --border-strong: #928374;
+  --text: #3c3836;
+  --text-dim: #504945;
+  --text-strong: #3c3836;
+  --accent: #076678;
+  --accent-tint: rgba(7, 102, 120, 0.1);
+  --primary: #076678;
+  --primary-hover: #0e6467;
+  --primary-text: #fbf1c7;
+  --primary-tint: rgba(7, 102, 120, 0.14);
+  --status-idle: #7c6f64;
+  --status-working: #005d6e;
+  --status-blocked: #9d0006;
+  --status-done: #5d5700;
+  --status-working-tint: rgba(0, 93, 110, 0.12);
+  --status-blocked-tint: rgba(157, 0, 6, 0.12);
+  --status-done-tint: rgba(93, 87, 0, 0.12);
+  --danger-tint: rgba(157, 0, 6, 0.1);
+  --notice: #b57614;
+  --danger-text: #9d0006;
+  --scrim: rgba(60, 56, 54, 0.35);
+  --term-bg: #fbf1c7;
+  --term-fg: #3c3836;
+  --term-cursor: #3c3836;
+  --term-selection: #ebdbb2;
+  --term-black: #3c3836;
+  --term-red: #9d0006;
+  --term-green: #676200;
+  --term-yellow: #8e5100;
+  --term-blue: #076678;
+  --term-magenta: #8f3f71;
+  --term-cyan: #316b48;
+  --term-white: #504945;
+  --term-bright-black: #504945;
+  --term-bright-red: #9d0006;
+  --term-bright-green: #676200;
+  --term-bright-yellow: #8e5100;
+  --term-bright-blue: #076678;
+  --term-bright-magenta: #8f3f71;
+  --term-bright-cyan: #316b48;
+  --term-bright-white: #3c3836;
+  --line-number: #504945;
+  --syntax-function: #076678;
+  --syntax-keyword: #8f3f71;
+  --syntax-string: #676200;
+  --syntax-number: #ac3800;
+  --syntax-type: #8e5100;
+  --syntax-variable: #3c3836;
+  --syntax-meta: #316b48;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(60, 56, 54, 0.22);
+  --shadow-pop: 0 16px 48px rgba(60, 56, 54, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(60, 56, 54, 0.07);
+}
+
+/* one-dark: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="dark"][data-palette="one-dark"] {
+  --bg: #282c34;
+  --bg-panel: #282c34;
+  --bg-elevated: #2c313a;
+  --bg-hover: #313640;
+  --bg-input: #2c313a;
+  --border: #3e4451;
+  --border-strong: #5c6370;
+  --text: #abb2bf;
+  --text-dim: #99a0ac;
+  --text-strong: #abb2bf;
+  --accent: #61afef;
+  --accent-tint: rgba(97, 175, 239, 0.13);
+  --primary: #61afef;
+  --primary-hover: #6cafeb;
+  --primary-text: #282c34;
+  --primary-tint: rgba(97, 175, 239, 0.16);
+  --status-idle: #737a87;
+  --status-working: #70bfff;
+  --status-blocked: #ff9aa1;
+  --status-done: #98c379;
+  --status-working-tint: rgba(112, 191, 255, 0.14);
+  --status-blocked-tint: rgba(255, 154, 161, 0.14);
+  --status-done-tint: rgba(152, 195, 121, 0.14);
+  --danger-tint: rgba(255, 154, 161, 0.12);
+  --notice: #e5c07b;
+  --danger-text: #ff9aa1;
+  --scrim: rgba(40, 44, 52, 0.5);
+  --term-bg: #282c34;
+  --term-fg: #abb2bf;
+  --term-cursor: #abb2bf;
+  --term-selection: #334659;
+  --line-number: #99a0ac;
+  --syntax-function: #61afef;
+  --syntax-keyword: #c97be1;
+  --syntax-string: #98c379;
+  --syntax-number: #d19a66;
+  --syntax-type: #e5c07b;
+  --syntax-variable: #abb2bf;
+  --syntax-meta: #56b6c2;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* one-light: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="light"][data-palette="one-light"] {
+  --bg: #fafafa;
+  --bg-panel: #fafafa;
+  --bg-elevated: #f0f0f1;
+  --bg-hover: #d8dbe2;
+  --bg-input: #f0f0f1;
+  --border: #e5e5e6;
+  --border-strong: #a0a1a7;
+  --text: #383a42;
+  --text-dim: #5c5e6a;
+  --text-strong: #383a42;
+  --accent: #4078f2;
+  --accent-tint: rgba(64, 120, 242, 0.1);
+  --primary: #2d6af1;
+  --primary-hover: #4371df;
+  --primary-text: #fafafa;
+  --primary-tint: rgba(64, 120, 242, 0.14);
+  --status-idle: #686b77;
+  --status-working: #1749c0;
+  --status-blocked: #a51110;
+  --status-done: #01620b;
+  --status-working-tint: rgba(23, 73, 192, 0.12);
+  --status-blocked-tint: rgba(165, 17, 16, 0.12);
+  --status-done-tint: rgba(1, 98, 11, 0.12);
+  --danger-tint: rgba(165, 17, 16, 0.1);
+  --notice: #c18401;
+  --danger-text: #a51110;
+  --scrim: rgba(56, 58, 66, 0.35);
+  --term-bg: #fafafa;
+  --term-fg: #383a42;
+  --term-cursor: #383a42;
+  --term-selection: #cddbf8;
+  --term-black: #383a42;
+  --term-red: #a51110;
+  --term-green: #287c2a;
+  --term-yellow: #995f00;
+  --term-blue: #2f64dd;
+  --term-magenta: #a626a4;
+  --term-cyan: #0072a9;
+  --term-white: #686b77;
+  --term-bright-black: #686b77;
+  --term-bright-red: #a51110;
+  --term-bright-green: #287c2a;
+  --term-bright-yellow: #995f00;
+  --term-bright-blue: #2f64dd;
+  --term-bright-magenta: #a626a4;
+  --term-bright-cyan: #0072a9;
+  --term-bright-white: #383a42;
+  --line-number: #5c5e6a;
+  --syntax-function: #2f64dd;
+  --syntax-keyword: #a626a4;
+  --syntax-string: #287c2a;
+  --syntax-number: #926300;
+  --syntax-type: #995f00;
+  --syntax-variable: #383a42;
+  --syntax-meta: #0072a9;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(56, 58, 66, 0.22);
+  --shadow-pop: 0 16px 48px rgba(56, 58, 66, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(56, 58, 66, 0.07);
+}
+
+/* solarized: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="dark"][data-palette="solarized"] {
+  --bg: #002b36;
+  --bg-panel: #002b36;
+  --bg-elevated: #073642;
+  --bg-hover: #164b57;
+  --bg-input: #073642;
+  --border: #164b57;
+  --border-strong: #586e75;
+  --text: #a8b6b6;
+  --text-dim: #a5b7b9;
+  --text-strong: #a8b6b6;
+  --accent: #268bd2;
+  --accent-tint: rgba(38, 139, 210, 0.13);
+  --primary: #2f93d9;
+  --primary-hover: #2d92ce;
+  --primary-text: #002b36;
+  --primary-tint: rgba(38, 139, 210, 0.16);
+  --status-idle: #657b83;
+  --status-working: #7fdcff;
+  --status-blocked: #ffbcaa;
+  --status-done: #c2d85d;
+  --status-working-tint: rgba(127, 220, 255, 0.14);
+  --status-blocked-tint: rgba(255, 188, 170, 0.14);
+  --status-done-tint: rgba(194, 216, 93, 0.14);
+  --danger-tint: rgba(255, 188, 170, 0.12);
+  --notice: #b58900;
+  --danger-text: #ffbcaa;
+  --scrim: rgba(0, 43, 54, 0.5);
+  --term-bg: #002b36;
+  --term-fg: #93a1a1;
+  --term-cursor: #93a1a1;
+  --term-selection: #083e55;
+  --line-number: #a5b7b9;
+  --syntax-function: #40a1e9;
+  --syntax-keyword: #fe60a6;
+  --syntax-string: #8fa41c;
+  --syntax-number: #f67344;
+  --syntax-type: #c0931c;
+  --syntax-variable: #93a1a1;
+  --syntax-meta: #37aba1;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* solarized-light: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="light"][data-palette="solarized-light"] {
+  --bg: #fdf6e3;
+  --bg-panel: #fdf6e3;
+  --bg-elevated: #eee8d5;
+  --bg-hover: #eee8d5;
+  --bg-input: #eee8d5;
+  --border: #c9dcdf;
+  --border-strong: #93a1a1;
+  --text: #556a72;
+  --text-dim: #5a6a6c;
+  --text-strong: #073642;
+  --accent: #268bd2;
+  --accent-tint: rgba(38, 139, 210, 0.1);
+  --primary: #2076b3;
+  --primary-hover: #2989c7;
+  --primary-text: #fdf6e3;
+  --primary-tint: rgba(38, 139, 210, 0.14);
+  --status-idle: #586e75;
+  --status-working: #005ea2;
+  --status-blocked: #b60006;
+  --status-done: #536300;
+  --status-working-tint: rgba(0, 94, 162, 0.12);
+  --status-blocked-tint: rgba(182, 0, 6, 0.12);
+  --status-done-tint: rgba(83, 99, 0, 0.12);
+  --danger-tint: rgba(182, 0, 6, 0.1);
+  --notice: #b58900;
+  --danger-text: #b60006;
+  --scrim: rgba(85, 106, 114, 0.35);
+  --term-bg: #fdf6e3;
+  --term-fg: #657b83;
+  --term-cursor: #657b83;
+  --term-selection: #c9dcdf;
+  --term-black: #556a72;
+  --term-red: #b60006;
+  --term-green: #5d6e00;
+  --term-yellow: #8a5f00;
+  --term-blue: #006baf;
+  --term-magenta: #c12073;
+  --term-cyan: #00746d;
+  --term-white: #5a6a6c;
+  --term-bright-black: #586e75;
+  --term-bright-red: #b60006;
+  --term-bright-green: #5d6e00;
+  --term-bright-yellow: #8a5f00;
+  --term-bright-blue: #006baf;
+  --term-bright-magenta: #c12073;
+  --term-bright-cyan: #00746d;
+  --term-bright-white: #556a72;
+  --line-number: #5a6a6c;
+  --syntax-function: #006baf;
+  --syntax-keyword: #c12073;
+  --syntax-string: #5d6e00;
+  --syntax-number: #ba3b00;
+  --syntax-type: #8a5f00;
+  --syntax-variable: #556a72;
+  --syntax-meta: #00746d;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(85, 106, 114, 0.22);
+  --shadow-pop: 0 16px 48px rgba(85, 106, 114, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(85, 106, 114, 0.07);
+}
+
+/* kanagawa: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="dark"][data-palette="kanagawa"] {
+  --bg: #1f1f28;
+  --bg-panel: #1f1f28;
+  --bg-elevated: #2a2a37;
+  --bg-hover: #363646;
+  --bg-input: #2a2a37;
+  --border: #363646;
+  --border-strong: #727169;
+  --text: #dcd7ba;
+  --text-dim: #c8c3aa;
+  --text-strong: #dcd7ba;
+  --accent: #7e9cd8;
+  --accent-tint: rgba(126, 156, 216, 0.13);
+  --primary: #7e9cd8;
+  --primary-hover: #74a7d7;
+  --primary-text: #1f1f28;
+  --primary-tint: rgba(126, 156, 216, 0.16);
+  --status-idle: #87867d;
+  --status-working: #9bbbf8;
+  --status-blocked: #ffa09b;
+  --status-done: #a3c397;
+  --status-working-tint: rgba(155, 187, 248, 0.14);
+  --status-blocked-tint: rgba(255, 160, 155, 0.14);
+  --status-done-tint: rgba(163, 195, 151, 0.14);
+  --danger-tint: rgba(255, 160, 155, 0.12);
+  --notice: #c0a36e;
+  --danger-text: #ffa09b;
+  --scrim: rgba(31, 31, 40, 0.5);
+  --term-bg: #1f1f28;
+  --term-fg: #dcd7ba;
+  --term-cursor: #dcd7ba;
+  --term-selection: #32384b;
+  --line-number: #c8c3aa;
+  --syntax-function: #7e9cd8;
+  --syntax-keyword: #9f89c2;
+  --syntax-string: #7d9c71;
+  --syntax-number: #ffa066;
+  --syntax-type: #c0a36e;
+  --syntax-variable: #dcd7ba;
+  --syntax-meta: #7fb4ca;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* kanagawa-lotus: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="light"][data-palette="kanagawa-lotus"] {
+  --bg: #f2ecbc;
+  --bg-panel: #f2ecbc;
+  --bg-elevated: #dcd5ac;
+  --bg-hover: #d5cea3;
+  --bg-input: #dcd5ac;
+  --border: #c9cbd1;
+  --border-strong: #a09cac;
+  --text: #545464;
+  --text-dim: #43436c;
+  --text-strong: #545464;
+  --accent: #4d699b;
+  --accent-tint: rgba(77, 105, 155, 0.1);
+  --primary: #4d699b;
+  --primary-hover: #4f6796;
+  --primary-text: #f2ecbc;
+  --primary-tint: rgba(77, 105, 155, 0.14);
+  --status-idle: #8a8980;
+  --status-working: #314b7b;
+  --status-blocked: #95002b;
+  --status-done: #3b5217;
+  --status-working-tint: rgba(49, 75, 123, 0.12);
+  --status-blocked-tint: rgba(149, 0, 43, 0.12);
+  --status-done-tint: rgba(59, 82, 23, 0.12);
+  --danger-tint: rgba(149, 0, 43, 0.1);
+  --notice: #77713f;
+  --danger-text: #95002b;
+  --scrim: rgba(84, 84, 100, 0.35);
+  --term-bg: #f2ecbc;
+  --term-fg: #545464;
+  --term-cursor: #545464;
+  --term-selection: #dcd5ac;
+  --term-black: #545464;
+  --term-red: #95002b;
+  --term-green: #4a6228;
+  --term-yellow: #625b2a;
+  --term-blue: #4d699b;
+  --term-magenta: #624c83;
+  --term-cyan: #216276;
+  --term-white: #43436c;
+  --term-bright-black: #43436c;
+  --term-bright-red: #95002b;
+  --term-bright-green: #4a6228;
+  --term-bright-yellow: #625b2a;
+  --term-bright-blue: #4d699b;
+  --term-bright-magenta: #624c83;
+  --term-bright-cyan: #216276;
+  --term-bright-white: #545464;
+  --line-number: #43436c;
+  --syntax-function: #3f5a8b;
+  --syntax-keyword: #624c83;
+  --syntax-string: #4a6228;
+  --syntax-number: #993f00;
+  --syntax-type: #625b2a;
+  --syntax-variable: #545464;
+  --syntax-meta: #216276;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(84, 84, 100, 0.22);
+  --shadow-pop: 0 16px 48px rgba(84, 84, 100, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(84, 84, 100, 0.07);
+}
+
+/* rose-pine: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="dark"][data-palette="rose-pine"] {
+  --bg: #191724;
+  --bg-panel: #191724;
+  --bg-elevated: #1f1d2e;
+  --bg-hover: #26233a;
+  --bg-input: #1f1d2e;
+  --border: #3b344b;
+  --border-strong: #6e6a86;
+  --text: #e0def4;
+  --text-dim: #c8c5dc;
+  --text-strong: #e0def4;
+  --accent: #c4a7e7;
+  --accent-tint: rgba(196, 167, 231, 0.13);
+  --primary: #c4a7e7;
+  --primary-hover: #c6ade9;
+  --primary-text: #191724;
+  --primary-tint: rgba(196, 167, 231, 0.16);
+  --status-idle: #908caa;
+  --status-working: #67a9c6;
+  --status-blocked: #f5779a;
+  --status-done: #67a9c6;
+  --status-working-tint: rgba(103, 169, 198, 0.14);
+  --status-blocked-tint: rgba(245, 119, 154, 0.14);
+  --status-done-tint: rgba(103, 169, 198, 0.14);
+  --danger-tint: rgba(245, 119, 154, 0.12);
+  --notice: #f6c177;
+  --danger-text: #f5779a;
+  --scrim: rgba(25, 23, 36, 0.5);
+  --term-bg: #191724;
+  --term-fg: #e0def4;
+  --term-cursor: #e0def4;
+  --term-selection: #3b344b;
+  --line-number: #c8c5dc;
+  --syntax-function: #4e90ab;
+  --syntax-keyword: #c4a7e7;
+  --syntax-string: #4e90ab;
+  --syntax-number: #ea9a97;
+  --syntax-type: #f6c177;
+  --syntax-variable: #e0def4;
+  --syntax-meta: #9ccfd8;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* rose-pine-dawn: pinned herdr mapping with reviewed repairs (scripts/herdr-theme-overrides.ts). */
+[data-theme="light"][data-palette="rose-pine-dawn"] {
+  --bg: #faf4ed;
+  --bg-panel: #faf4ed;
+  --bg-elevated: #f2e9e1;
+  --bg-hover: #e3d9cf;
+  --bg-input: #f2e9e1;
+  --border: #e3d9cf;
+  --border-strong: #9893a5;
+  --text: #464261;
+  --text-dim: #605b78;
+  --text-strong: #464261;
+  --accent: #907aa9;
+  --accent-tint: rgba(144, 122, 169, 0.1);
+  --primary: #7e659b;
+  --primary-hover: #8874a2;
+  --primary-text: #faf4ed;
+  --primary-tint: rgba(144, 122, 169, 0.14);
+  --status-idle: #797593;
+  --status-working: #165a74;
+  --status-blocked: #873a52;
+  --status-done: #165a74;
+  --status-working-tint: rgba(22, 90, 116, 0.12);
+  --status-blocked-tint: rgba(135, 58, 82, 0.12);
+  --status-done-tint: rgba(22, 90, 116, 0.12);
+  --danger-tint: rgba(135, 58, 82, 0.1);
+  --notice: #ea9d34;
+  --danger-text: #873a52;
+  --scrim: rgba(70, 66, 97, 0.35);
+  --term-bg: #faf4ed;
+  --term-fg: #464261;
+  --term-cursor: #464261;
+  --term-selection: #f2e9e1;
+  --term-black: #464261;
+  --term-red: #873a52;
+  --term-green: #286983;
+  --term-yellow: #9e5600;
+  --term-blue: #286983;
+  --term-magenta: #755f8d;
+  --term-cyan: #33717c;
+  --term-white: #605b78;
+  --term-bright-black: #605b78;
+  --term-bright-red: #873a52;
+  --term-bright-green: #286983;
+  --term-bright-yellow: #9e5600;
+  --term-bright-blue: #286983;
+  --term-bright-magenta: #755f8d;
+  --term-bright-cyan: #33717c;
+  --term-bright-white: #464261;
+  --line-number: #605b78;
+  --syntax-function: #286983;
+  --syntax-keyword: #755f8d;
+  --syntax-string: #286983;
+  --syntax-number: #a1514f;
+  --syntax-type: #9e5600;
+  --syntax-variable: #464261;
+  --syntax-meta: #33717c;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(70, 66, 97, 0.22);
+  --shadow-pop: 0 16px 48px rgba(70, 66, 97, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(70, 66, 97, 0.07);
+}
+
+/* dracula: pinned herdr mapping with reviewed AA and border overrides. */
+[data-theme="dark"][data-palette="dracula"] {
+  --bg: #282a36;
+  --bg-panel: #282a36;
+  --bg-elevated: #44475a;
+  --bg-hover: #373c52;
+  --bg-input: #44475a;
+  --border: #6272a4;
+  --border-strong: #828cb4;
+  --text: #f8f8f2;
+  --text-dim: #d2d2dc;
+  --text-strong: #f8f8f2;
+  --accent: #bd93f9;
+  --accent-tint: rgba(189, 147, 249, 0.13);
+  --primary: #bd93f9;
+  --primary-hover: #d796ea;
+  --primary-text: #282a36;
+  --primary-tint: rgba(189, 147, 249, 0.16);
+  --status-idle: #828cb4;
+  --status-working: #8be9fd;
+  --status-blocked: #ffc8c8;
+  --status-done: #50fa7b;
+  --status-working-tint: rgba(139, 233, 253, 0.14);
+  --status-blocked-tint: rgba(255, 200, 200, 0.14);
+  --status-done-tint: rgba(80, 250, 123, 0.14);
+  --danger-tint: rgba(255, 200, 200, 0.12);
+  --notice: #f1fa8c;
+  --danger-text: #ffc8c8;
+  --scrim: rgba(40, 42, 54, 0.5);
+  --term-bg: #282a36;
+  --term-fg: #f8f8f2;
+  --term-cursor: #f8f8f2;
+  --term-selection: #463f5d;
+  --line-number: #d2d2dc;
+  --syntax-function: #8be9fd;
+  --syntax-keyword: #ff99d1;
+  --syntax-string: #50fa7b;
+  --syntax-number: #ffb86c;
+  --syntax-type: #f1fa8c;
+  --syntax-variable: #f8f8f2;
+  --syntax-meta: #8be9fd;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* nord: pinned herdr mapping with reviewed AA and border overrides. */
+[data-theme="dark"][data-palette="nord"] {
+  --bg: #2e3440;
+  --bg-panel: #2e3440;
+  --bg-elevated: #3b4252;
+  --bg-hover: #434c5e;
+  --bg-input: #3b4252;
+  --border: #4c566a;
+  --border-strong: #646e82;
+  --text: #eceff4;
+  --text-dim: #d8dee9;
+  --text-strong: #eceff4;
+  --accent: #88c0d0;
+  --accent-tint: rgba(136, 192, 208, 0.13);
+  --primary: #88c0d0;
+  --primary-hover: #93c4d6;
+  --primary-text: #2e3440;
+  --primary-tint: rgba(136, 192, 208, 0.16);
+  --status-idle: #646e82;
+  --status-working: #bfe1ff;
+  --status-blocked: #ffd0d7;
+  --status-done: #c8e5b1;
+  --status-working-tint: rgba(191, 225, 255, 0.14);
+  --status-blocked-tint: rgba(255, 208, 215, 0.14);
+  --status-done-tint: rgba(200, 229, 177, 0.14);
+  --danger-tint: rgba(255, 208, 215, 0.12);
+  --notice: #ebcb8b;
+  --danger-text: #ffd0d7;
+  --scrim: rgba(46, 52, 64, 0.5);
+  --term-bg: #2e3440;
+  --term-fg: #eceff4;
+  --term-cursor: #eceff4;
+  --term-selection: #40505d;
+  --line-number: #d8dee9;
+  --syntax-function: #92b3d3;
+  --syntax-keyword: #caa4c3;
+  --syntax-string: #a3be8c;
+  --syntax-number: #e89e86;
+  --syntax-type: #ebcb8b;
+  --syntax-variable: #eceff4;
+  --syntax-meta: #8fbcbb;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* vesper: pinned herdr mapping with reviewed AA and border overrides. */
+[data-theme="dark"][data-palette="vesper"] {
+  --bg: #101010;
+  --bg-panel: #1a1a1a;
+  --bg-elevated: #232323;
+  --bg-hover: #101010;
+  --bg-input: #232323;
+  --border: #5c5c5c;
+  --border-strong: #7e7e7e;
+  --text: #ffffff;
+  --text-dim: #a0a0a0;
+  --text-strong: #ffffff;
+  --accent: #ffc799;
+  --accent-tint: rgba(255, 199, 153, 0.13);
+  --primary: #ffc799;
+  --primary-hover: #fecea2;
+  --primary-text: #1a1a1a;
+  --primary-tint: rgba(255, 199, 153, 0.16);
+  --status-idle: #7e7e7e;
+  --status-working: #b0b0b0;
+  --status-blocked: #ff8080;
+  --status-done: #99ffe4;
+  --status-working-tint: rgba(176, 176, 176, 0.14);
+  --status-blocked-tint: rgba(255, 128, 128, 0.14);
+  --status-done-tint: rgba(153, 255, 228, 0.14);
+  --danger-tint: rgba(255, 128, 128, 0.12);
+  --notice: #ffc799;
+  --danger-text: #ff8080;
+  --scrim: rgba(16, 16, 16, 0.5);
+  --term-bg: #101010;
+  --term-fg: #ffffff;
+  --term-cursor: #ffffff;
+  --term-selection: #232323;
+  --line-number: #a0a0a0;
+  --syntax-function: #b0b0b0;
+  --syntax-keyword: #ffd1a8;
+  --syntax-string: #99ffe4;
+  --syntax-number: #ffc799;
+  --syntax-type: #ffc799;
+  --syntax-variable: #ffffff;
+  --syntax-meta: #66ddcc;
+  --bubble-border: var(--border);
+  --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 [data-chat-width="narrow"] {
@@ -524,6 +1497,50 @@ body {
   font-weight: var(--fw-regular);
   line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- line breaking ---------- */
+
+/* The UI language is <html lang> (lib/settings.ts applyToDocument). Set on body alone so that every
+   text inherits it once and no descendant sets it again: Korean keeps each word whole (keep-all
+   breaks at spaces and punctuation only, never "시도하 / 세요."), Japanese and Chinese take strict
+   kinsoku (no line starts with 。」 or a small kana). English keeps the browser's defaults. */
+html:lang(ko) body {
+  word-break: keep-all;
+}
+
+html:is(:lang(ja), :lang(zh)) body {
+  line-break: strict;
+}
+
+/* Code, keys, the terminal and the two text boxes keep the browser's breaking, and their children
+   inherit this reset: a path or a command is not a word, and xterm lays out its own cells.
+   overflow-wrap is not part of this rule; the chat's and the composer's own rules keep it. */
+:is(pre, code, kbd, samp, .xterm, .composer-text, .terminal-input-text) {
+  word-break: normal;
+  line-break: auto;
+}
+
+/* The two boxes' placeholders are interface copy, not typed text: Korean keeps their words whole
+   too ("넣지 않습니다", never "넣지 않 / 습니다"). The pseudo-element alone takes keep-all, so the box
+   itself, what the user types in it, and the code and terminal subtrees keep the reset above. */
+html:lang(ko) :is(.composer-text, .terminal-input-text)::placeholder {
+  word-break: keep-all;
+}
+
+/* A failure's folded line quotes what the PC or the browser said (lib/userError.ts): a sentence,
+   often a translated one, so it takes the interface face. The mono stack has no Hangul: Korean set
+   in it gets a letter-wide space between words and a period set off from its word. */
+:is([role="alert"], .composer-note-text, .composer-note-details, .chat-failure-details) > code {
+  font-family: var(--font-ui);
+}
+
+/* A title that wraps takes even lines, never a full line over a one-word stub: dialog titles, the
+   empty chat's greeting and a Settings group's caption. */
+.modal-title,
+.composer-greeting-title,
+.settings-section h3 {
+  text-wrap: balance;
 }
 
 button {
@@ -682,8 +1699,9 @@ button {
   order: 1;
 }
 
-/* a half's own bar: its pane's mark and title, its lens, and its close. The active half's bar
-   carries the accent, as the pane the header, the palette and the shortcuts act on */
+/* a half's close sits at the end of its tab strip (TabStrip.css); a half with no strip (its pane
+   gone, or crashed) keeps it in a bar of its own. The active half's row carries the accent, as
+   the pane the header, the palette and the shortcuts act on */
 .pane-slot-bar {
   display: flex;
   flex: none;
@@ -702,6 +1720,21 @@ button {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
+/* over the strip's own surface, which would paint over an inset shadow on the row */
+.pane-slot .tab-strip-row {
+  position: relative;
+}
+
+.pane-slot.is-active .tab-strip-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
 .pane-slot-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -710,17 +1743,28 @@ button {
   white-space: nowrap;
 }
 
+/* the half's grip: the free end of its row, which drags its pane to a half (App), with its close */
+.pane-slot-grip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 var(--space-1) 0 var(--space-2);
+}
+
 .pane-slot-machine {
   flex: none;
   color: var(--text-dim);
 }
 
-.pane-slot-bar .pane-slot-action {
+.pane-slot-action {
   width: 24px;
   height: 24px;
 }
 
-.pane-slot-bar .pane-slot-action svg {
+.pane-slot-action svg {
   width: 14px;
   height: 14px;
 }
@@ -805,7 +1849,10 @@ button {
   letter-spacing: var(--tracking-tight);
 }
 
-.context-title-text {
+/* the header note's sentence (.header-note-text, App.tsx) is cut like the title it stands in for; its
+   own class keeps .context-title-text on the pane title alone (the browser checks measure it) */
+.context-title-text,
+.header-note-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1166,6 +2213,20 @@ button {
   .error-retry {
     height: var(--touch-target);
   }
+
+  /* the segmented track keeps its height; each option is a finger's width, so neighbours never
+     share a tap, and reaches the target's height through an invisible expander, as the palette's
+     filter chips do (CommandPalette.css) */
+  .segmented > button {
+    position: relative;
+    min-width: var(--touch-target);
+  }
+
+  .segmented > button::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--control-h) - var(--segmented-inset) - var(--touch-target)) / 2) 0;
+  }
 }
 
 .pill {
@@ -1185,6 +2246,12 @@ button {
   color: var(--status-blocked);
   border-color: var(--status-blocked);
   background: var(--danger-tint);
+}
+
+/* a pill that carries a sentence (the header's link and copy notes): the interface face, for the
+   same reason as a failure's detail line above */
+.header-note {
+  font-family: var(--font-ui);
 }
 
 /* a lens that is on its way: inside a segmented button, so it stays small */
@@ -1273,7 +2340,7 @@ button {
   align-items: center;
   gap: var(--space-1);
   white-space: nowrap; /* Hangul/CJK may break between any two syllables: keep a label on one line */
-  height: calc(var(--control-h) - 6px);
+  height: calc(var(--control-h) - var(--segmented-inset));
   padding: 0 var(--space-3);
   background: transparent;
   border: 0;
@@ -1485,6 +2552,14 @@ button {
   color: var(--text-strong);
   font: inherit;
   font-size: var(--fs-input);
+}
+
+/* a field's placeholder: the browser's own grey reads 3.8:1 on a dark field, so every placeholder
+   takes --text-dim (at least 4.5:1 on every field of every palette) at full opacity, which Firefox
+   would otherwise dim */
+::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
 }
 
 /* a bordered field shows focus on its own border; the offset ring is for controls without one */

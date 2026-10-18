@@ -35,13 +35,15 @@ async function pane(): Promise<string> {
   return created.root_pane.pane_id;
 }
 
-async function connect(paneId: string, ack = true, observer = false, port = server.port) {
+async function connect(paneId: string, ack = true, observer = false, port = server.port, find = "") {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   sockets.push(ws);
   const state = {
     bytes: 0, frames: 0, ack, code: 0, exits: 0,
     latest: undefined as Extract<ServerMessage, { type: "pty-data" }> | undefined,
     errors: [] as string[], tail: "",
+    /** the first frame's text (a joiner's replay), and whether `find` has arrived since the attach */
+    first: undefined as string | undefined, find, found: false,
   };
   const send = (message: ClientMessage) => ws.send(JSON.stringify(message));
   const acknowledge = (frame = state.latest) => {
@@ -55,6 +57,8 @@ async function connect(paneId: string, ack = true, observer = false, port = serv
     state.bytes += Buffer.byteLength(frame.data);
     state.frames++;
     state.latest = frame;
+    state.first ??= frame.data;
+    if (state.find && (state.tail.slice(-state.find.length) + frame.data).includes(state.find)) state.found = true;
     state.tail = (state.tail + frame.data).slice(-8192);
     if (state.ack) acknowledge(frame);
   });
@@ -79,10 +83,12 @@ function breakPath(): () => void {
   };
 }
 
-async function flood(paneId: string): Promise<void> {
+const FLOOD = `python3 -u -c 'import sys,time; [(sys.stdout.write("\\033[H"+(str(i%10)*79+"\\n")*23),sys.stdout.flush(),time.sleep(.01)) for i in range(1500)]'`;
+
+async function flood(paneId: string, command = FLOOD): Promise<void> {
   // Redraws reach the attach stream; raw shell byte rate alone is not its workload.
   await Bun.sleep(150); // herdr's attach consumes very early keystrokes
-  await paneSendText(paneId, `python3 -u -c 'import sys,time; [(sys.stdout.write("\\033[H"+(str(i%10)*79+"\\n")*23),sys.stdout.flush(),time.sleep(.01)) for i in range(1500)]'`);
+  await paneSendText(paneId, command);
   await paneSendKeys(paneId, ["Enter"]);
 }
 
@@ -156,6 +162,36 @@ describe("real terminal output flow control", () => {
       operator.send({ type: "input", pane_id: paneId, text: "\x03" });
     } finally { operator.ws.close(); joiner?.ws.close(); }
   }, 30_000);
+
+  it("repaints what was drawn once for a client joining after the replay tail lost it", async () => {
+    // btop's shape: a frame drawn once on the alternate screen, then only changing cells. herdr's
+    // attach stream sends differences, so the frame is in the stream once, at its start.
+    const MARK = "STATIC_FRAME_TITLE";
+    const program = `python3 -u -c 'import sys,time,itertools
+sys.stdout.write("\\033[?1049h\\033[2J\\033[1;1H${MARK}\\033[2;1H"+"="*60); sys.stdout.flush()
+for i in itertools.count(): sys.stdout.write("".join("\\033[%d;1H%s" % (r, str((i+r)%10)*79) for r in range(5,25))); sys.stdout.flush(); time.sleep(.01)'`;
+    const paneId = await pane();
+    const operator = await connect(paneId, true, false, server.port, MARK);
+    let joiner: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      await flood(paneId, program);
+      await until(() => operator.state.found, "the frame is drawn", 15_000);
+      const drawn = operator.state.bytes;
+      // the updates since the frame overflow the 128 KiB tail a joiner is sent
+      await until(() => operator.state.bytes - drawn > 192 * 1024, "the tail fills with updates", 20_000);
+      joiner = await connect(paneId, true, false, server.port, MARK);
+      // the replay alone has no frame (the bug this guards against): herdr's repaint brings it
+      expect(joiner.state.first?.includes(MARK)).toBe(false);
+      await until(() => joiner!.state.found, "the frame reaches the joiner", 10_000);
+      expect(joiner.state.errors).toEqual([]);
+      expect(joiner.state.code).toBe(0);
+      expect(operator.state.code).toBe(0);
+    } finally {
+      operator.send({ type: "input", pane_id: paneId, text: "\x03" });
+      operator.ws.close();
+      joiner?.ws.close();
+    }
+  }, 45_000);
 
   it("resumes on valid ACKs and rejects future credit without accepting stale subscriptions", async () => {
     const paneId = await pane();

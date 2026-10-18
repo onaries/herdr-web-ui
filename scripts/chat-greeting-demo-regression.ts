@@ -106,7 +106,7 @@ try {
     const body = Bun.file(join(app, file));
     return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
   } });
-  const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.infra)}`;
+  const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.omp)}`;
   const settings = (): void => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })); };
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });

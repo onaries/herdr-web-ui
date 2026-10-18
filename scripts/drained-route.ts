@@ -1,4 +1,4 @@
-import type { Page, Route } from "playwright-core";
+import type { BrowserContext, Page, Route } from "playwright-core";
 
 const DRAIN_MS = 15_000;
 
@@ -12,7 +12,7 @@ const DRAIN_MS = 15_000;
  * race between two calls in flight (playwright-core 1.63), and "ignoreErrors" would hide a
  * handler's real failure: a call that fails here fails the unroute.
  */
-export async function routeDrained(page: Page, url: string, handle: (route: Route) => Promise<void>): Promise<() => Promise<void>> {
+export async function routeDrained(page: Page | BrowserContext, url: string, handle: (route: Route) => Promise<void>): Promise<() => Promise<void>> {
   const running = new Set<Promise<void>>();
   const handler = (route: Route): Promise<void> => {
     const call = handle(route).finally(() => { running.delete(call); });

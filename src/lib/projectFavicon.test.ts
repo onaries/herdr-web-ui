@@ -5,11 +5,18 @@ import { faviconKey, faviconPath, forgetFaviconProbes, probeFavicon } from "./pr
 describe("project favicon probe", () => {
   beforeEach(forgetFaviconProbes);
 
-  it("returns the first candidate that is an image, trying them in order", async () => {
+  it("returns the best candidate that is an image, asking every place at once", async () => {
     const asked: string[] = [];
-    const found = await probeFavicon("k", "/work/app/", async (path) => { asked.push(path); return path.endsWith("public/favicon.ico"); });
+    const found = await probeFavicon("k", "/work/app/", async (path) => { asked.push(path); return path.endsWith("public/favicon.ico") || path.endsWith("assets/logo.png"); });
     expect(found).toBe("/work/app/public/favicon.ico");
-    expect(asked).toEqual(["/work/app/favicon.svg", "/work/app/favicon.ico", "/work/app/favicon.png", "/work/app/public/favicon.svg", "/work/app/public/favicon.ico"]);
+    expect(asked).toContain("/work/app/favicon.svg");
+    expect(asked).toContain("/work/app/app/icon.svg");
+    expect(asked).toContain("/work/app/.github/logo.png");
+  });
+
+  it("finds an app icon or a logo where no favicon is kept", async () => {
+    expect(await probeFavicon("k1", "/a", async (path) => path === "/a/build/icon.png" || path === "/a/logo.svg")).toBe("/a/build/icon.png");
+    expect(await probeFavicon("k2", "/b", async (path) => path === "/b/assets/logo.png")).toBe("/b/assets/logo.png");
   });
 
   it("answers null when nothing is found, and a failing check counts as not found", async () => {

@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 
-import { filePresentation } from "./filePresentation.ts";
+import { filePresentation, openPresentation } from "./filePresentation.ts";
 
 it("places text and source extensions beside the pane before metadata arrives", () => {
   for (const path of ["notes.txt", "src/App.tsx:42:8", "docs/README.MD#L6-L10", "report.HTML", "config.yaml", "C:\\work\\app.py"]) {
@@ -12,4 +12,10 @@ it("places media, binary, unknown and extensionless paths in the popup", () => {
   for (const path of ["photo.png", "preview.svg", "demo.webm", "song.mp3", "report.pdf", "archive.zip", "app.exe", "data.bin", "unknown.custom", "/docs", "/docs.txt/", ".gitignore", "README"]) {
     expect(filePresentation(path)).toBe("popup");
   }
+});
+
+it("opens every file in the popup unless Settings puts text beside the pane", () => {
+  for (const path of ["notes.txt", "src/App.tsx:42:8", "photo.png", "/docs"]) expect(openPresentation(path, "popup")).toBe("popup");
+  expect(openPresentation("notes.txt", "panel")).toBe("panel");
+  expect(openPresentation("photo.png", "panel")).toBe("popup");
 });

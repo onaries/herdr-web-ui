@@ -9,11 +9,24 @@ import { createContext } from "react";
 
 /** The terminal's matcher takes the same line, column and range suffixes. */
 const LINE_SUFFIX = /(?::(\d+)(?::\d+)?|#L(\d+)(?:-L?\d+)?)$/;
+/** what a name is made of, as in the terminal's matcher: any script's letters, digits and marks */
+const NAME = "\\p{L}\\p{N}\\p{M}_";
+const ROOT = "(?:~\\/|\\.{1,2}\\/|\\/)";
+const EXTENSION = "\\.[A-Za-z0-9]{1,8}";
+const LINE = "(?::\\d+(?::\\d+)?|#L\\d+(?:-L?\\d+)?)?";
+const SEGMENT = `[${NAME}@.+-]+`;
+const FILE_NAME = `[${NAME}@+-][${NAME}@.+-]*${EXTENSION}`;
 // a path starts where a run of its characters starts, `+` among them: a line of plus signs is
 // otherwise tried as a path from every one of them, to its end. `~/` still starts one after a
-// plus sign (`+~/notes/a.md`, a line of a diff)
-const BARE_PATH = /(?<![\w/.@~-])(?<!\+(?!~))((?:~\/|\.{1,2}\/|\/)?(?:[\w@.+-]+\/)+[\w@+-][\w@.+-]*\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)?)(?![\w/])/g;
-const CODE_PATH = /^(?:~\/|\.{1,2}\/|\/)?(?:[\w@.+-]+\/)*[\w@+-][\w@.+-]*\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)?$/;
+// plus sign (`+~/notes/a.md`, a line of a diff). It ends at an ASCII word character only, so a
+// particle written onto it in Korean or Japanese prose is not taken as part of the name.
+const BARE_PATH = new RegExp(`(?<![${NAME}/.@~-])(?<!\\+(?!~))(${ROOT}?(?:${SEGMENT}\\/)+${FILE_NAME}${LINE})(?![\\w/])`, "gu");
+// A code span is delimited, so a path in it may hold single spaces (`.senpi/pages/a b.html`):
+// after a root (`~/My Docs/a.md`) or past a first folder, never in a bare name or a first word,
+// so a command (`bun scripts/check.ts`) or a phrase (`run a.ts`) is not one
+const SPACED = `${SEGMENT}(?: ${SEGMENT})*`;
+const SPACED_NAME = `[${NAME}@+-](?:[${NAME}@.+-]| (?=[${NAME}@.+-]))*${EXTENSION}`;
+const CODE_PATH = new RegExp(`^(?:${ROOT}(?:${SPACED}\\/)*${SPACED_NAME}|${SEGMENT}\\/(?:${SPACED}\\/)*${SPACED_NAME}|${FILE_NAME})${LINE}$`, "u");
 
 /**
  * A bare dotted name that is code or a host, not a file: what agents write in backticks all the
@@ -26,14 +39,28 @@ function isCodeName(name: string): boolean {
   return !name.includes("/") && CODE_NAME.test(name);
 }
 
+// Chinese and Japanese prose writes a Latin path straight onto its words ("open src/app.ts"
+// with no spaces): where CJK letters and ASCII letters meet with nothing between them, a name
+// ends or starts, so each run between such seams is matched on its own
+const CJK = "\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}";
+const SCRIPT_SEAM = new RegExp(`(?<=[${CJK}])(?=[A-Za-z])|(?<=[A-Za-z])(?=[${CJK}])`, "u");
+
+function* pathMatches(text: string): Generator<{ index: number; 0: string; 1: string }> {
+  let start = 0;
+  for (const run of text.split(SCRIPT_SEAM)) {
+    for (const match of run.matchAll(BARE_PATH)) yield { index: start + (match.index ?? 0), 0: match[0], 1: match[1]! };
+    start += run.length;
+  }
+}
+
 /** Text split into plain runs and the file paths in it. */
 export function splitFilePaths(text: string): (string | { path: string })[] {
   const parts: (string | { path: string })[] = [];
   let offset = 0;
-  for (const match of text.matchAll(BARE_PATH)) {
-    const index = match.index ?? 0;
+  for (const match of pathMatches(text)) {
+    const index = match.index;
     // a version number or a domain is not a path: one of its segments must hold a letter
-    if (!/[A-Za-z]/.test(match[1]!.replace(LINE_SUFFIX, "").replace(/\.[A-Za-z0-9]{1,8}$/, ""))) continue;
+    if (!/\p{L}/u.test(match[1]!.replace(LINE_SUFFIX, "").replace(/\.[A-Za-z0-9]{1,8}$/, ""))) continue;
     if (index > offset) parts.push(text.slice(offset, index));
     parts.push({ path: match[1]! });
     offset = index + match[0].length;
@@ -45,7 +72,9 @@ export function splitFilePaths(text: string): (string | { path: string })[] {
 /** A code span that is a single file name or path (`README.md`, `src/app.ts`). */
 export function codeIsFilePath(code: string): boolean {
   const name = code.replace(LINE_SUFFIX, "");
-  return CODE_PATH.test(code) && !isCodeName(name) && /[A-Za-z]/.test(name.replace(/\.[A-Za-z0-9]{1,8}$/, "")) && !/^\d+(?:\.\d+)+$/.test(name);
+  return CODE_PATH.test(code) && !isCodeName(name) && /\p{L}/u.test(name.replace(/\.[A-Za-z0-9]{1,8}$/, "")) && !/^\d+(?:\.\d+)+$/.test(name)
+    // two files listed in one span (`src/a.ts src/b.css`) are not one name with a space in it
+    && code.split(" ").filter((word) => CODE_PATH.test(word)).length < 2;
 }
 
 /** Split a viewer target; columns and range ends are ignored, and only positive safe lines are marked. */

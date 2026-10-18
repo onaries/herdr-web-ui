@@ -3,10 +3,15 @@
  * no room for. Hidden on fine-pointer desktops, shown on coarse pointers and
  * narrow viewports. A key never takes focus (KeyBar.tsx cancels pointerdown and
  * mousedown), so the soft keyboard stays up and xterm's textarea keeps every
- * keystroke; the row scrolls sideways when the keys outgrow the viewport.
+ * keystroke; the row scrolls sideways when the keys outgrow the viewport, and the
+ * edge that hides more keys fades out (KeyBar.tsx sets data-overflow-start/end).
  */
 
 .key-bar {
+  /* the fade's width at an edge with keys out of view */
+  --keybar-fade: var(--space-6);
+  --keybar-fade-start: 0px;
+  --keybar-fade-end: 0px;
   display: none;
   flex: none;
   align-items: center;
@@ -26,6 +31,27 @@
   display: none;
 }
 
+/* a mask rather than a painted overlay: the fade is the bar's own colours in every palette, it
+   needs no element over the scroller, and it is static, so reduced motion has nothing to stop */
+.key-bar[data-overflow-start],
+.key-bar[data-overflow-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    currentColor var(--keybar-fade-start),
+    currentColor calc(100% - var(--keybar-fade-end)),
+    transparent
+  );
+}
+
+.key-bar[data-overflow-start] {
+  --keybar-fade-start: var(--keybar-fade);
+}
+
+.key-bar[data-overflow-end] {
+  --keybar-fade-end: var(--keybar-fade);
+}
+
 /* the bar at the bottom of the screen (KeyBar.tsx) keeps clear of the home indicator, though
    less than the whole safe area: the bar's own padding around its keys is part of that room,
    as the composer's is (Composer.css) */
@@ -39,6 +65,7 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  /* the touch target in both directions; a wider cap (Shift, Enter) grows the key, never shrinks it */
   min-width: var(--touch-target);
   height: var(--touch-target);
   padding: 0 var(--space-1);

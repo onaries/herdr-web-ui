@@ -6,6 +6,7 @@ import type { ViewportIntentGate } from "../lib/viewportIntent.ts";
 import { findResultAfterError } from "../lib/paneFind.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
+import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import type { TerminalSearchState } from "./TerminalViewportTools.tsx";
 import "./FindBar.css";
 
@@ -15,7 +16,7 @@ export function FindBar({ paneId, viewportIntent, disabled, focusRequest, active
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<PaneFindResponse | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserError | null>(null);
   useEffect(() => { onResult?.(result ? { query, result } : null); }, [query, result, onResult]);
   useEffect(() => () => onResult?.(null), [onResult]);
   const active = useRef(true);
@@ -48,9 +49,7 @@ export function FindBar({ paneId, viewportIntent, disabled, focusRequest, active
     } catch (cause) {
       if (active.current) {
         setResult((current) => findResultAfterError(current, cause));
-        setError(cause instanceof ApiError
-        ? cause.code === "stale_content" ? t("Pane changed. Search again.") : cause.detail
-        : cause instanceof Error ? cause.message : String(cause));
+        setError(cause instanceof ApiError && cause.code === "stale_content" ? { message: t("Pane changed. Search again."), detail: null } : userErrorMessage(cause));
       }
     } finally {
       releaseViewport?.();
@@ -81,7 +80,7 @@ export function FindBar({ paneId, viewportIntent, disabled, focusRequest, active
         <button className="icon-button" type="button" aria-label={t("Next match")} title={t("Next match")} disabled={disabled || busy || !query} onClick={() => void search("forward")}><ArrowDown size={16} aria-hidden="true" /></button>
         <button className="icon-button" type="button" aria-label={t("Close search")} title={t("Close search")} onClick={onClose}><X size={16} aria-hidden="true" /></button>
       </div>
-      {error ? <p className="find-bar-error" role="alert">{error}</p> : <p className="find-bar-hint">{t("Search moves the pane for every client.")}</p>}
+      {error ? <p className="find-bar-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p> : <p className="find-bar-hint">{t("Search moves the pane for every client.")}</p>}
     </form>
   );
 }

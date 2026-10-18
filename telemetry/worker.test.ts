@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACTIVE_LATE_DAYS, type TelemetrySettings } from "../shared/telemetry.ts";
+import { ACTIVE_LATE_DAYS, TELEMETRY_THEME_IDS, telemetrySettings, type TelemetrySettings } from "../shared/telemetry.ts";
 import { handle, readActive, readEvent, requestCountry, type Env } from "./worker.ts";
 
 const event = {
@@ -131,6 +131,36 @@ describe("telemetry receiver", () => {
       expect((await handle(post(JSON.stringify({ ...event, settings: bad })), env, now)).status).toBe(400);
     }
     expect(rows).toEqual([]);
+  });
+
+  test("takes herdr theme ids and the dark/light theme keys, and every older app's snapshot too", async () => {
+    const { env, rows } = fakeDb();
+    const themed: TelemetrySettings = { ...settings, palette: "tokyo-night", paletteDark: "tokyo-night", paletteLight: "tokyo-night-day", darkTheme: "tokyo-night", lightTheme: "tokyo-night-day" };
+    // the exact key set apps before the theme keys send, with their ids and with a herdr id
+    for (const valid of [settings, { ...settings, palette: "tokyo-night" }, themed] satisfies TelemetrySettings[]) {
+      expect(telemetrySettings(valid)).toEqual(valid);
+      expect(readEvent({ ...event, settings: valid }, now)?.settings).toEqual(valid);
+    }
+    for (const id of TELEMETRY_THEME_IDS) expect(telemetrySettings({ ...themed, darkTheme: id, lightTheme: id, palette: id })).not.toBeNull();
+    expect((await handle(post(JSON.stringify({ ...event, settings: themed })), env, now)).status).toBe(204);
+    expect(rows[0]!.values.at(-1)).toBe(JSON.stringify(themed));
+
+    const { lightTheme: _light, ...oneSide } = themed;
+    for (const bad of [
+      { ...settings, palette: "not-a-theme" },
+      { ...themed, darkTheme: "not-a-theme" },
+      { ...themed, lightTheme: null },
+      // removed before any release could send them
+      { ...settings, palette: "lilac" },
+      // herdr's terminal theme maps to the web default and is never sent
+      { ...settings, paletteDark: "terminal" },
+      oneSide,
+      { ...themed, unknownSetting: true },
+    ]) {
+      expect(telemetrySettings(bad)).toBeNull();
+      expect((await handle(post(JSON.stringify({ ...event, settings: bad })), env, now)).status).toBe(400);
+    }
+    expect(rows).toHaveLength(1);
   });
 
   describe("against the real table", () => {

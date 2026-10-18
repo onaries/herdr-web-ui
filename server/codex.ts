@@ -57,8 +57,15 @@ export function codexOutputText(value: unknown): string {
 function contentText(value: unknown, user = false): string {
   if (typeof value === "string") return user && contextOnly(value) ? "" : value;
   if (!Array.isArray(value)) return "";
-  return value.flatMap((raw) => {
+  return value.flatMap((raw, index) => {
     const part = record(raw);
+    const previousType = string(record(value[index - 1]).type);
+    const nextType = string(record(value[index + 1]).type);
+    const text = string(part.text);
+    const imageEnvelope = user && part.type === "input_text"
+      && ((/^<image name=\[Image #\d+\](?: path="[^"\r\n]+")?>$/.test(text) && ["input_image", "local_image"].includes(nextType))
+        || (text === "</image>" && ["input_image", "local_image"].includes(previousType)));
+    if (imageEnvelope) return [];
     return ["input_text", "output_text", "text", "summary_text"].includes(string(part.type))
       && typeof part.text === "string" && !(user && contextOnly(part.text)) ? [part.text] : [];
   }).join("\n");
@@ -960,7 +967,7 @@ function codexExchanges(text: string): CodexExchange[] {
 }
 
 /** The first top-level prompt and its following assistant output, after this TUI's header. */
-function displayedFirstExchange(screen: string): CodexExchange | null {
+function displayedFirstExchange(screen: string, keepCompletionFooter = false): CodexExchange | null {
   const header = screen.lastIndexOf("OpenAI Codex (v");
   if (header < 0) return null;
   const lines = screen.slice(header).split(/\r?\n/);
@@ -981,7 +988,12 @@ function displayedFirstExchange(screen: string): CodexExchange | null {
   if (answerAt < 0) return null;
   const user = lines.slice(promptAt, answerAt).map((line, index) => index === 0 ? line.slice(1) : line).join("\n");
   const nextPrompt = lines.findIndex((line, index) => index > answerAt && /^›(?:[ \t]|$)/.test(line));
-  const response = lines.slice(answerAt, nextPrompt < 0 ? undefined : nextPrompt)
+  const responseLines = lines.slice(answerAt, nextPrompt < 0 ? undefined : nextPrompt);
+  // Codex's completed-turn footer is terminal chrome, after a blank line and before the composer.
+  const footer = responseLines.findIndex((line, index) => index > 0 && responseLines[index - 1]!.trim() === ""
+    && /^[ \t]*Worked for <?\d+(?:ms|s|m|h)(?: \d+(?:ms|s|m|h))*(?: • \d{1,2}:\d{2}(?: [AP]M)?)?[ \t]*$/.test(line)
+    && responseLines.slice(index + 1).every((after) => after.trim() === ""));
+  const response = (footer < 0 || keepCompletionFooter ? responseLines : responseLines.slice(0, footer))
     .map((line) => /^•/.test(line) ? line.slice(1) : line).join("\n");
   return { user, assistant: response };
 }
@@ -1021,10 +1033,12 @@ export function matchCodexFirstExchange(
   const first = codexExchanges(match.candidate.text)[0];
   const storedPrompt = normalizePrompt(match.candidate.firstUserMessage ?? "");
   const shown = displayedFirstExchange(screen);
-  if (match.index !== 0 || first === undefined || shown === null
+  const shownWithFooter = displayedFirstExchange(screen, true);
+  if (match.index !== 0 || first === undefined || shown === null || shownWithFooter === null
     || storedPrompt === ""
     || normalizePrompt(first.user) !== storedPrompt
-    || normalizePrompt(first.assistant) !== normalizePrompt(shown.assistant)
+    || (normalizePrompt(first.assistant) !== normalizePrompt(shown.assistant)
+      && normalizePrompt(first.assistant) !== normalizePrompt(shownWithFooter.assistant))
     || typeof match.candidate.createdAtMs !== "number"
     || !Number.isFinite(match.candidate.createdAtMs) || match.candidate.createdAtMs < startedAtMs) return null;
   return match.candidate.path;

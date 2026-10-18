@@ -1,7 +1,8 @@
 /**
  * A staged, fictional herdr session for the README media (capture.ts): its own named herdr
- * session (never the one you work in), five workspaces under /tmp/herdr-demo, and curated
- * chats served in place of real transcripts. The real hostname never reaches the page.
+ * session (never the one you work in), the demo's two repositories under /tmp/herdr-demo with
+ * their agent worktrees and the release shell tab, and curated chats served in place of real
+ * transcripts. The real hostname never reaches the page.
  */
 process.env["HERDR_TEST_SESSION"] = "herdr-web-ui-demo";
 await import("../test-herdr.ts");
@@ -9,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const { createServer } = await import("../../server/index.ts");
-const { herdrRpc, workspaceCreate, workspaceClose, sessionSnapshot } = await import("../../server/herdr/client.ts");
+const { herdrRpc, workspaceCreate, workspaceClose, sessionSnapshot, tabCreate, worktreeCreate } = await import("../../server/herdr/client.ts");
 const { hostname } = await import("node:os");
 
 const REAL_HOST = hostname();
@@ -36,16 +37,45 @@ function releaseRepo(dir: string) {
   sh("git commit -q --allow-empty -m 'chore(release): 1.4.0' && git tag v1.4.0");
 }
 
+/** An empty repository with one commit, so herdr can add worktrees to it. */
+function gitRepo(dir: string) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const r = Bun.spawnSync(["bash", "-c", "git init -q -b main && git commit -q --allow-empty -m init"], { cwd: dir, env: { ...process.env, GIT_AUTHOR_NAME: "demo", GIT_AUTHOR_EMAIL: "demo@example.com", GIT_COMMITTER_NAME: "demo", GIT_COMMITTER_EMAIL: "demo@example.com" } });
+  if (r.exitCode !== 0) throw new Error("git init: " + r.stderr.toString());
+}
+
 export async function stage() {
   // start clean: close whatever an earlier run left in the demo session
   for (const ws of (await sessionSnapshot()).workspaces) await workspaceClose(ws.workspace_id).catch(() => {});
+  // herdr's worktree folders from an earlier run would refuse the same paths
+  rmSync(join(ROOT, "worktrees"), { recursive: true, force: true });
   const panes: DemoPane[] = [];
+  const byKey = (key: string | undefined) => panes.find((p) => p.key === key);
+  // each repository is a real git checkout (the one with the shell tab holds the release history),
+  // a worktree is herdr's own (under the demo root, so no home path shows), and a tab joins its
+  // repository's workspace
   for (const spec of SPECS) {
-    const cwd = join(ROOT, spec.label);
-    if (spec.key === "shell") releaseRepo(cwd); else mkdirSync(cwd, { recursive: true });
-    const ws = await workspaceCreate({ cwd, label: spec.label });
-    const pane = ws.root_pane.pane_id;
-    panes.push({ ...spec, pane, workspace: ws.workspace.workspace_id });
+    const parent = byKey(spec.worktreeOf ?? spec.tabOf);
+    let pane: string, workspace: string, cwd: string;
+    if (spec.tabOf && parent) {
+      const tab = await tabCreate({ workspaceId: parent.workspace, label: spec.label });
+      ({ pane_id: pane } = tab.root_pane);
+      workspace = parent.workspace;
+      cwd = join(ROOT, SPECS.find((s) => s.key === spec.tabOf)!.label);
+    } else if (spec.worktreeOf && spec.branch && parent) {
+      const opened = await worktreeCreate({ workspaceId: parent.workspace, branch: spec.branch, label: spec.label, path: join(ROOT, "worktrees", spec.label) });
+      ({ pane_id: pane } = opened.root_pane);
+      workspace = opened.workspace.workspace_id;
+      cwd = opened.worktree.path;
+    } else {
+      cwd = join(ROOT, spec.label);
+      if (SPECS.some((s) => s.tabOf === spec.key && !s.agent)) releaseRepo(cwd); else gitRepo(cwd);
+      const ws = await workspaceCreate({ cwd, label: spec.label });
+      pane = ws.root_pane.pane_id;
+      workspace = ws.workspace.workspace_id;
+    }
+    panes.push({ ...spec, pane, workspace });
     // a plain prompt: no user, host or home path on screen
     await herdrRpc("pane.send_text", { pane_id: pane, text: `exec env -i HOME=${cwd} TERM=xterm-256color PATH=$PATH bash --norc --noprofile\n` });
   }
@@ -94,7 +124,7 @@ export async function stage() {
 
   async function teardown() {
     server.stop();
-    for (const p of panes) await workspaceClose(p.workspace).catch(() => {});
+    for (const workspace of new Set(panes.map((p) => p.workspace))) await workspaceClose(workspace).catch(() => {});
     rmSync(stateDir, { recursive: true, force: true });
   }
   /** Codex asks again: each capture starts from the same state. */

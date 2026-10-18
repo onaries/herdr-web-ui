@@ -200,7 +200,7 @@ try {
   const open = async (paneId: string) => {
     await page!.goto(`http://127.0.0.1:${port}/?pane=${encodeURIComponent(paneId)}`);
     await page!.locator(".conn-live").waitFor();
-    return page!.getByRole("log", { name: `conversation of ${paneId}` });
+    return page!.locator(`.pane-frame[data-layout-pane="${paneId}"]`).getByRole("log");
   };
   const modelInfo = page.getByLabel("Model and reasoning");
   const logA = await open(paneA);

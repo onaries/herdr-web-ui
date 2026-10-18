@@ -47,3 +47,15 @@ export function conflictResponse(code: string, message: string): Response {
 export function badRequest(code: string, message: string): Response {
   return jsonResponse({ error: { code, message } }, 400);
 }
+
+/** A JSON route's body as an object, or the 400 that says it is not JSON or not an object. */
+export async function readJsonObject<T extends object = Record<string, unknown>>(request: Request): Promise<T | Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest("invalid_json", "request body must be JSON");
+  }
+  if (!isJsonObject(body)) return badRequest("invalid_body", "request body must be a JSON object");
+  return body as T;
+}

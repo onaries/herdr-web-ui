@@ -18,6 +18,8 @@ import { ApiError } from "../lib/api.ts";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
+import { useSettings } from "../lib/settings.ts";
+import { launchAgent } from "../lib/agentLaunchMode.ts";
 import { suggestWorktreeBranch, worktreeLabel } from "../lib/worktreeName.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -36,6 +38,7 @@ const said = (reason: unknown): string => reason instanceof ApiError ? reason.de
 
 export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
   const t = useT();
+  const { settings } = useSettings();
   const id = useId();
   const { createWorktree, fetchAgentKinds, listWorktrees, openWorktree } = useMachineApi();
   const [agents, setAgents] = useState<AgentKind[]>([]);
@@ -130,7 +133,7 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
     const name = branch.trim();
     if (!name) return;
     void run(t("Creating the checkout…"), async () => {
-      const result = await createWorktree({ workspace_id: workspace.workspace_id, branch: name, base: base.trim() || null, label: label.trim() || null, agent: agentKind ? { kind: agentKind } : null });
+      const result = await createWorktree({ workspace_id: workspace.workspace_id, branch: name, base: base.trim() || null, label: label.trim() || null, agent: launchAgent(agentKind, settings) });
       // the default follows what actually started: Shell after a plain checkout, an agent only once it runs
       if (!agentKind || result.agent_started === true) rememberAgent(agentKind);
       return result;

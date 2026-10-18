@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { herdrRpc, paneRead, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { testShellEnv } from "./test-shell.ts";
 
 /** Its own XDG config isolates the global plugin registry as well as the owned herdr panes. */
 it("herdr loads the Phone setup entrypoint and keeps its QR and code visible in a pane", async () => {
@@ -24,7 +25,7 @@ it("herdr loads the Phone setup entrypoint and keeps its QR and code visible in 
   const binary = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr")!;
   const session = "phone-setup-qa";
   const socket = join(config, "herdr", "sessions", session, "herdr.sock");
-  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), XDG_CONFIG_HOME: config };
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), ...testShellEnv(config), XDG_CONFIG_HOME: config };
   const cli = async (...args: string[]) => {
     const child = Bun.spawn([binary, ...args], { env, stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);

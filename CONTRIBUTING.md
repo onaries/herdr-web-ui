@@ -60,6 +60,7 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
 
 ```bash
 bun run generate:types --check   # shared/herdr-api.generated.ts matches scripts/herdr-schema.json
+bun run generate:themes --check  # theme copies match the theme blocks of src/styles.css
 bun run typecheck
 bun run build
 bun run test:unit
@@ -85,6 +86,9 @@ running terminals: see [development](docs/development.md#checks).
   contract test (`server/api.contract.test.ts` for endpoints). A test that needs a live herdr is named
   `*.contract.test.ts`.
 - **herdr wire types:** never edit `shared/herdr-api.generated.ts`; run `bun run generate:types`.
+- **Theme colors:** edit them only in the theme blocks of `src/styles.css`. Never edit
+  `src/lib/themes.generated.ts` or the generated copies in DESIGN.md, `index.html` and
+  `public/manifest.webmanifest`; run `bun run generate:themes`.
 - **UI text:** every new `t("…")` string needs an entry in `src/lib/i18n.ko.ts`, `i18n.ja.ts`
   and `i18n.zh.ts`, with the same placeholders. `bun run test:unit` fails on a missing, unused or
   untranslated entry.
@@ -92,9 +96,14 @@ running terminals: see [development](docs/development.md#checks).
   new ones. Every language has to translate each later string, so a PR that adds a language is
   closed.
 - **UI:** component CSS uses the tokens in `src/styles.css` (see [DESIGN.md](DESIGN.md)).
-- **Color palettes:** the app keeps three (Amber, Charcoal, Catppuccin) and does not take new ones.
-  Every palette is a light and a dark block that each later token change has to fill in, so a PR
-  that adds a palette is closed.
+- **Themes:** besides the app's own Amber, Charcoal, Codex and Catppuccin, a theme is added only when
+  herdr ships it as a built-in; a PR with any other theme is closed. Each theme is a complete block
+  in `src/styles.css`, the one place its colors are written. Start from
+  `bun scripts/herdr-theme-proposal.ts`, write the block by hand, and record every role whose value
+  differs from the raw herdr mapping (`mapTheme`) in `scripts/herdr-theme-overrides.ts` with its dE
+  and a reason, including repairs the proposal tool already applied. Every
+  entry has to pass the AA contrast test on the committed hex. Then run `bun run generate:themes`;
+  never edit `src/lib/themes.generated.ts` or the other generated copies.
 - **The browser demo:** the [demo](https://herdrweb.dev/demo/) redeploys on every
   merge to `main`. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
   else gets its 404.

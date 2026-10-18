@@ -69,6 +69,55 @@
   flex: none;
 }
 
+/* the fold toggle ends the header: after "View plan", or on its own at the end */
+.prompt-card-fold {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.prompt-card-plan-file + .prompt-card-fold {
+  margin-inline-start: 0;
+}
+
+.prompt-card-fold svg {
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+
+@media (hover: hover) {
+  .prompt-card-fold:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.prompt-card-fold:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+@media (pointer: coarse) {
+  .prompt-card-fold {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
+
+/* folded: the header alone; a note that the answer is on its way, or failed, still shows */
+.prompt-card.is-folded > :not(.prompt-card-header, .prompt-card-status, .prompt-card-error, .visually-hidden) {
+  display: none;
+}
+
 /* a form of several questions: a chip per question, answered ones checked, the one asked now in
    the accent; the chips name the questions, so the card's title only says where this one stands */
 .prompt-card-steps {
@@ -177,6 +226,42 @@
   overflow-wrap: anywhere;
 }
 
+/* a review's answers: plain text, not the mono box, each question with its answer under it. Like
+   the body, it gives way when the card is short, with its own scroll */
+.prompt-card-answers {
+  flex: 0 1 auto;
+  min-height: calc(2lh + 2 * var(--space-2));
+  max-height: calc(8lh + 2 * var(--space-2));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-y: auto;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+}
+
+.prompt-card-answer dt {
+  color: var(--text-dim);
+}
+
+.prompt-card-answer dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.prompt-card-answer dd.is-empty,
+.prompt-card-answer .prompt-card-answer-note {
+  color: var(--text-dim);
+  font-weight: var(--fw-regular);
+}
+
 /* a command of one line is one line tall */
 .prompt-card-body.is-line {
   min-height: calc(1lh + 2 * var(--space-2));
@@ -234,13 +319,14 @@
   color: var(--accent);
 }
 
-/* while an answer is on its way every option waits, the checkbox rows included */
-.prompt-card[aria-busy="true"] .prompt-card-option {
+/* while an answer is on its way every option waits, the checkbox rows included (the busy state is
+   the options group's own, so the card's status line stays outside it) */
+.prompt-card-options[aria-busy="true"] .prompt-card-option {
   opacity: 0.55;
   cursor: default;
 }
 
-.prompt-card[aria-busy="true"] .prompt-card-option:hover {
+.prompt-card-options[aria-busy="true"] .prompt-card-option:hover {
   background: transparent;
 }
 
@@ -389,6 +475,20 @@
 .prompt-card-error {
   color: var(--status-blocked);
   font-size: var(--fs-xs);
+}
+
+/* an answer on its way: said under the actions, so a slow PC never looks like a dead button */
+.prompt-card-status {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* the chips' and rows' colour changes snap instead of fading */
+@media (prefers-reduced-motion: reduce) {
+  .prompt-card-step,
+  .prompt-card-option {
+    transition: none;
+  }
 }
 
 /* a desktop always shows the tab strip (as herdr's TUI): the card's 60% is of what is under it,

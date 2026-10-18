@@ -8,7 +8,11 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
 import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/shortcutBindings.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type Palette as PaletteName, type VoiceButton } from "../lib/settings.ts";
+import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
+import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
+import { CLAUDE_LAUNCH_MODES, CODEX_LAUNCH_MODES, type ClaudeLaunchMode, type CodexLaunchMode } from "../lib/agentLaunchMode.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
+import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
@@ -233,13 +237,51 @@ function shownBy(entry: SettingsLevel | null): { page: SettingsPage | null; keyB
   return page === null && entry.page !== null ? null : { page, keyBar: entry.keyBar && page === "terminal" };
 }
 
-function PaletteSelect({ id, value, onChange }: { id: string; value: PaletteName; onChange: (palette: PaletteName) => void }) {
+/** What each theme is called: the color words are translated, the brand names stay as their projects write them. */
+const THEME_NAMES: Record<ThemeId, string> = {
+  amber: "Amber",
+  charcoal: "Charcoal",
+  codex: "Codex",
+  catppuccin: "Catppuccin",
+  "catppuccin-latte": "Catppuccin Latte",
+  "tokyo-night": "Tokyo Night",
+  "tokyo-night-day": "Tokyo Night Day",
+  gruvbox: "Gruvbox",
+  "gruvbox-light": "Gruvbox Light",
+  "one-dark": "One Dark",
+  "one-light": "One Light",
+  solarized: "Solarized",
+  "solarized-light": "Solarized Light",
+  kanagawa: "Kanagawa",
+  "kanagawa-lotus": "Kanagawa Lotus",
+  "rose-pine": "Rosé Pine",
+  "rose-pine-dawn": "Rosé Pine Dawn",
+  dracula: "Dracula",
+  nord: "Nord",
+  vesper: "Vesper",
+};
+
+/**
+ * Every theme, grouped by the kind of the row `side` draws it with - a both-mode theme by the
+ * side's own kind, a single-kind theme by its only one - the side's own kind first. The other
+ * kind is offered too: a dark theme chosen for light mode draws dark, as it does in herdr.
+ */
+function themeGroups(side: Mode): { kind: Mode; ids: ThemeId[] }[] {
+  const other: Mode = side === "dark" ? "light" : "dark";
+  return [side, other].map((kind) => ({ kind, ids: THEME_IDS.filter((id) => rowFor(id, side).mode === kind) }));
+}
+
+/** The theme of one side. Picking a paired theme also fills the other side with its sibling while that side is still untouched (pickTheme). */
+function ThemeSelect({ side }: { side: Mode }) {
+  const { settings, update } = useSettings();
   const t = useT();
   return (
-    <select id={id} className="select settings-select" value={value} onChange={(event) => onChange(event.target.value as PaletteName)}>
-      <option value="amber">{t("Amber")}</option>
-      <option value="charcoal">{t("Charcoal")}</option>
-      <option value="catppuccin">{t("Catppuccin")}</option>
+    <select id={`settings-theme-${side}`} className="select settings-select" value={side === "dark" ? settings.darkTheme : settings.lightTheme} onChange={(event) => update(pickTheme(settings, side, event.target.value as ThemeId))}>
+      {themeGroups(side).map(({ kind, ids }) => (
+        <optgroup key={kind} label={kind === "dark" ? t("Dark") : t("Light")}>
+          {ids.map((id) => <option key={id} value={id}>{t(THEME_NAMES[id])}</option>)}
+        </optgroup>
+      ))}
     </select>
   );
 }
@@ -253,20 +295,12 @@ function AppearancePage() {
       <SettingsRow label={t("Theme")} wide>
         <Segmented label={t("Theme")} value={settings.theme} onChange={(theme) => update({ theme })} options={[{ value: "dark", label: t("Dark") }, { value: "light", label: t("Light") }, { value: "system", label: t("System") }]} />
       </SettingsRow>
-      {settings.theme === "system" ? (
-        <>
-          <SettingsRow label={t("Light colors")} description={t("System mode switches between the two palettes")} htmlFor="settings-palette-light">
-            <PaletteSelect id="settings-palette-light" value={settings.paletteLight} onChange={(paletteLight) => update({ paletteLight })} />
-          </SettingsRow>
-          <SettingsRow label={t("Dark colors")} htmlFor="settings-palette-dark">
-            <PaletteSelect id="settings-palette-dark" value={settings.paletteDark} onChange={(paletteDark) => update({ paletteDark })} />
-          </SettingsRow>
-        </>
-      ) : (
-        <SettingsRow label={t("Colors")} htmlFor="settings-palette">
-          <PaletteSelect id="settings-palette" value={settings.palette} onChange={(palette) => update({ palette })} />
-        </SettingsRow>
-      )}
+      <SettingsRow label={t("Dark theme")} description={t("Shown in dark mode")} htmlFor="settings-theme-dark" wide>
+        <ThemeSelect side="dark" />
+      </SettingsRow>
+      <SettingsRow label={t("Light theme")} description={t("Shown in light mode")} htmlFor="settings-theme-light" wide>
+        <ThemeSelect side="light" />
+      </SettingsRow>
       <SettingsRow label={t("Density")}>
         <Segmented label={t("Density")} value={settings.density} onChange={(density) => update({ density })} options={[{ value: "comfortable", label: t("Comfortable") }, { value: "compact", label: t("Compact") }]} />
       </SettingsRow>
@@ -382,6 +416,12 @@ function ChatPage() {
         </SettingsRow>
         <SettingsRow label={t("Diff layout")} description={t("A phone shows one column either way.")}>
           <Segmented label={t("Diff layout")} value={settings.diffStyle} onChange={(diffStyle) => update({ diffStyle })} options={DIFF_STYLES.map((diffStyle) => ({ value: diffStyle, label: diffStyle === "split" ? t("Split") : t("Unified") }))} />
+        </SettingsRow>
+        <SettingsRow label={t("Open files")} description={t("On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.")}>
+          <Segmented label={t("Open files")} value={settings.fileOpen} onChange={(fileOpen) => update({ fileOpen })} options={FILE_OPEN_TARGETS.map((fileOpen) => ({ value: fileOpen, label: fileOpen === "panel" ? t("Beside the pane") : t("In a popup") }))} />
+        </SettingsRow>
+        <SettingsRow label={t("Web links")} description={t("Only a page this PC serves, such as a dev server on localhost, opens beside the pane. Shift-click opens it the other way.")}>
+          <Segmented label={t("Web links")} value={settings.webLinks} onChange={(webLinks) => update({ webLinks })} options={WEB_LINK_TARGETS.map((webLinks) => ({ value: webLinks, label: webLinks === "panel" ? t("Beside the pane") : t("In a new tab") }))} />
         </SettingsRow>
       </SettingsGroup>
     </>
@@ -568,6 +608,43 @@ function VoicePage() {
  * hooks or settings, which this app leaves to the user, so a row shows the command to run instead.
  */
 function IntegrationsPage() {
+  return (
+    <>
+      <LaunchModesGroup />
+      <IntegrationsList />
+    </>
+  );
+}
+
+function claudeModeName(mode: ClaudeLaunchMode, t: ReturnType<typeof useT>): string {
+  return mode === "acceptEdits" ? t("Accept edits") : mode === "auto" ? t("Auto") : mode === "plan" ? t("Plan")
+    : mode === "dontAsk" ? t("Don't ask") : mode === "bypassPermissions" ? t("Bypass permissions") : t("Agent default");
+}
+function codexModeName(mode: CodexLaunchMode, t: ReturnType<typeof useT>): string {
+  return mode === "readOnly" ? t("Read only") : mode === "auto" ? t("Auto") : mode === "fullAccess" ? t("Full access") : t("Agent default");
+}
+
+/** The mode the new workspace, tab and worktree dialogs start Claude Code and Codex in (lib/agentLaunchMode.ts). */
+function LaunchModesGroup() {
+  const { settings, update } = useSettings();
+  const t = useT();
+  return (
+    <SettingsGroup title={t("New agents")} section="launch-modes" note={t("Applies to agents started from New workspace, New tab and New worktree. Agent default adds no flag, so the agent's own configuration decides.")}>
+      <SettingsRow label="Claude Code" description={t("Permission mode")} htmlFor="settings-claude-launch-mode">
+        <select id="settings-claude-launch-mode" className="select settings-select" value={settings.claudeLaunchMode} onChange={(event) => update({ claudeLaunchMode: event.target.value as ClaudeLaunchMode })}>
+          {CLAUDE_LAUNCH_MODES.map((mode) => <option key={mode} value={mode}>{claudeModeName(mode, t)}</option>)}
+        </select>
+      </SettingsRow>
+      <SettingsRow label="Codex" description={t("Sandbox and approvals")} htmlFor="settings-codex-launch-mode">
+        <select id="settings-codex-launch-mode" className="select settings-select" value={settings.codexLaunchMode} onChange={(event) => update({ codexLaunchMode: event.target.value as CodexLaunchMode })}>
+          {CODEX_LAUNCH_MODES.map((mode) => <option key={mode} value={mode}>{codexModeName(mode, t)}</option>)}
+        </select>
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
+
+function IntegrationsList() {
   const t = useT();
   const api = useMachineApi();
   const machineId = useMachineId();
@@ -766,11 +843,13 @@ function DevicesPage({ auth, onSignOut }: { auth: HealthAuth | null; onSignOut: 
   // where a phone can open this app now, for the pairing QR code: the served address, else this one when it is not loopback
   const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(window.location.hostname) ? null : window.location.origin;
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  // what keeps the switch from working here, only while it does (lib/wakeLock.ts asks for the same two)
+  const wakeLockProblem = !window.isSecureContext ? t("Needs HTTPS or localhost.") : !("wakeLock" in navigator) ? t("This browser can't keep the screen on.") : null;
   return (
     <>
       <SettingsGroup title={t("Phone")} section="phone">
         <div className="settings-item"><PhonePanel plan={plan} loading={access === undefined} onRefresh={loadAccess} /></div>
-        <SettingsRow label={t("Keep screen on")} description={t("While a terminal or chat pane is open. Requires HTTPS or localhost and a supported browser.")}>
+        <SettingsRow label={t("Keep screen on")} description={<>{t("While a terminal or chat pane is open.")}{wakeLockProblem !== null && <span className="settings-condition">{wakeLockProblem}</span>}</>}>
           <Toggle label={t("Keep screen on")} checked={settings.keepScreenOn} onChange={(keepScreenOn) => update({ keepScreenOn })} />
         </SettingsRow>
         <SettingsRow label={t("Install")} description={installPrompt.installed ? t("Installed") : installPrompt.canInstall ? undefined : installPrompt.help}>

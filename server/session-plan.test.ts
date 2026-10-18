@@ -1,152 +1,128 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { appendFileSync, chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+import { describe, expect, it } from "bun:test";
+import { appendFileSync, chmodSync } from "node:fs";
 import type { HerdrPane, PlanSummary } from "../shared/protocol.ts";
 import { paneAfterStatus } from "./machines.ts";
-import { forgetPlans, planSummary, readPlan, SessionPlans } from "./session-plan.ts";
-
-const roots: string[] = [];
-afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-  forgetPlans();
-});
-
-const at = (minute: number): string => new Date(Date.parse("2026-10-07T00:00:00.000Z") + minute * 60_000).toISOString();
-const json = (value: unknown): string => `${JSON.stringify(value)}\n`;
-
-function file(name = "s.jsonl"): { path: string; add: (entry: unknown) => void } {
-  const root = mkdtempSync(join(tmpdir(), "herdr-plan-"));
-  roots.push(root);
-  const path = join(root, name);
-  writeFileSync(path, json({ type: "user", timestamp: at(0), message: { role: "user", content: "go" } }));
-  return { path, add: (entry) => appendFileSync(path, json(entry)) };
-}
-
-/** A Claude transcript: each task call is an assistant tool_use, answered by a user tool_result as Claude Code 2.1.28x writes them. */
-function claude() {
-  const f = file();
-  let call = 0;
-  let next = 0;
-  const use = (name: string, input: unknown, minute: number) => {
-    const id = `toolu_${++call}`;
-    f.add({ type: "assistant", timestamp: at(minute), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } });
-    return id;
-  };
-  return {
-    path: f.path,
-    add: f.add,
-    create(subject: string, minute = 1, extra: Record<string, unknown> = {}): string {
-      const toolId = use("TaskCreate", { subject, description: `do ${subject}`, ...extra }, minute);
-      const id = String(++next);
-      f.add({ type: "user", timestamp: at(minute), message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: `Task #${id} created successfully: ${subject}` }] }, toolUseResult: { task: { id, subject } } });
-      return id;
-    },
-    update(input: Record<string, unknown>, minute = 1, answer: Record<string, unknown> = { success: true }, error = false): void {
-      const toolId = use("TaskUpdate", input, minute);
-      f.add({ type: "user", timestamp: at(minute), message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolId, content: error ? "<tool_use_error>Task not found</tool_use_error>" : `Updated task #${String(input["taskId"])}`, ...(error ? { is_error: true } : {}) }] }, toolUseResult: answer });
-    },
-  };
-}
+import { readPlan, SessionPlans } from "./session-plan.ts";
+import { at, claude, file } from "./session-plan.fixture.ts";
 
 const steps = (path: string) => (readPlan("claude-transcript", path) ?? []).map((step) => `${step.id}:${step.status}:${step.blocked_by.join(",")}`);
 
-describe("readPlan (Claude Code task list)", () => {
-  it("rebuilds the tasks, their order and their progress from the task calls", () => {
-    const s = claude();
-    const a = s.create("Study", 1, { activeForm: "Studying" });
-    const b = s.create("Build", 1);
-    const c = s.create("Ship", 1);
-    s.update({ taskId: b, addBlockedBy: [a] }, 1);
-    // `addBlocks` is the same edge seen from the other end
-    s.update({ taskId: b, addBlocks: [c] }, 1);
-    s.update({ taskId: a, status: "in_progress" }, 2);
-    s.update({ taskId: a, status: "completed" }, 5);
-    s.update({ taskId: b, status: "in_progress", activeForm: "Building it" }, 6);
-    expect(readPlan("claude-transcript", s.path)).toEqual([
-      { id: "1", label: "Study", active: "Studying", status: "completed", blocked_by: [], owner: null, started_at: at(2), ended_at: at(5) },
-      { id: "2", label: "Build", active: "Building it", status: "in_progress", blocked_by: ["1"], owner: null, started_at: at(6), ended_at: null },
-      { id: "3", label: "Ship", active: null, status: "pending", blocked_by: ["2"], owner: null, started_at: null, ended_at: null },
-    ]);
-    expect(planSummary(readPlan("claude-transcript", s.path))).toEqual({ done: 1, total: 3, current: "Building it" });
-  });
-
-  it("reads only what was appended since, and follows a renamed, reassigned or deleted task", () => {
-    const s = claude();
-    const a = s.create("One");
-    const b = s.create("Two");
-    s.update({ taskId: b, addBlockedBy: [a] });
-    expect(steps(s.path)).toEqual(["1:pending:", "2:pending:1"]);
-    s.update({ taskId: a, subject: "First", owner: "researcher" });
-    s.update({ taskId: a, status: "deleted" });
-    expect(readPlan("claude-transcript", s.path)).toEqual([{ id: "2", label: "Two", active: null, status: "pending", blocked_by: [], owner: null, started_at: null, ended_at: null }]);
-  });
-
-  it("takes nothing from a failed call, an unknown task or a call never answered", () => {
-    const s = claude();
-    const a = s.create("One");
-    s.update({ taskId: a, status: "completed" }, 2, { success: false });
-    s.update({ taskId: a, status: "completed" }, 2, {}, true);
-    s.update({ taskId: "99", status: "completed" }, 2);
-    s.add({ type: "assistant", timestamp: at(3), message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_x", name: "TaskUpdate", input: { taskId: a, status: "completed" } }] } });
-    expect(steps(s.path)).toEqual(["1:pending:"]);
-  });
-
-  it("starts a new plan with the first task created after every task was done, as Claude empties its list", () => {
-    const s = claude();
-    const a = s.create("Old");
-    s.update({ taskId: a, status: "completed" }, 2);
-    // a finished plan is still shown until another begins
-    expect(planSummary(readPlan("claude-transcript", s.path))).toEqual({ done: 1, total: 1, current: null });
-    s.create("New A", 3);
-    s.create("New B", 3);
-    expect(steps(s.path)).toEqual(["2:pending:", "3:pending:"]);
-  });
-
-  it("takes the id from the answer's words when the structured result is missing, and numeric ids", () => {
-    const s = claude();
-    s.add({ type: "assistant", timestamp: at(1), message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_a", name: "TaskCreate", input: { subject: "Plain" } }] } });
-    s.add({ type: "user", timestamp: at(1), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_a", content: [{ type: "text", text: "Task #7 created successfully: Plain" }] }] } });
-    s.add({ type: "assistant", timestamp: at(2), message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_b", name: "TaskUpdate", input: { taskId: 7, status: "in_progress" } }] } });
-    s.add({ type: "user", timestamp: at(2), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_b", content: "Updated task #7 status" }] } });
-    expect(steps(s.path)).toEqual(["7:in_progress:"]);
-  });
-
-  it("has no plan for a session that never used the task tools, and starts over on another file at the same path", () => {
-    const s = claude();
-    expect(readPlan("claude-transcript", s.path)).toBeNull();
-    s.create("One");
-    expect(steps(s.path)).toEqual(["1:pending:"]);
-    writeFileSync(s.path, json({ type: "user", timestamp: at(9), message: { role: "user", content: "fresh" } }));
-    expect(readPlan("claude-transcript", s.path)).toBeNull();
-  });
-});
-
-describe("readPlan (Codex checklist)", () => {
-  it("takes the last explicit checklist, each step after the one before", () => {
-    const f = file("rollout.jsonl");
-    f.add({ timestamp: at(1), type: "response_item", payload: { type: "function_call", name: "update_plan", call_id: "c1", arguments: JSON.stringify({ plan: [{ step: "Read", status: "in_progress" }, { step: "Fix", status: "pending" }] }) } });
-    expect((readPlan("codex-transcript", f.path) ?? []).map((step) => `${step.id}:${step.status}:${step.blocked_by.join(",")}:${step.label}`)).toEqual(["1:in_progress::Read", "2:pending:1:Fix"]);
-    f.add({ timestamp: at(4), type: "response_item", payload: { type: "function_call", name: "update_plan", call_id: "c4", arguments: JSON.stringify({ plan: [{ step: "Read", status: "completed" }, { step: "Fix", status: "in_progress" }, { step: "Ship", status: "pending" }] }) } });
-    expect(readPlan("codex-transcript", f.path)).toEqual([
-      // a step keeps when it started across checklists, found by its words
-      { id: "1", label: "Read", active: null, status: "completed", blocked_by: [], owner: null, started_at: at(1), ended_at: at(4) },
-      { id: "2", label: "Fix", active: null, status: "in_progress", blocked_by: ["1"], owner: null, started_at: at(4), ended_at: null },
-      { id: "3", label: "Ship", active: null, status: "pending", blocked_by: ["2"], owner: null, started_at: null, ended_at: null },
-    ]);
-  });
-
-  it("leaves the plan as it was for malformed arguments", () => {
-    const f = file("rollout.jsonl");
-    f.add({ timestamp: at(1), type: "response_item", payload: { type: "function_call", name: "update_plan", arguments: JSON.stringify({ plan: [{ step: "Only", status: "in_progress" }] }) } });
-    f.add({ timestamp: at(2), type: "response_item", payload: { type: "function_call", name: "update_plan", arguments: "{plan: nope}" } });
-    expect((readPlan("codex-transcript", f.path) ?? []).map((step) => step.label)).toEqual(["Only"]);
-  });
-});
-
 describe("SessionPlans", () => {
   const pane = (pane_id: string, agent: string, session = "s1"): HerdrPane => ({ pane_id, agent, cwd: "/w", agent_session: { kind: "id", value: session } } as unknown as HerdrPane);
+
+  it("initializes an OmO plan from the todo tool answer", async () => {
+    // Given a native session with a synthetic todo answer.
+    const f = file("omo.jsonl");
+    f.add({ type: "message", timestamp: at(1), message: { role: "toolResult", toolName: "todo", toolCallId: "t1", content: [{ type: "text", text: "Overall: 0/2 done\n  Build:\n    - [ ] Read (in progress)\n    - [ ] Fix" }] } });
+    const deps = { claudePath: () => null, codexPath: async () => null, omoPath: () => f.path, onChange: () => {} };
+    const plans = new SessionPlans(deps);
+    // When the OmO pane is followed and polled.
+    await plans.refresh([pane("omo1", "omo")]);
+    plans.poll();
+    // Then both the sidebar summary and plan panel receive the list.
+    expect(plans.summaryOf("omo1")).toEqual({ done: 0, total: 2, current: "Read" });
+    expect(plans.planOf(pane("omo1", "omo"))?.map((step) => step.label)).toEqual(["Read", "Fix"]);
+  });
+
+  const omo = async () => {
+    const f = file("omo.jsonl");
+    let sequence = 0;
+    const answer = (text: string, toolName = "todo") => f.add({ type: "message", timestamp: at(++sequence), message: { role: "toolResult", toolName, toolCallId: `t${sequence}`, content: [{ type: "text", text }] } });
+    answer("Overall: 0/2 done\n  Build:\n    - [ ] Read (in progress)\n    - [ ] Fix");
+    const plans = new SessionPlans({ claudePath: () => null, codexPath: async () => null, omoPath: () => f.path, onChange: () => {} });
+    await plans.refresh([pane("omo1", "omo")]);
+    plans.poll();
+    return { plans, answer, f };
+  };
+
+  it("updates OmO progress when another todo answer is appended", async () => {
+    // Given a polled native list.
+    const { plans, answer } = await omo();
+    // When one item finishes and the next starts.
+    answer("Overall: 1/2 done\n  Build:\n    - [X] Read\n    - [ ] Fix (in progress)");
+    plans.poll();
+    // Then progress and step times follow the new answer.
+    expect(plans.summaryOf("omo1")).toEqual({ done: 1, total: 2, current: "Fix" });
+    expect(plans.planOf(pane("omo1", "omo"))).toMatchObject([
+      { label: "Read", status: "completed", started_at: at(1), ended_at: at(2) },
+      { label: "Fix", status: "in_progress", started_at: at(2), ended_at: null },
+    ]);
+  });
+
+  it("retains the completed OmO plan when every task is done", async () => {
+    // Given an initial native list.
+    const { plans, answer } = await omo();
+    // When the full answer marks both tasks done.
+    answer("Overall: 2/2 done\n  Build:\n    - [X] Read\n    - [X] Fix");
+    plans.poll();
+    // Then the sidebar retains a completed count.
+    expect(plans.summaryOf("omo1")).toEqual({ done: 2, total: 2, current: null });
+  });
+
+  it.each(["Todo list is empty.", "Todo list cleared."])("clears OmO progress when the answer says %s", async (empty) => {
+    // Given an existing plan.
+    const { plans, answer } = await omo();
+    // When the native list is cleared.
+    answer(empty);
+    plans.poll();
+    // Then neither surface keeps stale progress.
+    expect(plans.summaryOf("omo1")).toBeNull();
+    expect(plans.planOf(pane("omo1", "omo"))).toBeNull();
+  });
+
+  it.each([
+    "Overall: 1/2 done\n  Build:\n    - [X] Read",
+    "  Build:\n    - [X] Read\n… trimmed",
+  ])("ignores a truncated OmO answer: %s", async (truncated) => {
+    // Given an existing complete plan.
+    const { plans, answer } = await omo();
+    // When a cut-short answer is appended.
+    answer(truncated);
+    plans.poll();
+    // Then its incomplete contents never replace the plan.
+    expect(plans.summaryOf("omo1")).toEqual({ done: 0, total: 2, current: "Read" });
+  });
+
+  it("excludes dropped OmO work while keeping blocked work pending", async () => {
+    // Given an existing plan.
+    const { plans, answer } = await omo();
+    // When one task is dropped and one is blocked.
+    answer("Overall: 0/2 done\n  Build:\n    - [ ] Read (dropped)\n    - [ ] Fix (blocked: waiting)");
+    plans.poll();
+    // Then abandoned work does not inflate completion, and blocked work is not done.
+    expect(plans.summaryOf("omo1")).toEqual({ done: 0, total: 1, current: null });
+    expect(plans.planOf(pane("omo1", "omo"))?.map((step) => step.status)).toEqual(["pending"]);
+  });
+
+  it("ignores quoted OmO todos outside a todo tool result", async () => {
+    // Given an existing plan.
+    const { plans, answer, f } = await omo();
+    // When prose, an assistant call and another tool quote a different list.
+    const text = "  Fake:\n    - [X] Wrong";
+    f.add({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "never-answered", name: "todo", arguments: { op: "done" } }, { type: "text", text }] } });
+    answer(text, "read");
+    plans.poll();
+    // Then the answered todo alone remains authoritative.
+    expect(plans.summaryOf("omo1")).toEqual({ done: 0, total: 2, current: "Read" });
+  });
+
+  it.each(["replaced", "unresolved"])("follows an OmO binding when it becomes %s", async (binding) => {
+    // Given a tracked pane with an unchanged provider session id.
+    const old = file("old.jsonl"), next = file("next.jsonl");
+    const result = (label: string) => ({ type: "message", message: { role: "toolResult", toolName: "todo", content: [{ type: "text", text: `  Work:\n    - [ ] ${label}` }] } });
+    old.add(result("Old work"));
+    next.add(result("New work"));
+    let path: string | null = old.path;
+    const plans = new SessionPlans({ claudePath: () => null, codexPath: async () => null, omoPath: () => path, onChange: () => {} });
+    await plans.refresh([pane("omo1", "omo")]);
+    plans.poll();
+    // When discovery replaces or loses the native binding.
+    path = binding === "replaced" ? next.path : null;
+    await plans.refresh([pane("omo1", "omo")]);
+    plans.poll();
+    // Then the old session is never returned.
+    expect(plans.planOf(pane("omo1", "omo"))?.map((step) => step.label) ?? null).toEqual(binding === "replaced" ? ["New work"] : null);
+  });
 
   it("keeps a remote PC's plan as its frames say", () => {
     const frame = (plan?: PlanSummary | null) => ({ type: "pane-status" as const, pane_id: "p1", agent_status: "working" as const, ...(plan === undefined ? {} : { plan }) });

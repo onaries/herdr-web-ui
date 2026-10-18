@@ -1,0 +1,49 @@
+import { describe, expect, test } from "bun:test";
+
+import { askedQuestions } from "./askQuestions.ts";
+
+describe("a past question tool call", () => {
+  test("reads omp's ask, with its recommended option by index", () => {
+    expect(askedQuestions("ask", {
+      i: "Picking the install path",
+      questions: [{ id: "path", header: "Install path", question: "Which one should stay?", recommended: 1, options: [
+        { label: "Homebrew only", description: "Drop the curl script section" },
+        { label: "Both", description: "Keep both" },
+      ] }],
+    })).toEqual([{ header: "Install path", question: "Which one should stay?", multi: false, recommended: 1, options: [
+      { label: "Homebrew only", description: "Drop the curl script section", preview: null },
+      { label: "Both", description: "Keep both", preview: null },
+    ] }]);
+  });
+
+  test("reads OmO's and Claude's multiSelect, a preview, and a question without options", () => {
+    for (const tool of ["ask_user_question", "request_user_input", "AskUserQuestion"]) {
+      expect(askedQuestions(tool, { questions: [
+        { header: "Symptoms", question: "What goes wrong?", multiSelect: true, options: [{ label: "Layout", preview: "┌─┐" }, { label: "Answer", description: "" }] },
+        { header: "Notes", question: "Anything else?" },
+      ] })).toEqual([
+        { header: "Symptoms", question: "What goes wrong?", multi: true, recommended: null, options: [
+          { label: "Layout", description: null, preview: "┌─┐" },
+          { label: "Answer", description: null, preview: null },
+        ] },
+        { header: "Notes", question: "Anything else?", multi: false, recommended: null, options: [] },
+      ]);
+    }
+  });
+
+  test("ignores a recommendation that names no option", () => {
+    for (const recommended of [2, -1, 0.5, "0"]) {
+      expect(askedQuestions("ask", { questions: [{ question: "Q?", recommended, options: [{ label: "A" }, { label: "B" }] }] })?.[0]?.recommended).toBeNull();
+    }
+  });
+
+  test("leaves other tools and shapes it does not know as their JSON", () => {
+    expect(askedQuestions("Bash", { questions: [{ question: "Q?" }] })).toBeNull();
+    for (const args of [null, "text", {}, { questions: [] }, { questions: "Q?" }, { questions: [null] }, { questions: [{ question: "" }] },
+      { questions: [{ question: "Q?", header: 3 }] }, { questions: [{ question: "Q?", options: "A" }] },
+      { questions: [{ question: "Q?", options: [{ label: "" }] }] }, { questions: [{ question: "Q?", options: [{ label: "A", description: 1 }] }] },
+      { questions: [{ question: "Q?" }, { header: "no question" }] }]) {
+      expect(askedQuestions("ask", args)).toBeNull();
+    }
+  });
+});

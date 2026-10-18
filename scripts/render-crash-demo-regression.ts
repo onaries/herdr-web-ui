@@ -25,7 +25,7 @@ async function open(browser: Browser, search: string, { phone = false, clipboard
   const context = await browser.newContext(phone
     ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" }
     : { viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", fileOpen: "panel" })));
   // a plain-HTTP LAN address: no clipboard API, and the old copy command refused too
   if (clipboardRefused) await context.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
@@ -75,7 +75,7 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
-      const pane = `?pane=${encodeURIComponent(panes.infra)}&view=terminal`;
+      const pane = `?pane=${encodeURIComponent(panes.omp)}&view=terminal`;
 
       // without the hook asked for, nothing throws: the probe is inert
       {
@@ -185,7 +185,7 @@ try {
       {
         const { page, close } = await open(browser, `${pane}&file=README.md&crash=settings`);
         await page.locator("aside.file-panel .file-viewer").waitFor();
-        await page.keyboard.press("Control+Shift+Comma");
+        await page.keyboard.press("ControlOrMeta+Shift+Comma");
         const dialog = page.getByRole("dialog", { name: "Settings" });
         await dialog.getByRole("alert").filter({ hasText: "Settings can't be shown." }).waitFor();
         const closeButton = dialog.getByRole("button", { name: "Close", exact: true });

@@ -3,17 +3,37 @@ import { opendirSync, readFileSync, readlinkSync, realpathSync, statSync } from 
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { HerdrPane } from "../shared/protocol.ts";
 import { paneProcessInfo } from "./herdr/client.ts";
-import { runsAgent } from "./gjc-runtime.ts";
 
 const SESSION = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const MAX_GROUPS = 4096;
-/** The one native build whose held-file evidence was observed. Others have no reader yet. */
-const GROK_NATIVE_BUILD = "grok-1.0.50-linux-x86_64";
+/** Linux appends this to `/proc/<pid>/exe` after the inode is unlinked. */
+const DELETED_SUFFIX = " (deleted)";
+/** Packaging only. A version such as `grok-1.0.52` keeps its dots. */
+const EXECUTABLE_SUFFIXES = [".cjs", ".mjs", ".exe", ".js"];
 
 export interface GrokProcessInfo { foreground_processes?: { pid: number; argv?: string[] | null }[] }
-const GROK_EXECUTABLE = /(^|[\\/])grok(?:-\d[^\\/]*)?(?:\.exe|\.[cm]?js)?$/i;
+/** Discover native or bun/node-launched Grok using the same names as the exe gate. */
 export function grokPaneProcesses(info: GrokProcessInfo): { pid: number }[] {
-  return (info.foreground_processes ?? []).filter((p) => runsAgent(p.argv ?? [], GROK_EXECUTABLE));
+  return (info.foreground_processes ?? []).filter((p) => {
+    const argv = p.argv ?? [];
+    return isGrokExecutable(argv[0] ?? "") ||
+      (/(^|[\\/])(?:bun|node)(?:\.exe)?$/i.test(argv[0] ?? "") && isGrokExecutable(argv[1] ?? ""));
+  });
+}
+
+/** True when this path's file name is Grok: `grok`, or `grok-` plus anything else
+ * (`grok-1.0.52-linux-x86_64`, `grok.exe`). The session is still the one held events.jsonl. */
+export function isGrokExecutable(exePath: string): boolean {
+  const slash = Math.max(exePath.lastIndexOf("/"), exePath.lastIndexOf("\\"));
+  let name = slash >= 0 ? exePath.slice(slash + 1) : exePath;
+  if (name.endsWith(DELETED_SUFFIX)) name = name.slice(0, -DELETED_SUFFIX.length);
+  name = name.toLowerCase();
+  for (;;) {
+    const suffix = EXECUTABLE_SUFFIXES.find((candidate) => name.endsWith(candidate));
+    if (!suffix) break;
+    name = name.slice(0, -suffix.length);
+  }
+  return name === "grok" || name.startsWith("grok-");
 }
 
 const inside = (root: string, path: string): boolean => {
@@ -83,18 +103,18 @@ export function grokHeldSession(pid: number, home: string): string | null {
   } catch { return null; }
 }
 
+/** Bind a Linux Grok pane only when its sole held session agrees with Herdr's exact ID. */
 export async function resolveGrokStore(pane: HerdrPane, configuredHome?: string): Promise<string | null> {
   const session = pane.agent_session;
   if (pane.agent !== "grok" || session?.agent !== "grok" || session.kind !== "id" || session.source !== "herdr:grok" || !SESSION.test(session.value)) return null;
-  // The evidence is read from /proc, and the held-set invariant was observed on this exact
-  // native build only, including a resume into a session the process had never visited.
-  // Every other build and PC gets the terminal view; argv alone does not attest the version.
+  // The held file is read from /proc, so this shortcut is Linux-only. The executable may be
+  // any Grok build. The session is the sole held events.jsonl, not a version string.
   if (process.platform !== "linux") return null;
   try {
     const processes = grokPaneProcesses((await paneProcessInfo(pane.pane_id)) ?? {});
     if (processes.length !== 1) return null;
     const owner = processes[0]!;
-    if (basename(readlinkSync(`/proc/${owner.pid}/exe`)) !== GROK_NATIVE_BUILD) return null;
+    if (!isGrokExecutable(readlinkSync(`/proc/${owner.pid}/exe`))) return null;
     const home = configuredHome ?? grokHomeFromEnvironment(readFileSync(`/proc/${owner.pid}/environ`, "utf8"));
     if (!home) return null;
     const held = grokHeldSession(owner.pid, home);

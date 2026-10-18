@@ -32,7 +32,7 @@ describe("shared skill walk", () => {
     put(join(root, "fallback", "SKILL.md"), "---\nname: invalid name\n---\nBody fallback\n");
     put(join(root, "group", "deep", "SKILL.md"), "---\ndescription: Deep\n---\n");
     put(join(root, "loose.md"), "---\ndescription: Loose\n---\n");
-    expect(walkSkills(root, one).map(({ name, description }) => [name, description])).toEqual([
+    expect(walkSkills(root, one).map(({ name, description }) => [name, description]).sort()).toEqual([
       ["fallback", "Body fallback"], ["valid:name", "x".repeat(150)],
     ]);
   });

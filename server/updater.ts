@@ -1,7 +1,7 @@
 /** Build in a private checkout. The source tree and the serving build stay intact. */
 import { spawn } from "node:child_process";
-import { closeSync, constants, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { CHECKOUT_CHANGED_REASON, noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
 import { compareVersions, releaseNotes, releaseSummaries, SUMMARIES_FILE } from "./release-notes.ts";
 
@@ -48,17 +48,33 @@ function packageVersion(directory: string): string | null {
   } catch { return null; }
 }
 
-/** Commands use argv, bounded output/time, and a separate group for cancellation. */
-export function runCommand(cwd: string, argv: string[], signal?: AbortSignal, timeout = 30_000): Promise<string> {
+/** How long a timed-out or cancelled command has to end itself before it is killed outright. */
+const KILL_GRACE_MS = 2_000;
+
+/**
+ * Commands use argv, bounded output/time, and a separate group for cancellation. A command that
+ * times out or is cancelled is asked to end with SIGTERM and killed only once the grace period
+ * has passed: that is what makes git release the lock files it holds (measured on git 2.54, a
+ * SIGTERM lifts .git/shallow.lock; a SIGKILL leaves even that, and the next fetch fails with
+ * "File exists"). The half-written tmp_pack_* files survive however the fetch ends; removing
+ * them after a failed one is the updater's own job (fetchInto) — a slow unshallow fetch
+ * leaked 17 GiB of them in three days (#1252).
+ */
+export function runCommand(cwd: string, argv: string[], signal?: AbortSignal, timeout = 30_000, grace = KILL_GRACE_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd, detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
     });
     let output = "", errors = "", failure: string | null = null;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    const killGroup = (sig: "SIGTERM" | "SIGKILL") => {
+      if (child.pid) { try { process.kill(-child.pid, sig); } catch { child.kill(sig); } }
+    };
     const cancel = (reason: string) => {
       failure = reason;
-      if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } }
+      killGroup("SIGTERM");
+      killTimer ??= setTimeout(() => killGroup("SIGKILL"), grace);
     };
     const abort = () => cancel("Update cancelled");
     const timer = setTimeout(() => cancel(`${argv[0]} timed out`), timeout);
@@ -66,14 +82,69 @@ export function runCommand(cwd: string, argv: string[], signal?: AbortSignal, ti
     if (signal?.aborted) abort();
     child.stdout.on("data", data => { output += data; if (output.length > 2_000_000) cancel("Command output too large"); });
     child.stderr.on("data", data => { errors = (errors + data).slice(-8000); });
-    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+    const cleanup = () => { clearTimeout(timer); if (killTimer) clearTimeout(killTimer); signal?.removeEventListener("abort", abort); };
     child.on("error", error => { cleanup(); reject(error); });
     child.on("close", code => {
+      // a group member that ignores SIGTERM and holds none of our pipes outlives the child: the
+      // grace timer cleanup clears would have been its only end
+      if (failure !== null) killGroup("SIGKILL");
       cleanup();
       if (code === 0 && !failure) resolve(output.trim());
       else reject(new Error(failure ?? `${argv.slice(0, 3).join(" ")} failed: ${errors.trim() || code}`));
     });
   });
+}
+
+/** The unshallow fetch downloads the whole missing history in one go: a slow link needs minutes,
+ * not the 30 s bound of an ordinary command (#1252). */
+const UNSHALLOW_TIMEOUT_MS = 10 * 60_000;
+/** After a failed unshallow fetch, the next attempt waits this long: retried on every 5-minute
+ * check, the same history was re-downloaded for days on slow links (#1252). */
+const UNSHALLOW_RETRY_MS = 6 * 60 * 60_000;
+
+/** The `tmp_pack_*` files a pack directory holds right now; none when there is no directory. */
+function tmpPacks(packDir: string | null): Set<string> {
+  if (packDir === null) return new Set();
+  try { return new Set(readdirSync(packDir).filter((name) => name.startsWith("tmp_pack_"))); }
+  catch { return new Set(); }
+}
+
+/** A `tmp_pack_*` untouched this long belongs to no running fetch: index-pack keeps writing to
+ * (and so updating the mtime of) the file it fills, and the updater's longest fetch, the
+ * unshallow one, is bounded at 10 minutes. */
+const STALE_TMP_PACK_MS = 60 * 60_000;
+
+/** Removes the `tmp_pack_*` files that were not there before the fetch: the ones it wrote before
+ * failing, never the ones that were already there and none of the directory's other files. A
+ * removal that fails is swallowed, not to replace the fetch's own error. */
+function cleanTmpPacks(packDir: string | null, before: Set<string>): void {
+  if (packDir === null) return;
+  for (const name of tmpPacks(packDir)) {
+    if (!before.has(name)) { try { rmSync(join(packDir, name), { force: true }); } catch { /* the fetch's error is the one to tell */ } }
+  }
+}
+
+/** Removes every `tmp_pack_*` file older than STALE_TMP_PACK_MS, whoever left it: the packs a
+ * fetch leaked before this cleanup existed (#1252), or that a failed fetch's own cleanup never
+ * reached (the process exited first, a crash, a delete Windows refused while the file was
+ * open). Best effort and never recursive: a failure or a directory is left alone. */
+function sweepStaleTmpPacks(packDir: string | null, now = Date.now()): void {
+  if (packDir === null) return;
+  for (const name of tmpPacks(packDir)) {
+    const path = join(packDir, name);
+    try {
+      const stat = lstatSync(path);
+      if (stat.isFile() && now - stat.mtimeMs > STALE_TMP_PACK_MS) rmSync(path, { force: true });
+    } catch { /* best effort: the next check sweeps again */ }
+  }
+}
+
+/** A fetch that failed because another git holds a lock in the checkout (a developer's own
+ * `git pull` or an IDE's auto-fetch alongside `bun run start`) downloaded nothing; a
+ * `tmp_pack_*` that appeared meanwhile is that git's own, still being written. */
+function lockConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(".lock': File exists") || message.includes("cannot lock ref");
 }
 
 export class Updater {
@@ -89,6 +160,9 @@ export class Updater {
   private initialTimer?: ReturnType<typeof setTimeout>;
   private sourceRevision = "";
   private failedRevision: string | null = null;
+  /** When a failed unshallow fetch may be tried again (#1252); a time already past, the initial
+   * 0 included, holds nothing off. */
+  private unshallowRetryAt = 0;
 
   constructor(readonly options: {
     root: string; stateDir: string; autoUpdate: boolean;
@@ -103,7 +177,9 @@ export class Updater {
     publish: (status: UpdateStatus) => void;
   }) { this.status.auto_update = options.autoUpdate; this.status.error = options.notice ?? null; }
 
-  private git(...args: string[]) { return runCommand(this.options.root, ["git", ...args], this.controller.signal); }
+  /** One git command in the source checkout; a test stands in here for a fetch that fails
+   * without git ending it itself (#1252). */
+  protected git(...args: string[]) { return runCommand(this.options.root, ["git", ...args], this.controller.signal); }
   private patch(patch: Partial<UpdateStatus>) {
     this.status = { ...this.status, ...patch };
     this.options.publish(this.status);
@@ -198,12 +274,12 @@ export class Updater {
     clearTimeout(this.initialTimer); clearInterval(this.timer); this.controller.abort();
   }
 
-  private async discover() {
+  private async discover(byUser = false) {
     this.patch({ phase: "checking", error: this.options.notice ?? null, available: false, blocked_reason: null });
     const reason = await this.sourceBlock();
     if (reason) { this.patch({ blocked_reason: reason, checked_at: new Date().toISOString() }); return; }
     // Only published releases update installs: commits pushed to main without a tag stay put.
-    await this.git("fetch", "--no-tags", "origin", "+refs/tags/v*:refs/tags/v*");
+    await this.fetchInto(() => this.git("fetch", "--no-tags", "origin", "+refs/tags/v*:refs/tags/v*"));
     const tags = (await this.git("for-each-ref", "--sort=-v:refname", "--format=%(refname:short)", "refs/tags/v*"))
       .split("\n").filter((tag) => RELEASE_TAG.test(tag));
     const checked_at = new Date().toISOString();
@@ -220,9 +296,9 @@ export class Updater {
     let block: string | null = null;
     let available = false;
     if (target !== current) {
-      if (await this.ancestor(current, target)) available = true;
+      if (await this.ancestor(current, target, byUser)) available = true;
       // running ahead of the latest release (a development checkout) is simply up to date
-      else if (!await this.ancestor(target, current)) {
+      else if (!await this.ancestor(target, current, byUser)) {
         block = "The running version is not part of the release history; automatic downgrade is disabled.";
       }
     }
@@ -246,21 +322,65 @@ export class Updater {
   }
 
   /** herdr's plugin checkout is shallow: fetch the missing history once before calling two commits unrelated. */
-  private async ancestor(older: string, newer: string): Promise<boolean> {
+  private async ancestor(older: string, newer: string, byUser = false): Promise<boolean> {
     const test = () => this.git("merge-base", "--is-ancestor", older, newer).then(() => true, () => false);
     if (await test()) return true;
     if (await this.git("rev-parse", "--is-shallow-repository") !== "true") return false;
-    await this.git("fetch", "--no-tags", "--unshallow", "origin");
+    // the backoff holds the timer off, never a user's own Check or Update — the same way a
+    // revision automatic installation gave up on is still installed when asked for
+    if (!byUser && Date.now() < this.unshallowRetryAt) {
+      throw new Error(`The checkout's history is not fully fetched; the unshallow fetch failed and the next attempt is at ${new Date(this.unshallowRetryAt).toISOString()}.`);
+    }
+    try { await this.fetchInto(() => this.unshallowFetch(UNSHALLOW_TIMEOUT_MS)); }
+    catch (error) {
+      this.unshallowRetryAt = Date.now() + UNSHALLOW_RETRY_MS;
+      throw error;
+    }
     return test();
   }
 
-  async request(command: UpdateCommand): Promise<void> {
+  /** The checkout's pack directory, where a killed fetch leaves its half-written packs; null
+   * when the root is not a Git checkout whose directory could be named. */
+  private async packDir(): Promise<string | null> {
+    const dir = await this.git("rev-parse", "--git-common-dir").catch(() => null);
+    return dir === null ? null : join(resolve(this.options.root, dir), "objects", "pack");
+  }
+
+  /** Every fetch into the checkout goes through here, the tag fetch of each check and the
+   * one-off unshallow fetch alike: a failed fetch leaves its half-written tmp_pack_* files
+   * behind however it ends (measured on git 2.54: SIGTERM, SIGINT, SIGKILL, and git's own
+   * exit after the connection dropped), so what it added to the pack directory is removed
+   * here, on every OS — Windows cannot signal a process group at all, and any kill path can
+   * be too late anyway (#1252). */
+  private async fetchInto(fetch: () => Promise<string>): Promise<string> {
+    const packDir = await this.packDir();
+    sweepStaleTmpPacks(packDir);
+    const held = tmpPacks(packDir);
+    try { return await fetch(); }
+    catch (error) {
+      // another git's lock: its in-progress pack is not ours to remove; anything it abandons is
+      // swept once stale
+      if (!lockConflict(error)) cleanTmpPacks(packDir, held);
+      throw error;
+    }
+  }
+
+  /** The one-off fetch of the missing history, with its own, much longer timeout (#1252);
+   * `run` is the command runner, a seam for a test that checks the argv and timeout the real
+   * fetch hands on. */
+  protected async unshallowFetch(timeout: number, run: typeof runCommand = runCommand): Promise<string> {
+    return run(this.options.root, ["git", "fetch", "--no-tags", "--unshallow", "origin"], this.controller.signal, timeout);
+  }
+
+  /** `byUser`: the request came from the settings' Check or Update (through the supervisor), not
+   * from the 5-minute timer; only the timer waits a failed unshallow fetch's backoff out. */
+  async request(command: UpdateCommand, byUser = false): Promise<void> {
     if (this.busy || !this.status.managed || this.controller.signal.aborted) return;
     this.busy = true;
     let stage: string | null = null;
     let attempted: string | null = null;
     try {
-      await this.discover();
+      await this.discover(byUser);
       if ((command === "install" || this.options.autoUpdate) && this.status.available) {
         const revision = this.status.latest_revision!;
         if (command === "check" && revision === this.failedRevision) {

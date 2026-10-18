@@ -77,7 +77,8 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     const focusChanged = () => setFocusKey(rowFor(document.activeElement));
     const focusOut = () => queueMicrotask(focusChanged);
     const interaction = (event: Event) => {
-      if (event.target instanceof Element && event.target.closest("summary, .work-block-head, .work-row-head, .chat-tool-more")) manualLayout.current = true;
+      // a pending work block's head opens nothing
+      if (event.target instanceof Element && event.target.closest("summary, .work-block-head, .work-row-head, .chat-tool-more") && !event.target.closest(".work-block.is-pending")) manualLayout.current = true;
     };
     document.addEventListener("selectionchange", selectionChanged);
     node.addEventListener("focusin", focusChanged);

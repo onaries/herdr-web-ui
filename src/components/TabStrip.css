@@ -19,6 +19,32 @@
   display: none;
 }
 
+/* a split view half's row: its tabs scroll, as wide as they are, and the end (App's grip and
+   close) takes the rest of the row */
+.tab-strip-row {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  /* the strip's own surface (below), so the end around the close is no band of another colour */
+  --strip-bg: var(--bg-panel);
+  background: var(--strip-bg);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.tab-strip-row > .tab-strip {
+  flex: 0 1 auto;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.tab-strip-end {
+  display: flex;
+  align-items: stretch;
+  flex: 1 0 auto;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
 .tab-strip-item {
   position: relative;
   display: flex;
@@ -114,7 +140,8 @@
   cursor: pointer;
 }
 
-/* Desktop tabs use their context menu; only touch or narrow layouts expose the ellipsis. */
+/* Touch and narrow layouts keep the ellipsis in view; a mouse on a wide screen draws it on the
+   selected tab while the strip is hovered or the tab has keyboard focus (below). */
 .tab-strip-menu { display: none; }
 
 .tab-strip-error {
@@ -163,9 +190,48 @@
     height: var(--touch-target);
   }
 
-  .tab-strip-tab { min-height: var(--touch-target); }
+  /* a one- or two-character name (탭 1) is still a finger's width; the ⋯ beside it is its own */
+  .tab-strip-tab {
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
+  }
   .tab-strip-menu { display: inline-flex; }
   .tab-strip-item.is-active .tab-strip-tab { padding-right: var(--space-1); }
+}
+
+/* A mouse keeps its right-click and the keyboard its menu key; the ellipsis is the route in
+   plain sight. It holds its place at rest, hidden, so the strip never reflows under the pointer:
+   the pointer over the strip, the tab's keyboard focus, its own, or its open menu fade it in.
+   Hidden with visibility too: a Shift+Tab from the + lands on the tab, not on something unseen,
+   and nothing invisible takes a press. Between the tab's focus and the button's there is an
+   instant in which neither has it while the item still has it within, and a hidden button cannot
+   take the focus then: the fade's delay used to carry it over, reduced motion has no fade, so the
+   item's :focus-within without a focused child keeps the button in view through the handoff. */
+@media (hover: hover) and (pointer: fine) and (min-width: 769px) {
+  .tab-strip-menu {
+    display: inline-flex;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity var(--dur-fast) var(--ease-out),
+      visibility 0s linear var(--dur-fast);
+  }
+
+  .tab-strip:hover .tab-strip-menu,
+  .tab-strip-item:has(> .tab-strip-tab:focus-visible) .tab-strip-menu,
+  .tab-strip-item:focus-within:not(:has(:focus)) .tab-strip-menu,
+  .tab-strip-menu:focus-visible,
+  .tab-strip-menu[aria-expanded="true"] {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  .tab-strip-item.is-active .tab-strip-tab { padding-right: var(--space-1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-strip-menu { transition: none; }
 }
 
 /* From 769px the header over the pane is the pane's surface (styles.css), and the strip under
@@ -173,12 +239,15 @@
    or the chat's, where the header has no rule and the strip's hairline is the one line over the
    transcript. Below that the header is the panel's bar and the strip stays with it. */
 @media (min-width: 769px) {
-  .tab-strip {
+  .tab-strip,
+  .tab-strip-row {
     --strip-bg: var(--term-bg);
   }
 
   .pane-column.is-chat .tab-strip,
-  .pane-slot.is-chat .tab-strip {
+  .pane-column.is-chat .tab-strip-row,
+  .pane-slot.is-chat .tab-strip,
+  .pane-slot.is-chat .tab-strip-row {
     --strip-bg: var(--bg);
   }
 }

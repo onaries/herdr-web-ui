@@ -5,7 +5,6 @@
   "scripts/droplet-regression.ts": 5,
   "scripts/key-bar-hold-repeat-regression.ts": 7,
   "scripts/output-browser-qa.ts": 4,
-  "scripts/preferences-sync-regression.ts": 6,
   "scripts/pty-compare.ts": 1,
   "scripts/remote-bundle-smoke.ts": 1,
   "scripts/terminal-arrows-clicks-regression.ts": 9,

@@ -13,6 +13,10 @@ inputs:
     description: "'true' installs the checksum-pinned herdr 0.9.3 (Linux x86_64) on PATH."
     required: false
     default: 'false'
+  cache:
+    description: "'save' restores and saves the Bun dependency cache; 'restore' only restores it, for a job that runs unpinned third-party code and must not write a cache other workflows trust."
+    required: false
+    default: 'save'
 runs:
   using: composite
   steps:
@@ -48,8 +52,16 @@ runs:
     - name: Cache Bun dependencies
       # On the measured self-hosted connection this archive costs 37–43s to restore,
       # versus 7–20s for a fresh install. Do not pay for restore/save on disposable runners.
-      if: runner.environment != 'self-hosted'
+      if: runner.environment != 'self-hosted' && inputs.cache != 'restore'
       uses: actions/cache@v4
+      with:
+        path: .ci-cache/bun
+        key: bun-workspace-v2-${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
+        restore-keys: |
+          bun-workspace-v2-${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-
+    - name: Restore Bun dependencies (read-only)
+      if: runner.environment != 'self-hosted' && inputs.cache == 'restore'
+      uses: actions/cache/restore@v4
       with:
         path: .ci-cache/bun
         key: bun-workspace-v2-${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}

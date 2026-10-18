@@ -4,10 +4,11 @@ The reader shows Grok's user messages, assistant text and expandable tool rows i
 the existing Chat view. Terminal remains the place for approvals. Reading chat makes no
 model calls. Reasoning, images and child-session expansion are outside this first scope.
 
-**Supported build:** for now chat works only with the native Grok executable
-`grok-1.0.50-linux-x86_64`, running inside Herdr on Linux. Any other Grok build, and Grok on
-macOS or Windows, shows the terminal view instead. Lifecycle checks used Grok 1.0.50 and
-Herdr 0.9.3. No installer changes the Grok configuration.
+**Supported executable:** on Linux, chat follows any Grok executable named `grok` or
+`grok-…`, including a versioned build such as `grok-1.0.52-linux-x86_64` and a binary
+replaced while it was still running. macOS and Windows show the terminal view, because the
+held-file check reads Linux `/proc`. Lifecycle checks used Grok 1.0.50 and Herdr 0.9.3.
+No installer changes the Grok configuration.
 
 Chat shows Thinking or Working from the bound transcript's current turn even if Herdr
 reports ready or done. A native completion clears that indicator; late background tool
@@ -18,18 +19,19 @@ turn or rewind replaces it. Unavailable native history is explicitly marked in C
 ## Finding the active session
 
 The bridge reads the foreground Grok process's environment for `GROK_HOME`, or
-`HOME/.grok` when unset. The pane's Grok process is found in Herdr's foreground list, and its
-executable must be the supported build above. A reported ID is looked up exactly, including
-hashed directory names for long paths; directory or modification time never chooses a
-conversation.
+`HOME/.grok` when unset. The pane's Grok process is found in Herdr's foreground list.
+Foreground discovery and the executable check both accept `grok` or `grok-…`, with
+packaging suffixes removed; neither requires a particular build number or a numeric suffix.
+A reported ID is looked up exactly, including hashed directory names for long paths;
+directory or modification time never chooses a conversation.
 
 Grok 1.0.50 does not fire `SessionStart` on an in-TUI `/resume`, so Herdr can keep an old ID.
 `active_sessions.json` and open file descriptors can contain several sessions; neither
 identifies which of them is on screen. Chat is therefore shown only when the process's sole
 held `events.jsonl` session agrees with Herdr's ID. After a `/resume` that leaves them apart,
-or any other ambiguity, the pane uses the terminal view. Other builds are excluded on
-purpose: their files are not known to differ, but the held-session evidence was observed on
-this build alone.
+or any other ambiguity, the pane uses the terminal view. That same rule applies to every
+Grok executable. Builds other than 1.0.50 were not each re-checked; an ambiguous hold still
+stays on the terminal view.
 
 ## History and limits
 
@@ -63,8 +65,9 @@ bun run check run --build bun scripts/grok-chat-browser-qa.ts
 bun run check fast
 ```
 
-The contract test uses an isolated real Herdr and a disposable stand-in process named after
-the supported build; it verifies HTTP identity and cursor behavior, not the native TUI.
+The contract test uses an isolated real Herdr and a disposable stand-in process named
+`grok-1.0.52-linux-x86_64`; it also unlinks the running binary to cover Linux's ` (deleted)`
+marker. It verifies HTTP identity and cursor behavior, not the native TUI.
 Native fictional captures separately establish replay equivalence after nested rewinds.
 The browser test runs the real built client against fictional files and checks retained
 expanded output after updates, shrink and rewind. It never opens the user's browser session.

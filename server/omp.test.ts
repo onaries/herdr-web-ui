@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
@@ -7,7 +8,9 @@ import type { HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { forgetTranscriptState, paneConversation } from "./conversation.ts";
 import * as herdr from "./herdr/client.ts";
 import { terminalBreadcrumb } from "./gjc-runtime.ts";
-import { isOmpProcess, ompAgentDir } from "./omp.ts";
+import { isOmpProcess, ompAgentDir, ompHeldTranscript } from "./omp.ts";
+import * as ompProbe from "./omp-process.ts";
+import * as omo from "./omo.ts";
 
 it("recognizes native and interpreter-launched omp, not look-alikes", () => {
   expect(isOmpProcess(["omp", "--profile", "personal", "--resume"])).toBe(true);
@@ -64,7 +67,7 @@ describe("an omp pane's chat", () => {
   let home = "";
   let savedHome: string | undefined;
   let agentSession: unknown;
-  let processes: { pid: number; argv: string[] }[] = [];
+  let processes: { pid: number; name?: string; argv?: string[] }[] = [];
   let pane: HerdrPane;
   const restores: Array<() => void> = [];
   const transcript = (cwd: string) => [
@@ -150,5 +153,88 @@ describe("an omp pane's chat", () => {
         ]);
       }
     } finally { child.kill(); await child.exited; }
+  });
+
+  for (const [profile, includeArgv] of [["personal", true], [null, false], ["personal", false]] as const) it.skipIf(process.platform !== "linux")(`reads the open ${profile ?? "default"} omp transcript when herdr ${includeArgv ? "supplies" : "omits"} argv`, async () => {
+    const agentDir = profile === null ? join(home, ".omp/agent") : join(home, ".omp/profiles", profile, "agent");
+    const store = join(agentDir, "sessions/-project");
+    mkdirSync(store, { recursive: true });
+    const path = join(store, "2026-10-01_s1.jsonl");
+    writeFileSync(path, transcript(pane.cwd!));
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const script = join(bin, "omp.js");
+    writeFileSync(script, `require("node:fs").openSync(${JSON.stringify(path)}, "a"); console.log("ready"); setInterval(() => {}, 1000);`);
+    const argv = [process.execPath, script, ...(profile === null ? [] : ["--profile", profile])];
+    const child = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    try {
+      const reader = child.stdout.getReader();
+      const first = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("omp stand-in did not start")), 5000)),
+      ]);
+      expect(new TextDecoder().decode(first.value)).toContain("ready");
+      processes = [{ pid: child.pid, name: "omp", ...(includeArgv ? { argv } : {}) }];
+      for (const session of [undefined, { agent: "claude", kind: "id", value: "a-claude-session" }]) {
+        agentSession = session;
+        forgetTranscriptState();
+        const answer = await paneConversation(pane.pane_id);
+        expect(answer.source).toBe("omp-transcript");
+        expect(answer.turns.map((turn) => turn.parts[0])).toEqual([
+          { kind: "text", text: "synthetic question" }, { kind: "text", text: "synthetic answer" },
+        ]);
+      }
+    } finally { child.kill(); await child.exited; }
+  });
+
+  it.skipIf(process.platform !== "linux")("does not trust the omp name when its argv is inaccessible or belongs to another executable", async () => {
+    for (const pid of [2147483647, process.pid]) {
+      processes = [{ pid, name: "omp" }];
+      await expect(paneConversation(pane.pane_id)).rejects.toThrow("no_session_path");
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")("on WSL a failed probe with supplied argv never falls back to a synchronous environment read", async () => {
+    const wsl = spyOn(ompProbe, "isWsl").mockReturnValue(true);
+    const probe = spyOn(ompProbe, "ompProcessMemory").mockResolvedValue(null);
+    restores.push(() => wsl.mockRestore());
+    const environ = spyOn(omo, "processEnviron").mockImplementation(() => { throw new Error("unsafe synchronous read"); });
+    restores.push(() => probe.mockRestore(), () => environ.mockRestore());
+    processes = [{ pid: process.pid, argv: ["omp"] }];
+    expect(await ompHeldTranscript(pane.pane_id, pane.cwd!)).toBeNull();
+    expect(probe).toHaveBeenCalledWith(process.pid, false);
+    expect(environ).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform !== "linux")("a native Linux pane whose argv herdr supplies keeps the direct read and spawns no helper", async () => {
+    const wsl = spyOn(ompProbe, "isWsl").mockReturnValue(false);
+    const probe = spyOn(ompProbe, "ompProcessMemory");
+    restores.push(() => wsl.mockRestore(), () => probe.mockRestore());
+    processes = [{ pid: process.pid, argv: ["omp"] }];
+    expect(await ompHeldTranscript(pane.pane_id, pane.cwd!)).toBeNull();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform !== "linux")("a successful probe's environment finds the tmux breadcrumb with no synchronous environ read", async () => {
+    const agentDir = join(home, ".omp/agent");
+    const store = join(agentDir, "sessions/-project");
+    mkdirSync(store, { recursive: true });
+    const path = join(store, "2026-10-01_s1.jsonl");
+    writeFileSync(path, transcript(pane.cwd!));
+    mkdirSync(join(agentDir, "terminal-sessions"));
+    writeFileSync(join(agentDir, "terminal-sessions", "tmux-%4242"), `${pane.cwd}\n${path}\n`);
+    const probe = spyOn(ompProbe, "ompProcessMemory").mockResolvedValue({ argv: ["omp"], environ: ["TMUX=/tmp/tmux-1/default,1,0", "TMUX_PANE=%4242"] });
+    const environ = spyOn(omo, "processEnviron").mockImplementation(() => { throw new Error("unsafe synchronous read"); });
+    const read = fs.readFileSync;
+    const files = spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, options?: unknown) => {
+      if (String(file).endsWith("/environ")) throw new Error(`unsafe synchronous read of ${String(file)}`);
+      return read(file, options as never);
+    }) as typeof fs.readFileSync);
+    restores.push(() => probe.mockRestore(), () => environ.mockRestore(), () => files.mockRestore());
+    processes = [{ pid: process.pid, name: "omp" }];
+    expect(await ompHeldTranscript(pane.pane_id, pane.cwd!)).toBe(path);
+    expect(probe).toHaveBeenCalledWith(process.pid, true);
+    expect(environ).not.toHaveBeenCalled();
+    expect(files.mock.calls.some(([file]) => String(file).endsWith("/environ"))).toBe(false);
   });
 });

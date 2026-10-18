@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 
+import { translate } from "./i18n.ts";
 import { actionAliases, rankByTitle, requestedSettingsPage, requestSettingsPage, settingsPageEntries } from "./paletteSettings.ts";
+import type { Translate } from "./i18n.ts";
 
 const identity = (key: string): string => key;
+/** The Settings pages as the palette searches them, in the language `t` speaks. */
+const pagesIn = (t: Translate) => settingsPageEntries(t).map((entry) => ({ item: entry.id, title: entry.label, aliases: entry.aliases }));
 
 describe("rankByTitle", () => {
   const rows = [
@@ -32,10 +36,20 @@ describe("rankByTitle", () => {
 });
 
 describe("settings entries", () => {
-  it("lets a user reach a page by theme or font", () => {
-    const pages = settingsPageEntries(identity).map((entry) => ({ item: entry.id, title: entry.label, aliases: entry.aliases }));
+  it("lets a user reach a page by theme, palette or font", () => {
+    const pages = pagesIn(identity);
     expect(rankByTitle("theme", pages)).toEqual(["appearance"]);
+    expect(rankByTitle("palette", pages)).toEqual(["appearance"]);
     expect(rankByTitle("font", pages)).toEqual(["chat", "terminal"]);
+  });
+
+  it("finds Appearance by the literal word palette in every language, and by the language's own word", () => {
+    // the translated alias is a bag of search words, so it keeps the English word next to its own, as it keeps openai and ssh
+    const words = { en: "palette", ko: "팔레트", ja: "パレット", zh: "调色板" } as const;
+    for (const [language, word] of Object.entries(words) as [keyof typeof words, string][]) {
+      const pages = pagesIn((key, vars) => translate(language, key, vars));
+      expect({ language, literal: rankByTitle("palette", pages), own: rankByTitle(word, pages) }).toEqual({ language, literal: ["appearance"], own: ["appearance"] });
+    }
   });
 
   it("has an alias for every action the palette can offer", () => {

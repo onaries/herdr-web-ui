@@ -16,8 +16,8 @@ const app = mkdtempSync(join(tmpdir(), "herdr-sidebar-activity-demo-"));
 
 const API = "Idempotent payments";        // claude, working, finishes by itself
 const WEB = "Guard the export button";    // codex, blocked
-const INFRA = "Why did the backup fail?"; // idle: the agent a message is sent from
-const AGENTS_HERDR_ORDER = [API, WEB, INFRA, "Proofread the guide", "Ship the retry flag"];
+const INFRA = "Plan the config file";     // omp, idle: the agent a message is sent from
+const AGENTS_HERDR_ORDER = [API, WEB, "Fix the flaky retry test", INFRA, "Ship the retry flag", "Draft the changelog"];
 
 const agents = (page: Page) => page.locator(".agents-sidebar .agent-item");
 const agentTitles = (page: Page) => agents(page).locator(".agent-title").allTextContents();
@@ -112,7 +112,8 @@ try {
       for (const mobile of [false, true]) {
         await withPage(browser, {}, async (page) => {
           if (mobile) await page.locator('button[aria-controls="workspace-drawer"]').tap();
-          const head = page.locator(`.workspace-select[data-pane="${panes.api}"]`);
+          // the repository's row opens the shell tab the page starts on, so it is found by its workspace
+          const head = page.locator(`.workspace-group[data-workspace="${panes.api.split(":")[0]}"] > .workspace-header .workspace-select`);
           const headId = await head.evaluate((row) => row.closest(".workspace-group")?.getAttribute("data-workspace"));
           assert.ok(headId);
           const worktrees = await page.evaluate(async (workspaceId) => {
@@ -178,12 +179,12 @@ try {
       await withPage(browser, {}, async (page) => {
         const selected = await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection"));
         await page.locator(".header-more-button").focus();
-        const workspace = page.locator(`.workspace-select[data-pane="${panes.api}"]`);
+        const workspace = page.locator(`.workspace-group[data-workspace="${panes.api.split(":")[0]}"] > .workspace-header .workspace-select`);
         const bounds = (await workspace.boundingBox())!;
         await workspace.click({ button: "right", position: { x: 32, y: bounds.height / 2 } });
         const menu = page.getByRole("menu", { name: "checkout-api", exact: true });
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "right-click uses native workspace scope");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close group", "New worktree", "Open worktree…", "Collapse"], "right-click on a repository uses its group scope");
         const opened = (await menu.boundingBox())!;
         assert.ok(Math.abs(opened.x - bounds.x - 32) <= 1 && Math.abs(opened.y - bounds.y - bounds.height / 2) <= 1, "the menu opens at the pointer");
         assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selected, "right-click leaves the selected pane alone");
@@ -192,13 +193,13 @@ try {
         await workspace.focus();
         await page.keyboard.press("Shift+F10");
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close workspace", "New worktree", "Open worktree…"], "the context-menu key and right-click have identical items");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close group", "New worktree", "Open worktree…", "Collapse"], "the context-menu key and right-click have identical items");
         await page.keyboard.press("Escape");
         const pins = () => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]") as string[]);
         // a pinned workspace leaves its place for a card at the top of its PC's list, and returns unpinned
         const workspaceTitles = () => page.locator(".machine-workspaces .workspace-name").allTextContents();
         const herdrOrder = await workspaceTitles();
-        const infraWorkspace = page.locator(`.workspace-select[data-pane="${panes.infra}"]`);
+        const infraWorkspace = page.locator(`.workspace-select[data-pane="${panes.omp}"]`);
         await infraWorkspace.click({ button: "right" });
         const infraMenu = page.getByRole("menu");
         await infraMenu.getByRole("menuitem", { name: "Pin workspace", exact: true }).click();
@@ -224,7 +225,7 @@ try {
         await agentMenu.waitFor();
         assert.deepEqual(await agentMenu.getByRole("menuitem").allTextContents(), ["Pin agent"], "an agent's right-click menu offers its pin");
         await agentMenu.getByRole("menuitem", { name: "Pin agent" }).click();
-        await page.waitForFunction((key) => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").includes(key), `local:${panes.infra}`);
+        await page.waitForFunction((key) => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").includes(key), `local:${panes.omp}`);
         assert.deepEqual(await agentTitles(page), [INFRA, ...AGENTS_HERDR_ORDER.filter((title) => title !== INFRA)], "a pinned agent moves to the top, the rest keep herdr's order");
         assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selected, "pinning does not select the agent");
         assert.equal(await page.locator(".header-more-button").evaluate((button) => document.activeElement === button), true, "the menu hands focus back where it was");
@@ -298,7 +299,7 @@ try {
 
       await withPage(browser, { agentOrder: "activity" }, async (page) => {
         assert.equal((await agentTitles(page))[0], WEB, "the blocked agent is pinned on top");
-        assert.match(await agent(page, WEB).locator(".agent-context").textContent() ?? "", /web-dashboard/, "a row names its workspace");
+        assert.match(await agent(page, WEB).locator(".agent-context").textContent() ?? "", /export-guard/, "a row names its workspace");
 
         // the demo's Claude pane finishes out of sight: it rises under the blocked one, and keeps its dot
         await waitStatus(page, API, "done");
@@ -306,18 +307,18 @@ try {
 
         // a message sent from an agent takes it to the top while it runs ...
         await agent(page, INFRA).locator(".agent-select").click();
-        await page.locator(".composer-text").fill("Check the backup again");
+        await page.locator(".composer-text").fill("Check the plan again");
         await page.locator(".composer-text").press("Enter");
         await waitStatus(page, INFRA, "working");
         await waitAgentAt(page, 1, INFRA);
         // ... and keeps it there when it finishes while another pane is open, with its dot
-        await page.locator(".machine-workspaces .workspace-select", { hasText: "release" }).first().click();
+        await page.locator(".machine-workspaces .workspace-select", { hasText: "flaky-retry-test" }).first().click();
         await waitStatus(page, INFRA, "done");
         assert.equal((await agentTitles(page))[1], INFRA, "the agent just worked in stays on top after it finishes");
 
         // opening it here leaves herdr's DONE as it is
         await agent(page, INFRA).locator(".agent-select").click();
-        await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.infra, { timeout: 5_000 });
+        await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.omp, { timeout: 5_000 });
         assert.equal(await agentStatus(page, INFRA), "done", "an opened DONE keeps its dot");
       });
       console.log("PASS Activity pins blocked and follows recency; an opened DONE keeps its dot");

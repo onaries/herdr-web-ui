@@ -15,6 +15,7 @@
  *             {"t":"i","d":"<text>"}          write text into the pty
  *             {"t":"r","c":<cols>,"r":<rows>} resize the pty
  *             {"t":"p","paused":true|false} pause/resume output (input stays live)
+ *             {"t":"w"}                       signal SIGWINCH to the child at its current size
  *   stdout: raw pty bytes, unmodified
  *   stderr: diagnostics only
  *   exit:   mirrors the child's exit code
@@ -89,6 +90,8 @@ function handle(line) {
   try {
     if (frame.t === "i" && typeof frame.d === "string") term.write(frame.d);
     else if (frame.t === "r") term.resize(clamp(frame.c), clamp(frame.r));
+    // a resize to the same size changes nothing the kernel signals: the child is told directly
+    else if (frame.t === "w") { if (process.platform !== "win32") process.kill(term.pid, "SIGWINCH"); }
     else if (frame.t === "p" && typeof frame.paused === "boolean") {
       parentPaused = frame.paused;
       updateReading();

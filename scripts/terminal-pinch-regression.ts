@@ -8,6 +8,7 @@ import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
 import { UsageService } from "../server/usage.ts";
 import { chromePath } from "./chrome-path.ts";
+import { openSettingsPage } from "./settings-page.ts";
 
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -214,6 +215,50 @@ export async function checkTerminalPinch(browser: Browser, origin: string, paneI
     await dragOne();
     assert((await probe()).wheels > w1, "a fresh one-finger drag scrolls again");
     await release();
+
+    // Settings can restore the size that led to the previous announcement: the next pinch must
+    // clear and restore the same words, rather than silently assigning unchanged text.
+    await page.keyboard.press("ControlOrMeta+Shift+Comma");
+    await openSettingsPage(page, "Terminal");
+    await page.getByRole("button", { name: "Decrease terminal font size", exact: true }).click();
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    await page.evaluate(() => {
+      const status = document.querySelector(".terminal-font-size")!.nextElementSibling!;
+      const changes: string[] = [];
+      new MutationObserver(() => {
+        changes.push(status.textContent ?? "");
+        status.setAttribute("data-announcements", JSON.stringify(changes));
+      }).observe(status, { childList: true });
+    });
+    await spreadTo(100, 105);
+    await release();
+    await page.waitForFunction(() => {
+      const changes: string[] = JSON.parse(document.querySelector(".terminal-font-size")!.nextElementSibling!.getAttribute("data-announcements") ?? "[]");
+      return changes.includes("") && changes.some((text) => text !== "");
+    }, undefined, { timeout: 5_000 });
+    const repeated = await page.evaluate(() => JSON.parse(document.querySelector(".terminal-font-size")!.nextElementSibling!.getAttribute("data-announcements") ?? "[]"));
+    assert.deepEqual(repeated, ["", "Terminal text size 20 px"], "an identical pinch result changes the live region twice");
+
+    // Dispatch both gestures in one task, so the newer one necessarily starts before the old
+    // announcement's animation frame. No clock race or artificial delay can make this pass.
+    await page.evaluate(async () => {
+      const host = document.querySelector(".pane-terminal")!;
+      const status = document.querySelector(".terminal-font-size")!.nextElementSibling!;
+      const touch = (id: number, x: number) => new Touch({ identifier: id, target: host, clientX: x, clientY: 200 });
+      const fire = (type: string, distance: number | null) => host.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, touches: distance === null ? [] : [touch(1, 100), touch(2, 100 + distance)],
+      }));
+      fire("touchstart", 100);
+      fire("touchmove", 90);
+      fire("touchend", null);
+      fire("touchstart", 100);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (status.textContent !== "") throw new Error("a newer pinch must cancel the stale announcement");
+      fire("touchcancel", null);
+    });
+    await spreadTo(90, 100);
+    await release();
+    console.log("PASS repeated pinch result is re-announced and a newer pinch cancels a pending restore");
 
     ready = false;
     await page.reload();

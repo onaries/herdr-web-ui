@@ -262,6 +262,28 @@
   color: var(--text-strong);
 }
 
+/* a mouse's floor: the copy glyph and the format buttons keep their --chip-h look and take a
+   --pointer-target hit area through an invisible expander around the button (a finger's
+   --touch-target size is set below, where the buttons touch and an expander would overlap them) */
+@media (pointer: fine) {
+  .chat-copy,
+  .chat-meta-btn {
+    position: relative;
+  }
+
+  .chat-copy::before,
+  .chat-meta-btn::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--chip-h) - var(--pointer-target)) / 2);
+  }
+
+  /* the copy glyph's hairline edge lies inside its box: the expander starts past it */
+  .chat-copy::before {
+    inset: calc((var(--chip-h) - var(--pointer-target)) / 2 - var(--hairline));
+  }
+}
+
 /* "Plain text": the second copy as words, shown with a mouse only (below) */
 .chat-meta-word {
   display: none;
@@ -940,7 +962,54 @@
 
 .chat-inline-error { color: var(--status-blocked); }
 
-.chat-activity {
+/* a read that failed (ChatView.tsx FailureLine): the one line, Try again beside it where it is the
+   way on, and a dim Details toggle under them for the advice and the PC's own words */
+.chat-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--fs-xs);
+}
+
+.chat-failure-line {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-failure-details {
+  flex-basis: 100%;
+  color: var(--text-dim);
+}
+
+.chat-failure-details > summary {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+}
+
+.chat-failure-details > p {
+  margin: var(--space-1) 0 0;
+}
+
+.chat-failure-details > code {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+/* a finger's floor (the button is a .btn and grows to it in styles.css): the toggle keeps its line
+   and takes the hit area, both ways, through an invisible expander around it */
+@media (pointer: coarse) {
+  .chat-failure-details > summary::before {
+    content: "";
+    position: absolute;
+    inset: calc((1lh - var(--touch-target)) / 2) min(0px, calc((100% - var(--touch-target)) / 2));
+  }
+}
+
+/* a native turn thinking under its open work block: one quiet line, not a second head */
+.chat-activity-line {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -949,7 +1018,14 @@
   font-size: var(--fs-sm);
 }
 
-.chat-activity svg { width: 1em; height: 1em; flex: none; }
+.chat-activity-line svg { width: 1em; height: 1em; flex: none; }
+
+/* a pending block's head opens nothing until its rows are drawn */
+.work-block.is-pending .work-block-head,
+.work-block.is-pending .work-block-head:hover {
+  background: transparent;
+  cursor: default;
+}
 
 .chat-endcap {
   width: 100%;
@@ -1018,8 +1094,8 @@
   /* no hover on touch: the meta rows are always there, quietly */
   .chat-turn-meta { opacity: 1; pointer-events: auto; }
 
-  /* a user turn's row is one line, not a 40px row: the copy button keeps its 40px target,
-     which reaches above and below the line */
+  /* a user turn's row is one line, not a --touch-target row: the copy button keeps its
+     --touch-target size, which reaches above and below the line */
   .chat-user-row > .chat-turn-meta { height: var(--chip-h); }
 
   .chat-user-row .chat-copy,
@@ -1027,8 +1103,8 @@
     margin-block: calc((var(--chip-h) - var(--touch-target)) / 2);
   }
 
-  /* both answer copies are 40px targets; the row is pulled left by the first one's inset so
-     its glyph stays on the prose edge */
+  /* both answer copies are --touch-target targets; the first one drops its own left inset so its
+     glyph stays on the prose edge (an overhang past the transcript's edge could not be tapped) */
   .chat-agent-meta { gap: 0; }
 
   .chat-agent-meta .chat-meta-btn {
@@ -1037,7 +1113,7 @@
     padding-inline: var(--space-2);
   }
 
-  .chat-agent-meta .chat-meta-btn:first-child { margin-left: calc(-1 * var(--space-2)); }
+  .chat-agent-meta .chat-meta-btn:first-child { padding-left: 0; }
 
   /* the skill a message invoked sits clear of the copy target that reaches below the row */
   .chat-turn-user .chat-user-row + .chat-skills { margin-top: calc((var(--touch-target) - var(--chip-h)) / 2); }
@@ -1489,6 +1565,38 @@
   overflow-wrap: anywhere;
 }
 .chat-task-result-note { margin: var(--space-2) 0 0; color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* a question the agent asked: its questions numbered, the options it offered under each */
+.chat-ask-questions {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.chat-ask-question + .chat-ask-question { margin-top: var(--space-4); }
+.chat-ask-question p { margin: 0; white-space: pre-wrap; }
+.chat-ask-header, .chat-ask-meta, .chat-ask-description { color: var(--text-dim); font-size: var(--fs-xs); }
+.chat-ask-text, .chat-ask-label { font-weight: var(--fw-semibold); }
+.chat-ask-options { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
+.chat-ask-options > li + li { margin-top: var(--space-2); }
+.chat-ask-preview {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+}
+
+/* a Claude teammate's delivery: a task card of its own per message, its original text on request */
+.chat-teammate-messages { min-width: 0; }
+.chat-teammate-message { border-top: var(--hairline) solid var(--border); }
+.chat-teammate-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-teammate-raw { margin-top: var(--space-3); color: var(--text-dim); font-size: var(--fs-xs); }
+.chat-teammate-raw > summary { cursor: pointer; }
+.chat-teammate-raw > pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* a task call's tasks: what each is for and the agent it runs as, the prompt under it */
 .chat-task-calls {

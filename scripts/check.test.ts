@@ -44,6 +44,36 @@ describe("plan", () => {
 });
 
 describe("isolate", () => {
+  it("replaces the user's login shell for Unix test panes, but keeps the native Windows environment", () => {
+    const dir = scratch();
+    const home = join(dir, "home");
+    mkdirSync(home);
+    for (const name of [".bashrc", ".bash_profile", ".profile", "bash-env"]) {
+      writeFileSync(join(home, name), "export TEST_STARTUP_READ=yes\n");
+    }
+    const logout = join(dir, "logout-read");
+    writeFileSync(join(home, ".bash_logout"), `printf logout > '${logout}'\n`);
+    const { env } = isolate({ SHELL: "/bin/zsh", HOME: home, BASH_ENV: join(home, "bash-env") }, dir);
+    if (process.platform === "win32") {
+      expect(env["SHELL"]).toBe("/bin/zsh");
+    } else if (!existsSync("/bin/bash")) {
+      expect(env["SHELL"]).toBe("/bin/sh");
+    } else {
+      const shell = env["SHELL"];
+      if (!shell) throw new Error("Missing test shell");
+      // an interactive bash takes the controlling terminal, which stops a test run started from one
+      // (a herdr pane included): the -i probes run in a session of their own, with no terminal
+      const setsid = ["/usr/bin/setsid", "/bin/setsid"].find((path) => existsSync(path));
+      for (const args of setsid ? [["-i"], ["-l", "-i"], []] : [[]]) {
+        const probe = [shell, ...args, "-c", 'printf "%s|%s" "${TEST_STARTUP_READ-unread}" "$1"; exit', "test", "argument with spaces"];
+        const result = setsid ? spawnSync(setsid, probe, { env, encoding: "utf8" }) : spawnSync(probe[0]!, probe.slice(1), { env, encoding: "utf8" });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toBe("unread|argument with spaces");
+        expect(existsSync(logout)).toBe(false);
+      }
+    }
+  });
+
   it("points herdr, its plugins and the web UI at one directory of the run's own, under its own session name", () => {
     const first = isolate({ PATH: "/bin", XDG_CONFIG_HOME: "/home/someone/.config" });
     const second = isolate({ PATH: "/bin" });
@@ -63,6 +93,8 @@ describe("isolate", () => {
       // one integration file at a time unless asked otherwise
       expect(first.env["HERDR_TEST_SHARDS"]).toBe("1");
       expect(isolate({ HERDR_TEST_SHARDS: "4" }, scratch()).env["HERDR_TEST_SHARDS"]).toBe("4");
+      // the browsers of a run draw the English copy the scripts assert, whatever the desktop's language
+      expect(isolate({ LANGUAGE: "ko:en_AU:en" }, scratch()).env["LANGUAGE"]).toBe("en_US:en");
     } finally {
       const dir = join(first.env["XDG_CONFIG_HOME"]!, "..");
       first.remove();
@@ -474,6 +506,7 @@ describe("check CLI", () => {
       name: "check-cli-fixture",
       scripts: {
         "generate:types": noOp,
+        "generate:themes": noOp,
         typecheck: noOp,
         build: fixtureBuild,
         "test:unit": noOp,
@@ -492,6 +525,10 @@ describe("check CLI", () => {
     delete env["CHECK_REPORT"];
     delete env["GITHUB_EVENT_NAME"];
     delete env["GITHUB_EVENT_PATH"];
+    // CHECK_DIR makes the nested run take the PC-wide admission port, which the self-hosted
+    // runners share with every lane of the PC that is waiting for a slot: without a wait, a
+    // moment's overlap refuses the run before it writes its report (#1225).
+    env["CHECK_WAIT_SECONDS"] = "20";
     const runCheck = () => spawnSync(process.execPath, [fileURLToPath(new URL("./check.ts", import.meta.url)), "fast"], {
       cwd,
       env,
@@ -518,6 +555,7 @@ describe("check CLI", () => {
       name: "check-cli-fixture",
       scripts: {
         "generate:types": noOp,
+        "generate:themes": noOp,
         typecheck: noOp,
         build: fixtureBuild,
         "test:unit": "git init -q nested && node -e \"require('node:fs').writeFileSync('nested/source.txt','fixture')\"",
@@ -548,7 +586,7 @@ describe("check CLI", () => {
     rmSync(join(cwd, "dist"), { recursive: true });
     writeFileSync(join(cwd, "package.json"), JSON.stringify({
       name: "check-cli-fixture",
-      scripts: { "generate:types": noOp, typecheck: noOp, build: noOp, "test:unit": noOp },
+      scripts: { "generate:types": noOp, "generate:themes": noOp, typecheck: noOp, build: noOp, "test:unit": noOp },
     }));
     const missingBuild = runCheck();
     expect(missingBuild.status).toBe(1);

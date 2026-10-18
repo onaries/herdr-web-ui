@@ -11,6 +11,21 @@ const TOTAL_TIMEOUT_MS = 8_000;
 const MAX_BUFFER = 1024 * 1024;
 const MAX_CURSOR_LENGTH = 4096;
 
+/** Execution failed; unlike an identity rejection, this must not clear the current chat. */
+export class GjcSdkLookupError extends Error {
+  constructor(readonly reason: "timeout" | "unavailable") {
+    super("GJC SDK lookup failed");
+    this.name = "GjcSdkLookupError";
+  }
+}
+
+function lookupExecutionError(error: unknown): GjcSdkLookupError {
+  if (error instanceof GjcSdkLookupError) return error;
+  const timedOut = isRecord(error) && (error.killed === true || error.signal === "SIGKILL"
+    || error.code === "ETIMEDOUT" || error.code === "ERR_CHILD_PROCESS_TIMEOUT");
+  return new GjcSdkLookupError(timedOut ? "timeout" : "unavailable");
+}
+
 export interface GjcSdkCommandOptions {
   env: NodeJS.ProcessEnv;
   encoding: "utf8";
@@ -211,7 +226,7 @@ async function runBounded(
   deadline: number,
 ): Promise<string> {
   const remaining = Math.min(COMMAND_TIMEOUT_MS, deadline - Date.now());
-  if (remaining <= 0) throw new Error("SDK lookup deadline exceeded");
+  if (remaining <= 0) throw new GjcSdkLookupError("timeout");
 
   const options: GjcSdkCommandOptions = {
     env: { ...process.env, GJC_SDK_BROKER_AUTOSTART: "0" },
@@ -228,9 +243,13 @@ async function runBounded(
     return await Promise.race([
       Promise.resolve().then(() => runner("gjc", args, options)),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error("SDK lookup deadline exceeded")), remaining);
+        timer = setTimeout(() => reject(new GjcSdkLookupError("timeout")), remaining);
       }),
     ]);
+  } catch (error) {
+    // only a timeout is worth retrying; a missing or failing gjc stays the fallback it was
+    const failure = lookupExecutionError(error);
+    throw failure.reason === "timeout" ? failure : error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -242,18 +261,20 @@ async function resolveWorktreeRoot(
   deadline: number,
 ): Promise<string | null | undefined> {
   const timeoutMs = Math.min(COMMAND_TIMEOUT_MS, deadline - Date.now());
-  if (timeoutMs <= 0) return undefined;
+  if (timeoutMs <= 0) throw new GjcSdkLookupError("timeout");
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const root = await Promise.race([
       Promise.resolve().then(() => resolver(cwd, timeoutMs)),
-      new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), timeoutMs);
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new GjcSdkLookupError("timeout")), timeoutMs);
       }),
     ]);
     return root === null ? null : canonicalPath(root) ?? undefined;
-  } catch {
+  } catch (error) {
+    const failure = lookupExecutionError(error);
+    if (failure.reason === "timeout") throw failure;
     return undefined;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -336,8 +357,9 @@ async function resolveTranscript(
       hostIncarnation: expected.hostIncarnation,
       endpointGeneration: expected.endpointGeneration,
     };
-  } catch {
-    // SDK stderr and process errors may include user paths; discovery must fail closed and stay quiet.
+  } catch (error) {
+    if (error instanceof GjcSdkLookupError) throw error;
+    // Invalid identity data still fails closed; only sanitized execution failures propagate.
     return null;
   }
 }

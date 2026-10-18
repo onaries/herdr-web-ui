@@ -1,0 +1,101 @@
+name: OMP question compatibility
+
+on:
+  schedule:
+    - cron: '31 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      omp_version:
+        description: 'Exact @oh-my-pi/pi-coding-agent version; blank resolves latest stable once'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omp-question-compat-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-questions:
+    name: Native OMP questions (${{ matrix.lane }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: baseline
+            omp_version: '18.10.4'
+          - lane: candidate
+            omp_version: latest
+    env:
+      OMP_REQUESTED_VERSION: ${{ matrix.omp_version == 'latest' && inputs.omp_version || matrix.omp_version }}
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Create evidence directory
+        run: mkdir -p "$RUNNER_TEMP/omp-compat-evidence"
+      - uses: ./.github/actions/setup-ci
+        with:
+          node: 'true'
+          herdr: 'true'
+          # this job installs and runs an unpinned OMP release: never save the shared cache
+          cache: restore
+      - name: Install locked app dependencies
+        run: bun install --frozen-lockfile
+      # agent-browser 0.33.2 requires Node 24 or newer.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install browser automation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee -a "$RUNNER_TEMP/omp-compat-evidence/browser-install.log") 2>&1
+          npm install --prefix "$RUNNER_TEMP/omp-compat-tools" --no-save --no-audit --no-fund agent-browser@0.33.2
+          echo "$RUNNER_TEMP/omp-compat-tools/node_modules/.bin" >> "$GITHUB_PATH"
+          bun node_modules/playwright-core/cli.js install --with-deps chromium
+      - name: Resolve and install the OMP release
+        id: omp
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee -a "$RUNNER_TEMP/omp-compat-evidence/omp-install.log") 2>&1
+          if [[ "$OMP_REQUESTED_VERSION" == latest ]]; then
+            version="$(npm view @oh-my-pi/pi-coding-agent dist-tags.latest)"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Latest OMP tag is not a stable version: $version" >&2; exit 1; }
+          else
+            version="$OMP_REQUESTED_VERSION"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || { echo "Invalid exact OMP version: $version" >&2; exit 1; }
+          mkdir -p "$RUNNER_TEMP/omp-compat/$version"
+          npm install --prefix "$RUNNER_TEMP/omp-compat/$version" --no-save --no-audit --no-fund "@oh-my-pi/pi-coding-agent@$version"
+          actual="$("$RUNNER_TEMP/omp-compat/$version/node_modules/.bin/omp" --version)"
+          [[ "$actual" == "omp/$version" || "$actual" == "$version" ]] || { echo "Expected OMP $version, got $actual" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "bin=$RUNNER_TEMP/omp-compat/$version/node_modules/.bin/omp" >> "$GITHUB_OUTPUT"
+          echo "OMP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "OMP_BIN=$RUNNER_TEMP/omp-compat/$version/node_modules/.bin/omp" >> "$GITHUB_ENV"
+          echo "Resolved requested lane '$OMP_REQUESTED_VERSION' to $version ($actual)"
+          npm view "@oh-my-pi/pi-coding-agent@$version" dist.integrity dist.tarball --json > "$RUNNER_TEMP/omp-compat-evidence/$version-metadata.json"
+      - name: Run native question compatibility harness
+        env:
+          OMP_BIN: ${{ steps.omp.outputs.bin }}
+          OMP_VERSION: ${{ steps.omp.outputs.version }}
+          OMP_COMPAT_OUT: ${{ runner.temp }}/omp-compat-evidence/${{ matrix.lane }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$OMP_COMPAT_OUT"
+          CHECK_WAIT_SECONDS=900 bun run check run --build bun scripts/omp-question-compat.ts 2>&1 | tee "$OMP_COMPAT_OUT/harness.log"
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: omp-question-${{ matrix.lane }}-${{ steps.omp.outputs.version || 'install-failed' }}
+          path: ${{ runner.temp }}/omp-compat-evidence/
+          if-no-files-found: error
+          retention-days: 14

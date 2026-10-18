@@ -108,13 +108,47 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 /* Pinned rows, agents and workspaces alike, stand first in a card: an edge, not a fill, so a row's
    hover and selection read inside it as anywhere else, its corner the rows' own plus its padding.
    The list under it follows a gap below. */
+/* Pinned rows stand first in a card whose top edge carries "── Pinned ──", like a fieldset's
+   legend: the caption sits on the line, masked by the sidebar's own background. The list carries the
+   name for screen readers, so the caption is hidden from them. */
 .sidebar-pinned {
-  padding: var(--space-1);
+  padding: var(--space-2) var(--space-1) var(--space-1);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-lg);
 }
 
 .sidebar-pinned + ul { margin-top: var(--space-2); }
+
+.sidebar-pinned-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* half the caption's height above the card's edge, half below it */
+  margin: var(--space-1) 0 calc(var(--fs-2xs) * var(--lh-tight) / -2);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.sidebar-pinned-label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-inline: var(--space-2);
+  background: var(--bg-panel);
+}
+
+.sidebar-pinned-label svg {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
 
 .workspace {
   display: flex;
@@ -191,9 +225,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--hairline);
 }
 
-/* The folder that leads a workspace row. It is the fold, and a button, when linked worktrees
-   sit under the workspace: open while they show, closed while they are folded. */
+/* The face that leads a workspace row is also the fold when linked worktrees sit under it: under a
+   pointer or keyboard focus it turns to the folder that says so, open while the worktrees show and
+   closed while they are folded; on touch, where nothing hovers, the folder always shows. */
 .sidebar-row-action.workspace-toggle {
+  position: relative;
   flex: 0 0 var(--side-box);
   width: var(--side-box);
   align-self: stretch;
@@ -202,12 +238,35 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   color: var(--text);
 }
 
+.workspace-toggle .sidebar-mark { flex-basis: auto; width: auto; }
+
+.workspace-toggle-fold {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
 .sidebar-row-action.workspace-toggle svg {
   width: var(--icon-size);
   height: var(--icon-size);
 }
 
-/* how many worktrees a closed folder holds: the closed glyph alone looks like any workspace's */
+@media (hover: hover) {
+  .workspace-header:hover .workspace-toggle .sidebar-mark { visibility: hidden; }
+  .workspace-header:hover .workspace-toggle-fold { display: flex; }
+}
+
+.workspace-toggle:focus-visible .sidebar-mark { visibility: hidden; }
+.workspace-toggle:focus-visible .workspace-toggle-fold { display: flex; }
+
+@media (hover: none) {
+  .workspace-toggle .sidebar-mark { visibility: hidden; }
+  .workspace-toggle-fold { display: flex; }
+}
+
+/* how many worktrees a folded group holds: the face alone looks like any workspace's */
 .workspace-fold-count {
   flex: none;
   color: var(--text-dim);
@@ -574,7 +633,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .sidebar-footer-action:hover:not(:disabled) { background: var(--side-hover); }
 }
 
-/* Settings keeps the room the plan meters beside it leave */
+/* the gear first, the plan meters filling the rest */
 .sidebar-footer-row {
   display: flex;
   align-items: center;
@@ -582,11 +641,14 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   min-width: 0;
 }
 
-.sidebar-footer-row > .sidebar-footer-action {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
+/* Settings is its gear alone, so the plan meters beside it get the rest of the row */
+.sidebar-footer-row > .sidebar-footer-settings {
+  flex: 0 0 auto;
+  width: var(--side-box);
+  padding: 0;
 }
+
+.sidebar-footer-settings svg { margin-inline: auto; }
 
 .sidebar-install-help {
   margin: 0;

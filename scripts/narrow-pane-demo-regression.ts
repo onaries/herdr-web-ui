@@ -78,7 +78,9 @@ try {
     try {
       const context = await browser.newContext({ viewport: { width: 1700, height: 900 }, locale: "en-US" });
       await context.addInitScript(() => {
-        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+        // These viewport thresholds require fixed font metrics: the default terminal stack uses
+        // installed fonts, and Noto Sans Mono CJK KR already fits 84 columns at 1450px and 13px.
+        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalFontFamily: "JetBrains Mono Web" }));
       });
       const page = await context.newPage();
       const errors: string[] = [];

@@ -2,6 +2,32 @@
 
 herdr web ui includes material from the projects below, under their own licenses.
 
+## Theme palettes
+
+The CSS theme colors adapt herdr's pinned palettes, with readability adjustments recorded in
+`scripts/herdr-theme-overrides.ts`. Catppuccin Latte also names the unchanged legacy light row.
+The MIT and Apache-2.0 license texts are already printed below; individual theme sources and
+licenses follow. Tokyo Night Day uses folke's Apache-2.0 port, not the original MIT theme.
+
+| Theme | Upstream source | License |
+| --- | --- | --- |
+| Catppuccin Mocha and Latte | [catppuccin/palette](https://github.com/catppuccin/palette/blob/main/palette.json) | MIT |
+| tokyo-night | [enkia/tokyo-night-vscode-theme](https://github.com/enkia/tokyo-night-vscode-theme/blob/master/themes/tokyo-night-color-theme.json) | MIT |
+| tokyo-night-day | [folke/tokyonight.nvim](https://github.com/folke/tokyonight.nvim/blob/main/extras/ghostty/tokyonight_day) | Apache-2.0 |
+| gruvbox | [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim) | MIT |
+| gruvbox-light | [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim) | MIT |
+| one-dark | [atom/one-dark-syntax](https://github.com/atom/one-dark-syntax/blob/master/styles/colors.less) | MIT |
+| one-light | [atom/one-light-syntax](https://github.com/atom/one-light-syntax/blob/master/styles/colors.less) | MIT |
+| solarized | [altercation/solarized](https://github.com/altercation/solarized/blob/master/README.md) | MIT |
+| solarized-light | [altercation/solarized](https://github.com/altercation/solarized/blob/master/README.md) | MIT |
+| kanagawa | [rebelot/kanagawa.nvim](https://github.com/rebelot/kanagawa.nvim/blob/master/lua/kanagawa/themes.lua) | MIT |
+| kanagawa-lotus | [rebelot/kanagawa.nvim](https://github.com/rebelot/kanagawa.nvim/blob/master/lua/kanagawa/themes.lua) | MIT |
+| rose-pine | [rose-pine/palette](https://github.com/rose-pine/palette/blob/main/palette.json) | MIT |
+| rose-pine-dawn | [rose-pine/palette](https://github.com/rose-pine/palette/blob/main/palette.json) | MIT |
+| dracula | [dracula/dracula-theme](https://github.com/dracula/dracula-theme/blob/master/README.md) | MIT |
+| nord | [nordtheme/nord](https://github.com/nordtheme/nord/blob/develop/src/nord.css) | MIT |
+| vesper | [raunofreiberg/vesper](https://github.com/raunofreiberg/vesper/blob/main/themes/Vesper-dark-color-theme.json) | MIT |
+
 ## Legend List
 
 The chat timeline uses [`@legendapp/list`](https://github.com/LegendApp/legend-list) 3.3.5.

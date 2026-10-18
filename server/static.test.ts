@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { appName, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin } from "./static.ts";
+import { appName, CONTENT_SECURITY_POLICY, contentSecurityPolicy, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin } from "./static.ts";
 
 // The sources Vite builds from: public/ is copied into dist/ as it is, and the meta survives the build.
 const root = join(import.meta.dir, "..");
@@ -60,6 +60,20 @@ describe("HERDR_WEB_APP_NAME", () => {
     const renamed = renameShell(shell, "laptop");
     expect(renamed).toContain('<meta name="apple-mobile-web-app-title" content="laptop" />');
     expect(renamed.replace("content=\"laptop\"", "content=\"herdr\"")).toBe(shell);
+  });
+
+  it("frames the other ports of the request's own host and no other host", () => {
+    expect(contentSecurityPolicy("http://100.123.228.51:7317")).toContain("frame-src 'self' http://100.123.228.51:* https://100.123.228.51:*;");
+    expect(contentSecurityPolicy("https://pc.tailnet.ts.net")).toContain("frame-src 'self' http://pc.tailnet.ts.net:* https://pc.tailnet.ts.net:*;");
+    expect(contentSecurityPolicy("http://[::1]:7317")).toContain("frame-src 'self' http://[::1]:* https://[::1]:*;");
+    expect(contentSecurityPolicy("http://100.123.228.51:7317").replace(/ http:\/\/\S+ https:\/\/\S+;/, ";")).toBe(CONTENT_SECURITY_POLICY);
+  });
+
+  it("keeps frame-src to itself without an origin or with a host that is no host name", () => {
+    expect(contentSecurityPolicy()).toBe(CONTENT_SECURITY_POLICY);
+    expect(contentSecurityPolicy("not a url")).toBe(CONTENT_SECURITY_POLICY);
+    expect(contentSecurityPolicy("http://a_b;script-src *")).toBe(CONTENT_SECURITY_POLICY);
+    expect(CONTENT_SECURITY_POLICY).toContain("frame-src 'self';");
   });
 
   it("escapes the name in the shell", () => {

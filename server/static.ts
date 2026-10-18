@@ -83,7 +83,10 @@ function cacheControlFor(pathname: string): string {
  *   an explicit `new WebSocket("ws://<same host>/ws")` and the machines event stream both
  *   connect under the enforcing header).
  * - `media-src 'self'`: the file viewer's <video>/<audio>, same-origin.
- * - `frame-src 'self'`: the PDF viewer frames /api/fs/file, same-origin.
+ * - `frame-src 'self'`: the PDF viewer frames /api/fs/file, same-origin. With the request's
+ *   origin known, also any port of the host the browser used for the app: the web panel
+ *   (src/lib/webPanel.ts) frames a page served by this PC, a dev server's localhost:5173 named
+ *   under that host. No other host is framed.
  * - `worker-src 'self'`: the service worker is /sw.js, same-origin.
  * - `object-src 'none'`: no <object>/<embed> in the app, and none may appear.
  * - `base-uri 'self'`: no <base>, and a tag that adds one changes what every relative URL
@@ -114,16 +117,32 @@ const CSP_DIRECTIVES = [
  */
 export const CONTENT_SECURITY_POLICY = CSP_DIRECTIVES.join("; ");
 
+/** A host name or bracketed IPv6 address, nothing that could end or add a directive. */
+const FRAMEABLE_HOST = /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/i;
+
+/** The policy for a request from `origin` (requestOrigin): its host's other ports may be framed. */
+export function contentSecurityPolicy(origin?: string): string {
+  let host: string | null = null;
+  try {
+    host = origin === undefined ? null : new URL(origin).hostname;
+  } catch {
+    host = null;
+  }
+  if (host === null || !FRAMEABLE_HOST.test(host)) return CONTENT_SECURITY_POLICY;
+  return CSP_DIRECTIVES.map((directive) => directive === "frame-src 'self'" ? `frame-src 'self' http://${host}:* https://${host}:*` : directive).join("; ");
+}
+
 /**
  * HERDR_WEB_CSP=report-only measures the policy above without enforcing it: the browser
  *   logs what the policy would have blocked and the app keeps working. `report-only` is the
  *   measurement mode; anything else enforces.
  */
-function cspHeader(): Record<string, string> {
+function cspHeader(origin?: string): Record<string, string> {
   const mode = process.env["HERDR_WEB_CSP"];
+  const policy = contentSecurityPolicy(origin);
   return mode === "report-only"
-    ? { "content-security-policy-report-only": CONTENT_SECURITY_POLICY }
-    : { "content-security-policy": CONTENT_SECURITY_POLICY };
+    ? { "content-security-policy-report-only": policy }
+    : { "content-security-policy": policy };
 }
 
 /**
@@ -226,7 +245,7 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
       }
       const kind = pathname === "/manifest.webmanifest" ? "manifest" : candidate === indexPath ? "shell" : null;
       return new Response(await body(file, kind, origin), {
-        headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader() },
+        headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader(origin) },
       });
     }
   }
@@ -236,6 +255,6 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
     return new Response(null, { status: 404, headers: { "cache-control": REVALIDATE, ...cspHeader() } });
   }
   return new Response(await body(Bun.file(indexPath), "shell"), {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader() },
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader(origin) },
   });
 }

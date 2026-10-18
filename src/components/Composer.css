@@ -10,17 +10,6 @@
      and still clear it, and the full inset left a band of nothing under the box */
   padding: 0 var(--space-4) max(var(--space-4), calc(env(safe-area-inset-bottom, 0px) - var(--space-4)));
   background: var(--bg-panel);
-  /* how far the resize grip's hit area rises above the box */
-  --composer-grip-h: 12px;
-}
-
-/* The held-message list ends in things to press (a message's own box, Send now, Discard), and the
-   grip's hit area would lie over the bottom centre of its last row. After the list the composer
-   keeps that strip for itself. So it does after a prompt card, whose last row is an option, the
-   custom answer's Send or Confirm */
-.composer-queue ~ .composer,
-.prompt-dock:not(:empty) ~ .composer {
-  padding-top: var(--composer-grip-h);
 }
 
 /* The prompt card's place (PaneTerminal.tsx): over the input card and under the held messages,
@@ -438,6 +427,11 @@
   white-space: normal;
 }
 
+/* over the cap by an attachment's path: the one line that says so takes the notice colour, Send waits */
+.composer-status-hint.is-over {
+  color: var(--notice);
+}
+
 /* on a line of its own (Composer.tsx marks it): the whole line, and no dot to lead it */
 .composer-status[data-hint-alone] > .composer-status-hint {
   flex-basis: 100%;
@@ -486,71 +480,6 @@
 .composer-surface.is-dragging {
   border-color: var(--accent);
   box-shadow: 0 0 0 var(--hairline) var(--accent);
-}
-
-/* the resize grip: a short bar on the box's top edge. Its hit area rises from the border and
-   never reaches into the box, so a tap at the box's top still lands on the text and a remove
-   button in the attachment strip stays reachable. The composer has no space of its own above the
-   box, so the area (48 by 12px, 64 by 20px on touch) lies over the bottom centre of what comes
-   before it: the conversation's bottom padding, or the quick-reply row. Nothing to press belongs
-   in that strip: after the held-message list the composer reserves it (above) */
-.composer-resize {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  z-index: 1;
-  display: grid;
-  place-items: end center;
-  width: 48px;
-  height: var(--composer-grip-h);
-  transform: translateX(-50%);
-  cursor: ns-resize;
-  touch-action: none;
-}
-
-/* the bar sits on the border; its half over the box is drawn, not hit */
-.composer-resize::before {
-  content: "";
-  width: var(--space-8);
-  height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--border-strong);
-  transform: translateY(2px);
-  pointer-events: none;
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-
-.composer-resize:hover::before,
-.composer-resize:active::before,
-.composer-resize:focus-visible::before {
-  background: var(--accent);
-}
-
-/* with a mouse the bar is drawn when the card is pointed at, while it is dragged (the press
-   keeps it :active) and on its own keyboard focus; and while a height is set by hand, so the way
-   back to the automatic one stays in sight. Any coarse pointer keeps it always: a bar that is
-   not drawn and still drags would be a control nobody can find. The query is the hybrid-safe
-   one: a laptop with a touch screen counts as touch */
-@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
-  .composer-resize::before {
-    opacity: 0;
-    transition:
-      opacity var(--dur-fast) var(--ease-out),
-      background-color var(--dur-fast) var(--ease-out);
-  }
-
-  .composer-surface:hover > .composer-resize::before,
-  .composer-resize.is-sized::before,
-  .composer-resize:hover::before,
-  .composer-resize:active::before,
-  .composer-resize:focus-visible::before {
-    opacity: 1;
-  }
-}
-
-.composer-resize:focus-visible {
-  outline-offset: 0;
-  border-radius: var(--radius-sm);
 }
 
 .composer-text {
@@ -602,13 +531,6 @@
 
 .composer-text:focus-visible {
   outline: 0;
-}
-
-/* a height set with the grip: the grip's own limits, re-applied when a keyboard or a rotation
-   shrinks the viewport, so the saved height comes back once there is room again */
-.composer-text.is-sized {
-  max-height: min(50vh, 480px);
-  max-height: min(calc(var(--app-height, 100dvh) / 2), 480px);
 }
 
 .composer-text::placeholder {
@@ -828,6 +750,69 @@
   display: contents;
 }
 
+/* the rows, inside the menu that scrolls them: never shrunk to its height, or nothing would scroll */
+.composer-menu-list {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* the menu's close, in its top corner over whatever row scrolls under it; the first row (or group
+   heading) leaves it room, so at rest it covers nothing */
+.composer-menu-close {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: none;
+  align-self: flex-end;
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  margin-bottom: calc(-1 * var(--control-h));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.composer-menu-close svg {
+  width: var(--fs-md);
+  height: var(--fs-md);
+}
+
+.composer-menu-list > .composer-menu-group:first-child > :first-child,
+.composer-menu-close + .composer-menu-group > :first-child {
+  padding-inline-end: calc(var(--control-h) + var(--space-1));
+}
+
+@media (hover: hover) {
+  .composer-menu-close:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.composer-menu-close:focus-visible {
+  outline: var(--ring);
+  outline-offset: calc(-1 * var(--ring-offset));
+}
+
+@media (pointer: coarse) {
+  .composer-menu-close {
+    width: var(--touch-target);
+    height: var(--touch-target);
+    margin-bottom: calc(-1 * var(--touch-target));
+  }
+
+  .composer-menu-list > .composer-menu-group:first-child > :first-child,
+  .composer-menu-close + .composer-menu-group > :first-child {
+    padding-inline-end: calc(var(--touch-target) + var(--space-1));
+  }
+}
+
 /* where a skill comes from: yours in the accent; the project's, the agent's own and a plugin's
    dimmed like any other icon */
 .composer-menu .menu-item[data-origin="user"] svg {
@@ -914,6 +899,26 @@
   border-color: var(--status-blocked);
 }
 
+/* a path with no room or a failed upload: the badge is a warning glyph alone (its words are for
+   assistive tech); the status line under the box, or the failure line above it, says the rest */
+.composer-attachment.is-no-room .composer-attachment-state,
+.composer-attachment.is-error .composer-attachment-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--notice);
+}
+
+.composer-attachment.is-error .composer-attachment-state {
+  color: var(--status-blocked);
+}
+
+.composer-attachment.is-no-room .composer-attachment-state svg,
+.composer-attachment.is-error .composer-attachment-state svg {
+  width: var(--fs-xs);
+  height: var(--fs-xs);
+}
+
 .composer-attachment button {
   position: absolute;
   top: calc(-1 * var(--space-2));
@@ -930,6 +935,17 @@
   color: var(--text-strong);
 }
 
+/* a mouse's floor: the X keeps its --chip-h circle and takes a --pointer-target hit area through an
+   invisible expander around it, past its hairline edge (a finger's --touch-target size is set
+   below) */
+@media (pointer: fine) {
+  .composer-attachment button::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--chip-h) - var(--pointer-target)) / 2 - var(--hairline));
+  }
+}
+
 /* why the message did not go: a band on the box's top edge, the box's own width, so it reads as
    the box's; a note with its one way on (send over the terminal's draft) keeps the button at its
    end, or under the reason when the row is too short for both */
@@ -938,8 +954,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-2);
-  /* the resize grip's hit area rises above the box: the band stops short of it, so its button is whole */
-  margin-bottom: max(var(--space-2), var(--composer-grip-h));
+  margin-bottom: var(--space-2);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   background: var(--danger-tint);
   border: var(--hairline) solid color-mix(in srgb, var(--status-blocked) 35%, transparent);
@@ -960,6 +975,38 @@
   flex: 1 1 12rem;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* what the line leaves out (the advice, the PC's own words) folds under it: a dim Details toggle */
+.composer-note-details {
+  margin-top: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.composer-note-details > summary {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+}
+
+.composer-note-details > p {
+  margin: var(--space-1) 0 0;
+}
+
+.composer-note-details > code {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+/* a finger's floor: the toggle keeps its one line and takes a --touch-target hit area, both ways, through an
+   invisible expander around it */
+@media (pointer: coarse) {
+  .composer-note-details > summary::before {
+    content: "";
+    position: absolute;
+    inset: calc((1lh - var(--touch-target)) / 2) min(0px, calc((100% - var(--touch-target)) / 2));
+  }
 }
 
 .composer-note-offer .composer-note-action {
@@ -1058,13 +1105,6 @@
     height: var(--touch-target);
   }
 
-  .composer {
-    --composer-grip-h: 20px;
-  }
-
-  .composer-resize {
-    width: 64px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1073,8 +1113,7 @@
   }
 
   .composer-surface,
-  .composer-action::before,
-  .composer-resize::before {
+  .composer-action::before {
     transition: none;
   }
 }

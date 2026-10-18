@@ -5,6 +5,7 @@ import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
+import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -160,6 +161,11 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     </li>;
   };
 
+  // no PCs yet (the roster is still on its way), or a connected PC whose panes have not come in: not "none running"
+  const loading = machines.length === 0 || machines.some((machine) => machine.state === "connected" && machine.snapshot === null);
+  // the empty list's line is a live region that is in the list from its first render, clipped while empty (never
+  // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
+  const shownEmpty = useAnnouncedText(rows.length === 0 ? (loading ? t("Loading agents…") : t("No agents running")) : null);
   const menuPinned = menu !== null && pinned.includes(menu.key);
   const runPin = (state: PinMenu): void => {
     // where the menu hands the focus back (lib RowMenu): the ⋯ itself unless the right-click said otherwise
@@ -177,8 +183,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       {collapsed && rows.length > 0 && <span className="agent-section-count">{rows.length}</span>}
     </button>
     <div className="agent-list-contents" id={listId} hidden={collapsed}>
-      {rows.length === 0 ? <p className="agent-empty" role="status">{t("No agents running")}</p> : <>
-        {split.pinned.length > 0 && <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(agentItem)}</ul>}
+      <p className={shownEmpty === null ? "visually-hidden" : "agent-empty"} role="status">{shownEmpty}</p>
+      {rows.length > 0 && <>
+        {split.pinned.length > 0 && <>
+          <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
+          <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(agentItem)}</ul>
+        </>}
         {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
       </>}
     </div>

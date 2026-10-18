@@ -1,7 +1,9 @@
 {
   "api": "w1C:p1",
   "web": "w1D:p1",
-  "infra": "w1E:p1",
-  "docs": "w1F:p1",
+  "flaky": "w1H:p1",
+  "omp": "w1J:p1",
+  "cli": "w1K:p1",
+  "hermes": "w1L:p1",
   "shell": "w1G:p1"
 }

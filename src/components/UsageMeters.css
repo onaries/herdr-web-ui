@@ -1,7 +1,9 @@
 /* Plan meters beside Settings in the sidebar footer, and the popover with every limit */
 
 .usage {
-  flex: 0 1 auto;
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
   min-width: 0;
 }
 

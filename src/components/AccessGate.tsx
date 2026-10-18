@@ -6,6 +6,7 @@ import { ApiError, authenticate, pairDevice } from "../lib/api.ts";
 import { deviceLabel } from "../lib/phone.ts";
 import type { AccessRefusal } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
+import { userErrorMessage, type UserError } from "../lib/userError.ts";
 
 
 export interface AccessGateProps {
@@ -31,7 +32,8 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
   const [code, setCode] = useState(initialCode);
   const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState<"code" | "token" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserError | null>(null);
+  const [codeShort, setCodeShort] = useState(false);
   const scanned = useRef(code.length === 6);
 
   const pair = async (value: string): Promise<void> => {
@@ -42,7 +44,7 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
       await pairDevice(value, deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0));
       onUnlocked();
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? t("That code is wrong, used up or expired. Start a new pairing on the PC.") : err instanceof Error ? err.message : String(err));
+      setError(err instanceof ApiError && err.status === 401 ? { message: t("That code is wrong, used up or expired. Start a new pairing on the PC."), detail: null } : userErrorMessage(err));
       setSubmitting(null);
       codeRef.current?.select();
     }
@@ -53,7 +55,7 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
 
   const submitCode = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    if (code.length !== 6) { codeRef.current?.focus(); return; }
+    if (code.length !== 6) { setCodeShort(true); codeRef.current?.focus(); return; }
     void pair(code);
   };
 
@@ -67,7 +69,7 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
       await authenticate(token);
       onUnlocked();
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? t("Token does not match.") : err instanceof Error ? err.message : String(err));
+      setError(err instanceof ApiError && err.status === 401 ? { message: t("Token does not match."), detail: null } : userErrorMessage(err));
       setSubmitting(null);
       tokenRef.current?.select();
     }
@@ -99,11 +101,12 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
             maxLength={7}
             placeholder="000 000"
             autoFocus
-            aria-invalid={error !== null && submitting !== "token"}
-            aria-describedby={error !== null ? "access-gate-error" : undefined}
+            aria-invalid={codeShort || (error !== null && submitting !== "token")}
+            aria-describedby={codeShort ? "access-gate-code-error" : error !== null ? "access-gate-error" : undefined}
             value={code}
-            onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            onChange={(event) => { setCodeShort(false); setCode(event.target.value.replace(/\D/g, "").slice(0, 6)); }}
           />
+          {codeShort && <p id="access-gate-code-error" className="access-gate-error" role="alert">{t("Enter all 6 digits of the pairing code.")}</p>}
           <button type="submit" className="access-gate-submit" disabled={submitting !== null}>
             {t(submitting === "code" ? "Pairing…" : "Pair this device")}
           </button>
@@ -129,7 +132,7 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
           </form>
         </details>
         {error !== null && (
-          <p id="access-gate-error" className="access-gate-error" role="alert">{error}</p>
+          <p id="access-gate-error" className="access-gate-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>
         )}
       </div>
     </main>

@@ -13,6 +13,7 @@
 .account-choice > span { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .account-choice:hover:not(:disabled) { background: var(--bg-hover); }
 .account-choice:disabled { color: var(--text-dim); cursor: default; }
+.usage-hub-key { display: flex; align-items: center; gap: var(--space-2); }
 .account-error { color: var(--status-blocked); }
 .usage-hub-login, .usage-hub-login form { display: flex; flex-direction: column; gap: var(--space-4); }
 .usage-hub-login .input { width: 100%; min-width: 0; }

@@ -17,6 +17,7 @@ interface Props {
   terminal: Terminal | null;
   paneId: string;
   pageScroll?: { current: ((direction: -1 | 1) => void) | null };
+  lineScroll?: { current: ((lines: number) => void) | null };
   onApplicationPage?: (direction: -1 | 1) => void;
   enabled: boolean;
   interactive: boolean;
@@ -28,7 +29,7 @@ interface Props {
 /** how long a page asked for on stale metrics waits for the read that tells history from a program's screen */
 const HELD_PAGE_MS = 1000;
 
-export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageScroll, onApplicationPage, enabled, interactive, search, onError }: Props) {
+export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageScroll, lineScroll, onApplicationPage, enabled, interactive, search, onError }: Props) {
   const t = useT();
   const api = useMachineApi();
   const layer = useRef<HTMLDivElement>(null);
@@ -46,7 +47,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
   const query = interactive && search && Array.isArray(search.result.matches) && search.result.scroll !== undefined ? search.query : "";
 
   useEffect(() => {
-    if (!terminal || !enabled) { setScroll(null); setHits([]); previewRef.current = null; if (pageScroll) pageScroll.current = null; return; }
+    if (!terminal || !enabled) { setScroll(null); setHits([]); previewRef.current = null; if (pageScroll) pageScroll.current = null; if (lineScroll) lineScroll.current = null; return; }
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timerDue = 0;
@@ -63,6 +64,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     // keys for the shell. A page asked for meanwhile waits for that read, briefly.
     let metricsOutput = -1;
     let heldPage: { direction: -1 | 1; at: number } | null = null;
+    let heldLines: { lines: number; at: number } | null = null;
     let data: PaneFindResponse | null = null;
     let lastKey = "";
     const showing = () => document.visibilityState !== "hidden" && !!terminal.element?.getClientRects().length
@@ -149,6 +151,10 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
           heldPage = null;
           if (Date.now() - held.at < HELD_PAGE_MS) scrollPage(held.direction);
         }
+        if (heldLines && output === outputVersion && validScroll(metrics)) {
+          const held = heldLines; heldLines = null;
+          if (Date.now() - held.at < HELD_PAGE_MS) scrollLines(held.lines);
+        }
       } catch {
         // a failed read retries on the first step, not the idle backoff: page keys wait on it
         if (alive && revision === version) { clearHits(); if (!query) setScroll(null); idle = 0; }
@@ -206,8 +212,18 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       else { dirty = true; idle = 0; schedule(0); }
     };
     if (pageScroll) pageScroll.current = scrollPage;
+    const scrollLines = (lines: number) => {
+      if (!interactive || !alive || viewportIntent.isSearching() || !showing()) return;
+      const metrics = scrollRef.current;
+      if (validScroll(metrics)) writeRef.current((previewRef.current ?? metrics.offset_from_bottom) + lines);
+      else {
+        heldLines = { lines: (heldLines && Date.now() - heldLines.at < HELD_PAGE_MS ? heldLines.lines : 0) + lines, at: Date.now() };
+        dirty = true; idle = 0; schedule(0);
+      }
+    };
+    if (lineScroll) lineScroll.current = scrollLines;
     const unregisterCancellation = viewportIntent.registerScrollCancellation(() => {
-      desired = null; version++;
+      desired = null; heldLines = null; version++;
       previewRef.current = null;
       clearHits();
     });
@@ -229,6 +245,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     return () => {
       alive = false; desired = null; version++; heldPage = null;
       if (pageScroll?.current === scrollPage) pageScroll.current = null;
+      if (lineScroll?.current === scrollLines) lineScroll.current = null;
       previewRef.current = null;
       unregisterCancellation();
       if (timer !== null) clearTimeout(timer);
@@ -237,7 +254,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       document.removeEventListener("visibilitychange", visibility);
       refreshRef.current = () => {}; writeRef.current = () => {};
     };
-  }, [terminal, paneId, enabled, interactive, query, api, t, viewportIntent, pageScroll, onApplicationPage]);
+  }, [terminal, paneId, enabled, interactive, query, api, t, viewportIntent, pageScroll, lineScroll, onApplicationPage]);
 
   useEffect(() => { refreshRef.current(); }, [search?.result]);
   return <div ref={layer} className="terminal-viewport-tools" aria-hidden={!enabled || undefined}>

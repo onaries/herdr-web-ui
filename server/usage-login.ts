@@ -27,7 +27,7 @@ export class UsageLoginService {
 
   ended(paneId: string): boolean { return this.panes.delete(paneId); }
 
-  async handle(request: Request): Promise<Response> {
+  async handle(request: Request, trackPane?: (paneId: string) => void): Promise<Response> {
     const executableFor = (id: UsageProviderId) => LOGIN[id].binaries.map((cli) => Bun.which(cli, { PATH: this.env["PATH"] ?? "" })).find(Boolean);
     if (request.method === "GET") {
       const id = new URL(request.url).searchParams.get("provider");
@@ -97,6 +97,7 @@ export class UsageLoginService {
       const created = workspace ? await tabCreate({ ...options, workspaceId: workspace.workspace_id }) : await workspaceCreate(options);
       const paneId = created.root_pane.pane_id;
       this.panes.add(paneId);
+      trackPane?.(paneId);
       // All variable argv are quoted by the bridge's existing POSIX shell encoder.
       if (process.platform === "win32") {
         const info = await paneProcessInfo(paneId);

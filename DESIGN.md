@@ -6,14 +6,18 @@ value. When a component needs a value that is not here, add it to both first.
 
 ## 1. Atmosphere & Identity
 
-A warm terminal: an amber-phosphor console on lamp-lit graphite (dark) or ledger paper (light),
+The herdr look (amber) is a warm terminal: an amber-phosphor console on lamp-lit graphite (dark) or ledger paper (light),
 with chat-app clarity. Tonal surfaces and hairlines keep the chrome out of the way. There is ONE
 chrome color, amber: focus, the chosen lens, the terminal cursor and the user's own action (Send, primary
 buttons). Agent states carry the remaining saturated colors and none of them is amber. The user's
 chat turns are neutral raised cards, so a long thread never turns into a wall of color. Dark is the
 default, light follows the same hierarchy, and comfortable or compact density changes scale without
-changing information architecture. A neutral charcoal look and Catppuccin are
-opt-in palettes (Settings → Appearance → Colors); amber stays the default and the look before settings load.
+changing information architecture. A new browser starts on the Codex theme (dark and light), which
+draws this hierarchy in Codex's neutral surfaces and blue accent; amber, charcoal, Catppuccin and
+herdr's built-in themes are picked in Settings → Appearance → Dark theme and Light theme. Amber
+stays the base every theme block overrides, the look before settings load, and the look a browser
+keeps when it saved a theme while amber was the default. Settings are saved on a user's first
+change, so a browser that never changed one moves to Codex with everyone new.
 
 The sidebar is one grid: a leading cell that says who or what a row is (the coding agent's brand
 mark, else the place's own glyph), a title, and a trailing cell that says how it is. Workspaces
@@ -24,12 +28,22 @@ Hover and selection are one neutral fill at two strengths. Brand marks are the o
 there that is not a state, and a ready row draws no state at all. Amber connects focus, the chosen
 lens glyph and the terminal cursor.
 
+Messages say only what the person needs now, not everything the app knows:
+- Something to do: one sentence and the control that does it ("Couldn't attach [Try again]").
+- Only waiting: one muted phrase, in one place ("Connecting…"); never the same state twice on screen.
+- Causes, internals and conditions stay folded away (a Details toggle) or appear only when they
+  apply. A known cause is the sentence ("PC disk is full"); a generic fallback never pushes it aside.
+- One situation, one message, one place.
+- The resting screen is calm: a destructive control looks neutral until it asks to confirm;
+  danger color is for the moment of risk.
+
 ## 2. Color
 
 ### Palette
 
 Only tokens overridden by `[data-theme="light"]` have a light value. Both columns are literal CSS.
 
+<!-- BEGIN GENERATED THEMES -->
 | Role | Token | Dark | Light |
 |------|-------|------|-------|
 | Surface/base | `--bg` | `#12100e` | `#eeeae2` |
@@ -65,60 +79,312 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Danger/text | `--danger-text` | `#ffd9d4` | `#8f1d1d` |
 | Notice | `--notice` | `#e8c55c` | `#7a5a00` |
 | Overlay/scrim | `--scrim` | `rgba(8, 6, 4, 0.55)` | `rgba(40, 32, 22, 0.35)` |
-| Glass bar | `--bar-bg` | `color-mix(in srgb, var(--bg-panel) 72%, transparent)` | same expression |
-| Glass card | `--card-glass` | `color-mix(in srgb, var(--bg-elevated) 80%, transparent)` | same expression |
-| Glass blur | `--glass-blur` | `saturate(180%) blur(20px)` | same |
 | Drawer shadow | `--shadow-drawer` | `0 0 40px rgba(0, 0, 0, 0.6)` | `0 0 40px rgba(40, 32, 22, 0.22)` |
 | Popover shadow | `--shadow-pop` | `0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border)` | `0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border)` |
 | Card shadow | `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.35)` | `0 4px 16px rgba(40, 32, 22, 0.07)` |
 | Document surface | `--pdf-page` | `#ffffff` | `#ffffff` |
+| Terminal/background | `--term-bg` | `#181613` | `#faf8f3` |
+| Terminal/foreground | `--term-fg` | `#d8d0c3` | `#2a251f` |
+| Terminal/cursor | `--term-cursor` | `#f0a830` | `#8c5000` |
+| Terminal/selection | `--term-selection` | `#4a3d26` | `#f0d9ae` |
+| Syntax/keyword | `--syntax-keyword` | `#e8875f` | `#a33a17` |
+| Syntax/string | `--syntax-string` | `#a8c17c` | `#4b6b18` |
+| Syntax/number | `--syntax-number` | `#d6a0c9` | `#8a3f7a` |
+| Syntax/type | `--syntax-type` | `#6cb8d6` | `#155a72` |
+| Syntax/variable | `--syntax-variable` | `#e0c08f` | `#7a5418` |
+| Syntax/meta | `--syntax-meta` | `#b49dd6` | `#5d4791` |
+| Alert/background | `--droplet-bg` | `#000` | `#000` |
+| Alert/text | `--droplet-text` | `#f5f5f7` | `#f5f5f7` |
+| Alert/dim text | `--droplet-text-dim` | `rgba(245, 245, 247, 0.62)` | `rgba(245, 245, 247, 0.62)` |
+| Alert/blocked | `--droplet-blocked` | `#ff8a80` | `#ff8a80` |
+| Alert/done | `--droplet-done` | `#9fd47a` | `#9fd47a` |
+| Alert/mark background | `--droplet-mark-bg` | `rgba(255, 255, 255, 0.1)` | `rgba(255, 255, 255, 0.1)` |
+| Alert/ring | `--droplet-ring` | `rgba(255, 255, 255, 0.1)` | `rgba(255, 255, 255, 0.1)` |
+| Alert/shadow | `--droplet-shadow` | `rgba(0, 0, 0, 0.35)` | `rgba(0, 0, 0, 0.35)` |
+
+### Light terminal ANSI colours
+
+Each colour is at least 4.5:1 on its row's `--term-bg`. Dark rows use xterm's defaults.
+Normal and bright slots may share a colour to preserve the palette while keeping both readable.
+
+| ANSI | xterm key | amber | charcoal | codex | catppuccin | catppuccin-latte | tokyo-night-day | gruvbox-light | one-light | solarized-light | kanagawa-lotus | rose-pine-dawn |
+|------|-----------|-------|-------|-------|-------|-------|-------|-------|-------|-------|-------|-------|
+| 0 | `black` | `#2a251f` | `#242424` | `#1a1c1f` | `#4c4f69` | `#4c4f69` | `#3760bf` | `#3c3836` | `#383a42` | `#556a72` | `#545464` | `#464261` |
+| 1 | `red` | `#a82323` | `#b3261e` | `#b3261e` | `#ac0c2f` | `#ac0c2f` | `#90001b` | `#9d0006` | `#a51110` | `#b60006` | `#95002b` | `#873a52` |
+| 2 | `green` | `#2f6317` | `#22743a` | `#22743a` | `#28651b` | `#28651b` | `#405b1f` | `#676200` | `#287c2a` | `#5d6e00` | `#4a6228` | `#286983` |
+| 3 | `yellow` | `#8c5000` | `#8a5300` | `#8a5300` | `#8a5710` | `#8a5710` | `#6c4d1f` | `#8e5100` | `#995f00` | `#8a5f00` | `#625b2a` | `#9e5600` |
+| 4 | `blue` | `#155a72` | `#0b6e8a` | `#0b6e8a` | `#1750bf` | `#1750bf` | `#004db6` | `#076678` | `#2f64dd` | `#006baf` | `#4d699b` | `#286983` |
+| 5 | `magenta` | `#8a3f7a` | `#6f42c1` | `#6f42c1` | `#712fc6` | `#712fc6` | `#7847bd` | `#8f3f71` | `#a626a4` | `#c12073` | `#624c83` | `#755f8d` |
+| 6 | `cyan` | `#0f6b6f` | `#0f6f74` | `#0f6f74` | `#0e6b70` | `#0e6b70` | `#005f4a` | `#316b48` | `#0072a9` | `#00746d` | `#216276` | `#33717c` |
+| 7 | `white` | `#685e52` | `#5f5b56` | `#5f5b56` | `#5c5f77` | `#5c5f77` | `#41508a` | `#504945` | `#686b77` | `#5a6a6c` | `#43436c` | `#605b78` |
+| 8 | `brightBlack` | `#5a5045` | `#4e4b47` | `#4e4b47` | `#64677d` | `#64677d` | `#41508a` | `#504945` | `#686b77` | `#586e75` | `#43436c` | `#605b78` |
+| 9 | `brightRed` | `#c42b2b` | `#c92d24` | `#c92d24` | `#c41545` | `#c41545` | `#90001b` | `#9d0006` | `#a51110` | `#b60006` | `#95002b` | `#873a52` |
+| 10 | `brightGreen` | `#3b741c` | `#277d3f` | `#277d3f` | `#2f7620` | `#2f7620` | `#405b1f` | `#676200` | `#287c2a` | `#5d6e00` | `#4a6228` | `#286983` |
+| 11 | `brightYellow` | `#9d5a00` | `#9f6100` | `#9f6100` | `#905c13` | `#905c13` | `#6c4d1f` | `#8e5100` | `#995f00` | `#8a5f00` | `#625b2a` | `#9e5600` |
+| 12 | `brightBlue` | `#1d6f8c` | `#1a7391` | `#1a7391` | `#0b59f4` | `#0b59f4` | `#004db6` | `#076678` | `#2f64dd` | `#006baf` | `#4d699b` | `#286983` |
+| 13 | `brightMagenta` | `#a24b90` | `#7f52d1` | `#7f52d1` | `#8839ef` | `#8839ef` | `#7847bd` | `#8f3f71` | `#a626a4` | `#c12073` | `#624c83` | `#755f8d` |
+| 14 | `brightCyan` | `#117676` | `#13767e` | `#13767e` | `#13737a` | `#13737a` | `#005f4a` | `#316b48` | `#0072a9` | `#00746d` | `#216276` | `#33717c` |
+| 15 | `brightWhite` | `#16120d` | `#111111` | `#0d0d0d` | `#4c4f69` | `#4c4f69` | `#3760bf` | `#3c3836` | `#383a42` | `#556a72` | `#545464` | `#464261` |
+<!-- END GENERATED THEMES -->
+
+The glass tokens are expressions over the palette above, not colors of their own:
+
+| Role | Token | Dark | Light |
+|------|-------|------|-------|
+| Glass bar | `--bar-bg` | `color-mix(in srgb, var(--bg-panel) 72%, transparent)` | same expression |
+| Glass card | `--card-glass` | `color-mix(in srgb, var(--bg-elevated) 80%, transparent)` | same expression |
+| Glass blur | `--glass-blur` | `saturate(180%) blur(20px)` | same |
 
 `--pdf-page` is the one color with the same value in both columns, on purpose: a PDF page is
 paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the theme. It is named in
 `src/styles.css` under the same note and no theme or palette block overrides it.
 
-### Opt-in palettes
+### Themes
 
-`settings.palette` (`amber` default, `charcoal`, `catppuccin`) is written as `data-palette`. The
-tables above are amber, the base blocks; the two opt-in palettes override them in
-`[data-theme][data-palette]` blocks of `src/styles.css`, which hold the complete values.
+`settings.darkTheme` and `settings.lightTheme` (both `codex` by default) name the theme each mode
+draws. The resolved entry is written as `data-theme` (its mode) and `data-palette` (its id). Any
+theme can be picked on either side. Picking one half of a herdr pair also sets the other side to
+its sibling, but only while that side still holds `codex` (the default, even if picked by hand),
+`amber` (the default before it) or the sibling of the previous pick; any other value is kept. A
+dark theme picked for light mode still draws dark.
+The themes are amber, charcoal, codex and catppuccin plus herdr's built-ins; herdr's `terminal` theme is
+not offered. The tables above are amber, the base blocks; every other theme overrides them in a
+`[data-theme][data-palette]` block of `src/styles.css`.
+
+The theme blocks of `src/styles.css` are the theme table and the one place a theme color is
+edited: `:root` is dark amber, `[data-theme="light"]` is light amber and
+`[data-theme="<mode>"][data-palette="<id>"]` is every other entry. `bun run generate:themes`
+(`scripts/generate-themes.ts`) reads them and writes the copies: `src/lib/themes.generated.ts`
+(the supported entries with their roles, xterm colors and panel color), the amber table above
+between its `GENERATED THEMES` markers, the `theme-color` tag in `index.html` and the manifest's
+`theme_color` and `background_color`. Never edit those copies by hand; `--check` fails when one
+is stale. The tables list amber's UI roles and every light row's terminal ANSI colours; read
+another theme's UI values in its block. A herdr theme
+starts from `bun scripts/herdr-theme-proposal.ts`. Every role whose value differs from the raw
+herdr mapping (`mapTheme`), including repairs the proposal tool already made, is listed in
+`scripts/herdr-theme-overrides.ts` with its dE and reason; every entry passes AA on its
+committed hex.
 
 `--bubble-border` is the edge of the chat's user bubble. It is `transparent` where `--bg-elevated`
 alone parts the bubble from `--bg`: dark amber and dark charcoal. It is `var(--border)`
 where the two surfaces sit close: every light theme (the `[data-theme="light"]` block sets it for
 all palettes) and dark Catppuccin, whose elevated surface is darker than its canvas.
 
-- **Charcoal** is a neutral Ghostty-style dark: `--bg` `#0f0f0f`, panel and terminal `#171717`, text
-  `#cbc7c0` / `#918c85` / `#f5f2ec`, accent and primary near-white `#e8e4dc` with `#171717` text,
-  muted states (working `#c2a2af`, input `#e0877f`, done `#a7b789`, idle `#9a958e`), terminal cursor
-  `#cbc7c0`, selection `#49443d`. It keeps amber's rounded corners and card shadow.
-  In light it is plain paper (`--bg` `#f2f2f0`, panel `#fafaf9`, text `#242424`, primary ink
-  `#242424` with `#fafaf9` text) with an ink accent and cursor `#242424`, selection `#dedad3`.
+- **Charcoal** is a neutral Ghostty-style dark: near-black canvas, a slightly lighter panel and
+  terminal, a near-white accent and primary, and muted agent states. It keeps amber's rounded
+  corners and card shadow. In light it's plain paper with an ink accent and cursor.
+- **Codex** copies the Codex desktop app's default theme export: surface `#ffffff` / `#181818`,
+  ink `#1a1c1f` / `#ffffff` and accent `#3a83f7`. The chrome sits one quiet step off the surface,
+  the primary control is ink as Codex's send button, and agent states and code take Codex's
+  diff and skill colors, moved in lightness only as far as AA needs.
 - **Catppuccin** follows [catppuccin.com/palette](https://catppuccin.com/palette/), its style guide
   and its Zed port: Mocha in dark, Latte in light. In both the content (chat canvas `--bg`,
   terminal) is Base, the chrome (`--bg-panel`: sidebar, the header over it and on a phone, tabs) and elevated surfaces Mantle,
   dimmed text Subtext1, cursor Rosewater, selection Overlay2 at 25% over Base. Dark uses palette
-  colors (only the primary hover `#d3b3f8`, Mauve lightened, and the tints are derived): Base
-  `#1e1e2e`, Mantle `#181825`, input Crust, hover Surface0, text Text `#cdd6f4` / Subtext1 `#bac2de`,
-  accent and primary Mauve `#cba6f7` with Crust text, states Blue / Maroon / Green, idle Subtext0
-  (Maroon, not Red, keeps input AA on a hovered row), cursor `#f5e0dc`, selection `#3b3d4f`. Light
-  keeps Latte's surfaces and text: Base `#eff1f5` (also input), Mantle `#e6e9ef`, hover Crust
-  `#dce0e8` (the darkest surface Subtext1 stays AA on), idle Subtext1, cursor `#dc8a78`, selection
-  `#d2d4dc`. Latte's accents are under 4.5:1 on these surfaces, so each keeps its hue and is darkened
-  until it passes AA: Mauve `#712fc6` (primary hover is plain Latte Mauve `#8839ef`), Blue `#1750bf`,
-  Red `#ac0c2f`, Green `#28651b`. It keeps amber's rounded corners.
+  colors, with only the primary hover (Mauve lightened) and the tints derived; its states are
+  Blue / Maroon / Green (Maroon, not Red, keeps input AA on a hovered row). Light keeps Latte's
+  surfaces and text, with Crust as the hover, the darkest surface Subtext1 stays AA on. Latte's
+  accents are under 4.5:1 on these surfaces, so each keeps its hue and is darkened until it passes
+  AA. It keeps amber's rounded corners.
+
+### Herdr theme pair notes
+
+Theme colors remain authored only in `src/styles.css`; the notes here describe deviations, not
+another color table. Catppuccin Latte is a second selector on the existing legacy light block.
+Its proposal is deliberately not applied: the permanent legacy oracle takes precedence over the
+herdr mapping, including existing surface, accent, cursor, status and syntax choices.
+
+- **tokyo-night**: `--border` moves dE 12.89; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **tokyo-night**: `--border-strong` moves dE 8.72; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+- **tokyo-night-day**: `--text` moves dE 6.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--text-dim` moves dE 11.81; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--text-strong` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--status-working` moves dE 18.99; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--status-blocked` moves dE 23.41; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--status-done` moves dE 12.85; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--status-working-tint` moves dE 18.99; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--status-blocked-tint` moves dE 23.41; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--status-done-tint` moves dE 12.85; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--danger-tint` moves dE 23.41; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--danger-text` moves dE 23.41; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--scrim` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--line-number` moves dE 11.81; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--syntax-function` moves dE 14.94; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-keyword` moves dE 5.15; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-string` moves dE 8.95; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-number` moves dE 11.25; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-type` moves dE 10.85; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-variable` moves dE 6.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--syntax-meta` moves dE 14.24; its lightness changes to keep serialized text readable at the 4.6 target.
+- **tokyo-night-day**: `--shadow-drawer` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--shadow-pop` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--shadow-card` moves dE 6.18; it follows the repaired foreground so its derived color stays consistent.
+- **tokyo-night-day**: `--border` moves dE 8.13; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **tokyo-night-day**: `--border-strong` moves dE 9.61; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+
+- **gruvbox**: `--status-working` moves dE 9.80; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox**: `--status-blocked` moves dE 18.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox**: `--status-working-tint` moves dE 9.80; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--status-blocked-tint` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--danger-tint` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--danger-text` moves dE 18.18; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox**: `--border` moves dE 6.71; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **gruvbox**: `--border-strong` moves dE 20.90; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+- **gruvbox-light**: `--status-done` moves dE 9.96; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--status-done-tint` moves dE 9.96; it follows the repaired foreground so its derived color stays consistent.
+- **gruvbox-light**: `--syntax-string` moves dE 6.17; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--syntax-type` moves dE 12.38; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--syntax-meta` moves dE 5.51; its lightness changes to keep serialized text readable at the 4.6 target.
+- **gruvbox-light**: `--border` moves dE 6.90; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **gruvbox-light**: `--border-strong` moves dE 20.78; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+
+- **one-dark**: `--status-blocked` moves dE 12.35; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-dark**: `--status-blocked-tint` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-dark**: `--danger-tint` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-dark**: `--danger-text` moves dE 12.35; it follows the repaired foreground so its derived color stays consistent.
+- **one-dark**: `--border` moves dE 7.45; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **one-dark**: `--border-strong` moves dE 11.20; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+- **one-light**: `--status-working` moves dE 14.64; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--status-blocked` moves dE 17.89; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--status-done` moves dE 20.75; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--status-working-tint` moves dE 14.64; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--status-blocked-tint` moves dE 17.89; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--status-done-tint` moves dE 20.75; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--danger-tint` moves dE 17.89; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--danger-text` moves dE 17.89; it follows the repaired foreground so its derived color stays consistent.
+- **one-light**: `--syntax-function` moves dE 6.19; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--syntax-string` moves dE 12.04; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--syntax-type` moves dE 12.40; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--syntax-meta` moves dE 5.55; its lightness changes to keep serialized text readable at the 4.6 target.
+- **one-light**: `--border-strong` moves dE 21.23; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+
+- **solarized**: `--text` moves dE 6.75; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--text-dim` moves dE 11.25; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--text-strong` moves dE 6.75; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--status-working` moves dE 24.14; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--status-blocked` moves dE 29.43; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--status-done` moves dE 19.69; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--status-working-tint` moves dE 24.14; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--status-blocked-tint` moves dE 29.43; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--status-done-tint` moves dE 19.69; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--danger-tint` moves dE 29.43; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--danger-text` moves dE 29.43; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--line-number` moves dE 11.25; it follows the repaired foreground so its derived color stays consistent.
+- **solarized**: `--syntax-function` moves dE 6.94; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--syntax-keyword` moves dE 11.95; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--syntax-number` moves dE 12.29; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized**: `--border` moves dE 7.51; herdr active_row_bg replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible; surface1 is already `--border-strong`.
+- **solarized-light**: `--text` moves dE 5.80; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--text-dim` moves dE 14.20; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--text-strong` moves dE 26.00; herdr solarized surface0 (base02) replaces the repaired `--text`, which sits 1.01:1 from `--text-dim` while `--bg-hover` equals `--bg-elevated`, so strong text and the chosen segment part from quiet text.
+- **solarized-light**: `--status-working` moves dE 14.20; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--status-blocked` moves dE 9.89; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--status-done` moves dE 17.94; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--status-working-tint` moves dE 14.20; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--status-blocked-tint` moves dE 9.89; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--status-done-tint` moves dE 17.94; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--danger-tint` moves dE 9.89; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--danger-text` moves dE 9.89; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--scrim` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--line-number` moves dE 14.20; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--syntax-function` moves dE 10.19; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-keyword` moves dE 5.11; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-string` moves dE 14.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-type` moves dE 13.99; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-variable` moves dE 5.80; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--syntax-meta` moves dE 14.09; its lightness changes to keep serialized text readable at the 4.6 target.
+- **solarized-light**: `--shadow-drawer` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--shadow-pop` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--shadow-card` moves dE 5.80; it follows the repaired foreground so its derived color stays consistent.
+- **solarized-light**: `--border` moves dE 6.34; herdr selection_bg replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible; surface1 is already `--border-strong`.
+
+- **kanagawa**: `--status-working` moves dE 9.73; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa**: `--status-blocked` moves dE 24.67; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa**: `--status-done` moves dE 14.97; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa**: `--status-working-tint` moves dE 9.73; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--status-blocked-tint` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--status-done-tint` moves dE 14.97; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--danger-tint` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--danger-text` moves dE 24.67; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa**: `--border-strong` moves dE 21.13; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+- **kanagawa-lotus**: `--status-working` moves dE 10.49; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--status-blocked` moves dE 14.57; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--status-done` moves dE 18.90; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--status-working-tint` moves dE 10.49; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--status-blocked-tint` moves dE 14.57; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--status-done-tint` moves dE 18.90; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--danger-tint` moves dE 14.57; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--danger-text` moves dE 14.57; it follows the repaired foreground so its derived color stays consistent.
+- **kanagawa-lotus**: `--syntax-function` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-string` moves dE 13.23; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-number` moves dE 15.26; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-type` moves dE 7.57; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--syntax-meta` moves dE 14.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **kanagawa-lotus**: `--border` moves dE 6.84; herdr surface1 replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible.
+- **kanagawa-lotus**: `--border-strong` moves dE 14.20; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+
+- **rose-pine**: `--status-working` moves dE 17.40; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--status-done` moves dE 17.40; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--status-working-tint` moves dE 17.40; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine**: `--status-done-tint` moves dE 17.40; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine**: `--syntax-function` moves dE 9.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--syntax-string` moves dE 9.27; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine**: `--border` moves dE 10.15; herdr selection_bg replaces surface0, which equals `--bg-elevated` and `--bg-input`, so control edges stay visible; surface1 would be 1.09:1 against the elevated card.
+- **rose-pine**: `--border-strong` moves dE 26.75; herdr overlay0 replaces surface1, so it stays one step above the moved `--border`.
+- **rose-pine-dawn**: `--text-dim` moves dE 8.98; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-working` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-blocked` moves dE 14.03; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-done` moves dE 5.18; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--status-working-tint` moves dE 5.18; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--status-blocked-tint` moves dE 14.03; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--status-done-tint` moves dE 5.18; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--danger-tint` moves dE 14.03; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--danger-text` moves dE 14.03; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--line-number` moves dE 8.98; it follows the repaired foreground so its derived color stays consistent.
+- **rose-pine-dawn**: `--syntax-keyword` moves dE 9.20; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--syntax-number` moves dE 16.36; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--syntax-type` moves dE 23.03; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--syntax-meta` moves dE 11.64; its lightness changes to keep serialized text readable at the 4.6 target.
+- **rose-pine-dawn**: `--border-strong` moves dE 31.57; herdr overlay0 replaces surface1, which is lighter than the panel, so it stays one step above the moved `--border`.
+
+### Herdr dark-only theme notes
+
+Dracula, Nord and Vesper keep their single dark row on either settings side, with no sibling
+pre-fill. The CSS blocks remain the color source; explicit repairs are recorded in the override list.
+
+- **dracula**: `--border` moves dE 16.44; reviewed herdr overlay/surface border keeps outlines distinct from elevated and input surfaces.
+- **dracula**: `--border-strong` moves dE 8.91; herdr overlay1 keeps it one step above `--border`, since surface1 and overlay0 are the same color as `--border`.
+- **dracula**: `--status-blocked` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--syntax-keyword` moves dE 6.69; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--danger-text` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--status-blocked-tint` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **dracula**: `--danger-tint` moves dE 24.57; reviewed explicit lightening and chroma relaxation beyond the proposal bound; serialized foreground reaches 4.6 and dependent defaults follow.
+- **nord**: `--border` moves dE 7.34; reviewed herdr overlay/surface border keeps outlines distinct from elevated and input surfaces.
+- **nord**: `--border-strong` moves dE 12.14; herdr overlay1 keeps it one step above `--border`, since overlay0 is already `--border`.
+- **nord**: `--status-working` moves dE 19.85; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-blocked` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-done` moves dE 11.92; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--syntax-keyword` moves dE 7.04; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--syntax-number` moves dE 7.32; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--syntax-function` moves dE 5.70; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--danger-text` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-working-tint` moves dE 19.85; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-blocked-tint` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--status-done-tint` moves dE 11.92; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **nord**: `--danger-tint` moves dE 30.16; AA lightness repair on serialized hex (target 4.6); dependent defaults follow repaired foreground.
+- **vesper**: `--border` moves dE 21.86; reviewed herdr overlay/surface border keeps outlines distinct from elevated and input surfaces.
+- **vesper**: `--border-strong` moves dE 31.63; herdr overlay1 keeps it one step above `--border`, since overlay0 is already `--border`.
 
 ### Terminal theme
 
-xterm.js reads a JavaScript theme, so `src/lib/settings.ts` `terminalTheme()` mirrors these four
-CSS tokens verbatim for each resolved theme and palette (`settings.test.ts` checks the match).
+xterm.js reads a JavaScript theme, not CSS, so `bun run generate:themes` copies these four tokens
+of every supported entry into `src/lib/themes.generated.ts`, and `terminalTheme()` hands them to
+xterm (`settings.test.ts` checks the match).
 
-| Role | Token | Dark | Light | xterm key |
-|------|-------|------|-------|-----------|
-| Background | `--term-bg` | `#181613` | `#faf8f3` | `background` |
-| Foreground | `--term-fg` | `#d8d0c3` | `#2a251f` | `foreground` |
-| Cursor | `--term-cursor` | `#f0a830` | `#8c5000` | `cursor` |
-| Selection | `--term-selection` | `#4a3d26` | `#f0d9ae` | `selectionBackground` |
+The amber dark and light values are generated in the Terminal rows of the table above.
+
+The xterm keys are `background` for `--term-bg`, `foreground` for `--term-fg`, `cursor` for
+`--term-cursor` and `selectionBackground` for `--term-selection`.
 
 Programs pick their own colors for one background, so xterm keeps a cell's text at 4.5:1 or more
 against the cell's background (`minimumContrastRatio`, WCAG AA): a foreground below it moves toward
@@ -134,28 +400,28 @@ palette: `--syntax-comment` is `--text-dim`, `--syntax-function` is `--accent`,
 (each at least 4.5:1 on `--bg-panel` and `--bg-elevated`). Catppuccin follows Catppuccin's own mapping: keywords are mauve, so `--syntax-function` is
 blue there instead of `--accent`, and Latte's colors are darkened to stay readable.
 
-| Block | keyword | string | number | type | variable | meta |
-|-------|---------|--------|--------|------|----------|------|
-| Dark amber | `#e8875f` | `#a8c17c` | `#d6a0c9` | `#6cb8d6` | `#e0c08f` | `#b49dd6` |
-| Light amber | `#a33a17` | `#4b6b18` | `#8a3f7a` | `#155a72` | `#7a5418` | `#5d4791` |
-| Light charcoal | `#b3261e` | `#22743a` | `#8a5300` | `#0b6e8a` | `#3b3b3b` | `#6f42c1` |
-| Dark charcoal | `#d7a08a` | `#a7b789` | `#c2a2af` | `#9fb4c2` | `#dcd8d0` | `#b8a5c9` |
-| Catppuccin Mocha | `#cba6f7` | `#a6e3a1` | `#fab387` | `#f9e2af` | `#f5e0dc` | `#f5c2e7` |
-| Catppuccin Latte | `#712fc6` | `#2f7620` | `#b44201` | `#905c13` | `#4c4f69` | `#bc1d91` |
+The amber values of `--syntax-keyword`, `--syntax-string`, `--syntax-number`, `--syntax-type`,
+`--syntax-variable` and `--syntax-meta` are generated in the Syntax rows of the table above.
 
-`--syntax-function` in Catppuccin: Mocha `#89b4fa`, Latte `#0b59f4`.
+Charcoal and Catppuccin set their own six (and Catppuccin its `--syntax-function`) in their
+blocks of `src/styles.css`.
 
 ### File viewer
 
 - `--notice` colors a note that the view is partial (a file cut short, code too long to color): the
   size in the header's meta line becomes `256 KB of 1.3 MB`, always beside a warning icon so the
   color is not the only sign. It is a warning yellow, at least 4.5:1 on
-  `--bg`, `--bg-panel` and `--bg-elevated`: amber `#e8c55c` / `#7a5a00`, light
-  charcoal `#8a5300`, dark charcoal `#d9b26a`, Catppuccin Mocha `#f9e2af` (yellow), Latte
-  `#8a5710`.
+  `--bg`, `--bg-panel` and `--bg-elevated` (see `--notice` in the generated table). Charcoal and Catppuccin
+  (its yellow) set theirs in their blocks of `src/styles.css`.
+- The header's meta line (size, folder) is `--fs-xs`. A file that cannot be previewed says so in
+  one sentence ("This file can't be previewed here. Download it to open it.") over its type and
+  size as a dim mono `--fs-xs` line; "Opening…" is a `role="status"` note that is in the document from
+  the viewer's first render, clipped and empty (`.visually-hidden`, never `display: none`), and gets its
+  words a frame later: a live region that appears together with its content is not announced.
 - `--line-number` colors the line numbers beside code: tertiary text, quieter than the code. It is
-  `--text-dim`, except in Catppuccin, whose `--text-dim` (subtext1) is nearly `--text`: Mocha
-  overlay2 `#9399b2` (5.8:1), Latte `#64677d` (subtext0 darkened to 4.9:1 on `--bg`).
+  `--text-dim`, except in Catppuccin, whose `--text-dim` (subtext1) is nearly `--text`: Mocha uses
+  overlay2 and Latte subtext0 darkened to stay AA on `--bg`, as set in its blocks of
+  `src/styles.css`.
 
 ### Rules
 - Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's
@@ -235,16 +501,36 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   `--chat-scale` is the chat's size over the interface's: unchosen, the chat follows the interface size;
   chosen, it is drawn as itself whatever the interface size.
 
+### Line breaking
+- The UI language is `<html lang>` (`lib/settings.ts`), and `src/styles.css` keys the breaking
+  on it, on `body` alone, so every text inherits it once and no descendant sets it again. Korean
+  (`html:lang(ko)`) is `word-break: keep-all`: a word moves to the next line whole, at a space or
+  punctuation, never as "시도하 / 세요.". Japanese and Chinese (`html:is(:lang(ja), :lang(zh))`)
+  are `line-break: strict`: no line starts with closing punctuation or a small kana (。」ょ).
+  English keeps the browser's defaults. Chat prose in another language follows the UI language.
+- `pre`, `code`, `kbd`, `samp`, the terminal (`.xterm`) and the two text boxes (`.composer-text`,
+  `.terminal-input-text`) reset to `word-break: normal; line-break: auto`, and their children
+  inherit that: a path, a command or a terminal cell is not a word. `overflow-wrap` is no part of
+  the rule; the chat's and the composer's own rules keep it. The file viewer's virtualized source
+  rows live in `@pierre/diffs`' shadow root, which document CSS does not reach: they inherit
+  `body`'s value.
+- `text-wrap: balance` on `.modal-title`, `.composer-greeting-title` and a Settings group's
+  caption (`.settings-section h3`): a title that wraps takes even lines, never a full line over a
+  one-word stub.
+
 ### Settings
 - `theme`: `dark`, `light`, or `system`; default `dark`.
-- `palette`: `amber`, `charcoal` or `catppuccin`; default `amber`. A removed palette (`report`,
-  `lilac`, `forest`) loads as `amber`.
+- `palette`: the legacy mirror of the drawn side's theme for older app versions; default `codex`.
+  A record with no palette (saved before palettes) or a removed one (`report`, `lilac`, `forest`)
+  loads as `amber`.
 - `density`: `comfortable` or `compact`; default `comfortable`.
 - `sidebarRows`: `one` or `two`; default `one`.
 - Terminal font size is independent: default `13px`, clamped to `10–22px`.
   During a two-finger pinch the font follows the fingers live and a badge above the grid shows the
   size in pixels; the grid refits locally and the shared pty resizes once when a finger lifts.
-  Cancellation restores the starting size.
+  Cancellation restores the starting size. The badge is hidden from assistive tech; a polite live
+  region says "Terminal text size {px} px" once, when a pinch ends at a new size, and says nothing
+  for a cancelled pinch.
 - A split pane that would have fewer than 80 columns at that size draws in the largest smaller
   whole-pixel size that gives it 80, never below `10px`. A pane alone in its tab or zoomed, a pane that `10px` cannot bring
   to 80 columns, and a pane this browser only watches or mirrors keep the user's size. The saved
@@ -266,6 +552,11 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   `diffStyle`: `unified` (default) or `split` for a repository diff (a phone draws one column
   whatever it says, and the viewer says so).
   These layout choices stay on this device, like chat width.
+- New agents (Settings → Integrations): `claudeLaunchMode` (`--permission-mode`: `acceptEdits`,
+  `auto`, `plan`, `dontAsk`, `bypassPermissions`) and `codexLaunchMode` (`readOnly`, `auto`,
+  `fullAccess`, each a `--sandbox` and `--ask-for-approval` pair) become the `agent.args` the new
+  workspace, tab and worktree dialogs send (src/lib/agentLaunchMode.ts). `default` (the default)
+  adds nothing, so the agent's own configuration decides. Both are shared across devices.
   The viewer loads a Markdown file's first 256 KB through one bounded streaming reader, with abort
   on close or navigation and a 5 s deadline; any other text that fits 256 KB reads whole under the
   same budget, and a larger one reads up to 8 MB and 200 000 lines with a 30 s deadline
@@ -339,7 +630,9 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--header-h-wide` | `46px` | — | App header from `769px`, in either density (`--header-h` takes this value there) |
 | `--sidebar-w` | `320px` | `300px` | Sidebar/drawer; the default while the user has not dragged the sidebar's edge |
 | `--control-h` | `34px` | `32px` | Buttons and fields |
-| `--touch-target` | `40px` | — | Coarse-pointer minimum |
+| `--segmented-inset` | `6px` | — | What the segmented track takes from `--control-h` above and below an option (its `2px` padding and the hairline, both sides): an option is `--control-h` less this, and its touch expander grows from that height to `--touch-target` |
+| `--touch-target` | `44px` | — | Coarse-pointer minimum: every control a finger can reach is at least this in both dimensions |
+| `--pointer-target` | `24px` | — | Fine-pointer minimum hit area: a glyph button under `--control-h` (the chat's copy and format buttons, an attachment tile's X) keeps its look and reaches it through an invisible `::before` expander |
 | `--touch-target-header` | `44px` | — | The phone header's controls (`<=768px`) |
 | `--keybar-h` | `48px` | — | Terminal key bar |
 | `--row-h` | `56px` | `44px` | Palette, worktree, device and background-task list rows; chat and composer list height caps |
@@ -375,18 +668,19 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 
 ### In-app alert
 
-One set for both themes: the card is island black wherever it shows.
+One set for both themes: the card is island black wherever it shows. Values are generated in the
+Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--droplet-bg` | `#000` | Drop, anchor and card |
-| `--droplet-text` | `#f5f5f7` | Pane name |
-| `--droplet-text-dim` | `rgba(245, 245, 247, 0.62)` | Ended detail, blank mark |
-| `--droplet-blocked` | `#ff8a80` | Needs-input detail and dot |
-| `--droplet-done` | `#9fd47a` | Finished detail and dot |
-| `--droplet-mark-bg` | `rgba(255, 255, 255, 0.1)` | Agent mark disc |
-| `--droplet-ring` | `rgba(255, 255, 255, 0.1)` | Card hairline |
-| `--droplet-shadow` | `rgba(0, 0, 0, 0.35)` | Drop shadow under the liquid |
+| Token | Usage |
+|-------|-------|
+| `--droplet-bg` | Drop, anchor and card |
+| `--droplet-text` | Pane name |
+| `--droplet-text-dim` | Ended detail, blank mark |
+| `--droplet-blocked` | Needs-input detail and dot |
+| `--droplet-done` | Finished detail and dot |
+| `--droplet-mark-bg` | Agent mark disc |
+| `--droplet-ring` | Card hairline |
+| `--droplet-shadow` | Drop shadow under the liquid |
 
 ### Shell
 - `.app` is a full-viewport column: `.app-header` over `.app-body`; the body is sidebar plus
@@ -434,7 +728,8 @@ One set for both themes: the card is island black wherever it shows.
 - The terminal stack contains a positioned terminal surface, then composer or key bar. The xterm
   mount stays alive under the chat lens; changing views never creates a second connection.
 - At `<=480px` the brand name, the offline pill and desktop-only control labels go, and the
-  palette's button gives its room to the title (a hardware keyboard still opens it).
+  palette's button gives its room to the title (the More menu's first item and a hardware
+  keyboard still open it).
   Icons and selected context remain.
 
 ## 5. Components
@@ -442,6 +737,13 @@ One set for both themes: the card is island black wherever it shows.
 ### Button (`.btn`, `.icon-button`)
 - `.btn` is a medium text control. Variants: neutral, `.btn-primary`, `.btn-danger`, `.btn-ghost`.
   Primary uses `--primary`; danger uses danger tint plus blocked border; ghost removes fill/edge.
+  A destructive action that asks twice (Settings → Phone & devices, Revoke) is a neutral
+  `.icon-button` (the trash glyph, named "Revoke {name}") at rest and becomes `.btn-danger` with
+  its "Revoke?" label only while it asks to confirm; the same element through both steps, so focus
+  stays on it. A trust decision (the SSH host key) shows the fingerprint to compare
+  (`.machine-fingerprint`: `--font-mono`, `--fs-md`, `--text-strong`, under a dim "Fingerprint of
+  {host}" label) over one sentence, "Trust it only if it matches the fingerprint shown on the PC.";
+  ssh's own words wait behind a Show SSH output fold, and no status box sits above the question.
 - `.icon-button` is a square unlabeled visual control with mandatory `aria-label`; `.is-outlined`
   adds the border. Both families use `--control-h`, `--radius-md`, focus ring, hover and disabled.
 - Coarse pointers grow controls to `--touch-target`.
@@ -450,6 +752,10 @@ One set for both themes: the card is island black wherever it shows.
 - One `aria-pressed="true"` option receives hover fill and strong text; the group itself is an
   elevated, bordered `--radius-md` track.
 - Used for Chat/Terminal, theme and density. It is not a generic tab list.
+- An option is `--control-h` less `--segmented-inset` tall, so the track is `--control-h`. On a coarse
+  pointer the track keeps its height; each option is at least `--touch-target` wide, so neighbours
+  never share a tap, and reaches `--touch-target` tall through an invisible `::before` expander sized
+  from that same difference, as the palette's filter chips do.
 - The header's Chat/Terminal switch from `769px` drops the track and the glyphs: two words, the
   chosen one on the hover fill. At `<=768px` it keeps the track; at `<=560px` it is glyphs only.
 
@@ -486,7 +792,12 @@ One set for both themes: the card is island black wherever it shows.
 ### Field (`.field`, `.input`, `.select`)
 - Stacked uppercase label, optional hint and `--bg-input` field. Desktop fields use `--fs-sm`;
   small-screen fields retain `--fs-input` to avoid focus zoom.
-- Focus names the edge with accent; errors use blocked/danger tokens and `role="alert"`.
+- Focus names the edge with accent; errors use blocked/danger tokens and `role="alert"`. A failure
+  leads with a plain sentence (`lib/userError.ts`); what the PC or the browser said follows on a
+  second line in the interface face, selectable, never in the mono stack (which has no Hangul and
+  would set Korean with letter-wide spaces).
+- Every placeholder is `--text-dim` at full opacity (at least 4.5:1 on every field of every
+  palette), never the browser's own grey (3.8:1 on a dark field).
 
 ### Menu / popover (`.menu*`)
 - Bordered `--radius-lg` surface with `--shadow-pop`; rows use `--control-h`, `--radius-md`, icon,
@@ -521,8 +832,16 @@ One set for both themes: the card is island black wherever it shows.
   confirmed close, focus lands on the header's workspace-list toggle.
 - Tab and pane menus follow herdr's target scopes. A tab's menu contains New tab with agent…, Rename
   tab and Close tab, plus Move tab left/right when a neighbouring position exists and no move is pending.
-  The `⋯` that touch and narrow layouts draw beside the selected tab holds the same tab actions and also carries the open pane's actions, less Split and Zoom: a
-  phone shows one pane at a time. The pane's own context menu carries pane actions; it opens at the pointer
+  The `⋯` beside the selected tab holds the same tab actions (the strip's `+` opens a shell tab, so
+  New tab with agent… stays here) and also carries the open pane's actions, less Split and Zoom where a phone shows one pane at a time.
+  Touch and narrow layouts keep that `⋯` in view; a desktop with a mouse (`hover: hover`,
+  `pointer: fine`, wider than 768px) draws it on the selected tab only, in its place at rest but
+  hidden (`opacity` 0, `visibility` hidden, so the strip never reflows), and fades it in
+  (`--dur-fast`, none under reduced motion) while the strip is hovered, while the tab or the `⋯`
+  itself has keyboard focus, or while its menu is open; it is named "Actions for {tab}" with
+  `aria-haspopup="menu"`. Right-click and the context-menu key open the full tab menu as before.
+  A lone pane beside such a `⋯` draws no second ellipsis (its actions are in the tab's menu), on a
+  desktop as on touch. The pane's own context menu carries pane actions; it opens at the pointer
   without changing which pane is focused. The pane header's ellipsis opens the same menu on touch.
 
 ### Badge (`.badge`)
@@ -551,7 +870,7 @@ One set for both themes: the card is island black wherever it shows.
   A tab's mark follows the same choice, held still.
 
 ### Pill (`.pill`)
-- Mono metadata at `--chip-h`. Offline is the one header pill that stays, and uses danger tokens. A deep link that could not open what it named, and Copy link, say so in a plain `.header-note` pill for a moment (8 s, 1.6 s for Link copied). The note takes the flexible context's place and ellipsizes when narrow, keeping the lens and More controls in view.
+- Mono metadata at `--chip-h`. Offline is the one header pill that stays, and uses danger tokens. A deep link waiting for its PC's roster says **Opening link…** in the same `.header-note` pill (`role="status"`) until it lands or its failure note replaces it. That status stays in the document while there is no note, clipped and empty (`.visually-hidden`, never `display: none`, as `.conn-live`), and the words of a page that opens with a link land a frame after it: a live region that appears together with its content is not announced. The `.header-note` pill carries a sentence, so it is set in the interface face (`--font-ui`), not the mono one. A deep link that could not open what it named, and Copy link, say so in a plain `.header-note` pill for a moment (8 s, 1.6 s for Link copied). The note takes the flexible context's place and ellipsizes when narrow, keeping the lens and More controls in view.
 
 ### Sidebar roster row and footer
 - No top bar. The sidebar opens with the plan panel (when Settings puts it there), the PC workspace groups and a separate **Agents** list spanning the connected PCs. A workspace starts from the `+` on its PC's header, or from the **New workspace**
@@ -569,7 +888,8 @@ One set for both themes: the card is island black wherever it shows.
   workspace list has the rest. The Agents heading stays outside its scroll area and shows its
   count only while folded. A list that is cut fades out at its lower edge. An empty or folded
   Agents list gives its space back; PC and workspace folds do not hide agent rows. In the drawer
-  (`max-width: 768px`) the list starts folded.
+  (`max-width: 768px`) the list starts folded. Until the PCs are in and every connected PC's
+  panes have come, an empty list says **Loading agents…**, never "No agents running".
 - A PC's header is the head of its workspaces, and the caret beside its `+` is the one fold over
   them. The roster has no label or fold of its own.
 - A repository's parent row keeps `workspace.label`; its opened linked
@@ -580,12 +900,14 @@ One set for both themes: the card is island black wherever it shows.
   Clicking its name opens the
   selected pane in that workspace, else the last viewed pane, else the pane herdr has focused,
   else its first pane. Tabs are selected from the tab strip; panes are selected on the canvas or from the command palette.
-- A top-level workspace row starts with a folder glyph in the grid's leading cell, under the
-  PC's monitor; the row's mark and name follow it. For a repository workspace with linked
-  worktree workspaces that folder is the group's fold, a button (`.workspace-toggle`) in
-  `--text`: open while the worktrees show, closed while they are folded, when a dim `+N` after
-  the name counts the checkouts put away. For any other workspace it is a dim glyph and no
-  control. Worktree rows have no folder: they sit one cell in, their marks under the parent's.
+- A top-level workspace row starts with its project's icon in the grid's leading cell, under the
+  PC's monitor, or a folder glyph when its folder keeps none; the row's mark and name follow it.
+  For a repository workspace with linked worktree workspaces that cell is the group's fold, a
+  button (`.workspace-toggle`) in `--text`: the folder (no icon) is open while the worktrees show
+  and closed while they are folded, when a dim `+N` after the name counts the checkouts put away;
+  a project icon stays until a pointer hovers the row or the button takes keyboard focus, when
+  that same open or closed folder takes its place. Where nothing hovers (touch) the folder always
+  shows. For any other workspace it is a dim glyph or the icon, and no control. Worktree rows have no folder: they sit one cell in, their marks under the parent's.
   Worktree folds are remembered at
   `herdr-web-ui:worktree-group-collapsed:<machineId>:<repo_key>`; a folded group keeps the selected
   child visible, and status snapshots preserve a deliberate fold.
@@ -618,10 +940,12 @@ One set for both themes: the card is island black wherever it shows.
   A disconnected PC's saved workspace and agent rows are dimmed, inert and draw no state until that PC reconnects.
 - The Agents list is flat and every row names its own place. Pinned agents (pinned from a row's
   menu) stand first, in the order they were pinned, in a card (a `--hairline` `--border` edge,
-  `--radius-lg`, `--space-1` padding, no fill, so hover and selection read inside it as elsewhere),
+  `--radius-lg`, no fill, so hover and selection read inside it as elsewhere),
   with no mark of their own (the card says so); the rest follow `--space-2` below in the
-  chosen order. The Agents head is the only head (the pinned list is labelled **Pinned** for screen
-  readers); without pins there is no card. Pins are shared with the other browsers of the server.
+  chosen order. The card's caption sits on its top edge, as a fieldset's legend does
+  (`.sidebar-pinned-label`: a pin and **PINNED**, centered, `--fs-2xs` semibold caps in
+  `--text-dim` on the `--bg-panel` it masks the edge with); it is hidden from screen readers,
+  where the list itself is labelled **Pinned**. Without pins there is no card and no caption. Pins are shared with the other browsers of the server.
 - Appearance's **Sidebar rows** is **One line** by default: a workspace row is its name, and an
   agent row is one line on a workspace row's height, its dim place after the title (the title keeps
   its width first, the place takes what is left with an ellipsis). Two lines draws the row as the
@@ -645,7 +969,8 @@ One set for both themes: the card is island black wherever it shows.
   On One line, as in herdr's own sidebar, a top-level git workspace (a repository, or a worktree
   whose repository is not open) says its branch under its name in `--text-dim` `--fs-xs`, on a
   two-line row's height (`--side-row-2`); an indented worktree, whose name already comes from its
-  branch, and a folder outside git stay one line. The branch is read with the worktree inventory
+  branch, a pinned workspace in its card (the branch stays in its tooltip and menu) and a folder
+  outside git stay one line. The branch is read with the worktree inventory
   (`useWorktreeBranches`), a repository without worktrees and a git workspace herdr has not marked
   included. As herdr draws its tree, each indented worktree hangs from its repository's folder on
   a `--hairline` `--border-strong` branch in the indent: a tee for each but the last, an elbow for
@@ -663,7 +988,7 @@ One set for both themes: the card is island black wherever it shows.
   next or previous group with its worktrees, and a worktree moves among its siblings only.
 - A workspace is pinned from its row menu (**Pin workspace** / **Unpin workspace**, first in the
   menu), as Paseo pins a chat: pinned workspaces leave their place and stand first in their PC's
-  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`), with no mark
+  list, in the order they were pinned, in the Agents list's card (`.sidebar-pinned`, under the same **Pinned** caption), with no mark
   of their own either. A pinned repository's workspace stands alone in the card; its unpinned
   worktrees stay as standalone rows at the group's position, in their order. They are not dragged
   or moved away from their repository; unpinning the head restores the group. A pinned worktree
@@ -693,17 +1018,21 @@ One set for both themes: the card is island black wherever it shows.
 - Rows use only shared theme tokens in dark and light. Touch keeps row menus and folds visible,
   with `--touch-target` controls, and draws no hover fill; reduced motion removes row transitions
   and keeps the working dot's breath (opacity only).
-- Footer holds the contextual **Install app** action and Settings with the plan meters beside it,
+- Footer holds the contextual **Install app** action and Settings, its gear alone (named
+  **Settings** to screen readers and in its tooltip), with the plan meters filling the rest of its row,
   as rows on the same grid with no rule above.
   It carries no product name or version: the running versions are read in Settings.
 
 ### Plan meters (`.usage*`)
-- Beside Settings, one button holding up to four chips (three and `+N` past that), one per
-  account in the user's order: provider mark, mono `--fs-2xs` percent of the limit chosen in
-  Settings, the plan's week or its session (used, or left when Settings says so), and a 2px bar on a `--border-strong` track
+- Right of the Settings gear, one button holding as many chips as the row has room for (judged
+  by the widest chip drawn, so the count settles), the rest folded into `+N`, one per account in
+  the user's order: provider mark, mono `--fs-2xs` percent of the limit chosen in Settings, the
+  plan's session by default or its week (what is left by default, or what is used), and a 2px bar on a `--border-strong` track
   filled to that percent. From 80% used the percent and bar take `--status-blocked`; amber stays
   chrome. A chip whose numbers are stale or missing dims. An account hidden in Settings is
-  left out of the strip and the popover; with every account hidden, neither shows.
+  left out of the strip and the popover; with every account hidden, neither shows. The button's
+  name and tooltip add, per account, another of its limits from 80% used that the chip does not
+  show (`(Weekly 9% left)`); the chip itself does not mark it.
 - The button opens a popover above the footer (`--shadow-pop`, `--radius-lg`), as wide as the
   footer and scrolling when it outgrows the sidebar: per account its mark, name and plan pill with
   the email or login right-aligned and ellipsized, then one row per limit (label, reset time, right-aligned percent) over a 4px bar. A problem
@@ -742,8 +1071,10 @@ One set for both themes: the card is island black wherever it shows.
   in the strip. An agent tab comes from the tab menu's New tab with agent…, which opens the dialog.
   Tabs retain their names, status dots, active underline, keyboard navigation, rename field and
   close confirmation. A right-click opens tab actions at the pointer, including Move tab left/right
-  when a neighbouring position exists. Desktop tabs have no close or dropdown buttons. Touch and narrow layouts show a `⋯` beside
-  the selected tab for a trimmed menu; Shift+F10 or the menu key opens the full tab menu from a focused tab.
+  when a neighbouring position exists. Tabs have no close buttons or chevrons. Touch and narrow layouts show a `⋯` beside
+  the selected tab for a trimmed menu, and there a tab is at least `--touch-target` tall and wide, so a one- or
+  two-character name (탭 1) is still a finger's target with the `⋯` a target of its own beside it; a desktop with a mouse draws the same `⋯` on the selected tab, hidden in its place
+  until the strip is hovered or the tab has keyboard focus (Menu / popover). Shift+F10 or the menu key opens the full tab menu from a focused tab.
   Pane actions are not tab actions. Up to 768px, where a split tab shows one pane at a time, the
   tab's menu lists the tab's panes first, the open one marked current, over a hairline.
   Only at these narrow widths does it omit Split and Zoom pane; Unzoom pane stays available whenever the tab is zoomed.
@@ -761,7 +1092,7 @@ One set for both themes: the card is island black wherever it shows.
   (`any-pointer: coarse`), the ellipsis; a mouse opens the same menu by right-click. Keyboard users
   tab to the pane's ellipsis, which becomes visible on keyboard focus, and press Enter.
   Shift+F10 in the terminal goes to the terminal program, not the app menu. A lone or zoomed
-  pane is borderless; on touch its actions live in the tab menu rather than a second ellipsis.
+  pane is borderless; its actions live in the tab's `⋯` menu rather than a second ellipsis, on a desktop as on touch.
 - A left click or keyboard focus selects the actual pane. Right-click opens the clicked pane's
   menu without changing the selected pane: Rename pane, Clear pane name when named, Swap with
   focused pane when another is selected, Split right, Split down, Zoom/Unzoom pane, Close
@@ -885,10 +1216,11 @@ One set for both themes: the card is island black wherever it shows.
   whole title it is not drawn, and the title has the row. The full path is in the context's
   tooltip and at the top of the More menu. With no selection, the brand fills the context slot.
 - The More menu (`.header-more-button`, the `RowMenu` popover, a bottom sheet at `<=640px`) opens
-  with the location on two lines, "PC › workspace" then the full path in mono, and holds
-  **Find in terminal**, **Browse files** (at `<=768px` only: from `769px` Files is the header's own
-  button), **Copy link** and **Alerts**, each under the condition its own button had. New tab stays
-  on the tab strip's `+`; Command palette is not in More. The Alerts item says
+  with the location on two lines, "PC › workspace" then the full path in mono. Its first item,
+  at every width, is **Search panes and actions**, which opens the command palette (its shortcut
+  as the item's hint where the pointer is fine); then **Find in terminal**, **Browse files** (at
+  `<=768px` only: from `769px` Files is the header's own button), **Copy link** and **Alerts**,
+  each under the condition its own button had. New tab stays on the tab strip's `+`. The Alerts item says
   this device's state in words after its label ("On in the app", "On in this tab", "On, pushed to
   this device", "Off on this device") and switches it: it is a `menuitemcheckbox` with
   `aria-checked` in the popover and a button with `aria-pressed` in the sheet. While alerts are off on this device the
@@ -899,7 +1231,8 @@ One set for both themes: the card is island black wherever it shows.
 - At `<=768px` the drawer toggle, the lens buttons and More are `--touch-target-header` squares
   (the switch's track loses its inset so the `--header-h` bar holds them).
 - Connection is one quiet chip, drawn only while the bridge is not live: a pulsing dot plus the
-  written reconnecting/disconnected state. Below `900px` it keeps only its dot; the word stays as
+  written state - connecting until this page's first connection to the PC's socket, reconnecting
+  after a drop, disconnected once output stopped. Below `900px` it keeps only its dot; the word stays as
   its accessible text and in its tooltip. While live the chip takes no room and stays in the
   document as a `role="status"` a screen reader can read (`.conn-live`; never `display: none`).
 
@@ -955,7 +1288,10 @@ One set for both themes: the card is island black wherever it shows.
   beside its bubble, and an answer has one copy glyph (it copies Markdown) with a **Plain text**
   text button in the regular weight beside it. Otherwise the answer keeps two labelled buttons,
   glyph + MD and glyph + TXT; where the primary pointer is coarse each is a `--touch-target` target on a
-  one-line row, as is a user turn's copy, and a skill list under a user turn clears that target.
+  one-line row, as is a user turn's copy, and a skill list under a user turn clears that target; the
+  first copy drops its own left inset so its glyph stays on the prose edge (an overhang past the
+  transcript's edge cannot be tapped). With a mouse the copy and format buttons keep their `--chip-h`
+  look and take a `--pointer-target` hit area through an invisible `::before` expander.
 - Markdown supports headings, lists (a task item `- [x]` / `- [ ]` shows a checked or empty box in
   place of its bullet, not clickable), links, quotes, tables, inline/fenced code and code-copy
   actions.
@@ -973,6 +1309,10 @@ One set for both themes: the card is island black wherever it shows.
   header is one row: the name cut inside its stem, Show source and Copy, a **More** (Ellipsis)
   menu holding new tab, raw and download, then Close; the size and folder are left out there unless
   a partial-view notice is among them. A reader page has no Close.
+  A file opens in the popup unless Settings → Chat → Open files is Beside the pane (`fileOpen`,
+  per device), which docks text and code from 980px; the header button moves the open file either way.
+  This differs from t3code's and paseo's docked file panels, whose look the docked viewer keeps: a
+  file read from the chat leaves the chat its width unless the user asks for the split.
   Docked beside the pane (from 980px, `aside.file-panel`) the viewer is a split of the workspace on
   `--bg` behind one `--border` hairline, not a raised card, and its chrome is two thin rows on
   hairlines (t3code's file surface subheader, paseo's file panel bar): a header of
@@ -1008,9 +1348,16 @@ One set for both themes: the card is island black wherever it shows.
 - An empty chat is greeted from the composer (`.composer-greeting`, below), only where the agent's
   conversation was read and holds no turn. A chat still loading, one whose read failed, an agent
   whose transcript could not be read and a pane with no recognized agent keep their own lines
-  (`Loading conversation…`, the error, the terminal-output fallback, `No conversation yet — say
+  (`Loading conversation…`, the failure line, the terminal-output fallback, `No conversation yet — say
   something below`), as does an agent that is working or asking. A history read again after it
-  changed is loading, not empty. The server answers the terminal-output fallback for an agent
+  changed is loading, not empty. A read that failed while the chat retries on its own is one line
+  (`FailureLine`): a slow PC (a timeout, 408, 504) is waited for quietly, `Waiting for the PC…` in
+  the same persistent `role="status"` container as `Loading conversation…`, and alarms only after
+  three slow reads in a row, `The PC isn't responding` with Try again (`role="alert"`, a read now);
+  any other failure is `Couldn't load the conversation · <cause>` when the cause is known, else
+  `Couldn't load the conversation` with Try again. The advice and the PC's own words (the
+  `Chat read timed out.` classification among them) fold behind a dim Details toggle, never on the
+  line. The terminal-output fallback's failure is the same line, `Couldn't load the terminal output`. The server answers the terminal-output fallback for an agent
   that has not written its transcript yet (a new Claude Code or Codex pane before its first
   message), so those are not greeted; an omo session not yet written answers an empty
   conversation and is.
@@ -1057,9 +1404,10 @@ One set for both themes: the card is island black wherever it shows.
   starts with the list-checks glyph, the word **Plan** and `done/total` in tabular figures; running
   background tasks follow after a hairline as their glyph and number. The chip keeps the working
   tint while a step or a task is left, and goes quiet once every step is done and nothing runs. A
-  narrow card drops the words and keeps the glyphs and numbers. The chip shows only in the chat
-  lens, and not for an offline PC's cached plan. The sidebar's agent row repeats the count beside
-  the background count, in its quiet mono figures and with no box (`.plan-count`).
+  narrow card drops the words and keeps the glyphs and numbers; a finger gets a `--touch-target` hit
+  area through an invisible expander while the chip stays the `--chip-h` pill it is beside a mouse. The chip shows only in the chat lens, and not for an offline PC's cached
+  plan. The sidebar's agent row repeats the count beside the background count, in its quiet mono
+  figures and with no box (`.plan-count`).
 - The chip opens one list above the card: a **Plan** heading with `N of M done`, the steps in wave
   order (a status glyph, the name, what a running step does now, then a dim state · time · teammate
   line; a waiting step's name is dim), then a **Background tasks** heading over the tasks list when
@@ -1110,14 +1458,19 @@ One set for both themes: the card is island black wherever it shows.
   picked or typed, also when it asks the same question again. An answer that comes back after
   its card is gone (the next prompt is showing, or another pane is open) changes nothing on
   screen.
-- The composer keeps the resize grip's hit strip (`--composer-grip-h`) for itself under the card,
-  as it does under the held messages: the grip never lies over the card's last row.
+- A chevron at the header's end (`.prompt-card-fold`, after View plan) folds the card to its
+  header, to read the transcript under it, and opens it again (`aria-expanded`, Collapse question
+  / Expand question). The question still waits, so the card stays: a fold, never a dismiss. The
+  sending line and an error still show while folded, a typed pick's confirm row opens the card, and
+  the next prompt's card starts open. Follows T3 Code's pending-question panel, which folds per
+  question the same way; its dismiss without answering needs an answer herdr's prompts do not have.
 - A form of several questions (omo) shows a row of step chips (`.prompt-card-steps`) under the
   header: a chip per question, pill-shaped, mono number or a check once answered (`--accent`), the
   one asked now with an `--accent` border, `--accent-tint` fill and a `--primary` number. The title
   then reads `Question 1 of 2`; the review after the last question keeps the chips, all checked.
 - Single options submit immediately; multi-select exposes checks plus Submit; supported custom input
   has its own labelled field. The prompt id names what the prompt says and which asking of it this is; an answer to another prompt, or to an earlier asking of the same one, is rejected with `prompt_changed`.
+- While an answer is on its way, a `--text-dim` `--fs-xs` line under the actions says `Sending your answer…` (`role="status"`), so a slow PC never looks like a dead button. The line is in the card from its first render, clipped and empty (`.visually-hidden`, never `display: none`) until the answer goes out: a live region that appears together with its content is not announced. The card's busy state (`aria-busy`) sits on its options group (`.prompt-card-options`), never on the card: Chromium fires no live-region event inside an `aria-busy` subtree, so the status line stays outside it.
 - Options are flat full-width rows (`.prompt-card-option`), not boxes in the box: the menu's
   number as a keycap (mono, `--fs-2xs`, a `--border-strong` outline; the option's name keeps
   `1.`), the label, its description under it in `--text-dim`. All rows weigh the same: none is
@@ -1151,7 +1504,10 @@ One set for both themes: the card is island black wherever it shows.
   (the only other card on this surface is the prompt card docked over it, while an agent asks);
   focus turns its border `--accent` (no inner outline). Above it the notices (below), the
   completion popover and the background-task list; inside, the image strip is its own row at the top, then the auto-growing
-  message box as a row of its own at the card's full width, then ONE row of controls under it:
+  message box as a row of its own at the card's full width (each tile's X is a `--chip-h` circle
+  with a mouse, reaching `--pointer-target` through an invisible `::before` expander; under a
+  coarse pointer the button itself grows to `--touch-target` wide and `--touch-target` plus
+  `--space-1` tall), then ONE row of controls under it:
   on the left the add button (lucide `Plus`, named "Attach files"), the mic when voice input
   shows it (see Voice input), and the background-task chip; on the right the status content and ONE round Send/Stop button.
   The message's text starts `--space-4` in (`--space-3` on a phone, `480px` and below).
@@ -1192,7 +1548,7 @@ One set for both themes: the card is island black wherever it shows.
   with lucide `ArrowUp`; Stop is `--text-strong` with a `--bg` square, and turns
   `--status-blocked` on hover and focus. Not connected, Stop is disabled and loses its fill
   (`--border-strong` outline, `--text-dim` glyph). A coarse pointer keeps that compact visible
-  circle inside a transparent `--touch-target` / `40px` button, so tapping remains easy.
+  circle inside a transparent `--touch-target` / `44px` button, so tapping remains easy.
 - The status content (`.composer-status`, `role="status"`) sits between the two control groups,
   pushed to the button's side. It draws, at `--fs-xs`: the model pill and the uploading
   or reconnecting sentence in `--text-dim`. The background-task chip is a button in the left controls;
@@ -1241,8 +1597,8 @@ One set for both themes: the card is island black wherever it shows.
   secondary queue control. The placeholder is `Message <agent>…`; message text
   uses `--fs-chat` scaled by `--chat-scale` on `--lh-code` with a fine pointer. Otherwise it
   uses that scaled size or `--fs-input`, whichever is larger, keeping the 16px floor that avoids
-  iOS zoom. Changing Chat font size or density resizes an automatic box around its existing
-  draft; a height chosen with the grip stays chosen.
+  iOS zoom. Changing Chat font size or density resizes the box around its existing draft. The
+  box's height is automatic only: it has no resize grip.
 - A local desktop composer shows the first visible account in Settings order for its agent's
   provider as a read-only usage reference inside the model pill. Plan-wide five-hour session is
   preferred, with weekly fallback; scoped, failed and unavailable limits do not substitute.
@@ -1252,7 +1608,7 @@ One set for both themes: the card is island black wherever it shows.
   prompt dock. `PendingMessages` uses the chat's column and neutral user-bubble surface: plain
   text aligned right, with no outer card. Its scrolling stack is capped by `--pending-max-h`
   (`min(20dvh, 12rem)`). The text stays selectable. Its separate ↑ Send now action sends it, and the small sibling X
-  discards it. Actions keep a 40px touch target on phones.
+  discards it. Actions keep a `--touch-target` touch target on phones.
   An OmO pending row adds a lucide `ListEnd` icon in the same `.icon-button` style beside
   Send now and Discard. Its accessible name and tooltip say `Send to agent queue (Ctrl+Q)`.
   It transfers that existing bridge item to OmO's follow-up queue, claiming the same ID as
@@ -1264,10 +1620,11 @@ One set for both themes: the card is island black wherever it shows.
   Enter delivery removes the pending row and refreshes the transcript. Next-turn delivery and
   an explicit Send now action claim the same server ID; connection loss never resumes automatic input.
   Previously held browser messages retain their explicit Send now/Discard recovery.
-- Not connected, the sentence `Reconnecting… message held here, never queued` is said once and
-  whole: it is the placeholder while the box is empty and moves into the status content once
-  there is a draft (`composerStatusHint`), on a phone too. A sentence there (this one, or
-  `Uploading file…`) is never ellipsized: where it does not fit beside the model it takes a line
+- Not connected, the one word `Reconnecting…` (`Connecting…` before this page's first connection to
+  the PC's socket) is the placeholder while the box is empty and moves into the status content once
+  there is a draft (`composerStatusHint`), on a phone too; it says no more (nothing is queued, and
+  the disabled Send says so), and the chat body draws no connection line of its own: the header
+  chip's word is the one place. A sentence there (`Uploading file…`, or the word) is never ellipsized: where it does not fit beside the model it takes a line
   of its own under it, without its leading dot, and wraps there; its `title` repeats it. Only
   the sentence takes a line: the mark, the model, the level and the ring stay one row over it
   (`.composer-status-meta`), where the label gives way exactly as it does with no sentence. The
@@ -1279,11 +1636,6 @@ One set for both themes: the card is island black wherever it shows.
   starts, add and the round button keep their row, and the card grows by that row while the
   sentence shows. The primary control and add are disabled. With a draft, the reconnecting sentence is said instead of
   `Uploading file…`, never both: the attachment's own tile says it is uploading.
-- The resize grip is a short bar on the card's top edge. On a fine pointer (`(hover: hover) and
-  (pointer: fine) and (not (any-pointer: coarse))`) the bar is drawn while the card is hovered,
-  while it is dragged, on its own keyboard focus, and while a manual height is set; on any coarse
-  pointer it is always drawn. Its hit area lies above the card (`--composer-grip-h`), and the
-  composer keeps that strip free after the held-message list and after a prompt card.
 - The stack over the input card, on its column, is written once (PaneTerminal): held messages,
   then the prompt card (see Prompt card), then the input card. The notices are the input card's
   own: they stand inside the composer, over the card and its quick replies, so they move with it
@@ -1294,13 +1646,16 @@ One set for both themes: the card is island black wherever it shows.
   anatomy: one `--border` hairline above the group, then a row per notice (`role="status"`), no
   tint and no box, every line of text `--space-3` in. A row is its lucide mark and its sentence in
   `--text-dim` at `--fs-xs` (`--status-working` for the two warnings: another app holds the pane,
-  the stream failed), its own way on at its end (`Open here`, `Reconnect`, the held input's `Send`
-  and quiet `Discard`, in the held rows' buttons) and an X named `Dismiss notice`. Top to bottom
+  the stream failed), its own way on at its end (`Open here`, `Reconnect`, in the held rows' buttons)
+  and an X named `Dismiss notice`. The held input's row has no sentence on screen: the held text
+  (mono, one line, an ellipsis, the whole text as its title) and two `.icon-button` controls named
+  `Send held input` and `Discard held input`, as the terminal lens's held-input row; a clipped
+  `Input held:` stays in the row for its `role="status"` words. Top to bottom
   the rows are the plain notice, then the urgent ones, then the activity (the held input) nearest
   the card, as t3code's composer banner stack orders them (`src/lib/composerNotices.ts`). A
   dismissal lasts while the notice stands and says the same thing; it is forgotten once the
   notice goes or changes its words, so the next one shows again, and another pane's dismissals
-  never carry over. The group keeps the grip's hit strip free under it. With no input card (view
+  never carry over. With no input card (view
   only, ended, a secret prompt) the pills stay where the terminal lens draws them, and a notice
   keeps a phone's card docked: it never floats over the transcript.
 - Held messages (`.composer-queue`) are quiet rows on the input card's column, above it: the
@@ -1327,14 +1682,27 @@ One set for both themes: the card is island black wherever it shows.
   still `Discard`.
 - `/` completions come from `GET /api/pane/commands` and group built-in, user and project commands;
   `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
+  A listing that failed is told apart from no matches: a `role="status"` row says **Couldn't load
+  suggestions. Keep typing to try again.** (every change of the query asks again).
 - Paste, picker or drag/drop attaches up to 100 files per action; the message box names how many it left out.
   An image is stored as a paste, any other file under its own sanitised name. Each uploads through `POST /api/pane/image`, three at a time
   across all picks, and puts a removable editable `@path` mention at the start of the message (after
   a leading `/command`), in the order the files were picked. A path waits while the box holds only a
   `/command` still being typed or an IME composition, and a path that does not fit whole under the
-  length cap waits on a "No room" tile, with Send off and the status line saying how many characters
-  to remove; within 200 characters of the cap the status line counts what is left. The caret and selection move only with the
+  length cap waits on a tile whose badge is a warning glyph in `--notice` (`No room` for assistive
+  tech only), with Send off and one status line, in `--notice`, saying the limit and how many
+  characters over (`20,000-character limit · 41 over`); nothing else says it. Within 200 characters
+  of the cap the status line counts what is left, and at the cap it names the limit
+  (`20,000-character limit`), said once through the composer's polite region as the cap is reached;
+  no line under the card repeats it. The caret and selection move only with the
   text they sit in, so typing while files upload is not disturbed.
+- An upload that failed is one note on the box's top edge (`.composer-note`, `role="alert"`): what
+  failed and the cause when it is known (`Couldn't attach · PC disk is full`, from the status or the
+  server's own words, `lib/userError.ts` `userFailure`); with no known cause the line is
+  `Couldn't attach` and Try again beside it uploads the file again (`offersRetry`: no cause, or the
+  PC was only slow). The advice and the server's words fold behind a dim Details toggle under the
+  line, never on it; the size limit's own sentence is the whole note. Removing the tile removes its
+  note.
 - While a phone's keyboard is up, a tap on the transcript or a drag down it (`32px`) puts the
   keyboard away. Each only blurs the field, so the draft stays. The prompt card, which can stand
   where the transcript was on a short screen, does the same: a tap on its text (never on an
@@ -1345,7 +1713,7 @@ One set for both themes: the card is island black wherever it shows.
   A desktop's picked pane takes typing at once.
 - The Send button accepts the visible draft even while a phone IME is composing; only keyboard
   confirmation keys are withheld. A tap keeps the text box focused so the soft keyboard stays open.
-- Enter sends and Shift+Enter breaks by default; with **Enter sends** off, Mod+Enter sends. On touch screens the same device setting is shown inverted as **Return inserts a new line**, with Send and hardware Mod+Enter explained below it. IME Enter is ignored. Stop sends Escape. While the agent works and a draft shows Send in Stop's place, Escape in the box is Stop; an open completion menu takes the first Escape. Working Send schedules a pending message; its Send now action submits that same message now.
+- Enter sends and Shift+Enter breaks by default; with **Enter sends** off, Mod+Enter sends. On touch screens the same device setting is shown inverted as **Return inserts a new line**, with Send and hardware Mod+Enter explained below it. IME Enter is ignored. Stop sends Escape. While the agent works and a draft shows Send in Stop's place, Escape in the box is Stop; an open completion menu takes the first Escape, and its X in the top corner (`.composer-menu-close`, Close suggestions, sticky over the rows it scrolls; the first row leaves it room) does the same for a pointer or a phone, which has no Escape, keeping the text and the focus in the box. T3 Code's command menu closes on Escape alone. Working Send schedules a pending message; its Send now action submits that same message now.
 
 ### Voice input
 - A mic button sits beside the add button in the composer and beside Send in the terminal input line; it
@@ -1358,9 +1726,10 @@ One set for both themes: the card is island black wherever it shows.
   Amber only; `--danger` stays for errors.
 
 ### Command palette
-- The command palette and its plugin actions are not available in the phone touch UI
-  (`<=480px`): neither the header nor Files offers a palette button. Use a wider screen;
-  a connected keyboard can still open it with `Mod+Shift+K` (or the configured binding).
+- At `<=480px` the header has no palette button: the More menu's first item, **Search panes and
+  actions**, opens it by touch, and a connected keyboard still opens it with `Mod+Shift+K` (or
+  the configured binding). A folder listing that fails says so in the empty list with a **Try
+  again** button that asks for the same folder again.
 - `Mod+Shift+K` opens a top-offset `--palette-w` dialog searching panes across all connected PCs
   and the selected PC's actions. PC names participate in search. Recent panes
   lead an empty query; arrows in the search field cycle through visible results, Enter activates
@@ -1422,7 +1791,7 @@ One set for both themes: the card is island black wherever it shows.
   an edge swipe) takes one step out and never leaves the app from inside Settings; the Back
   control, the X, Escape and the scrim take the same entries off. Beside the list, turning pages
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
-- Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
+- Pages, in order: **Appearance** (theme, dark theme, light theme, density, language, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family; then
   **Composer**: Enter sends, send queued messages automatically, and on a touch screen the suggestion
   chip (off by default); then **Quick replies**; then **File viewer**: wrap long
@@ -1441,7 +1810,13 @@ One set for both themes: the card is island black wherever it shows.
   for five or more, a stepper (minus, value in `--font-mono`, plus, in one bordered well) and a
   text field; inside a card they sit on `--bg-input`. On a phone a control that needs the line
   (three or more segments, a text field, or a long sentence above it) goes under its label at
-  the card's width, its segments sharing it equally; the rest stay on the label's line.
+  the card's width, its segments sharing it equally; the rest stay on the label's line. A
+  condition that applies right now (Keep screen on without HTTPS) is one more line under the
+  sentence, in `--text` (`.settings-condition`), and absent otherwise. A block's explanation is
+  one dim sentence at rest with an accent "Details" word after a middle dot (`.settings-details`,
+  a `details` whose `summary` is the sentence); the conditions and exceptions open under it. On
+  coarse pointers an invisible expander gives that line the touch target without changing its
+  height.
 - Terminal keeps Key bar as a compact description and Edit key bar button. That button opens
   a detail screen in the same dialog with its own scroll body and a Back to settings control.
   Back or Escape returns to the Terminal page's scroll position and focuses Edit key bar;
@@ -1551,16 +1926,37 @@ One set for both themes: the card is island black wherever it shows.
   paging is disabled until that search ends, so an older page cannot overwrite its result.
 - xterm has `scrollback: 0`; wheel/touch gestures reach herdr's alternate-screen scrollback. The
   mount hides the unused xterm scrollbar.
-- Terminal banners stack top-right for ended, reconnecting, observe and held-draft review states.
+- Terminal banners stack top-right for ended, reconnecting, view-only and held-input states, and
+  say only what the person needs now (section 1). Ended reads **Terminal ended**; input held for
+  the pane stays until the person sends or discards it (pty-exit also comes with a herdr restart).
+  View only is the neutral pill with an eye glyph and the words **View only**: no accent, no
+  sentence about the operator's grid. Held input, once the socket is back, is one row on the
+  neutral elevated surface with the `--border` hairline: the command in mono (one line, cut with an
+  ellipsis, the whole text as its title) and two `.icon-button` controls named **Send held input**
+  and **Discard held input**, `--touch-target` square on a coarse pointer; no label and no chip on
+  screen (the live region keeps a clipped "Input held:" for its words). What the row has to tell
+  only when it applies (text or an Enter left out) sits on a line under it.
   Under the chat lens, while the input card shows, the ones it shares with the composer (another
   app holds the pane, a failed output stream, the held draft, a copy note) stand over the card
   instead (Composer: Notices).
+  Banners wrap inside their pane at any width (a phone, or a narrow split on a desktop): text breaks
+  between words, and what does not fit beside the text (actions) moves to the next line with button
+  labels kept whole; wrapped lines start at the left. The reconnecting banner's held preview
+  (`Input held: “…”`) stays on one line in mono, cut with an ellipsis, with the whole text as its
+  title: a command is never broken inside a word.
 - The mobile key bar starts with Esc, Tab and `^C`, then sticky Ctrl/Alt/Shift, Enter and arrows;
   it never steals typing focus. Modifiers remain highlighted until toggled off,
   leaving the pane/lens or disconnecting; each exposes `aria-pressed`.
 - That is the default row. Settings → Terminal → Key bar can add, remove and reorder every
   terminal key and register exact combinations. Removing a held modifier clears it immediately.
   A deliberately empty row retains only the keyboard mode control on a touch screen.
+- When the row outgrows the viewport it scrolls sideways, and the edge that hides more keys fades
+  out: `KeyBar` sets `data-overflow-start` / `data-overflow-end` on `.key-bar` (measured before
+  first paint, on scroll and on resize, once a frame) and `KeyBar.css` masks that edge with a
+  `--space-6` (24px) `mask-image` gradient, static, so reduced motion changes nothing. Every key
+  whose cap is a symbol or abbreviation carries its spoken name as `aria-label` (Esc → Escape,
+  `^C` → Control C, ⌫ → Backspace, Ctrl → Control, the arrows and page keys), translated with the
+  UI; a cap that is a word (Tab, Enter, Home, End) is its own name.
 - The mobile drawer slides over a scrim. Closed visibility removes its controls from the tab order.
 
 ### In-app alert
@@ -1648,7 +2044,15 @@ The values are the ones in `src/styles.css`.
   touch key bar, which intentionally preserves terminal focus and has hardware-key equivalents.
 - Icon-only controls carry `aria-label`; toggles expose `aria-pressed` or `role="switch"`; selected
   pane exposes `aria-current`; dialogs expose `role="dialog"` and `aria-modal`.
-- Status, loading and composer progress use `role="status"`; failures use `role="alert"`. Agent state
+- Status, loading and composer progress use `role="status"`; failures use `role="alert"`. A status
+  line that may hold words the moment it mounts (Connecting…, the connection chip's word, a PC's state
+  word, Loading PCs… / workspaces… / agents… / conversation…, the chat's Waiting for the PC…, Opening link…,
+  Opening…, Sending your answer…, Waiting for terminal input…) is one persistent container: in the
+  document from its owner's first render, clipped while empty (`.visually-hidden`, never
+  `display: none`), its words set a frame after mount through `useAnnouncedText`
+  (`src/lib/useAnnouncedText.ts`) - a live region that appears together with its content is not
+  announced. The container outlives what replaces its words (a PC's state line stays, empty, while
+  the PC's notice shows), and the terminal's wait is drawn only for a selected pane. Agent state
   has text plus color. Compact sidebar states add distinct glyphs and keep their text accessible;
   ready and unknown draw nothing there, and unknown uses a dashed badge edge elsewhere.
 - Touch targets grow to `--touch-target`; fields stay `--fs-input` where mobile zoom is a risk.
@@ -1675,8 +2079,8 @@ The values are the ones in `src/styles.css`.
   Application-owned paging has its own page length; no page input is queued across disconnects.
   The plain chat page keys preserve composer draft, selection and focus, excluding modified
   keys, composition, other editable controls and modal input. They do not capture terminal keys.
-- On touch screens app actions stay in buttons and menus. The command palette and its plugin
-  actions are not available in the phone touch UI; a wider screen or keyboard is required.
+- On touch screens app actions stay in buttons and menus. More → Search panes and actions opens
+  the command palette, including its plugin actions, in the phone touch UI.
   The key bar sends terminal input only; it is not an app-action toolbar. Hardware keyboards use
   the same global bindings on phones and desktops.
 - `document.title` is `<pane title> · herdr` while selected, otherwise `herdr web ui`.
@@ -1688,4 +2092,3 @@ The values are the ones in `src/styles.css`.
 | Terminal content accessibility relies on xterm defaults | `PaneTerminal.tsx` | Screen-reader mode changes terminal DOM and input behavior | Decide with herdr TUI owners |
 | Drawer has no focus trap | `.sidebar.is-open` | Closed state leaves the tab order, but open-state trapping is not implemented | Add a shared focus utility |
 | Modal focus is initialized, not fully trapped | Dialog components | Escape/scrim/close work; tab containment is not shared | Add the same focus utility |
-| Terminal colors exist in CSS and JavaScript | `styles.css`, `settings.ts` | xterm consumes a JS theme | Keep `terminalTheme()` verbatim with `--term-*` |

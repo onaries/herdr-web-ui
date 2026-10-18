@@ -23,5 +23,3 @@ export async function renderMermaid(source: string, dark: boolean): Promise<stri
     document.getElementById(`d${id}`)?.remove();
   }
 }
-
-export default mermaid;

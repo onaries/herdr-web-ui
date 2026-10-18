@@ -1,27 +1,35 @@
 /**
  * The fictional session behind the README media (scripts/readme-media/stage.ts) and the browser
- * demo (site/demo/transport.ts): five panes, their curated chats and one Codex approval. Nothing
- * here comes from a real machine. It imports no server code, so the browser bundle can take it.
+ * demo (site/demo/transport.ts): two repositories with two agent worktrees each, a shell tab, their
+ * curated chats and one Codex approval. Nothing here comes from a real machine. It imports no server
+ * code, so the browser bundle can take it.
  */
 import type { ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
 
 export interface DemoSpec {
   key: string;
-  /** the workspace's label and the folder name under the demo root */
+  /** the workspace's label and the folder name: under the demo root, or under herdr's worktrees folder */
   label: string;
   /** the pane's title */
   title: string;
   agent: string | null;
   state?: "idle" | "working" | "blocked";
+  /** a linked worktree of this repository spec's key, checked out on `branch` */
+  worktreeOf?: string;
+  branch?: string;
+  /** a second tab, labelled `label`, in this spec's workspace instead of a workspace of its own */
+  tabOf?: string;
 }
 
+// The sidebar reads as two repositories, each with its own agent and two agent worktrees under it.
 export const SPECS: DemoSpec[] = [
   { key: "api", label: "checkout-api", title: "Idempotent payments", agent: "claude", state: "working" },
-  { key: "web", label: "web-dashboard", title: "Guard the export button", agent: "codex", state: "blocked" },
-  { key: "infra", label: "infra", title: "Why did the backup fail?", agent: "gjc", state: "idle" },
-  { key: "docs", label: "docs-site", title: "Proofread the guide", agent: "omo", state: "idle" },
-  { key: "cli", label: "cli-tools", title: "Ship the retry flag", agent: "pi", state: "idle" },
-  { key: "shell", label: "release", title: "Tag v1.4.0", agent: null },
+  { key: "web", label: "export-guard", title: "Guard the export button", agent: "codex", state: "blocked", worktreeOf: "api", branch: "feat/export-guard" },
+  { key: "flaky", label: "flaky-retry-test", title: "Fix the flaky retry test", agent: "claude", state: "idle", worktreeOf: "api", branch: "fix/flaky-retry-test" },
+  { key: "omp", label: "cli-tools", title: "Plan the config file", agent: "omp", state: "idle" },
+  { key: "cli", label: "retry-flag", title: "Ship the retry flag", agent: "pi", state: "idle", worktreeOf: "omp", branch: "feat/retry-flag" },
+  { key: "hermes", label: "changelog", title: "Draft the changelog", agent: "hermes", state: "idle", worktreeOf: "omp", branch: "docs/changelog" },
+  { key: "shell", label: "release", title: "Tag v1.4.0", agent: null, tabOf: "api" },
 ];
 
 export const t = (min: number, sec = 0) => `2026-09-25T09:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.000Z`;
@@ -61,35 +69,37 @@ export const CHATS: Record<string, { turns: ConversationTurn[]; metadata: { mode
       ] },
     ],
   },
-  infra: {
-    metadata: { model: "glm-5.3", reasoning_effort: "med" },
+  flaky: {
+    metadata: { model: "claude-opus-5-5", reasoning_effort: "high" },
     turns: [
-      { role: "user" as const, ts: t(0), parts: [{ kind: "text" as const, text: "Why did last night's backup job fail?" }] },
-      { role: "assistant" as const, ts: t(0, 6), end_ts: t(1, 2), parts: [
-        tool("bash", "journalctl -u backup --since yesterday", { command: "journalctl -u backup --since yesterday" }, "backup.sh: disk quota exceeded on /mnt/archive"),
-        { kind: "text" as const, text: "The archive volume hit its quota at 02:14. Old snapshots were never pruned because the retention flag was dropped in the last config change. I restored `--keep-daily 14`; tonight's run will prune and succeed." },
+      { role: "user" as const, ts: t(7), parts: [{ kind: "text" as const, text: "`retries a timed-out upload` fails about one run in ten. Find out why and fix it." }] },
+      { role: "assistant" as const, ts: t(7, 4), end_ts: t(9, 30), parts: [
+        tool("Read", "src/lib/retry.test.ts", { file_path: "src/lib/retry.test.ts" }, "test(\"retries a timed-out upload\", async () => { … })"),
+        tool("Bash", "bun test retry --rerun-each 50", { command: "bun test retry --rerun-each 50" }, " 46 pass\n 4 fail\nexpected 3 attempts, received 2"),
+        tool("Edit", "src/lib/retry.test.ts", { file_path: "src/lib/retry.test.ts" }, "Updated src/lib/retry.test.ts"),
+        tool("Bash", "bun test retry --rerun-each 50", { command: "bun test retry --rerun-each 50" }, " 50 pass\n 0 fail"),
+        { kind: "text" as const, text: "The test waited on the real clock, so a slow run let the backoff timer fire before the second attempt was counted. It now drives the timer with a fake clock: 50 runs out of 50 pass." },
       ] },
     ],
   },
-  docs: {
-    metadata: { model: "claude-sonnet-5", reasoning_effort: "low" },
+  omp: {
+    metadata: { model: "anthropic/claude-opus-5-5", reasoning_effort: "high" },
     turns: [
-      { role: "user" as const, ts: t(0), parts: [{ kind: "text" as const, text: "Proofread the getting-started guide." }] },
-      // OmO's background tasks: the call that starts them, then what OmO reports when they end
-      { role: "assistant" as const, ts: t(0, 5), end_ts: t(0, 9), parts: [
-        { kind: "text" as const, text: "I'll hand two checks to background tasks and proofread meanwhile." },
-        tool("task", "Find pages that still say v0.2 · Translate the FAQ to Korean", { run_in_background: true, tasks: [
-          { task_summary: "Find pages that still say v0.2", category: "quick", prompt: "List every page under docs/ that still names v0.2, with file and line." },
-          { task_summary: "Translate the FAQ to Korean", category: "writing", prompt: "Translate docs/faq.md to Korean, keeping the terms in docs/i18n/glossary.ko.json." },
-        ] }, "Batch running.\n1. st_demo3 (running)\n2. st_demo4 (running)"),
+      { role: "user" as const, ts: t(3), parts: [{ kind: "text" as const, text: "Plan a `cli-tools.toml` so the flags people repeat can live in a file." }] },
+      { role: "assistant" as const, ts: t(3, 4), end_ts: t(5, 10), parts: [
+        tool("bash", "rg -n \"option\\(\" src/cli.ts", { command: "rg -n \"option\\(\" src/cli.ts" }, "src/cli.ts:12:  .option(\"--retries <n>\")\nsrc/cli.ts:13:  .option(\"--registry <url>\")\nsrc/cli.ts:14:  .option(\"--dry-run\")"),
+        { kind: "text" as const, text: "Three steps:\n\n1. Read `cli-tools.toml` from the project root, then `~/.config/cli-tools.toml`.\n2. A flag on the command line wins over the file, the file over the defaults.\n3. `cli-tools config` prints the merged values and where each one came from.\n\n`--retries` and `--registry` move over as they are; `--dry-run` stays a flag only." },
       ] },
-      { role: "user" as const, ts: t(4), parts: [{ kind: "task_result" as const, tasks: [
-        { id: "st_demo3", title: "Find pages that still say v0.2", agent: "quick", model: "Claude Haiku 4.5", status: "completed" as const, duration_ms: 241_000, turns: 9, tool_calls: 33, tokens: 61_200,
-          result: "**3 pages** still say v0.2:\n\n- line 12 of `docs/guide/install.md`: the `curl` line downloads `v0.2/install.sh`\n- lines 4 and 31 of `docs/guide/upgrade.md`\n- line 88 of `docs/faq.md`\n\nEvery other page names v0.3." },
-        { id: "st_demo4", title: "Translate the FAQ to Korean", agent: "writing", model: "GPT-6.1", status: "failed" as const, duration_ms: 236_000, turns: 3, tool_calls: 5, tokens: 12_000,
-          result: "The glossary `docs/i18n/glossary.ko.json` is missing, so the terms could not be kept consistent. Nothing was written." },
-      ] }] },
-      { role: "assistant" as const, ts: t(4, 3), parts: [{ kind: "text" as const, text: "Fixed 6 typos and one broken link, and moved the three v0.2 pages to v0.3. The Korean FAQ needs a glossary first: shall I start `docs/i18n/glossary.ko.json` from the English one?" }] },
+    ],
+  },
+  hermes: {
+    metadata: { model: "hermes-4-405b", reasoning_effort: "medium" },
+    turns: [
+      { role: "user" as const, ts: t(14), parts: [{ kind: "text" as const, text: "Draft the changelog for 2.0 from the merged pull requests." }] },
+      { role: "assistant" as const, ts: t(14, 3), end_ts: t(15, 20), parts: [
+        tool("terminal", "gh pr list --state merged --base main", { command: "gh pr list --state merged --base main" }, "#48  feat: retry flaky uploads\n#51  feat: read cli-tools.toml\n#53  fix: exit 2 on a bad flag"),
+        { kind: "text" as const, text: "## 2.0\n\n### Added\n- `--retries` retries a failed upload, never a rejected one (#48).\n- Flags can live in `cli-tools.toml` (#51).\n\n### Fixed\n- A bad flag exits with code 2 instead of 1 (#53)." },
+      ] },
     ],
   },
   // pi reads its own session file, which is an entry tree rather than a log: a `/tree` move

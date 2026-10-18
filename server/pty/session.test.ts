@@ -27,6 +27,31 @@ describe("PtySession", () => {
     expect(await printed).toContain("[" + sentinel + "]");
   }, 10000);
 
+  it("signals SIGWINCH to the command without changing its size", async () => {
+    if (process.platform === "win32") return;
+    let output = "";
+    let session: PtySession | undefined;
+    const done = new Promise<void>((resolve) => {
+      session = new PtySession({
+        command: "node", args: ["-e", `
+          process.on("SIGWINCH", () => process.stdout.write("WINCH " + process.stdout.columns + "x" + process.stdout.rows, () => process.exit(0)));
+          process.stdout.write("READY");
+          setInterval(() => {}, 1000);
+        `],
+        cols: 40, rows: 5,
+        onData: (data) => {
+          output += data;
+          if (output.includes("READY") && !output.includes("WINCH")) session?.winch();
+        },
+        onExit: () => resolve(),
+      });
+    });
+    try {
+      await done;
+      expect(output).toContain("WINCH 40x5");
+    } finally { session?.kill(); }
+  }, 10000);
+
   it("delivers split UTF-8 and the entire final burst before reporting the exit code", async () => {
     const expected = "한글🙂\u001b[31m끝\u001b[0m".repeat(100_000);
     let output = "";

@@ -24,7 +24,7 @@ const repo = join(import.meta.dir, "..");
 const caseDir = join(import.meta.dir, "skill-menu-cases");
 const app = mkdtempSync(join(tmpdir(), "herdr-agent-skill-menu-demo-"));
 const evidenceRoot = join(process.env.UI_EVIDENCE_DIR || join(repo, "evidence"), "agent-skill-menu");
-const TARGET = panes.docs;
+const TARGET = panes.hermes;
 const WIDTHS = [1280, 390] as const;
 
 const named = process.argv.slice(2);
@@ -56,7 +56,7 @@ try {
       // GET /api/pane/commands: the case's list
       if (Array.isArray(value.commands)) value.commands = commands.map((command) => ({ ...command }));
       // GET /api/pane/conversation of the chat: one more user turn, half a minute after the last
-      if (value.source === "omo-transcript" && Array.isArray(value.turns) && !value.turns.some((turn) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === turnText))) {
+      if (value.source === "hermes-transcript" && Array.isArray(value.turns) && !value.turns.some((turn) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === turnText))) {
         const last = value.turns[value.turns.length - 1];
         const at = last ? Date.parse(last.end_ts ?? last.ts) + 30_000 : Date.now();
         value.turns.push({ role: "user", ts: new Date(at).toISOString(), parts: [{ kind: "text", text: turnText }] });

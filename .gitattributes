@@ -1,0 +1,4 @@
+# Every text file is checked out with LF, whatever core.autocrlf says. herdr installs the plugin
+# with a git clone and runs its shell scripts with sh: on WSL a clone that inherits Windows'
+# core.autocrlf=true gets CRLF scripts, and sh stops at `set -u\r` ("set: Illegal option -").
+* text=auto eol=lf

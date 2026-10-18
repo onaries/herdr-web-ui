@@ -235,6 +235,14 @@ interface Parent {
   calls: Set<string>;
   results: Map<string, { at: number; error: boolean }>;
   commands: Commands;
+  /**
+   * `TaskStop` calls not answered yet, by call id: the task they name. A teammate is named by
+   * the name it was spawned with, and the answer then carries a task id of its own that no file
+   * of it holds, so the stop is kept under the name asked for as well as under that id.
+   */
+  stopCalls: Map<string, string>;
+  /** when each task named in an answered `TaskStop` was stopped */
+  stops: Map<string, number>;
   /** when the person last gave a prompt: the turn going on, or last ended, began there */
   promptAt: number | null;
 }
@@ -246,7 +254,7 @@ function scanParent(path: string): Parent | null {
   let parent = parents.get(path);
   if (!parent || parent.id !== stat.id || parent.offset > stat.size) {
     const from = Math.max(0, stat.size - PARENT_WINDOW);
-    parent = { id: stat.id, offset: from, skipping: from > 0, windowed: from > 0, firstAt: null, behind: false, notes: new Map(), calls: new Set(), results: new Map(), commands: noCommands(), promptAt: null };
+    parent = { id: stat.id, offset: from, skipping: from > 0, windowed: from > 0, firstAt: null, behind: false, notes: new Map(), calls: new Set(), results: new Map(), commands: noCommands(), stopCalls: new Map(), stops: new Map(), promptAt: null };
   }
   remember(parents, path, parent, 256);
   const state = parent;
@@ -301,17 +309,35 @@ function scanParentLine(parent: Parent, line: string): void {
   for (const value of Array.isArray(content) ? content : []) {
     const block = row(value);
     if (block === null) continue;
+    if (commanding) scanStop(parent, entry, block, at);
     if (calling && block["type"] === "tool_use" && (block["name"] === "Agent" || block["name"] === "Task") && typeof block["id"] === "string") parent.calls.add(block["id"]);
     else if (answering && block["type"] === "tool_result" && at !== null && typeof block["tool_use_id"] === "string" && parent.calls.has(block["tool_use_id"]) && !acknowledgement(entry, block)) {
       parent.results.set(block["tool_use_id"], { at, error: block["is_error"] === true });
     }
   }
   if (parent.calls.size > MAX_NAMES) parent.calls.clear();
+  if (parent.stopCalls.size > MAX_NAMES) parent.stopCalls.clear();
   if (parent.results.size > MAX_NAMES) parent.results.clear();
 }
 
+/** A `TaskStop` call and its answer: the task named, by the selector asked for and by the id answered. */
+function scanStop(parent: Parent, entry: Row, block: Row, at: number | null): void {
+  if (block["type"] === "tool_use" && block["name"] === "TaskStop" && typeof block["id"] === "string") {
+    const asked = text(row(block["input"])?.["task_id"]);
+    if (asked !== null) remember(parent.stopCalls, block["id"], asked, MAX_NAMES);
+    return;
+  }
+  if (block["type"] !== "tool_result" || typeof block["tool_use_id"] !== "string") return;
+  const asked = parent.stopCalls.get(block["tool_use_id"]);
+  if (asked === undefined) return;
+  parent.stopCalls.delete(block["tool_use_id"]);
+  if (at === null || block["is_error"] === true) return;
+  const answered = row(entry["toolUseResult"])?.["task_id"];
+  for (const id of new Set([asked, ...(typeof answered === "string" ? [answered] : [])])) remember(parent.stops, id, at, MAX_NAMES);
+}
+
 /** `title`: what it was called (description, else a teammate's name); a session resumed in a new file keeps neither toolUseId nor description */
-interface Meta { title: string | null; agent: string | null; toolUseId: string | null }
+interface Meta { title: string | null; name: string | null; agent: string | null; toolUseId: string | null }
 const metas = new Map<string, { key: string; meta: Meta | null }>();
 
 function readMeta(path: string): Meta | null {
@@ -323,7 +349,7 @@ function readMeta(path: string): Meta | null {
   let meta: Meta | null = null;
   try {
     const record = row(JSON.parse(readFileSync(path, "utf8")));
-    if (record !== null) meta = { title: text(record["description"]) ?? text(record["name"]), agent: text(record["agentType"]), toolUseId: text(record["toolUseId"]) };
+    if (record !== null) meta = { title: text(record["description"]) ?? text(record["name"]), name: text(record["name"]), agent: text(record["agentType"]), toolUseId: text(record["toolUseId"]) };
   } catch { return null; } // being written
   remember(metas, path, { key, meta }, 4096);
   return meta;
@@ -578,6 +604,8 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   let turnRunning = 0;
   const all = new Map<string, OmoTask>();
   const sources: Commands[] = parent === null ? [] : [parent.commands];
+  /** when each stopped agent's commands were stopped with it */
+  const halts = new Map<Commands, number>();
   let settled = parent !== null && !parent.behind;
   for (const { id, stat } of files) {
     const meta = readMeta(join(dir, `agent-${id}.meta.json`));
@@ -602,7 +630,16 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
     const told = note && (!answer || note.at >= answer.at) ? { at: note.at, status: note.status, turn: false } : answer ? { at: answer.at, status: answer.error ? "failed" as const : "completed" as const, turn: false } : null;
     // its own file can say it stopped (a teammate gets no notification, and a notice may not be written yet)
     const stopped = view.turnEndedAt !== null ? { at: view.turnEndedAt, status: "completed" as const, turn: true } : null;
-    const end = told && (!stopped || told.at >= stopped.at) ? told : stopped;
+    // TaskStop stopped it: by its id, or a teammate by its name, unless it was started or sent a message after
+    // the newer of a stop by its id and one by its name: a stop, a message and a second stop leave it stopped
+    const stopsAt = [parent?.stops.get(id), meta.name !== null ? parent?.stops.get(meta.name) : undefined].filter((at) => at !== undefined);
+    const stopAt = stopsAt.length > 0 ? Math.max(...stopsAt) : undefined;
+    // only once its start and its whole file are read: a teammate not read yet may be a new one or resumed
+    const halted = stopAt !== undefined && firstAt !== null && firstAt <= stopAt && !work.behind && Math.max(tail.dispatchAt ?? 0, work.dispatchAt ?? 0) <= stopAt
+      ? { at: stopAt, status: "cancelled" as const, turn: true } : null;
+    const end = ([told, stopped, halted] as ({ at: number; status: OmoTask["status"]; turn: boolean } | null)[])
+      .reduce((newest, next) => next !== null && (newest === null || next.at >= newest.at) ? next : newest, null);
+    if (end === halted && halted !== null) halts.set(work.commands, halted.at);
     // an end older than the agent's last entry is from before it was resumed; its own last turn ended is that entry
     if (end && (end.turn || view.lastAt === null || view.lastAt <= end.at)) { status = end.status; endedAt = end.at; }
     else if (parent === null) continue;
@@ -638,7 +675,9 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   for (const source of sources) {
     for (const [id, launch] of source.launches) {
       if (all.has(id)) continue;
-      const end = ends.get(id);
+      const halt = halts.get(source);
+      // a command an agent left running stops with the agent
+      const end = ends.get(id) ?? (halt !== undefined && launch.at <= halt ? { at: halt, status: "cancelled" as const } : undefined);
       const lost = !live || (since !== null && launch.at < since - START_SLACK_MS);
       keep({ id, title: launch.title, category: "shell", model: null, status: end?.status ?? (lost ? "lost" : "running"), started_at: iso(launch.at), ended_at: iso(end?.at ?? null), turns: null, tool_calls: null, tokens: null });
     }

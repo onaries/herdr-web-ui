@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
-import { AmbiguousClaudeStore, claudeProcessSession, claudeSessionTempDir, claudeStoreKey, claudeProjectDir, claudeTranscriptFile, configDirInPsLine, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeForegroundSession, claudeProcessSession, claudeSessionTempDir, claudeStoreKey, claudeProjectDir, claudeTranscriptFile, configDirInPsLine, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
 import type { ProcessRow } from "./windows-processes.ts";
 
 const NATIVE = process.platform === "linux" || process.platform === "darwin";
@@ -29,6 +29,21 @@ describe("claudeProcessSession", () => {
   it.skipIf(!NATIVE)("reads an exact live PID's session without a cwd guess", async () => {
     const home = nativeRecord();
     expect(await claudeProcessSession(home, process.pid)).toBe(SESSION);
+  });
+
+  // the test process stands in for the pane's Claude; its own CLAUDE_CONFIG_DIR would name another store
+  it.skipIf(!NATIVE || Boolean(process.env["CLAUDE_CONFIG_DIR"]))("reads the session a pane's one Claude process records, which /clear rewrites (#540)", async () => {
+    const home = nativeRecord();
+    const claude = { pid: process.pid, name: "claude", argv0: null, argv: null };
+    expect(await claudeForegroundSession([claude], home)).toBe(SESSION);
+    const cleared = "1c9e7f0e-8d3f-4c1a-9a53-6c2b7a1d9e43";
+    const path = join(home, ".claude", "sessions", `${process.pid}.json`);
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), sessionId: cleared }));
+    expect(await claudeForegroundSession([claude], home)).toBe(cleared);
+    // control: no single Claude process, no session
+    expect(await claudeForegroundSession([], home)).toBeNull();
+    expect(await claudeForegroundSession([claude, { ...claude, pid: process.pid + 1 }], home)).toBeNull();
+    expect(await claudeForegroundSession([{ ...claude, name: "bash" }], home)).toBeNull();
   });
 
   it.skipIf(process.platform !== "darwin")("reads it on a Mac whose locale puts the day first", async () => {
