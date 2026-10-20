@@ -74,7 +74,7 @@ export function TelemetryNotice({ enabled, onOpen }: { enabled: boolean; onOpen:
     return () => { recorded = true; cancelAnimationFrame(frame); document.removeEventListener("visibilitychange", onVisibility); };
   }, [shown]);
   if (!shown || closed) return null;
-  const text = t("herdr web ui sends anonymous usage counts.");
+  const text = t("Ovis sends anonymous usage counts.");
   return <div className="update-notice is-line" role="status">
     <span title={text}>{text}</span>
     <button type="button" className="btn btn-ghost" onClick={() => { setClosed(true); onOpen(); }}>{t("What is sent")}</button>

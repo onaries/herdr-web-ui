@@ -1,0 +1,21 @@
+
+ π > ⟳ Opus 5.5 (LiteLLM) > 🗑 projects/my-app ▶─2%────────────────────────────────────────────────────────┃─────────1M─
+╰─
+
+
+╭─ Switch Model ──────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  Session-only switch — role models stay unchanged                                                                   │
+│  🔍 >                                                                                                               │
+│                                                                                                                     │
+│   litellm/gpt-6.1-sol                                                               6.9s 24t/s  1.1m ◫       $2/10│ │
+│   litellm-anthropic/gemini-3.8-flash-high                                           8.9s 49t/s    1m ◫  $0.75/3.75█ │
+│   litellm/gpt-6-astra                                                               7.4s 17t/s  1.1m ◫      $10/50│ │
+│   litellm/claude-opus-4-6-thinking                                                                1m ◫       $5/25│ │
+│   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│   litellm/gpt-oss-120b                                                                          131k ◫  $0.35/0.75│ │
+│ ❯ litellm/gpt-oss-120b-medium                                                                   131k ◫  $0.35/0.75│ │
+│                                                                                                                     │
+│   GPT OSS 120B Medium (LiteLLM) · 131k ctx · 41k out · $0.35/0.75 per M · reasoning                                 │
+│                                                                                                                     │
+│ ↑/↓ models · ⏎ use for this session · type to search · @ quick roles · ⎋ close · ⌥P task model                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

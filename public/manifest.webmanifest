@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "herdr web ui",
-  "short_name": "herdr",
-  "description": "Chat with your coding agents and use live herdr terminals from your browser or phone.",
+  "name": "Ovis",
+  "short_name": "Ovis",
+  "description": "Ovis, the browser and phone client for herdr. Chat with your coding agents and use live herdr terminals.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

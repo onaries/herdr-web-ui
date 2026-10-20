@@ -12,6 +12,7 @@ import { codexImageParts } from "./codex-images.ts";
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 import { agentGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { resolveAgent } from "./pane-context.ts";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue => value !== null && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -487,7 +488,7 @@ export function sameDirectory(left: string, right: string): boolean {
 /** The other Codex panes herdr shows in this pane's directory, in any spelling `sameDirectory` takes. */
 export function codexPeersIn(panes: readonly HerdrPane[], paneId: string, cwd: string): HerdrPane[] {
   // the agent first: sameDirectory can ask the file system, and only Codex panes need it
-  return panes.filter((pane) => pane.pane_id !== paneId && (pane.agent ?? pane.agent_session?.agent) === "codex"
+  return panes.filter((pane) => pane.pane_id !== paneId && resolveAgent(pane).agent === "codex"
     && pane.cwd != null && sameDirectory(pane.cwd, cwd));
 }
 
@@ -1139,6 +1140,12 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
   return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
 }
 
+/** Native queue keys belong only to the interactive CLI, never its headless subcommands. */
+export async function paneRunsCodex(paneId: string): Promise<boolean> {
+  return (await codexProcessesOf(paneId)).list.some(({ argv = [] }) =>
+    !argv.some((arg) => /^(?:exec|e|review|app-server|mcp|mcp-server|login|logout|queue|help|completion)$/.test(arg)));
+}
+
 /** When each pane last looked at the other Codex panes for a set of threads, and which panes those were. */
 const claimChecks = new Map<string, { panes: string; at: number }>();
 const CLAIM_CHECK_MS = 5000;
@@ -1321,7 +1328,7 @@ async function shortThreadFromProcess(
   try {
     const peers = panes ?? (await sessionSnapshot()).panes;
     if (peers.some((pane) => pane.pane_id !== paneId
-      && (pane.agent ?? pane.agent_session?.agent) === "codex" && pane.cwd == null)) return null;
+      && resolveAgent(pane).agent === "codex" && pane.cwd == null)) return null;
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     const columns = new Set(db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('threads')").all().map((column) => column.name));
     if (!columns.has("first_user_message") || !columns.has("source")) return null;

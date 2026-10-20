@@ -1,18 +1,22 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { SlashCommand } from "../../shared/protocol.ts";
+import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
 import type { AgentCommandContext, AgentCommandSource } from "./index.ts";
 import { SkillIgnore } from "../skill-ignore.ts";
 import { description, environRecord, plainObject, readFrontmatter, readSkillText, walkSkills } from "./walk.ts";
 
 /**
- * omp 18.8.7: discovery/{builtin,omp-plugins,claude,agent-plugins,claude-plugins,
- * agents,codex,opencode,github}.ts and extensibility/skills.ts. Skills use the
- * provider's unqualified name, including plugin skills. No Python `$` menu.
- * Invocation-only extension/plugin roots cannot be recovered from file settings.
+ * Builtins follow omp's own registry, can1357/oh-my-pi 53a0377db6845e0dae606146130766ec92d407fd
+ * (18.12.3) packages/coding-agent/src/slash-commands/builtin-{modes,collaboration,session,lifecycle,
+ * marketplace,skills,control}.ts, assembled in builtin-registry.ts. Skills follow
+ * extensibility/skills.ts (same-name skills with different content are `<namespace>/<name>`) and
+ * capability/index.ts (`disabledProviders`, `enabledProviders`); discovery/{claude,codex,...}.ts.
+ * No Python `$` menu. Invocation-only extension/plugin roots cannot be recovered from file settings.
  */
 const BUILTINS = [
-  "login", "logout", "review", "goal", "session", "usage", "security", "setup", "plan",
+  "settings", "model", "effort", "agents", "tree", "mcp", "resume", "plugins", "skills", "skillful",
+  "ratchet", "modelpreset", "forget-approvals", "seance",
+  "login", "logout", "goal", "session", "usage", "security", "setup", "plan",
   "plan-review", "vibe", "guided-goal", "loop", "queue", "switch", "fast", "slow", "extended-context", "computer", "prewalk",
   "advisor", "export", "trace", "dump", "share", "collab", "join", "leave", "browser",
   "copy", "open", "todo", "jobs", "stats", "changelog", "hotkeys", "tools", "context",
@@ -20,10 +24,37 @@ const BUILTINS = [
   "delete", "compact", "shake", "handoff", "pin", "btw", "tan", "omfg", "cleanse",
   "retry", "debug", "memory", "rename", "move", "wt", "add-dir", "remove-dir", "dirs",
   "exit", "restart", "marketplace", "reload-plugins", "force", "live", "record",
-  "pause", "quit", "autoresearch", "green", "init",
+  "pause", "quit", "init",
 ] as const;
-// Palette minus the recorded unrepresentable model/resume/settings/agents/mcp/
-// plugins/skills/effort screens and terminal-only tree. `skill:` is a group, not a command.
+// review, autoresearch and green are bundled extensions in omp, not registry builtins: they are
+// listed only when an installed extension provides them. `skill:` is a group, not a command.
+
+// Registry aliases reserve their names as well: a file command named like one never runs.
+const ALIASES = ["providers", "models", "status", "rewind", "worktree", "plugin", "force:", "q"] as const;
+
+// Terminal-only: no `handle` in the registry (handleTui only), except btw whose answer omp stores
+// in its side store (#1380); the 18.5+ informational reports omp never writes to the transcript
+// (CHANGELOG 18.5.0); and the screens this list used to exclude by name.
+const TERMINAL_BOUND = [
+  "settings", "setup", "plan", "plan-review", "vibe", "goal", "guided-goal", "loop", "queue", "collab", "join",
+  "leave", "copy", "open", "hotkeys", "extensions", "agents", "git", "hub", "branch", "fork", "tree", "login",
+  "logout", "new", "clear", "delete", "resume", "tan", "omfg", "cleanse", "debug", "exit", "restart", "skills",
+  "live", "record", "pause", "quit", "seance",
+  "changelog", "context", "tools", "usage", "stats", "session", "dirs",
+  "mcp", "plugins", "effort",
+] as const;
+const TERMINAL_FORMS: CommandForm[] = [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }];
+const FORMS: Record<string, CommandForm[]> = {
+  ...Object.fromEntries(TERMINAL_BOUND.map((name) => [name, TERMINAL_FORMS])),
+  // The chat sends a bare /model as /switch (server/core/composer.ts): omp's own /model opens its
+  // Models hub, which saves the default role for later sessions, and /switch its session-only
+  // picker, which the omp-model card answers. /model <args> sets the model and is stored as a model change.
+  model: [{ match: "bare", interaction: "dialog", dialog: "omp-model" }, { match: "other", interaction: "none" }],
+  // omp compacts in place since 17.4.0, and with or without focus instructions shows only the
+  // "Generating handoff" status, cancelled with Esc (recorded on 18.8.7): no $EDITOR step.
+  handoff: [{ match: "bare", interaction: "dialog", dialog: "omp-handoff" }, { match: "other", interaction: "dialog", dialog: "omp-handoff" }],
+  btw: [{ match: "bare", interaction: "none" }, { match: "other", interaction: "none" }],
+};
 
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 function config(path: string): Record<string, unknown> {
@@ -54,6 +85,38 @@ function files(directory: string, recursive = false): string[] {
     });
   } catch { return []; /* absent or unreadable provider */ }
 }
+// Foreign tools whose ~/ config omp treats as opt-in (capability/index.ts FOREIGN_USER_PROVIDERS).
+const FOREIGN_USER_PROVIDERS: ReadonlySet<string> = new Set(["cursor", "codex", "claude", "claude-plugins", "gemini", "opencode", "windsurf", "github"]);
+// only blanks after the opening `---`: `\s*` there made an unclosed header quadratic (walk.ts)
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---(?:\s*\r?\n|$)/;
+
+/** extensibility/skills.ts skillNamespace: the plugin, else the directory owning `skills/`, else the provider. */
+function skillNamespace(path: string, plugin: string | undefined, provider: string): string {
+  let root = plugin;
+  if (root === undefined) {
+    const segments = path.split(/[\\/]/);
+    const skills = segments.lastIndexOf("skills");
+    const owner = skills > 0 ? segments[skills - 1] : segments[segments.length - 3];
+    const cached = owner?.split("___");
+    root = cached?.length === 3 ? cached[1] : owner;
+  }
+  if (!root || root.startsWith(".")) return provider;
+  return root.replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-+|-+$/g, "") || provider;
+}
+
+interface Admitted { readonly raw: string; readonly path: string; readonly fields: Readonly<Record<string, unknown>> }
+/** Same content: identical body and frontmatter, as extensibility/skills.ts compares them. */
+function identical(left: Admitted, right: Admitted): boolean {
+  try {
+    return Bun.deepEquals(left.fields, right.fields) && readSkillText(left.path).replace(FRONTMATTER, "") === readSkillText(right.path).replace(FRONTMATTER, "");
+  } catch { return false; /* unreadable skill */ }
+}
+
+/** Stable row identity: the canonical path of the file, the path itself when it cannot be resolved. */
+function canonicalPath(path: string): string {
+  try { return realpathSync(path); } catch { return path; /* vanished between listing and reading */ }
+}
+
 type Level = "user" | "project";
 interface Root {
   readonly path: string;
@@ -98,10 +161,11 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const opencode = [root(join(home, ".config", "opencode"), "user", "opencode"), root(join(cwd, ".opencode"), "project", "opencode")];
   const github = root(join(cwd, ".github"), "project", "github");
 
+  // omp reads `extensions` from its effective config.yml: the project's array replaces the user's.
   const extensions: Root[] = [];
-  for (const scope of native) {
-    const settings = config(join(scope.path, "settings.json"));
-    for (const path of strings(settings.extensions)) extensions.push({ ...scope, path: expand(path), provider: "omp-plugins", origin: "plugin" });
+  const projectExtensions = Array.isArray(projectSettings.extensions);
+  for (const path of strings(projectExtensions ? projectSettings.extensions : settings.extensions)) {
+    extensions.push({ path: expand(path), level: projectExtensions ? "project" : "user", provider: "omp-plugins", origin: "plugin" });
   }
   const pluginRoot = join(configRoot, "plugins");
   const pluginScopes = [root(pluginRoot, "user", "omp-plugins"),
@@ -163,26 +227,35 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   const legacyMarketplaces = marketplaceRoots.filter((scope) => !targetsPortable(scope));
   const skillRoots = [...nativeSkills, ...legacyExtensions, ...claude, ...portable,
     ...legacyMarketplaces, ...agents, ...codex, ...opencode, github];
+  // capability/index.ts: `disabledProviders` switches a whole provider off; `enabledProviders` opts a foreign
+  // user source in. The project's array replaces the user's, as for every omp setting.
+  const providerSet = (key: string): Set<string> => new Set(strings(Array.isArray(projectSettings[key]) ? projectSettings[key] : settings[key]));
+  const disabledProviders = providerSet("disabledProviders");
+  const enabledProviders = providerSet("enabledProviders");
+  const providerOn = (scope: Root): boolean => !disabledProviders.has(scope.provider);
+  const optedIn = (scope: Root): boolean => scope.level === "user" && FOREIGN_USER_PROVIDERS.has(scope.provider) &&
+    [scope.provider, "*", "all", ...(scope.provider === "claude-plugins" ? ["claude"] : [])].some((id) => enabledProviders.has(id));
   const thirdParty = ["enableCodexUser", "enableClaudeUser", "enableClaudeProject", "enablePiUser", "enablePiProject"].some((key) => skillsSettings[key] !== false);
   const enabled = (scope: Root): boolean => {
     const toggle = scope.provider === "native" ? `enablePi${scope.level === "user" ? "User" : "Project"}`
       : scope.provider === "agents" ? `enableAgents${scope.level === "user" ? "User" : "Project"}`
       : scope.provider === "claude" ? `enableClaude${scope.level === "user" ? "User" : "Project"}`
       : scope.provider === "codex" && scope.level === "user" ? "enableCodexUser" : null;
-    return toggle ? skillsSettings[toggle] !== false : thirdParty;
+    return providerOn(scope) && ((toggle ? skillsSettings[toggle] !== false : thirdParty) || optedIn(scope));
   };
   const commands: SlashCommand[] = [];
   const names = new Set<string>(BUILTINS);
   const seenPaths = new Set<string>();
+  const admitted = new Map<string, Admitted>();
   const ignored = strings(skillsSettings.ignoredSkills).map((pattern) => new Bun.Glob(pattern));
   const included = strings(skillsSettings.includeSkills).map((pattern) => new Bun.Glob(pattern));
   const disabled = strings(settings.disabledExtensions).concat(strings(projectSettings.disabledExtensions));
   const addSkills = (scope: Root, directories = [join(scope.path, "skills")]): void => {
     for (const directory of directories) for (const skill of walkSkills(directory, { depth: "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: true })) {
       const name = skill.name.trim();
-      if (!name || name.startsWith(".") || skill.fields.enabled === false || disabled.includes(`skill:${name}`) ||
-          ignored.some((glob) => glob.match(name)) || (included.length > 0 && !included.some((glob) => glob.match(name)))) continue;
-      const canonical = realpathSync(skill.path);
+      if (!name || name.startsWith(".") || /[\\/]/.test(name) || skill.fields.enabled === false || disabled.includes(`skill:${name}`) ||
+          ignored.some((glob) => glob.match(name))) continue;
+      const canonical = skill.id ?? canonicalPath(skill.path);
       if (portable.some((item) => item.path === scope.path)) {
         // Portable packages require spec names and contained skills, unlike legacy providers.
         const declared = skill.fields.name;
@@ -195,9 +268,22 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
             (skill.fields.metadata !== undefined && (typeof skill.fields.metadata !== "object" || skill.fields.metadata === null || Array.isArray(skill.fields.metadata) || Object.values(plainObject(skill.fields.metadata)).some((value) => typeof value !== "string"))) ||
             relative(realpathSync(scope.path), canonical).startsWith("..")) continue;
       }
-      if (names.has(`skill:${name}`) || seenPaths.has(canonical)) continue;
-      names.add(`skill:${name}`); seenPaths.add(canonical);
-      commands.push({ name: `skill:${name}`, description: skill.description, source: "skill", origin: scope.origin ?? scope.level });
+      if (seenPaths.has(canonical)) continue;
+      // A same-name skill with identical content collapses into the first; a different one is `<namespace>/<name>`.
+      const candidate: Admitted = { raw: name, path: skill.path, fields: skill.fields };
+      const same = [...admitted.entries()].filter(([, entry]) => entry.raw === name);
+      let final = name;
+      // extensibility/skills.ts: managed skills resolve last and defer to any authored skill of the same name.
+      if (scope.provider === "managed" && same.length > 0) continue;
+      if (same.length > 0) {
+        if (same.some(([, entry]) => identical(entry, candidate))) continue;
+        const namespace = skillNamespace(skill.path, scope.plugin, scope.provider);
+        final = `${namespace}/${name}`;
+        for (let count = 2; admitted.has(final); count += 1) final = `${namespace}/${name}~${count}`;
+      }
+      if (disabled.includes(`skill:${final}`) || ignored.some((glob) => glob.match(final))) continue;
+      admitted.set(final, candidate); seenPaths.add(canonical);
+      commands.push({ name: `skill:${final}`, description: skill.description, source: "skill", origin: scope.origin ?? scope.level, id: canonical });
     }
   };
   if (skillsSettings.enabled !== false && skillsSettings.enableSkillCommands !== false) {
@@ -205,8 +291,10 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
     for (const directory of strings(skillsSettings.customDirectories)) addSkills(root(expand(directory), "user", "custom"), [expand(directory)]);
     for (const scope of skillRoots.filter(enabled)) addSkills(scope, scope.plugin && !portable.includes(scope) ? pluginDirectories(scope, "skills") : undefined);
     addSkills(root(agentDir, "user", "managed"), [join(agentDir, "managed-skills")]);
+    // Include patterns match the final name once every name is settled, so a namespaced copy cannot bypass them.
+    if (included.length > 0) commands.splice(0, commands.length, ...commands.filter((command) => included.some((glob) => glob.match(command.name.slice("skill:".length)))));
   }
-  const allBuiltinNames = new Set<string>([...names, "model", "resume", "settings", "agents", "mcp", "plugins", "skills", "effort", "tree", "force:", "q", "providers", "models", "status"]);
+  const allBuiltinNames = new Set<string>([...names, ...ALIASES]);
   const addCommand = (command: SlashCommand): void => {
     if (allBuiltinNames.has(command.name)) return;
     allBuiltinNames.add(command.name); commands.push(command);
@@ -214,7 +302,8 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
   // File capabilities are provider-prioritized independently of the skill toggles.
   const claudeCommands = [root(claudeDir, "user", "claude"), root(join(cwd, ".claude"), "project", "claude")];
   for (const scope of [...native, ...legacyExtensions, ...claudeCommands, ...legacyMarketplaces, ...agents, ...codex, ...opencode]) {
-    if (["claude", "opencode"].includes(scope.provider) && commandSettings[`enable${scope.provider === "claude" ? "Claude" : "Opencode"}${scope.level === "user" ? "User" : "Project"}`] === false) continue;
+    if (!providerOn(scope)) continue;
+    if (["claude", "opencode"].includes(scope.provider) && commandSettings[`enable${scope.provider === "claude" ? "Claude" : "Opencode"}${scope.level === "user" ? "User" : "Project"}`] === false && !optedIn(scope)) continue;
     const directories = scope.plugin ? pluginDirectories(scope, "commands") : [join(scope.path, "commands")];
     for (const directory of directories) for (const path of files(directory, scope.provider === "claude")) {
       const fields = readFrontmatter(path);
@@ -223,13 +312,14 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
       try { text = readSkillText(path); } catch { continue; /* unreadable command file */ }
       const fallback = description(text);
       const desc = typeof fields?.description === "string" ? fields.description.trim() : fallback.length > 60 ? `${fallback.slice(0, 60)}...` : fallback;
-      const command = { name: scope.plugin ? `${scope.plugin}:${name}` : name, description: desc, source: scope.level };
+      const command = { name: scope.plugin ? `${scope.plugin}:${name}` : name, description: desc, source: scope.level, id: canonicalPath(path) };
       addCommand(command);
       if (scope.provider === "claude" && relative(directory, path).includes(sep)) addCommand({ ...command, name: relative(directory, path).slice(0, -3).split(sep).join(":") });
     }
   }
   // Native templates are recursive and user-first, with the runtime's source suffix.
   for (const scope of [nativeUser, nativeProject, ...legacyExtensions, ...agents, ...codex, github]) {
+    if (!providerOn(scope)) continue;
     const directory = join(scope.path, "prompts");
     for (const path of files(directory, scope.provider === "native")) {
       if (scope.provider === "github" && !path.endsWith(".prompt.md")) continue;
@@ -241,37 +331,39 @@ function discover(ctx: AgentCommandContext): SlashCommand[] {
       const fallback = description(markdown);
       const desc = typeof fields?.description === "string" ? fields.description : fallback.length > 60 ? `${fallback.slice(0, 60)}...` : fallback;
       const name = (scope.provider === "github" || scope.provider === "codex") && typeof fields?.name === "string" ? fields.name : basename(path, scope.provider === "github" ? ".prompt.md" : ".md");
-      addCommand({ name, description: desc ? `${desc} ${suffix}` : suffix, source: scope.level });
+      addCommand({ name, description: desc ? `${desc} ${suffix}` : suffix, source: scope.level, id: canonicalPath(path) });
     }
   }
   return commands;
 }
 
-// What each command does, as omp 18.8.7's own command definitions say it (src/slash-commands/*.ts
-// `description`). The palette shows a toggle's current state in that place ("Context: 1% ..."), which
-// is one session's state, not a description, so it is not copied here; a command whose definition
-// lives outside those files keeps the palette's wording when it describes the command.
+// What each command does, as the pinned registry's own definitions say it (slash-commands/builtin-*.ts and
+// seance.ts `description`). Where upstream computes the text, the stable part is kept: loop and effort end in a
+// key hint ("Esc suspends...", "shift+tab cycles levels") that follows the user's keybindings, and switch names
+// its default key. A toggle's current state (the palette's "Context: 1% ...") is one session's state, not a
+// description, so it is not copied. init is omp's embedded command, which the registry does not define.
 const DESCRIPTIONS: Readonly<Record<string, string>> = {
-  "login": "Login with OAuth provider",
-  "logout": "Logout from OAuth provider",
-  "review": "Launch interactive code review (bundled)",
-  "goal": "Toggle goal mode (persistent autonomous objective for this session)",
-  "session": "Session management commands",
-  "usage": "Show provider usage and limits",
   "security": "Plan, run, inspect, import, and compare OMP-native security scans",
+  "settings": "Open settings menu",
   "setup": "Open provider setup",
   "plan": "Toggle plan mode (agent plans before executing)",
   "plan-review": "Re-open the plan review for the latest plan (plan mode only)",
   "vibe": "Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)",
+  "goal": "Toggle goal mode (persistent autonomous objective for this session)",
   "guided-goal": "Have the agent interview you in chat, then set up goal mode",
-  "loop": "Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable.",
+  "loop": "Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Bound it with a count/duration, or gate it with `--until '<cmd>'` / `--while '<cmd>'` — the command's exit status decides whether the next iteration runs.",
   "queue": "Queue a message for after the agent yields",
-  "switch": "Switch model for this session (same as alt+p)",
-  "fast": "Toggle priority service tier (OpenAI service_tier=priority, Anthropic speed=fast)",
-  "slow": "",
-  "extended-context": "Toggle premium long-context windows",
-  "computer": "Toggle the native computer-use tool for this session",
-  "prewalk": "Switch to a fast/cheap model at the next action (works even without --prewalk)",
+  "model": "Switch model for this session",
+  "switch": "Switch model for this session (same as alt+p); accepts fuzzy ids, provider/id, @role, :level",
+  "fast": "Toggle fast service (OpenAI service_tier=priority or ultrafast, Anthropic speed=fast, Google priority)",
+  "slow": "Toggle slow mode: flex tier on OpenAI/Google; on Anthropic, continue at low priority after the Claude session limit",
+  "skillful": "Toggle listing available skills in the system prompt (session only)",
+  "extended-context": "Toggle extended context windows",
+  "computer": "Toggle the native computer-use eval prelude for this session",
+  "ratchet": "Build (or reuse) an eval for an LLM flow, then hillclimb it unattended",
+  "prewalk": "Arm, restart, or cancel a one-shot model handoff",
+  "modelpreset": "Save and switch model presets (role models + thinking level)",
+  "effort": "Set reasoning effort (thinking level, intelligence) for this session",
   "advisor": "Toggle the advisor (a second model that reviews each turn and injects notes)",
   "export": "Export session to HTML file",
   "trace": "Open this session's trace in the stats dashboard",
@@ -280,21 +372,28 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "collab": "Share this session live via a relay",
   "join": "Join a shared collab session",
   "leave": "Leave the collab session",
-  "browser": "Toggle browser headless vs visible mode",
+  "browser": "Toggle browser eval-prelude headless vs visible mode",
   "copy": "Pick text or code from the conversation to copy",
   "open": "Open the last link from the conversation in your browser (or pick one with /copy)",
   "todo": "View or modify the agent's todo list",
+  "session": "Session management commands",
   "jobs": "Show async background jobs status",
+  "usage": "Show provider usage and limits",
   "stats": "Launch the local stats dashboard",
   "changelog": "Show changelog entries",
   "hotkeys": "Show all keyboard shortcuts",
   "tools": "Show tools currently visible to the agent",
   "context": "Show estimated context usage breakdown",
   "extensions": "Open Extension Control Center dashboard",
+  "agents": "Open the agents hub (per-agent model, prewalk, and advisor)",
   "git": "Open the git UI (split diff viewer, staging, commit composer)",
   "hub": "Open the live Agent Hub",
-  "branch": "Create a new branch from a previous message",
-  "fork": "Create a new fork from a previous message",
+  "branch": "Rewind to a previous message, keeping the old path as a branch",
+  "fork": "Fork this session, or open it in a multiplexer pane or window",
+  "tree": "Navigate session tree (switch branches)",
+  "login": "Login with OAuth provider",
+  "logout": "Logout from OAuth provider",
+  "mcp": "Manage MCP servers (add, list, remove, test)",
   "ssh": "Manage SSH hosts (add, list, remove)",
   "new": "Start a new session",
   "fresh": "Reset provider stream state without changing the local transcript",
@@ -302,16 +401,17 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "delete": "Delete the current session and start a new one",
   "compact": "Manually compact the session context",
   "shake": "Drop heavy content from context (tool results, large blocks)",
-  "handoff": "Hand off session context to a new session",
+  "handoff": "Summarize the session into a handoff document and compact in place",
+  "resume": "Resume a different session",
   "pin": "Pin or unpin a session at the top of the resume list",
-  "btw": "Ask an ephemeral side question using the current session context",
+  "btw": "Ask a side question, or browse this session's BTW history",
   "tan": "Run a full background agent on tangential work",
   "omfg": "Forge a TTSR rule from a complaint to stop a recurring behavior",
   "cleanse": "Detect and fix project diagnostics with weighted parallel subagents",
   "retry": "Retry the last failed agent turn",
   "debug": "Open debug tools selector",
   "memory": "Inspect and operate memory maintenance",
-  "rename": "Rename the current session",
+  "rename": "Rename the current session (omit title to generate)",
   "move": "Move the current session to a different directory",
   "wt": "Move this session into a new worktree, changes included",
   "add-dir": "Add a workspace directory to this session (multi-root)",
@@ -320,15 +420,19 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "exit": "Exit the application",
   "restart": "Restart omp with the same launch flags, resuming this session",
   "marketplace": "Manage marketplace plugin sources and installed plugins",
+  "plugins": "View and manage installed plugins",
   "reload-plugins": "Reload all plugins (skills, commands, hooks, tools, agents, MCP)",
+  "skills": "Search, install, and update skills from the skills.omp.sh registry",
   "force": "Force next turn to use a specific tool",
   "live": "Start Codex-backed realtime voice mode",
   "record": "Start or stop recording this screen to a replayable file (omp play)",
   "pause": "Freeze all agents (main, subagents, advisor) until resumed",
+  "forget-approvals": "Forget every file and folder approval Ask and remember has recorded",
   "quit": "Quit the application",
-  "autoresearch": "Toggle builtin autoresearch mode, or pass off / clear, or a goal message.",
-  "green": "Generate a prompt to iterate on CI failures until the branch is green (bundled)",
+  "seance": "Consult a saved session without resuming it",
   "init": "Generate AGENTS.md for current codebase",
 };
 
-export const source: AgentCommandSource = { builtins: BUILTINS, descriptions: DESCRIPTIONS, discover };
+export const source: AgentCommandSource = {
+  builtins: BUILTINS, descriptions: DESCRIPTIONS, discover, forms: FORMS, terminalBound: TERMINAL_BOUND, pin: "18.12.3",
+};

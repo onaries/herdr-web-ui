@@ -12,7 +12,9 @@ const TIMEOUT_MS = 2500;
 /** the macOS App Store build puts no `tailscale` on the PATH; its CLI lives in the app bundle */
 const MAC_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 /** HTTPS ports to suggest, the conventional one first; a port another service already uses is skipped */
-const HTTPS_PORTS = [443, 8443, 7317, 17317];
+export const HTTPS_PORTS: readonly number[] = [443, 8443, 7317, 17317];
+/** names the one HTTPS port to publish the app on, for a user who keeps 443 for something else */
+export const HTTPS_PORT_VARIABLE = "HERDR_WEB_TAILSCALE_HTTPS_PORT";
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 /** stdout of the two commands; null where the command failed, timed out or is not installed */
@@ -58,8 +60,21 @@ function httpsUrl(host: string, port: number): string {
   return `https://${host}${port === 443 ? "" : `:${port}`}`;
 }
 
+/**
+ * The HTTPS ports a new `tailscale serve` may take, in order: the usual ones while the variable is
+ * unset, only the port it names when it is set, and none when it names no port. A port the user
+ * chose is never traded for another, since a phone's installed app stays on the address it was
+ * installed from.
+ */
+export function httpsPorts(value: string | undefined): readonly number[] {
+  const text = value?.trim() ?? "";
+  if (text === "") return HTTPS_PORTS;
+  const port = /^\d+$/.test(text) ? Number(text) : 0;
+  return port >= 1 && port <= 65535 ? [port] : [];
+}
+
 /** Pure: the two commands' output (or their absence) to what the phone panel needs. */
-export function parseTailscale(output: TailscaleOutput | null, port: number): TailscaleAccess {
+export function parseTailscale(output: TailscaleOutput | null, port: number, candidates: readonly number[] = HTTPS_PORTS): TailscaleAccess {
   if (output === null) return NONE;
   const status = parseJson<StatusJson>(output.status);
   if (status === null || status.BackendState !== "Running") return { ...NONE, state: "stopped" };
@@ -75,7 +90,7 @@ export function parseTailscale(output: TailscaleOutput | null, port: number): Ta
     if (!serve?.TCP?.[String(webPort)]?.HTTPS) continue;
     if (proxiesTo(site.Handlers?.["/"]?.Proxy, port)) { servingUrl = httpsUrl(host, webPort); break; }
   }
-  const free = servingUrl === null ? HTTPS_PORTS.find((candidate) => !taken.has(candidate)) ?? null : null;
+  const free = servingUrl === null ? candidates.find((candidate) => !taken.has(candidate)) ?? null : null;
   return {
     state: "running",
     dns_name: dns,
@@ -108,8 +123,8 @@ export async function readTailscale(binary: string | null = tailscaleBinary()): 
   return { status, serve };
 }
 
-export async function remoteAccess(port: number): Promise<RemoteAccess> {
-  return { port, tailscale: parseTailscale(await readTailscale(), port) };
+export async function remoteAccess(port: number, candidates: readonly number[] = httpsPorts(process.env[HTTPS_PORT_VARIABLE])): Promise<RemoteAccess> {
+  return { port, tailscale: parseTailscale(await readTailscale(), port, candidates) };
 }
 
 /** A tagged node belongs to no person: its `User` entry is the node itself, named by its MagicDNS name. */

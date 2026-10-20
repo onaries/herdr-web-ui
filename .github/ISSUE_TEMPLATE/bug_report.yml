@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in herdr web ui does not work as it should
+description: Something in Ovis does not work as it should
 labels: [bug]
 body:
   - type: markdown
@@ -31,7 +31,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: herdr web ui version
+      label: Ovis version
       description: "Settings shows it: the first line under Updates reads `Running vX.Y.Z (commit)`. Add the last version that worked, if you know it."
       placeholder: 0.3.33 (worked in 0.3.31)
     validations:

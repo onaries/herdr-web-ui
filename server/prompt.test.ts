@@ -4676,6 +4676,19 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     });
   });
 
+  /** omp's session-only model picker, a rule between its recent model and the rest, which ↑/↓ step over */
+  const ompPicker = (at: number) => {
+    const box = (text: string) => `│ ${text.padEnd(86)} │`;
+    const row = (index: number, name: string) => box(`${at === index ? "❯" : " "} ${name}`);
+    return [
+      `\n╭─ Switch Model ${"─".repeat(73)}╮`, box(" Session-only switch — role models stay unchanged"), box(" 🔍 >"), box(""),
+      row(0, "litellm/claude-opus-5-5 ●          1m ◫  $4/20"), box(`  ${"─".repeat(80)}`),
+      row(1, "litellm/gpt-6-sol                1.1m ◫  $2/10"), row(2, "litellm/gpt-5.6-sol              1.1m ◫  $4/20"), box(""),
+      box("  GPT 6 Sol (LiteLLM) · 1.1m ctx · 128k out"), box(""),
+      box("↑/↓ models · ⏎ use for this session · type to search · @ quick roles · ⎋ close"), `╰${"─".repeat(88)}╯\n`,
+    ].join("\n");
+  };
+
   // An ordinary answer that needs a move, on a screen drawn again the way each agent draws it
   // with the cursor on another row: every reader must still know its own menu there.
   describe("moves to a row that is not the cursor's and answers it", () => {
@@ -4730,6 +4743,11 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
       {
         name: "OmO's model list", agent: "omo", status: "idle", rows: 3, choice: { option_index: 2 }, sent: ["down", "down", "enter"],
         draw: (at) => `Only showing models from configured providers. Use /login to add providers.\nenter select  ctrl+s select as default  ctrl+f favorite\n>\n${["claude-opus-4-8 [anthropic] ✓", "claude-fable-5 [anthropic]", "gpt-5.5 [chatgpt-subscription]"].map((row, index) => `${at === index ? "→" : " "}   ${row}`).join("\n")}\n  Model Name: Claude Opus 4.8\n${"─".repeat(40)}\n/tmp/app • $0.000 (sub) • 0/1M (0.0%) (auto)  (anthropic) claude-opus-4-8 • effort medium\n(😺 OmO Native)\n`,
+      },
+      {
+        name: "omp's model picker, over the rule between its recent model and the rest", agent: "omp", status: "idle", rows: 3, choice: { option_index: 2 },
+        sent: ["down", "down", "enter"],
+        draw: (at) => ompPicker(at),
       },
       {
         // the last row drawn carries the cursor where it carried `↓`, under another effort line
@@ -4816,6 +4834,71 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     });
   });
 
+  describe("picker cancellation matches the parent move boundaries", () => {
+    const providerList = (agent: "pi" | "omo", at: number) => {
+      const rows = ["gpt-5.5", "gpt-6-sol", "gpt-6-astra"].map((name, row) =>
+        `${at === row ? "→" : " "}   ${name} [chatgpt-subscription]`).join("\n");
+      return agent === "omo"
+        ? `enter select  ctrl+s select as default  ctrl+f favorite\n>\n${rows}\n${"─".repeat(40)}\n/tmp/fixture\n(OmO Native)\n`
+        : `>\n${rows}\nEnter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel\n${"─".repeat(40)}\n/tmp/fixture\n0.0%/215k (auto)\n`;
+    };
+    const cases = [
+      { id: "omo-model", agent: "omo", move: "down", rereadMoves: false, draw: (at: number) => providerList("omo", at) },
+      { id: "pi-model", agent: "pi", move: "down", rereadMoves: false, draw: (at: number) => providerList("pi", at) },
+      { id: "claude-model", agent: "claude", move: "down", rereadMoves: true, draw: claudeModelList },
+      { id: "claude-effort", agent: "claude", move: "right", rereadMoves: true, draw: claudeEffort },
+      { id: "codex-model", agent: "codex", move: "down", rereadMoves: true, draw: codexModels },
+      { id: "omp-model", agent: "omp", move: "down", rereadMoves: true, draw: ompPicker },
+    ];
+    for (const fixture of cases) for (const during of ["first move", "next read", "commit read", "asking ended"]) {
+      test(`${fixture.id} preserves parent navigation when cancelled during ${during}`, async () => {
+        await withPane(fixture.agent, "idle", fixture.draw(0), async (pane) => {
+          const prompt = (await card())!;
+          const abort = new AbortController();
+          let at = 0;
+          pane.onSent = (sent) => {
+            if (sent !== fixture.move) return;
+            at += 1;
+            pane.screen = fixture.draw(at);
+            if (at === 1 && during === "first move") abort.abort();
+            if (at === 1 && during === "asking ended") promptWaitEnded("p_1");
+          };
+          // Abort within the exact read, after onRow's entry guard but before it returns.
+          pane.onRead = () => {
+            if ((at > 0 && during === "next read") || (at === 2 && during === "commit read")) abort.abort();
+          };
+          const result = await answer(prompt.id, { option_index: 2 }, { signal: abort.signal });
+          const moves = during === "asking ended" || (during === "first move" && fixture.rereadMoves) ? 1 : 2;
+          expect(pane.sent, `${fixture.id} must keep the parent's reversible keys without a commit`).toEqual(Array.from({ length: moves }, () => fixture.move));
+          expect(result).toEqual({ status: 409, code: "prompt_changed" });
+        });
+      });
+    }
+  });
+
+  // a refusal waits out the answer's own 1.5 s for the picker to show the row
+  test("sends no further arrow into omp's input once its model picker closes under the moves", async () => {
+    await withPane("omp", "idle", ompPicker(0), async (pane) => {
+      const prompt = (await card())!;
+      // Esc in the terminal right after the first ↓: omp's input box takes ↑/↓ as its history
+      pane.onSent = (sent) => { if (sent === "down") pane.screen = "\n> \n"; };
+      const result = await answer(prompt.id, { option_index: 2 });
+      expect(pane.sent, "a closed picker must not receive the remaining arrows").toEqual(["down"]);
+      expect(result).toEqual({ status: 409, code: "prompt_changed" });
+    });
+  });
+
+  test("an interaction plan sends no commit when Claude's highlight moves past the requested model", async () => {
+    await withPane("claude", "idle", claudeModelList(1), async (pane) => {
+      const prompt = (await card())!;
+      // A deterministic terminal move races our one Down: the requested row is 2, not 3.
+      pane.onSent = (sent) => { if (sent === "down") pane.screen = claudeModelList(3); };
+      const result = await answer(prompt.id, { option_index: 2 });
+      expect(pane.sent, "a changed highlight must not receive the session commit s").toEqual(["down"]);
+      expect(result).toEqual({ status: 409, code: "prompt_changed" });
+    });
+  });
+
   test("sets Claude's effort with ←/→ and s only where the slider still stands over that level", async () => {
     await withPane("claude", "idle", claudeEffort(2), async (pane) => {
       let at = 2;
@@ -4836,6 +4919,24 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
       expect(pane.sent).toEqual(["right"]);
     });
   }, 20_000);
+
+  test("sends no Esc to Claude's goal dialog once it shows another goal than the card's", async () => {
+    const goal = (name: string) => readFileSync(new URL("./fixtures/claude-goal-2.1.304-active-120.txt", import.meta.url), "utf8").replaceAll("hello.txt", name);
+    await withPane("claude", "idle", goal("hello.txt"), async (pane) => {
+      // the card's read, the answer's own read of the card, then its look before the key
+      let reads = 0;
+      pane.onRead = () => { reads += 1; if (reads === 3) pane.screen = goal("other.txt"); };
+      const prompt = (await card())!;
+      expect(prompt.title).toBe("Goal active");
+      expect(await answer(prompt.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+    });
+    await withPane("claude", "idle", goal("hello.txt"), async (pane) => {
+      const prompt = (await card())!;
+      expect(await answer(prompt.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
+      expect(pane.sent).toEqual(["esc"]);
+    });
+  });
 
   // each refusal waits out the answer's own 1.5 s for the list to show the row
   test("types no s, and no further arrow, once Claude's model list is not the one that was tapped", async () => {
@@ -5968,5 +6069,80 @@ favorite
     const rule = wide.lastIndexOf("─");
     expect(parseInteractivePrompt("omo", `${wide.slice(0, wide.indexOf("Model Name"))}some other output\n${wide.slice(wide.indexOf("Model Name"))}`)).toBeNull();
     expect(rule).toBeGreaterThan(0);
+  });
+});
+
+// Captured from omp 18.11.1 running /switch in an isolated herdr session at 120 columns by 40: the
+// picker as it opens, after ↓ was pressed eight times, and after `sol` was typed and ↓ pressed
+// once; and as it opened from the chat's `/model` in a browser that left the pane 94 columns by
+// 18. Provider names and the pane's folder are renamed in the files.
+describe("omp's model picker", () => {
+  const capture = (name: string) => readFileSync(new URL(`./fixtures/omp-switch-18.11.1-${name}.txt`, import.meta.url), "utf8");
+  const wide = capture("wide");
+  const scrolled = capture("scrolled");
+  const filtered = capture("filtered");
+  const short = capture("short");
+  const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
+
+  test("reads the picker /switch opens, naming the model in use and the models under its window", () => {
+    const prompt = parseInteractivePrompt("omp", wide)!;
+    expect(prompt.kind).toBe("question");
+    expect(prompt.question).toBe("Select model for this session (currently litellm/claude-opus-5-5). More models are listed in the terminal.");
+    // the name alone: neither the mark on the model in use, its figures nor the scrollbar after them
+    expect(labels(prompt)).toEqual([
+      "litellm/claude-opus-5-5", "litellm/gpt-5.6-sol", "litellm/deepseek-v4-flash", "litellm/gpt-6.1-sol",
+      "litellm-anthropic/gemini-3.8-flash-high", "litellm/gpt-6-astra", "litellm/claude-opus-4-6-thinking",
+    ]);
+    expect(prompt.options.every((option) => option.description === null)).toBe(true);
+    expect(prompt.custom_option_index).toBeNull();
+    expect(answerKeys(prompt, { option_index: 2 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }]);
+  });
+
+  test("reads a window scrolled past the rule between recent models and the rest, from where the cursor stands", () => {
+    const prompt = parseInteractivePrompt("omp", scrolled)!;
+    // the model in use has scrolled out of the window
+    expect(prompt.question).toBe("Select model for this session. More models are listed in the terminal.");
+    expect(labels(prompt)).toEqual([
+      "litellm/gpt-6.1-sol", "litellm-anthropic/gemini-3.8-flash-high", "litellm/gpt-6-astra",
+      "litellm/claude-opus-4-6-thinking", "litellm/gpt-oss-120b", "litellm/gpt-oss-120b-medium",
+    ]);
+    // ↑/↓ step over the rule: one key per model
+    expect(answerKeys(prompt, { option_index: 3 })).toEqual([{ keys: ["up"] }, { keys: ["up"] }, { keys: ["enter"] }]);
+  });
+
+  test("reads what a search left, which fits the window", () => {
+    const prompt = parseInteractivePrompt("omp", filtered)!;
+    expect(prompt.question).toBe("Select model for this session");
+    expect(labels(prompt)).toEqual(["litellm/gpt-6.1-sol", "litellm/gpt-6-sol", "litellm/gpt-5.6-sol"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
+  });
+
+  test("reads a short pane's five rows under a footer cut at its edge", () => {
+    expect(short).toContain("⌥P task …");
+    const prompt = parseInteractivePrompt("omp", short)!;
+    expect(prompt.question).toBe("Select model for this session (currently litellm/claude-opus-5-5). More models are listed in the terminal.");
+    expect(labels(prompt)).toEqual([
+      "litellm/claude-opus-5-5", "litellm/gpt-5.6-sol", "litellm/deepseek-v4-flash", "litellm/gpt-6.1-sol", "litellm-anthropic/gemini-3.8-flash-high",
+    ]);
+  });
+
+  test("says on a model the conversation overflows that omp compacts it first", () => {
+    const over = scrolled.replace("litellm/gpt-oss-120b   ", "litellm/gpt-oss-120b ⦸ context>131k");
+    expect(over).not.toBe(scrolled);
+    const prompt = parseInteractivePrompt("omp", over)!;
+    expect(prompt.options[4]).toEqual({ label: "litellm/gpt-oss-120b", description: "The conversation is over its 131k context: omp compacts it first" });
+  });
+
+  test("is gone once the picker is, and reads neither its quick roles nor its task models", () => {
+    // Esc: the picker leaves the screen, which ends in omp's input box again
+    expect(parseInteractivePrompt("omp", wide.slice(0, wide.indexOf("╭─ Switch Model")))).toBeNull();
+    // anything under it is not omp's picker, which is drawn over the bottom of the screen
+    expect(parseInteractivePrompt("omp", `${wide}some later output\n`)).toBeNull();
+    // a leading `@` lists quick roles, and Alt+P the model for task subagents: not the session's model
+    expect(parseInteractivePrompt("omp", wide.replace("Session-only switch — role models stay unchanged", "Quick role switch — applies its model and thinking for this session"))).toBeNull();
+    expect(parseInteractivePrompt("omp", wide.replace("╭─ Switch Model ─", "╭─ Switch Task Model ─"))).toBeNull();
+    expect(parseInteractivePrompt("omp", wide.replace("use for this session", "use for Task subagents"))).toBeNull();
+    // another agent's pane draws no such picker
+    expect(parseInteractivePrompt("pi", wide)).toBeNull();
   });
 });

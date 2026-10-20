@@ -1,0 +1,8 @@
+{
+  "appId": "sh.ovis.app",
+  "appName": "Ovis",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never"
+  }
+}

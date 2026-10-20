@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support · Ovis</title>
+<meta name="description" content="Help with Ovis: connecting to your PC, pairing, and reporting a problem.">
+<link rel="canonical" href="https://ovis.sh/support/">
+<link rel="alternate" hreflang="en" href="https://ovis.sh/support/">
+<link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/support/">
+<link rel="alternate" hreflang="x-default" href="https://ovis.sh/support/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ovis.sh/support/">
+<meta property="og:title" content="Support · Ovis">
+<meta property="og:description" content="Help with Ovis: connecting to your PC, pairing, and reporting a problem.">
+<meta property="og:image" content="https://ovis.sh/assets/icon-512.png">
+<meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131a2b" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/assets/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="wrap top">
+<a class="brand" href="/"><picture><source srcset="/assets/logo-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/logo-light.png" alt="Ovis" width="113" height="40"></picture></a>
+<nav><a href="/privacy/">Privacy</a><a href="/support/" aria-current="page">Support</a><a href="/ko/support/" hreflang="ko" lang="ko">한국어</a></nav>
+</header>
+<main>
+<article class="wrap doc">
+<h1>Support</h1>
+<p class="date">Ovis for iPhone and Android</p>
+<div class="box"><p><strong>Need help or found a bug?</strong> <a href="https://github.com/devswha/herdr-web-ui/issues/new">Open an issue on GitHub</a>. Please include your phone model, the app version, and the herdr web UI version from <strong>Settings → About</strong> on your PC.</p></div>
+<h2>Ovis cannot reach my PC</h2>
+<ul>
+<li>Check that the PC is on and herdr web UI is running: open its address in the PC's browser.</li>
+<li>Check that your phone has a route to the PC, for example that Tailscale is connected on both, or that both are on the same Wi-Fi.</li>
+<li>Open the same address in your phone's browser. If it does not load there either, the problem is the route, not the app.</li>
+<li>An <code>https</code> address (<code>tailscale serve</code> on the PC) opens faster in the app than a plain <code>http</code> one.</li>
+</ul>
+<h2>It asks for a pairing code</h2>
+<p>A phone that is not signed in to your Tailscale account as you are is paired once with a six-digit code. Find the code on the PC under <strong>Settings → Phone &amp; devices</strong>.</p>
+<h2>The QR code does not scan</h2>
+<p>Type the address shown under the QR code instead. If the camera does not open, allow camera access for Ovis in your phone's settings.</p>
+<h2>Switching to another PC</h2>
+<p>Use <strong>Change PC</strong> in the app to go back to the connect screen, where your saved PCs are listed.</p>
+<h2>Guides</h2>
+<ul>
+<li><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#on-your-phone">Phone setup</a></li>
+<li><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">Access and safety</a></li>
+<li><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md">The full herdr web UI guide</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap"><span>Ovis is the phone app for herdr web UI, made by devswha.</span><a href="/privacy/">Privacy</a><a href="/support/">Support</a><a href="https://github.com/devswha/herdr-web-ui">Source on GitHub</a><a href="https://herdrweb.dev/">herdrweb.dev</a></div></footer>
+</body>
+</html>

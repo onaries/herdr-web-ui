@@ -135,7 +135,7 @@ body { font-family: "Pretendard Variable", sans-serif; -webkit-font-smoothing: a
 <div id="stage"><div id="lamp"></div><div id="pools"></div><div id="objs"></div>
 <div id="scrimL"></div><div id="scrimB"></div><div id="shade"></div><div id="vig"></div>
 <div id="type"></div><div id="keys"></div>
-<div id="end"><img src="/_film/brand/mark-paper.png"><div class="word">herdr web ui</div><div class="cmd"></div><div class="tag">Your agents, in plain conversation.</div><div class="url">herdrweb.dev · MIT · a plugin for herdr</div></div>
+<div id="end"><img src="/_film/brand/mark-paper.png"><div class="word">Ovis</div><div class="cmd"></div><div class="tag">Your agents, in plain conversation.</div><div class="url">herdrweb.dev · MIT · a plugin for herdr</div></div>
 <div id="reveal"></div><div id="fade"></div></div>
 <script>
 const $ = (id) => document.getElementById(id);

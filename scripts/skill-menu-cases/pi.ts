@@ -34,10 +34,10 @@ export const expect = async ({ page, width, box, menu, scenario, log, clear, row
     await menu.locator(".menu-item").filter({ hasText: "/compact" }).waitFor();
     assert.equal(await box.getAttribute("aria-expanded"), "true", "the same pane's own / menu opens");
     const rows = await rowNames();
-    assert.ok(!rows.includes("tree"), `the menu does not list tree: ${rows.join(" ")}`);
+    assert.ok(rows.includes("tree"), `the menu lists tree, a terminal command: ${rows.join(" ")}`);
     assert.deepEqual([...rows].sort(), commands.map((command) => command.name).sort(), "every pi command is offered, once");
     const headings = await menu.locator(".menu-heading").allTextContents();
-    assert.deepEqual(headings, ["Built in", "User", "Your skills"], "pi's builtins, the person's template and their skills under their own headings");
+    assert.deepEqual(headings, ["Built in", "User", "Your skills", "Terminal commands"], "pi's builtins, the person's template, their skills and the terminal commands under their own headings");
     await menuFits("E");
     await rowsBrief("E");
     // the skills end the list: the capture shows their heading, icons and rows after the last builtins

@@ -80,6 +80,8 @@ describe("fixed sleeps", () => {
   it("tells a fixed sleep from a bounded poll", () => {
     const found = (code: string) => fixedSleeps("example.ts", code).length;
     expect(found("await Bun.sleep(300);")).toBe(1);
+    expect(found("await page.waitForTimeout(500);")).toBe(1);
+    expect(found("// fixed wait: nothing may arrive in this time\nawait page.waitForTimeout(500);")).toBe(0);
     expect(found("await new Promise((resolve) => setTimeout(resolve, 1500));")).toBe(1);
     expect(found("while (!ready) await Bun.sleep(20);")).toBe(1);
     expect(found("await new Promise((resolve) => setTimeout(resolve, 0));")).toBe(0);
@@ -101,6 +103,7 @@ describe("fixed sleeps", () => {
     const found = (code: string) => fixedSleeps("example.ts", code).length;
     expect(found("const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));\nawait sleep(10);\nawait sleep(20);")).toBe(2);
     expect(found("function delay(ms) { return Bun.sleep(ms); }\nawait delay(300);")).toBe(1);
+    expect(found("const wait = (ms: number) => page.waitForTimeout(ms);\nawait wait(10);\nawait wait(20);")).toBe(2);
     expect(found("import { setTimeout as sleep } from \"node:timers/promises\";\nawait sleep(500);")).toBe(1);
     expect(found("const wait = io.wait ?? Bun.sleep;\nawait wait(5);")).toBe(1);
     expect(found("const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));\nawait tick();\nawait tick(20);")).toBe(1);

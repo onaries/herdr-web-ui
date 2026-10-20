@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import { activeTrigger, applyCompletion } from "./mentions.ts";
-import { rankSlashCommands } from "./compose.ts";
+import { atSkillCommands, atSkillReplacement, rankSlashCommands } from "./compose.ts";
+import type { SlashCommand } from "../../shared/protocol.ts";
 
 describe("activeTrigger", () => {
   it("opens slash completion at the start of the text, including an empty query", () => {
@@ -109,6 +110,43 @@ describe("$ skills", () => {
     // a price or a shell variable inside a word is no skill
     expect(activeTrigger("cost5$x", 7, { skills: true })).toBeNull();
     expect(applyCompletion("use $dee now", { kind: "slash", prefix: "$", query: "dee", start: 4, end: 8 }, "$deepinit ")).toEqual({ text: "use $deepinit now", caret: 14 });
+  });
+});
+
+// OpenCode v2 skills are `@skill-id` attachments: a pane whose rows carry the `@` trigger lists
+// them in the `@` menu beside the files, and picking one inserts the id OpenCode expects
+describe("@ skills", () => {
+  const pdf: SlashCommand = { name: "pdf-tools", description: "Extracts text from PDFs", source: "skill", origin: "user", trigger: "@", id: "pdf-tools" };
+  const docs: SlashCommand = { name: "docs-release", description: "Writes release notes", source: "skill", origin: "project", trigger: "@" };
+  const hidden: SlashCommand = { name: "internal", description: "", source: "skill", trigger: "@", visibility: "agent-hidden" };
+  const slash: SlashCommand = { name: "compact", description: "Compact the context", source: "builtin" };
+  const rows = [slash, pdf, docs, hidden];
+
+  it("opens on a bare @ only where the pane has @ skills", () => {
+    expect(activeTrigger("@", 1, { atSkills: true })).toEqual({ kind: "file", query: "", start: 0, end: 1 });
+    expect(activeTrigger("see @", 5, { atSkills: true })).toEqual({ kind: "file", query: "", start: 4, end: 5 });
+    expect(activeTrigger("see @pdf", 8, { atSkills: true })).toEqual({ kind: "file", query: "pdf", start: 4, end: 8 });
+    expect(activeTrigger("@", 1)).toBeNull();
+    // an address keeps its @: a mention starts a word
+    expect(activeTrigger("mail me@", 8, { atSkills: true })).toBeNull();
+  });
+
+  it("lists the @ rows of a v2 row set, never the slash rows or an agent-hidden one", () => {
+    expect(atSkillCommands(rows)).toEqual([pdf, docs]);
+    expect(atSkillCommands([slash])).toEqual([]);
+    // a path is never a skill: only a name's prefix or a word of it matches, as inline skills do
+    expect(rankSlashCommands(atSkillCommands(rows), "pdf", {}, true)).toEqual([pdf]);
+    expect(rankSlashCommands(atSkillCommands(rows), "src/", {}, true)).toEqual([]);
+    // a bare @ lists them all, by name as a bare / does
+    expect(rankSlashCommands(atSkillCommands(rows), "", {}, true)).toEqual([docs, pdf]);
+  });
+
+  it("inserts @ and the skill's name, never the path its id holds", () => {
+    expect(atSkillReplacement(pdf)).toBe("@pdf-tools ");
+    expect(atSkillReplacement(docs)).toBe("@docs-release ");
+    expect(atSkillReplacement({ ...pdf, id: "/home/me/.config/opencode/skills/pdf-tools/SKILL.md" })).toBe("@pdf-tools ");
+    const trigger = activeTrigger("see @pdf now", 8, { atSkills: true });
+    expect(applyCompletion("see @pdf now", trigger!, atSkillReplacement(pdf))).toEqual({ text: "see @pdf-tools now", caret: 15 });
   });
 });
 

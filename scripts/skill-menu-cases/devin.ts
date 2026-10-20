@@ -20,7 +20,7 @@ export const expect = async ({ page, width, box, menu, scenario, clear, rowNames
     await menu.locator(".menu-item").first().waitFor();
     assert.deepEqual((await rowNames()).sort(), commands.map((command) => command.name).sort());
     const headings = await menu.locator(".menu-heading").allTextContents();
-    assert.deepEqual(headings, ["Built in", "Your skills", "Project skills", "Plugin skills"]);
+    assert.deepEqual(headings, ["Built in", "Your skills", "Project skills", "Plugin skills", "Terminal commands"]);
     await menuFits("A");
     await rowsBrief("A");
     await menu.evaluate((node) => { node.scrollTop = node.scrollHeight; });

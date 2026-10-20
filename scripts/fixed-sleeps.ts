@@ -20,8 +20,8 @@
  */
 import { files, lineOf, read, stripComments } from "./source-scan.ts";
 
-/** Bun.sleep, or a Promise resolved by setTimeout (`r => setTimeout(r, n)`, `function (r) { setTimeout(() => r(), n) }`), not a 0 ms yield. */
-const SLEEP = /\bBun\.sleep(?:Sync)?\s*\(|\bnew Promise(?:<[^>]*>)?\(\s*(?:async\s*)?(?:function\s*)?\(?\s*(\w+)\s*\)?\s*(?:=>)?\s*\{?\s*(?:window\.|globalThis\.)?setTimeout\(\s*(?:\1|\(\s*\)\s*=>\s*\{?\s*\1\s*\(\s*\)\s*;?\s*\}?)\s*,(?!\s*0\s*\))/g;
+/** Bun.sleep, Playwright's waitForTimeout, or a Promise resolved by setTimeout (`r => setTimeout(r, n)`, `function (r) { setTimeout(() => r(), n) }`), not a 0 ms yield. */
+const SLEEP = /\bBun\.sleep(?:Sync)?\s*\(|\b\w+(?:\.\w+)*\.waitForTimeout\s*\(|\bnew Promise(?:<[^>]*>)?\(\s*(?:async\s*)?(?:function\s*)?\(?\s*(\w+)\s*\)?\s*(?:=>)?\s*\{?\s*(?:window\.|globalThis\.)?setTimeout\(\s*(?:\1|\(\s*\)\s*=>\s*\{?\s*\1\s*\(\s*\)\s*;?\s*\}?)\s*,(?!\s*0\s*\))/g;
 /** A loop head bounded by a clock, a deadline or a try count (`i < 40`, `i < MAX_TRIES`, `attempt <= attempts`); a plain `i < list.length` is not. */
 const BOUND = /Date\.now\(\)|performance\.now\(\)|[Dd]eadline|\b\w+\s*<=?\s*(?:\d|[A-Z][A-Z0-9_]*\b|\w*(?:[Tt]ries|[Aa]ttempts|[Rr]etries|[Mm]ax|[Ll]imit)\w*)/;
 /** `// fixed wait:` followed by the reason. */
@@ -63,7 +63,7 @@ function sleepHelpers(code: string, source: string): { names: Set<string>; defin
   const definitions = new Set<number>();
   const yields = new Set<string>();
   // `const sleep = (ms) => <sleep>` or `function sleep(ms) { return <sleep> }`: a body that is only the sleep
-  const define = /(?:\b(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(\([^)]*\)|\w+)\s*(?::[^=;\n]*)?=>\s*(?:\{\s*return\s+)?|\bfunction\s+(\w+)\s*(\([^)]*\))[^{;]*\{\s*return\s+)(?=\bBun\.sleep|\bnew Promise)/g;
+  const define = /(?:\b(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(\([^)]*\)|\w+)\s*(?::[^=;\n]*)?=>\s*(?:\{\s*return\s+)?|\bfunction\s+(\w+)\s*(\([^)]*\))[^{;]*\{\s*return\s+)(?=\bBun\.sleep|\bnew Promise|\w+(?:\.\w+)*\.waitForTimeout\b)/g;
   for (const match of code.matchAll(define)) {
     const at = match.index + match[0].length;
     if (new RegExp(SLEEP.source, "y").exec(code.slice(at)) === null && !/^Bun\.sleep(?:Sync)?\s*\(/.test(code.slice(at))) continue;

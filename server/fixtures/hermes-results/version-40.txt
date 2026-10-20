@@ -1,0 +1,40 @@
+╚══════════════════════════════════════╝
+
+  ● fixture-model · 25 tools · toolsets:
+browser, clarify, code_execution,
+computer_use, connections, cronjob,
+delegation, file, image_gen, memory,
+session_search, skills, terminal, todo,
+tts, vision, web · provider: custom
+
+Welcome to Hermes Agent! Type your
+message or /help for commands.
+✦ Tip: Set browser.record_sessions: true
+to auto-record browser sessions as WebM
+videos.
+
+
+⚙️  /status
+Hermes CLI Status
+
+Session ID: 20261020_185258_c28886
+Path: /tmp/acc-t24-wPla/hermes-home
+Model: fixture-model (custom)
+Approvals: smart
+Created: 2026-10-20 18:52
+Last Activity: 2026-10-20 18:52
+Tokens: 0
+Agent Running: No
+
+⚙️  /version
+Hermes Agent v0.21.5+8892.g354724f (2026
+.9.24) · upstream 354724fb
+Install directory: /home/devswha/.hermes
+/hermes-agent
+Install method: git
+Python: 3.14.7
+OpenAI SDK: 2.24.0
+Update available — run 'hermes update'
+ ☤ fixture-model · 23s
+────────────────────────────────────────
+❯ What changed in this repo recently?

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ovis: your coding agents, in your pocket</title>
+<meta name="description" content="Ovis is the phone app for herdr. Read and answer the Claude Code and Codex agents running on your computer, as a chat or in the live terminal.">
+<link rel="canonical" href="https://ovis.sh/">
+<link rel="alternate" hreflang="en" href="https://ovis.sh/">
+<link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/">
+<link rel="alternate" hreflang="x-default" href="https://ovis.sh/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ovis.sh/">
+<meta property="og:title" content="Ovis: your coding agents, in your pocket">
+<meta property="og:description" content="Ovis is the phone app for herdr. Read and answer the Claude Code and Codex agents running on your computer, as a chat or in the live terminal.">
+<meta property="og:image" content="https://ovis.sh/assets/icon-512.png">
+<meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131a2b" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/assets/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="wrap top">
+<a class="brand" href="/"><picture><source srcset="/assets/logo-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/logo-light.png" alt="Ovis" width="113" height="40"></picture></a>
+<nav><a href="/privacy/">Privacy</a><a href="/support/">Support</a><a href="/ko/" hreflang="ko" lang="ko">한국어</a></nav>
+</header>
+<main>
+<section class="wrap hero">
+<div>
+<h1>Your coding agents,<br><em>in your pocket.</em></h1>
+<p class="lead">Ovis is the phone app for <a href="https://herdr.dev">herdr</a>. Read and answer the Claude Code and Codex agents running on your computer, as a chat or in the live terminal, from wherever you are.</p>
+<div class="stores">
+<span class="store" aria-disabled="true"><small>Coming soon to</small><strong>App Store</strong></span>
+<span class="store" aria-disabled="true"><small>Coming soon to</small><strong>Google Play</strong></span>
+</div>
+</div>
+<div class="shot">
+<img class="phone" src="/assets/chat-en.webp" alt="Ovis showing a Claude Code agent's conversation as a chat" width="390" height="844">
+<img class="sheep" src="/assets/sheep-480.png" alt="" width="480" height="480">
+</div>
+</section>
+<section class="block"><div class="wrap">
+<h2>How it works</h2>
+<p class="sub">Ovis opens the herdr web UI that your own computer serves. Nothing runs in between.</p>
+<ol class="steps">
+<li><h3>Run herdr web UI on your PC</h3><p>It is free and open source. On Linux or macOS one command installs everything; Windows and other ways are on <a href="https://herdrweb.dev/">herdrweb.dev</a>.</p><pre><code>curl -fsSL https://herdrweb.dev/install.sh | sh</code></pre></li>
+<li><h3>Pair your phone</h3><p>On the PC, open <strong>Settings → Phone &amp; devices</strong> and scan its QR code with Ovis, or type the address it shows.</p></li>
+<li><h3>Answer from anywhere</h3><p>Approvals and questions arrive as cards you tap. The agent's own terminal is one tap away, with a key bar for Esc, Tab and Ctrl.</p></li>
+</ol>
+</div></section>
+<section class="block"><div class="wrap">
+<h2>A look around</h2>
+<p class="sub">The same app you use in the browser, made for a phone.</p>
+<div class="gallery">
+<figure><img src="/assets/approve-en.webp" alt="A Codex agent asking to push, answered with a tap" width="390" height="844" loading="lazy"><figcaption>Approvals and questions as cards you tap</figcaption></figure>
+<figure><img src="/assets/agents-en.webp" alt="The list of workspaces and agents on a PC" width="390" height="844" loading="lazy"><figcaption>Every workspace and agent on your PC</figcaption></figure>
+</div>
+</div></section>
+<section class="block"><div class="wrap">
+<h2>Your code stays on your PC</h2>
+<div class="points">
+<div><h3>No account</h3><p>There is nothing to sign up for. Your phone is paired with your PC once, and that is all.</p></div>
+<div><h3>Straight to your PC</h3><p>The app talks only to the PCs you add, over your own network, such as Tailscale or your home Wi-Fi. There is no Ovis server in between.</p></div>
+<div><h3>No tracking</h3><p>The app has no ads, no analytics and no tracking. <a href="/privacy/">The privacy policy</a> says exactly what is kept.</p></div>
+</div>
+</div></section>
+<section class="block"><div class="wrap">
+<h2>Questions</h2>
+<details><summary>What is herdr?</summary><p><a href="https://herdr.dev">herdr</a> is a terminal multiplexer for coding agents: it runs Claude Code, Codex and other agents side by side in panes. <a href="https://herdrweb.dev/">herdr web UI</a> brings those panes to a browser, and Ovis brings them to your phone.</p></details>
+<details><summary>Do I need Tailscale?</summary><p>No, but it is the easiest way. Your phone needs a route to your PC: Tailscale, a VPN, the same Wi-Fi, or your own HTTPS proxy. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#on-your-phone">The phone setup guide</a> walks through each.</p></details>
+<details><summary>Is it free?</summary><p>Yes. Ovis and herdr web UI are free, and herdr web UI is open source under the MIT license.</p></details>
+<details><summary>Can I try it without a PC?</summary><p>Yes. The connect screen has a demo with made-up agents and terminals. Nothing leaves your phone.</p></details>
+<details><summary>Which phones?</summary><p>iPhone and Android. Both apps are in testing and will be in the App Store and Google Play soon.</p></details>
+</div></section>
+</main>
+<footer><div class="wrap"><span>Ovis is the phone app for herdr web UI, made by devswha.</span><a href="/privacy/">Privacy</a><a href="/support/">Support</a><a href="https://github.com/devswha/herdr-web-ui">Source on GitHub</a><a href="https://herdrweb.dev/">herdrweb.dev</a></div></footer>
+</body>
+</html>

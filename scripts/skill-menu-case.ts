@@ -16,8 +16,10 @@ export function agentBuiltins(agent: string): SlashCommand[] {
   return paneCommands(agent, DEMO_CWD, join(tmpdir(), "herdr-skill-menu-demo-no-home"), {}).filter((command) => command.source === "builtin");
 }
 
+export type ColorScheme = "light" | "dark";
+
 export interface SkillMenuCase {
-  /** the pane's agent, as the snapshot names it: the case file's own name */
+  /** the pane's agent, as the snapshot names it (the case file is named after the agent, or after the agent and what it tries) */
   agent: string;
   /** GET /api/pane/commands: the agent's own builtins and the case's skills */
   commands: SlashCommand[];
@@ -25,6 +27,10 @@ export interface SkillMenuCase {
   turnText: string;
   /** the chips that turn shows, in the forms they were written */
   chips: string[];
+  /** the window widths the scenarios run at; the runner's own (1280 and a 390 phone) when absent */
+  widths?: readonly number[];
+  /** the themes the scenarios run in (the app's theme setting); dark alone when absent */
+  schemes?: readonly ColorScheme[];
   /** the scenarios, run once at every width on a page showing the pane's chat */
   expect: (run: CaseRun) => Promise<void>;
 }
@@ -32,6 +38,7 @@ export interface SkillMenuCase {
 export interface CaseRun {
   page: Page;
   width: number;
+  scheme: ColorScheme;
   /** the message box */
   box: Locator;
   menu: Locator;
@@ -54,6 +61,8 @@ export interface CaseRun {
   /** every row's description is one line and one sentence; a listed command's tooltip is its whole text and its icon its origin's */
   rowsBrief(what: string): Promise<void>;
   chipGeometry(): Promise<ChipGeometry>;
+  /** the texts of every submit frame the page's sockets sent so far (the demo's stand-in included) */
+  submits(): Promise<string[]>;
 }
 
 export interface MenuGeometry {
@@ -94,8 +103,8 @@ const menuGeometry = (page: Page): Promise<MenuGeometry> => page.evaluate(() => 
   };
 });
 
-/** each row's description: its height in lines, the row's tooltip, origin and icon */
-const rowDescriptions = (page: Page) => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".composer-menu .menu-item")].map((row) => {
+/** each command row's description (a file row has none): its height in lines, the row's tooltip, origin and icon */
+const rowDescriptions = (page: Page) => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".composer-menu .menu-item")].filter((row) => row.querySelector(".menu-item-hint") !== null).map((row) => {
   const hint = row.querySelector<HTMLElement>(".menu-item-hint")!;
   return {
     name: row.querySelector<HTMLElement>(".menu-item-main")!.textContent ?? "",
@@ -123,12 +132,13 @@ const chipGeometry = (page: Page): Promise<ChipGeometry> => page.evaluate(() => 
   };
 });
 
-export function caseRun(page: Page, width: number, skillCase: SkillMenuCase, scenario: CaseRun["scenario"], log: CaseRun["log"]): CaseRun {
+export function caseRun(page: Page, width: number, skillCase: SkillMenuCase, scenario: CaseRun["scenario"], log: CaseRun["log"], scheme: ColorScheme = "dark"): CaseRun {
   const box = page.getByRole("textbox", { name: "Message", exact: true });
   const menu = page.locator(".composer-menu");
   const rowLabels = (): Promise<string[]> => menu.locator(".menu-item-main").allTextContents();
   return {
-    page, width, box, menu, scenario, log,
+    page, width, scheme, box, menu, scenario, log,
+    submits: () => page.evaluate(() => (window as unknown as { sentSubmits?: string[] }).sentSubmits ?? []),
     clear: async () => {
       await box.fill("");
       await menu.waitFor({ state: "detached" });

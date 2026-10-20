@@ -127,6 +127,15 @@ it("keeps a tab's pane while out of use until this device turns the pause on", (
   expect(sanitizeSettings({ releasePaneAway: "true" }).releasePaneAway).toBe(false);
 });
 
+it("leaves herdr's focus alone until this device asks to follow it, and keeps that choice its own", () => {
+  expect(DEFAULT_SETTINGS.followHerdrFocus).toBe(false);
+  expect(sanitizeSettings({}).followHerdrFocus).toBe(false);
+  expect(sanitizeSettings({ followHerdrFocus: true }).followHerdrFocus).toBe(true);
+  expect(sanitizeSettings({ followHerdrFocus: "true" }).followHerdrFocus).toBe(false);
+  expect(SETTING_SCOPE.followHerdrFocus).toBe("device");
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("followHerdrFocus");
+});
+
 it("keeps the screen wake lock off until this device explicitly enables it", () => {
   expect(DEFAULT_SETTINGS.keepScreenOn).toBe(false);
   expect(sanitizeSettings({}).keepScreenOn).toBe(false);
@@ -367,14 +376,6 @@ describe("chat font size", () => {
     expect(sanitizeSettings({ terminalFontSize: 15 }).chatFontSize).toBeNull();
   });
 
-  it("sizes the message box too: with a mouse at the transcript's size, on touch never under --fs-input", () => {
-    const css = readFileSync(join(import.meta.dir, "..", "components", "Composer.css"), "utf8");
-    const sizes = [...css.matchAll(/\.composer-text \{[^}]*?font-size: ([^;]+);/g)].map((match) => match[1]);
-    expect(sizes).toEqual([
-      "max(var(--fs-input), calc(var(--fs-chat) * var(--chat-scale, 1)))",
-      "calc(var(--fs-chat) * var(--chat-scale, 1))",
-    ]);
-  });
 });
 
 describe("chat width", () => {

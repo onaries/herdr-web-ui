@@ -10,7 +10,10 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
 import { UsageService } from "../server/usage.ts";
 import type { ServerMessage } from "../shared/protocol.ts";
 
-const root = mkdtempSync(join(tmpdir(), "herdr-omo-queue-"));
+const agent = process.argv[2] === "codex" ? "codex" : "omo";
+const queueKey = agent === "codex" ? "\t" : "\u0011";
+const screen = agent === "codex" ? "• Working (2s • esc to interrupt)\n›\n  gpt-6.1 high · /tmp/work\n" : "Message OmO\n";
+const root = mkdtempSync(join(tmpdir(), `herdr-${agent}-queue-`));
 const evidence = process.env.UI_EVIDENCE_DIR || join(root, "evidence");
 mkdirSync(evidence, { recursive: true });
 let workspace: string | undefined;
@@ -44,24 +47,24 @@ const recorder = Bun.listen<{ buffer: string }>({
   },
 });
 try {
-  const binary = join(root, "omo");
+  const binary = join(root, agent);
   copyFileSync(process.execPath, binary); chmodSync(binary, 0o755);
   const script = join(root, "recorder.cjs");
-  writeFileSync(script, `const net=require("node:net");const s=net.connect(${recorder.port},"127.0.0.1");process.stdin.setRawMode(true);process.stdin.resume();s.on("connect",()=>{process.stdout.write("\\x1b[?2004h\\nMessage OmO\\n");s.write(JSON.stringify("READY")+"\\n")});process.stdin.on("data",d=>s.write(JSON.stringify(d.toString("utf8"))+"\\n"));`);
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omo-queue", focus: false });
+  writeFileSync(script, `const net=require("node:net");const s=net.connect(${recorder.port},"127.0.0.1");process.stdin.setRawMode(true);process.stdin.resume();s.on("connect",()=>{process.stdout.write("\\x1b[?2004h\\r\\n"+${JSON.stringify(screen.replace(/\n/g, "\r\n"))});s.write(JSON.stringify("READY")+"\\n")});process.stdin.on("data",d=>s.write(JSON.stringify(d.toString("utf8"))+"\\n"));`);
+  const created = await workspaceCreate({ cwd: root, label: `herdr-web-ui-test-${agent}-queue`, focus: false });
   workspace = created.workspace.workspace_id;
   const pane = created.root_pane.pane_id;
   const ready = waitFor((event) => event === "READY");
   await herdrRpc("pane.send_text", { pane_id: pane, text: `exec '${binary}' '${script}'\n` });
   await ready;
-  await herdrRpc("pane.report_agent", { pane_id: pane, agent: "omo", state: "working", source: "manual" });
+  await herdrRpc("pane.report_agent", { pane_id: pane, agent, state: "working", source: "manual" });
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), usage: new UsageService(undefined, []) });
   browser = process.env.CHROME_CDP ? await chromium.connectOverCDP(process.env.CHROME_CDP)
     : await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 844 }, locale: "en-US", isMobile: width === 390, hasTouch: width === 390 });
     try {
-      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false })));
+      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false, autoSendQueued: false })));
       const page = await context.newPage();
       page.setDefaultTimeout(15_000);
       // Keep the raw recorder's lack of a real question separate from server input authority.
@@ -104,6 +107,7 @@ try {
       const row = card.locator(".pending-message").filter({ hasText: `native follow-up ${width}` });
       const queue = row.getByRole("button", { name: /^Send to agent queue:/ });
       await queue.waitFor();
+      assert.equal(await queue.getAttribute("title"), `Send to agent queue (${agent === "codex" ? "Tab" : "Ctrl+Q"})`);
       assert.equal(await queue.isEnabled(), true);
       for (const theme of ["dark", "light"]) {
         await page.evaluate((theme) => document.documentElement.dataset.theme = theme, theme);
@@ -116,18 +120,19 @@ try {
         }), true, "pending-row actions fit without overlap");
       }
       const mark = frames.length;
-      const delivered = waitFor((event) => event.includes("\u0011"));
+      const delivered = waitFor((event) => event.includes(queueKey));
       const accepted = receipt((frame) => frames.indexOf(frame) >= mark && frame.type === "pending-result" && frame.pane_id === pane && frame.pending_id === pendingId);
       const before = seen.length;
       await queue.click();
       const answer = await accepted;
       assert.ok(answer.type === "pending-result" && answer.ok);
       await delivered;
-      assert.equal(seen.slice(before).join(""), `\u001b[200~native follow-up ${width}\nsecond line\u001b[201~\u0011`);
+      assert.equal(seen.slice(before).join(""), `\u001b[200~native follow-up ${width}\nsecond line\u001b[201~${queueKey}`);
       await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".is-current .composer-text")?.value === "");
       assert.equal(await box.inputValue(), "", "only the acknowledged draft clears");
       await row.waitFor({ state: "detached" });
       assert.equal(await card.locator(".pending-message").count(), 0, "transfer removes the same bridge item");
+      if (agent === "omo") {
       await box.fill("normal Send now still works");
       const normalMark = frames.length;
       const normalHeld = receipt((frame) => frames.indexOf(frame) >= normalMark && frame.type === "submit-result" && frame.pane_id === pane);
@@ -142,6 +147,7 @@ try {
       await normalDelivered;
       await normalRow.waitFor({ state: "detached" });
       assert.equal(seen.slice(normalStart).join(""), "\u001b[200~normal Send now still works\u001b[201~\r", "normal steering remains Enter, not Ctrl+Q");
+      }
       await box.fill("keep this blocked message");
       const secondMark = frames.length;
       const secondHeld = receipt((frame) => frames.indexOf(frame) >= secondMark && frame.type === "submit-result" && frame.pane_id === pane);
@@ -153,21 +159,25 @@ try {
       const blockedQueue = blockedRow.getByRole("button", { name: /^Send to agent queue:/ });
       await blockedQueue.waitFor();
       const blocked = receipt((frame) => frame.type === "pane-status" && frame.pane_id === pane && frame.agent_status === "blocked");
-      await herdrRpc("pane.report_agent", { pane_id: pane, agent: "omo", state: "blocked", source: "manual" });
+      await herdrRpc("pane.report_agent", { pane_id: pane, agent, state: "blocked", source: "manual" });
       await blocked;
+      if (agent === "codex") {
+        await blockedQueue.waitFor({ state: "detached" });
+      } else {
       const blockedMark = frames.length;
       const refusal = receipt((frame) => frames.indexOf(frame) >= blockedMark && frame.type === "pending-result" && frame.pane_id === pane && frame.pending_id === secondId);
       // Status alone is not a prompt card; the server remains the input-state authority.
       await blockedQueue.click();
       const denied = await refusal;
       assert.ok(denied.type === "pending-result" && !denied.ok && denied.code === "agent_blocked");
+      }
       assert.equal(await blockedRow.locator(".pending-message-bubble").textContent(), "keep this blocked message");
       assert.deepEqual(errors, []);
       await box.fill("");
       await blockedRow.getByRole("button", { name: "Discard", exact: true }).click();
       await blockedRow.waitFor({ state: "detached" });
-      await herdrRpc("pane.report_agent", { pane_id: pane, agent: "omo", state: "working", source: "manual" });
-      console.log(`PASS bridge queue transfer at ${width}px: hold without typing, Ctrl+Q, same-ID removal, blocked retention, light/dark layout`);
+      await herdrRpc("pane.report_agent", { pane_id: pane, agent, state: "working", source: "manual" });
+      console.log(`PASS ${agent} bridge queue transfer at ${width}px: hold without typing, native key, same-ID removal, blocked retention, light/dark layout`);
     } finally { await context.close(); }
   }
 } finally {

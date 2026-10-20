@@ -219,7 +219,8 @@ export function opencodeTurns(records: readonly (OpencodeRecord | null)[]): Conv
       turn = { role: "assistant", ts: entry.ts, parts: [] };
       turns.push(turn);
     }
-    turn.parts.push(...entry.parts);
+    turn.parts.push(...entry.parts.map((part, index) => entry.stop && index === entry.parts.length - 1 && part.kind === "text"
+      ? { ...part, phase: "final_answer" as const } : part));
     if (entry.end !== null) turn.end_ts = entry.end;
     settled = entry.stop;
   }
@@ -591,6 +592,23 @@ export function opencodeImage(path: string, sessionId: string, ref: string): { m
     const image = rowImages(row.type, row.data)[Number(match[2])];
     return image === undefined ? null : { mediaType: image.media_type, bytes: new Uint8Array(Buffer.from(image.data, "base64")) };
   });
+}
+
+/** The OpenCode version that wrote this session (its `version` column, 2.x or 1.x store); null when unknown. */
+export function opencodeSessionVersion(path: string, sessionId: string): string | null {
+  if (!SESSION_ID.test(sessionId)) return null;
+  try {
+    return withStore(path, (db) => {
+      const flavor = storeFlavor(db);
+      if (flavor === "unknown") return null;
+      const table = flavor === "v1" ? "session" : "session_v2";
+      const row = db.query<{ version: unknown }, [string]>(`SELECT version FROM ${table} WHERE id = ?`).get(sessionId);
+      return typeof row?.version === "string" && row.version !== "" ? row.version : null;
+    });
+  } catch (error) {
+    if (unusable(error) || busy(error)) return null;
+    throw error;
+  }
 }
 
 /* -------------------------------------------------------------------------------------------------

@@ -2,13 +2,14 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { basename, dirname, join, relative, sep } from "node:path";
 import type { SlashCommand } from "../../shared/protocol.ts";
 import type { AgentCommandSource } from "./index.ts";
-import { customCommands, environValue, plainObject, readFrontmatter, stripJsonc, walkSkills } from "./walk.ts";
+import { customCommands, environValue, parseJsonc, plainObject, readFrontmatter, walkSkills } from "./walk.ts";
 
 /**
- * Devin 3000.11.92: config imports default on. Native roots are one level deep; imported
- * Claude/Copilot skills recurse. Invocation names are directory names, not display `name`.
- * The recorded palette excludes MCP prompts (server-dependent), cloud-only skills and commands,
- * and model/resume/config/hooks/mcp/theme whose recorded screens have no chat prompt.
+ * Devin CLI 3000.11.92, cross-checked against https://cli.devin.ai/docs/changelog: imported
+ * skill roots default on and read_config_from only disables providers set to false. Native roots are
+ * one level deep; imported Claude/Copilot skills recurse. Invocation names are directory names.
+ * MCP configuration follows Devin's documented mcp_config.json/mcpServers layout; prompts are
+ * exposed only when declared on disk, without connecting to a server.
  */
 const descriptions = {
   usage: "Show session usage of credits / ACUs", context: "Show context window usage",
@@ -36,38 +37,87 @@ const descriptions = {
   loop: "Run a prompt then auto-review the diff in a loop",
   goal: "Set a goal the agent keeps working on until it is done", recap: "Recap the session",
   share: "Share this conversation with your team on Devin",
+  pickup: "Pick up a Devin session", ssh: "Connect to a workspace over SSH",
+  "bypass-permissions": "Switch to bypass permissions mode", models: "Choose a model",
+  debug: "Show debugging information", workspaces: "List workspaces", rename: "Rename the session",
+  mcp: "Manage Model Context Protocol servers", resume: "Resume a session",
+  config: "Open configuration", hooks: "Manage hooks", theme: "Choose a theme",
+  model: "Choose a model",
+  "declarative-repo-setup": "Set up repository instructions for Devin",
+  "upload-secrets": "Upload repository secrets to Devin",
 } as const;
+
+const terminalBound = [
+  "status", "context", "session-stats", "help", "usage", "workspaces", "recap", "steps",
+  "model", "models", "fusion", "org", "billing", "login", "login-status", "resume",
+  "config", "hooks", "mcp", "theme",
+] as const;
+const forms = Object.fromEntries(terminalBound.map((name) => [
+  name, [{ match: "bare" as const, interaction: "terminal" as const }],
+]));
+
+function importSettings(value: unknown): Map<string, boolean> {
+  // Devin expects a structured object; arrays and other invalid values behave as no overrides.
+  return new Map(Object.entries(plainObject(value)).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+}
+
+function mcpPrompts(configs: readonly Record<string, unknown>[]): SlashCommand[] {
+  const prompts = new Map<string, SlashCommand>();
+  const servers = new Map<string, Record<string, unknown>>();
+  for (const file of configs) {
+    for (const [server, raw] of Object.entries(plainObject(file.mcpServers))) {
+      servers.set(server, plainObject(raw));
+    }
+  }
+  for (const [server, serverConfig] of servers) {
+    if (serverConfig.disabled === true || !Array.isArray(serverConfig.prompts)) continue;
+    for (const prompt of serverConfig.prompts) {
+      if (typeof prompt !== "string" || !prompt) continue;
+      const name = `mcp__${server}__${prompt}`;
+      prompts.set(name, { name, description: `MCP prompt ${prompt} from ${server}`, source: "plugin", origin: "plugin", id: name });
+    }
+  }
+  return [...prompts.values()];
+}
 
 function config(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   try {
-    const json = stripJsonc(readFileSync(path, "utf8"));
-    return plainObject(JSON.parse(json));
+    return plainObject(parseJsonc(readFileSync(path, "utf8")));
   } catch { return {}; /* optional malformed configuration */ }
 }
 
 export const source: AgentCommandSource = {
   builtins: Object.keys(descriptions),
   descriptions,
+  pin: "3000.11.92",
+  terminalBound,
+  forms,
   discover({ home, cwd, repoRoot, env }) {
     const configHome = environValue(env, "XDG_CONFIG_HOME") ?? join(home, ".config");
     const dataHome = environValue(env, "XDG_DATA_HOME") ?? join(home, ".local", "share");
     const project = repoRoot ?? cwd;
-    const imports = {
-      ...plainObject(config(join(configHome, "devin", "config.json")).read_config_from),
-      ...plainObject(project ? config(join(project, ".devin", "config.json")).read_config_from : null),
-    };
+    const userConfig = config(join(configHome, "devin", "config.json"));
+    const projectConfig = config(project ? join(project, ".devin", "config.json") : "");
+    const defaultImports = ["claude", "windsurf", "copilot", "cursor"].map((provider) => [provider, true] as const);
+    const userImports = new Map<string, boolean>(defaultImports);
+    for (const [name, enabled] of importSettings(userConfig.read_config_from)) userImports.set(name, enabled);
+    const projectImports = new Map(userImports);
+    for (const [name, enabled] of importSettings(projectConfig.read_config_from)) {
+      if (!enabled) projectImports.set(name, false);
+    }
     const found: { namespace: string; command: SlashCommand }[] = [];
     const add = (root: string, namespace: string, origin: SlashCommand["origin"], recursive = false, plugin = false): void => {
       for (const skill of walkSkills(root, { depth: recursive ? "recursive" : "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: false })) {
         if (Array.isArray(skill.fields.triggers) && !skill.fields.triggers.includes("user")) continue;
         const name = basename(dirname(skill.path));
-        found.push({ namespace, command: { name: plugin ? `${namespace}:${name}` : name, description: skill.description, source: "skill", origin } });
+        found.push({ namespace, command: { name: plugin ? `${namespace}:${name}` : name, description: skill.description, source: "skill", origin, id: skill.id } });
       }
     };
     // Native source roots share a precedence tier: first directory wins within each scope.
     for (const [base, origin] of [[home, "user"], [project, "project"]] as const) {
       if (!base) continue;
+      const imports = origin === "user" ? userImports : projectImports;
       const start = found.length;
       add(origin === "user" ? join(configHome, "devin", "skills") : join(base, ".devin", "skills"), "devin", origin);
       add(origin === "user" ? join(configHome, "cognition", "skills") : join(base, ".cognition", "skills"), "cognition", origin);
@@ -79,8 +129,9 @@ export const source: AgentCommandSource = {
         if (seen.has(item.command.name)) found.splice(index, 1);
         else { seen.add(item.command.name); index++; }
       }
-      if (imports.windsurf !== false) add(origin === "user" ? join(home, ".codeium", "windsurf", "skills") : join(base, ".windsurf", "skills"), "windsurf", origin);
-      if (imports.claude !== false) {
+      if (imports.get("windsurf")) add(origin === "user" ? join(home, ".codeium", "windsurf", "skills") : join(base, ".windsurf", "skills"), "windsurf", origin);
+      if (imports.get("cursor")) add(origin === "user" ? join(home, ".cursor", "skills") : join(base, ".cursor", "skills"), "cursor", origin, true);
+      if (imports.get("claude")) {
         add(join(base, ".claude", "skills"), "claude", origin, true);
         if (origin === "project") {
           const root = join(base, ".claude", "commands");
@@ -91,8 +142,18 @@ export const source: AgentCommandSource = {
           }
         }
       }
-      if (imports.copilot !== false) add(origin === "user" ? join(environValue(env, "COPILOT_HOME") ?? join(home, ".copilot"), "skills") : join(base, ".github", "skills"), "copilot", origin, true);
+      if (imports.get("copilot")) add(origin === "user" ? join(environValue(env, "COPILOT_HOME") ?? join(home, ".copilot"), "skills") : join(base, ".github", "skills"), "copilot", origin, true);
     }
+    const mcpConfigs = [
+      userConfig,
+      projectConfig,
+      config(join(configHome, "devin", "mcp_config.json")),
+      ...(project ? [
+        config(join(project, ".devin", "mcp_config.json")),
+        config(join(project, ".devin", "mcp_config.local.json")),
+      ] : []),
+    ];
+    for (const command of mcpPrompts(mcpConfigs)) found.push({ namespace: "devin", command });
     const pluginRoot = join(dataHome, "devin", "cli", "plugins");
     const visited = new Set<string>();
     const plugins = (directory: string): void => {
@@ -118,14 +179,19 @@ export const source: AgentCommandSource = {
       }
     };
     plugins(pluginRoot);
+    // An imported skill that is the same file as a native one (~/.claude/skills linked to Devin's own
+    // root) is that native skill: listed once under its native name, as Devin lists it.
+    const native = new Set(["devin", "cognition", "agents"]);
+    const nativeFiles = new Set(found.filter((item) => native.has(item.namespace)).map((item) => item.command.id));
+    const listed = found.filter((item) => native.has(item.namespace) || item.command.id === undefined || !nativeFiles.has(item.command.id));
     const namespaces = new Map<string, Set<string>>();
-    for (const { namespace, command } of found) {
+    for (const { namespace, command } of listed) {
       const sources = namespaces.get(command.name) ?? new Set<string>();
       sources.add(namespace);
       namespaces.set(command.name, sources);
     }
     const result = new Map<string, SlashCommand>();
-    for (const { namespace, command } of found) {
+    for (const { namespace, command } of listed) {
       const name = (namespaces.get(command.name)?.size ?? 0) > 1 ? `${namespace}:${command.name}` : command.name;
       // Project overrides user only within the same source namespace.
       result.set(name, { ...command, name });

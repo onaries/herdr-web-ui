@@ -147,7 +147,7 @@ function cspHeader(origin?: string): Record<string, string> {
 
 /**
  * HERDR_WEB_APP_NAME names the installed app. Each PC is its own origin, so two PCs installed
- * on one phone are two apps, and both would be called "herdr" (#476). Unset or blank, every
+ * on one phone are two apps, and both would be called "Ovis" (#476). Unset or blank, every
  * file is served as built. Read on every request, like HERDR_WEB_CSP; the manifest and the
  * shell revalidate on every load, so an installed app learns a new name without a reinstall.
  */
@@ -223,7 +223,7 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
   const indexPath = join(DIST_DIR, "index.html");
   if (!existsSync(indexPath)) {
     return new Response(
-      "herdr-web-ui server is running, but the browser client has not been built yet.\nRun: bun run build\n",
+      "Ovis server is running, but the browser client has not been built yet.\nRun: bun run build\n",
       { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
     );
   }

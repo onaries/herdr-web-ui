@@ -1,0 +1,92 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "sh.ovis.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "sh.ovis.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // The Play upload key stays outside the repository: OVIS_UPLOAD_PROPERTIES names a properties
+    // file with storeFile, storePassword, keyAlias and keyPassword (docs/native-app.md). Without it
+    // a release build is unsigned.
+    // A file that is missing or incomplete fails a release build with what is wrong, never a debug
+    // build or a sync, and never signs with part of a key.
+    def uploadProperties = System.getenv("OVIS_UPLOAD_PROPERTIES")
+    def upload = new Properties()
+    def uploadProblem = null
+    if (uploadProperties) {
+        def uploadFile = file(uploadProperties)
+        if (!uploadFile.isFile()) {
+            uploadProblem = "${uploadProperties} is not a file"
+        } else {
+            uploadFile.withInputStream { upload.load(it) }
+            def missing = ["storeFile", "storePassword", "keyAlias", "keyPassword"].findAll { !upload.getProperty(it) }
+            if (missing) uploadProblem = "${uploadProperties} lacks ${missing.join(', ')}"
+            else if (!file(upload.getProperty("storeFile")).isFile()) uploadProblem = "its storeFile ${upload.getProperty('storeFile')} is not a file"
+        }
+    }
+    if (uploadProperties && !uploadProblem) {
+        signingConfigs {
+            release {
+                storeFile file(upload.getProperty("storeFile"))
+                storePassword upload.getProperty("storePassword")
+                keyAlias upload.getProperty("keyAlias")
+                keyPassword upload.getProperty("keyPassword")
+            }
+        }
+    }
+    if (uploadProblem) {
+        gradle.taskGraph.whenReady { graph ->
+            if (graph.allTasks.any { it.project == project && it.name.toLowerCase().contains("release") }) {
+                throw new GradleException("OVIS_UPLOAD_PROPERTIES: ${uploadProblem}")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (uploadProperties && !uploadProblem) signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

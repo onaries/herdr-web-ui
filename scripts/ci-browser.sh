@@ -72,6 +72,7 @@ run_script scripts/portal-regression.ts
 run_script scripts/deep-link-demo-regression.ts
 run_script scripts/chat-history-browser-qa.ts
 run_script scripts/omo-queue-browser-qa.ts
+run_script scripts/codex-queue-browser-qa.ts
 run_script scripts/chat-virtual-browser-qa.ts
 run_script scripts/chat-scroll-padding-regression.ts
 run_script scripts/chat-selection-copy-regression.ts
@@ -96,11 +97,16 @@ run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/restored-draft-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts
 run_script scripts/held-rows-demo-regression.ts
+run_script scripts/command-outcome-demo-regression.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-spacing-demo-regression.ts
+run_script scripts/sidebar-machine-layout-demo-regression.ts
+run_script scripts/sidebar-machine-removal-demo-regression.ts
 run_script scripts/sidebar-branch-line-demo-regression.ts
+run_script scripts/sidebar-tokens-demo-regression.ts
 run_script scripts/workspace-touch-reorder-demo-regression.ts
 run_script scripts/prompt-dock-demo-regression.ts
+run_script scripts/opencode-prompt-regression.ts
 run_script scripts/files-prompt-regression.ts
 run_script scripts/plugin-actions-demo-regression.ts
 run_script scripts/palette-machines-demo-regression.ts

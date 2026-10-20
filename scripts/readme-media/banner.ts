@@ -42,7 +42,7 @@ ffmpeg(["-f", "lavfi", "-i", "nullsrc=s=256x256,geq=random(1)*255:128:128,format
 const windowObject = (still: string) => `<div class="window"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">localhost:7317</span></div><img src="${url(join(stills, still))}" alt=""></div>`;
 const phoneObject = (still: string) => `<div class="phone"><img src="${url(join(stills, still))}" alt=""></div>`;
 // no install command in the art: at the README's display size it would be ~8px; the README has it as text
-const copy = `<div class="copy"><img class="mark" src="${url(mark)}" alt=""><div class="word">herdr web ui</div><div class="tag">Your agents, in plain conversation.</div></div>`;
+const copy = `<div class="copy"><img class="mark" src="${url(mark)}" alt=""><div class="word">Ovis</div><div class="tag">Your agents, in plain conversation.</div></div>`;
 const hero = `${copy}<div class="scene">${windowObject("03-desktop-todo-open.png")}${phoneObject("14-phone-codex-approval.png")}</div>`;
 
 // look: the window's width in px, and "whole" (centred) or "detail" (top-left corner at 96,96)

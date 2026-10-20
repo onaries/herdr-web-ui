@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Ovis</string>
+    <string name="title_activity_main">Ovis</string>
+    <string name="package_name">sh.ovis.app</string>
+    <string name="custom_url_scheme">sh.ovis.app</string>
+</resources>

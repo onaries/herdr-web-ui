@@ -170,25 +170,30 @@ describe("slash commands follow the pane's process", () => {
     if (agent) await herdrRpc("pane.report_agent", { pane_id: created.root_pane.pane_id, source: "manual", agent, state: "idle" });
     return created.root_pane.pane_id;
   }
-  const names = async (paneId: string) => ((await (await fetch(`${base()}/api/pane/commands?pane_id=${encodeURIComponent(paneId)}`)).json()) as { commands: { name: string }[] }).commands.map((command) => command.name);
+  const rows = async (paneId: string) => ((await (await fetch(`${base()}/api/pane/commands?pane_id=${encodeURIComponent(paneId)}`)).json()) as { commands: { name: string; visibility?: string }[] }).commands;
+  const names = async (paneId: string) => (await rows(paneId)).map((command) => command.name);
 
   it("offers pi's commands to a pi process", async () => {
     expect(await names(await waiting("pi"))).toContain("scoped-models");
   }, 30_000);
 
   it.each(["pi", "claude", null])("offers omo commands with the reported label %j", async (agent) => {
-    const commands = await names(await waiting("omo", agent));
+    const listed = await rows(await waiting("omo", agent));
+    const commands = listed.map((command) => command.name);
     expect(commands).toContain("favorite-models");
     expect(commands).toContain("compact");
-    expect(commands).not.toContain("tree");
+    // /tree opens a browser only the terminal draws: listed as a terminal command
+    expect(listed.find((command) => command.name === "tree")?.visibility).toBe("terminal");
     expect(commands).not.toContain("config");
   }, 30_000);
 
   it("keeps Claude commands for a Claude process", async () => {
-    const commands = await names(await waiting("claude", "claude"));
-    // Claude's own list: /model (a picker the chat answers) stays, /config (a screen it cannot) is left out
+    const listed = await rows(await waiting("claude", "claude"));
+    const commands = listed.map((command) => command.name);
+    // Claude's own list: /model (a picker the chat answers) is offered, /config (a screen only the
+    // terminal draws) is listed as a terminal command
     expect(commands).toContain("model");
-    expect(commands).not.toContain("config");
+    expect(listed.find((command) => command.name === "config")?.visibility).toBe("terminal");
     expect(commands).not.toContain("favorite-models");
   }, 30_000);
 });

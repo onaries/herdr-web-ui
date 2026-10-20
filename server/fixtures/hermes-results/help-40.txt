@@ -1,0 +1,493 @@
+env -i PATH='/home/devswha/.nvm/versions
+/node/v24.18.0/lib/node_modules/omo-ai/n
+ode_modules/.bin:/home/devswha/.grok/bin
+:/home/devswha/.kimi-code/bin:/home/devs
+wha/.local/bin:/home/devswha/.bun/bin:/h
+ome/devswha/gems/bin:/home/devswha/.rben
+v/shims:/home/devswha/bin:/home/devswha/
+.rbenv/bin:/home/devswha/.nvm/versions/n
+ode/v24.18.0/bin:/home/devswha/anaconda3
+/condabin:/home/devswha/.cargo/bin:/usr/
+local/sbin:/usr/local/bin:/usr/sbin:/usr
+/bin:/sbin:/bin:/usr/games:/usr/local/ga
+mes:/snap/bin:/home/devswha/.fzf/bin:/ho
+me/devswha/.turso' HOME='/tmp/acc-t24-wP
+la/home' HERMES_HOME='/tmp/acc-t24-wPla/
+hermes-home' TERM=xterm-256color COLORTE
+RM=truecolor /home/devswha/.local/bin/he
+rmes
+devswha-System-Product-Name% env -i PATH
+='/home/devswha/.nvm/versions/node/v24.1
+8.0/lib/node_modules/omo-ai/node_modules
+/.bin:/home/devswha/.grok/bin:/home/devs
+wha/.kimi-code/bin:/home/devswha/.local/
+bin:/home/devswha/.bun/bin:/home/devswha
+/gems/bin:/home/devswha/.rbenv/shims:/ho
+me/devswha/bin:/home/devswha/.rbenv/bin:
+/home/devswha/.nvm/versions/node/v24.18.
+0/bin:/home/devswha/anaconda3/condabin:/
+home/devswha/.cargo/bin:/usr/local/sbin:
+/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
+/bin:/usr/games:/usr/local/games:/snap/b
+in:/home/devswha/.fzf/bin:/home/devswha/
+.turso' HOME='/tmp/acc-t24-wPla/home' HE
+RMES_HOME='/tmp/acc-t24-wPla/hermes-home
+' TERM=xterm-256color COLORTERM=truecolo
+r /home/devswha/.local/bin/hermes
+
+╔══════════════════════════════════════╗
+║ ☤ NOUS HERMES - AI Agent Framework ║
+║ Hermes Agent v0.21.5+8892.g354724f ║
+╚══════════════════════════════════════╝
+
+  ● fixture-model · 25 tools · toolsets:
+browser, clarify, code_execution, 
+computer_use, connections, cronjob, 
+delegation, file, image_gen, memory, 
+session_search, skills, terminal, todo, 
+tts, vision, web · provider: custom
+
+Welcome to Hermes Agent! Type your 
+message or /help for commands.
+✦ Tip: Set browser.record_sessions: true
+to auto-record browser sessions as WebM 
+videos.
+
+
+⚙️  /status
+Hermes CLI Status
+
+Session ID: 20261020_185258_c28886
+Path: /tmp/acc-t24-wPla/hermes-home
+Model: fixture-model (custom)
+Approvals: smart
+Created: 2026-10-20 18:52
+Last Activity: 2026-10-20 18:52
+Tokens: 0
+Agent Running: No
+
+⚙️  /version
+Hermes Agent v0.21.5+8892.g354724f (2026
+.9.24) · upstream 354724fb
+Install directory: /home/devswha/.hermes
+/hermes-agent
+Install method: git
+Python: 3.14.7
+OpenAI SDK: 2.24.0
+Update available — run 'hermes update'
+
+⚙️  /profile
+
+  Profile: default
+  Home:    /tmp/acc-t24-wPla/hermes-home
+
+
+⚙️  /reload-skills
+⏳ Reloading skills...
+  No new skills detected.
+  📚 55 skill(s) available
+
+⚙️  /help
+
++---------------------------------------
+----------------+
+|               (^_^)? Available Command
+s               |
++---------------------------------------
+----------------+
+
+  ── Session ──
+    /new            - Start a new 
+session (fresh session ID + history) 
+(usage: /new [name])
+    /reset          - Start a new 
+session (fresh session ID + history) 
+(alias for /new)
+    /clear          - Clear screen and 
+start a new session
+    /redraw         - Force a full UI 
+repaint (recovers from terminal drift)
+    /history        - Show conversation 
+history
+    /save           - Export the current
+conversation (bare /save shows usage) 
+(usage: /save <json|md|html> [filename] 
+[redact])
+    /retry          - Retry the last 
+message (resend to agent)
+    /prompt         - Compose your next 
+prompt in $EDITOR (markdown), then send 
+it (usage: /prompt [initial text])
+    /compose        - Compose your next 
+prompt in $EDITOR (markdown), then send 
+it (alias for /prompt)
+    /undo           - Back up N user 
+turns and re-prompt (default 1) (usage: 
+/undo [N])
+    /title          - Set a title for 
+the current session (usage: /title 
+[name])
+    /handoff        - Hand off this 
+session to a messaging platform 
+(Telegram, Discord, etc.) (usage: 
+/handoff <platform>)
+    /branch         - Branch the current
+session (new thread on 
+Discord/Telegram/Slack/Matrix; --here 
+stays here) (usage: /branch [--here] 
+[name])
+    /fork           - Branch the current
+session (new thread on 
+Discord/Telegram/Slack/Matrix; --here 
+stays here) (alias for /branch)
+    /worktree       - Show, list, 
+create, or prune isolated git worktrees 
+(usage: /worktree [new [name]|list|prune
+[--dry-run]])
+    /rollback       - List or restore 
+filesystem checkpoints (restores keep 
+your hand-edits; --all overrides) 
+(usage: /rollback [number] [--all])
+    /snapshot       - Create or restore 
+state snapshots of Hermes config/state 
+(usage: /snapshot [create|restore 
+<id>|prune])
+    /snap           - Create or restore 
+state snapshots of Hermes config/state 
+(alias for /snapshot)
+    /stop           - Kill all running 
+background processes
+    /review         - Spawn an 
+independent subagent to review the work 
+just discussed (PR, code, docs) (usage: 
+/review [review instructions])
+    /plan           - Write a markdown 
+implementation plan to .hermes/plans/ 
+without executing anything (usage: /plan
+[task])
+    /egress         - Show Docker egress
+proxy status (usage: /egress [status])
+    /resume         - Resume a 
+previously-named session (usage: /resume
+[name])
+    /sessions       - Browse and resume 
+previous sessions
+
+  ── Context ──
+    /compress       - Compress 
+conversation context (add 'here [N]' to 
+keep recent N turns; --preview shows 
+what would happen) (usage: /compress 
+[here [N] | focus topic | 
+--preview|--dry-run])
+    /compact        - Compress 
+conversation context (add 'here [N]' to 
+keep recent N turns; --preview shows 
+what would happen) (alias for /compress)
+    /status         - Show session, 
+model, token, and context info
+    /context        - Show detailed 
+context window view with usage gauge, 
+category breakdown, compression stats, 
+and throughput (usage: /context [all])
+    /ctx            - Show detailed 
+context window view with usage gauge, 
+category breakdown, compression stats, 
+and throughput (alias for /context)
+
+  ── Background & Automation ──
+    /bg             - Run a prompt in a 
+separate background session (usage: /bg 
+<prompt>)
+    /btw            - Ask a side 
+question about the current conversation 
+without interrupting it (usage: /btw 
+<question>)
+    /agents         - Show active agents
+and running tasks
+    /tasks          - Show active agents
+and running tasks (alias for /agents)
+    /journey        - Open the learning 
+journey timeline (usage: /journey 
+[list|delete <id>|edit <id>])
+    /learning       - Open the learning 
+journey timeline (alias for /journey)
+    /memory-graph   - Open the learning 
+journey timeline (alias for /journey)
+    /queue          - Queue a prompt for
+the next turn, or 
+list/edit/rm/move/clear queued prompts 
+(usage: /queue [<prompt>|list|edit N 
+<prompt>|rm N|move A B|clear])
+    /q              - Queue a prompt for
+the next turn, or 
+list/edit/rm/move/clear queued prompts 
+(alias for /queue)
+    /steer          - Inject a message 
+after the next tool call without 
+interrupting (usage: /steer <prompt>)
+    /s              - Inject a message 
+after the next tool call without 
+interrupting (alias for /steer)
+    /goal           - Set a standing 
+goal Hermes works on across turns until 
+achieved (usage: /goal [text | -- <text>
+| draft <text> | show | gate add <cmd> |
+pause | resume | clear | status | wait 
+<pid> | unwait])
+    /heartbeat      - Set a recurring 
+prompt that re-enters this session when 
+idle (usage: /heartbeat [every 
+<interval> <prompt> | status | pause | 
+resume | clear])
+    /hb             - Set a recurring 
+prompt that re-enters this session when 
+idle (alias for /heartbeat)
+    /refine         - Review this 
+conversation now and save lessons to 
+memory/skills (usage: /refine [focus 
+instructions])
+    /loop           - Re-run a prompt on
+a recurring interval in this session 
+(usage: /loop [interval] <prompt> 
+[--times N] [--until <condition>] | 
+status | pause | resume | stop)
+    /proactive      - Re-run a prompt on
+a recurring interval in this session 
+(alias for /loop)
+    /moa            - Run one prompt 
+through the default Mixture of Agents 
+preset, then restore your model (usage: 
+/moa <prompt>)
+    /subgoal        - Add or manage 
+extra criteria on the active goal 
+(usage: /subgoal [text | remove N | 
+clear])
+
+  ── Configuration ──
+    /export         - Export a profile 
+(config, skills, theme) to a shareable 
+archive (usage: /export [profile] [-o 
+output.tar.gz])
+    /import         - Import a shared 
+profile archive as a new profile (usage:
+/import <archive.tar.gz> [--name 
+<name>])
+    /config         - Show current 
+configuration
+    /model          - Switch model 
+(session-scoped; --global to persist) 
+(usage: /model [model] [--provider name]
+[--reasoning level] [--global|--session]
+[--refresh])
+    /codex-runtime  - Toggle codex 
+app-server runtime for OpenAI/Codex 
+models (usage: /codex-runtime 
+[auto|codex_app_server])
+    /codex_runtime  - Toggle codex 
+app-server runtime for OpenAI/Codex 
+models (alias for /codex-runtime)
+    /personality    - Set a predefined 
+personality (usage: /personality [name])
+    /statusbar      - Toggle the 
+context/model status bar
+    /sb             - Toggle the 
+context/model status bar (alias for 
+/statusbar)
+    /battery        - Toggle a 
+color-coded battery indicator in the 
+status bar (usage: /battery 
+[on|off|status])
+    /timestamps     - Toggle [HH:MM] 
+timestamps on messages and /history 
+(usage: /timestamps [on|off|status])
+    /ts             - Toggle [HH:MM] 
+timestamps on messages and /history 
+(alias for /timestamps)
+    /verbose        - Cycle tool 
+progress display: off -> new -> all -> 
+verbose
+    /focus          - Toggle focus view 
+— show only your prompt and the final 
+response (usage: /focus [on|off|status])
+    /footer         - Toggle gateway 
+runtime-metadata footer on final replies
+(usage: /footer [on|off|status])
+    /yolo           - Toggle YOLO mode 
+(skip all dangerous command approvals)
+    /approvals      - Show or set the 
+persistent dangerous-command approval 
+mode (usage: /approvals 
+[manual|smart|off])
+    /reasoning      - Manage reasoning 
+effort and display (usage: /reasoning 
+[level|show|hide|full|clamp] [--global])
+    /skin           - Show or change the
+display skin/theme (usage: /skin [name])
+    /indicator      - Pick the TUI 
+busy-indicator style (usage: /indicator 
+[ascii|emoji|kaomoji|unicode])
+    /voice          - Toggle voice mode 
+(usage: /voice [on|off|tts|status])
+    /wake           - Toggle the 'Hey 
+Hermes' wake word listener (usage: /wake
+[on|off|status])
+    /busy           - Control how 
+messages behave while Hermes is working 
+(usage: /busy 
+[queue|steer|interrupt|status])
+
+  ── Info ──
+    /whoami         - Show your slash 
+command access (admin / user)
+    /profile        - Show active 
+profile name and home directory
+    /diff           - Show git changes 
+in the working directory (usage: /diff 
+[staged|all|session] [--stat] [path...])
+    /help           - Show available 
+commands (/help skills lists skill 
+commands, /help <text> filters) (usage: 
+/help [skills|<filter>])
+    /palette        - Open the fuzzy 
+command palette (also Ctrl+P)
+    /usage          - Show token usage 
+and rate limits; `reset` redeems a 
+banked Codex limit reset (usage: /usage 
+[reset [--force]])
+    /subscription   - View your Nous 
+plan and change it in the browser
+    /upgrade        - View your Nous 
+plan and change it in the browser (alias
+for /subscription)
+    /login          - Sign in with a 
+Nous account (keeps your connectors)
+    /topup          - Show your Nous 
+balance and manage billing on the portal
+    /insights       - Show usage 
+insights and analytics (usage: /insights
+[days])
+    /platforms      - Show 
+gateway/messaging platform status
+    /gateway        - Show 
+gateway/messaging platform status (alias
+for /platforms)
+    /copy           - Copy the last 
+assistant response to clipboard (usage: 
+/copy [number])
+    /paste          - Attach clipboard 
+image from your clipboard
+    /image          - Attach a local 
+image file for your next prompt (usage: 
+/image <path>)
+    /update         - Update Hermes 
+Agent to the latest version
+    /version        - Show Hermes Agent 
+version
+    /v              - Show Hermes Agent 
+version (alias for /version)
+    /debug          - Upload debug 
+report (system info + logs) and get 
+shareable links (usage: /debug 
+[nous|local])
+
+  ── Tools & Skills ──
+    /tools          - Manage tools: 
+/tools [list|disable|enable] [name...] 
+(usage: /tools [list|disable|enable] 
+[name...])
+    /toolsets       - List available 
+toolsets
+    /skills         - Search, install, 
+inspect, or manage skills
+    /memory         - Review pending 
+memory writes / toggle the approval gate
+(usage: /memory 
+[pending|approve|reject|approval] 
+[id|on|off])
+    /bundles        - List skill bundles
+(aliases /<name> for multiple skills)
+    /pet            - Toggle or adopt a 
+petdex mascot (/pet, /pet list, /pet 
+<slug>) (usage: /pet [toggle|list|scale 
+<n>|<slug>])
+    /hatch          - Generate a new 
+petdex pet from a description (usage: 
+/hatch [description])
+    /generate-pet   - Generate a new 
+petdex pet from a description (alias for
+/hatch)
+    /learn          - Learn a reusable 
+skill from anything you describe (dirs, 
+URLs, this chat, notes) (usage: /learn 
+<what to learn from>)
+    /init           - Generate or update
+AGENTS.md project instructions from a 
+repo scan (usage: /init [notes])
+    /cron           - Manage scheduled 
+tasks (usage: /cron [subcommand])
+    /suggestions    - Review suggested 
+automations (accept/dismiss) (usage: 
+/suggestions [accept|dismiss N | 
+catalog])
+    /suggest        - Review suggested 
+automations (accept/dismiss) (alias for 
+/suggestions)
+    /blueprint      - Set up an 
+automation from a blueprint template 
+(usage: /blueprint [name] [slot=value 
+...])
+    /bp             - Set up an 
+automation from a blueprint template 
+(alias for /blueprint)
+    /curator        - Background skill 
+maintenance (status, run, pin, archive, 
+list-archived) (usage: /curator 
+[subcommand])
+    /kanban         - Multi-profile 
+collaboration board (tasks, links, 
+comments) (usage: /kanban [subcommand])
+    /reload         - Reload .env 
+variables into the running session
+    /reload-mcp     - Reload MCP servers
+from config
+    /reload_mcp     - Reload MCP servers
+from config (alias for /reload-mcp)
+    /reload-skills  - Re-scan 
+~/.hermes/skills/ for newly installed or
+removed skills
+    /reload_skills  - Re-scan 
+~/.hermes/skills/ for newly installed or
+removed skills (alias for 
+/reload-skills)
+    /browser        - Connect browser 
+tools to your live Chromium-family 
+browser via CDP, or switch to Browser 
+Use mode (usage: /browser 
+[connect|disconnect|status|use])
+    /plugins        - List installed 
+plugins and their status
+
+  ── Exit ──
+    /quit           - Exit the CLI (use 
+--delete to also remove session history)
+(usage: /quit [--delete])
+    /exit           - Exit the CLI (use 
+--delete to also remove session history)
+(alias for /quit)
+
+  ⚡ Skill Commands: 55 installed — /hel
+p skills to list them
+
+  Tip: /help skills lists skill commands
+ · /help <text> filters · Ctrl+P opens t
+he command palette
+  Multi-line: Ctrl+J, Alt+Enter, or \\+E
+nter for a new line
+  Draft editor: Ctrl+G (Alt+G in VSCode/
+Cursor)
+  Paste image: Alt+V (or /paste)
+
+ ☤ fixture-model · 40s 
+────────────────────────────────────────
+❯ What changed in this repo recently?

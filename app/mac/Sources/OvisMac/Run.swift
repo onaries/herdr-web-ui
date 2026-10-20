@@ -1,0 +1,122 @@
+import Foundation
+
+enum Ovis {
+    static let pluginID = "devswha.herdr-web-ui"
+    static let agentLabel = "sh.ovis.herdr-server"
+    static let installScript = URL(string: "https://herdrweb.dev/install.sh")!
+    static let support = URL(string: "https://ovis.sh/support/")!
+    static let tailscaleDownload = URL(string: "https://tailscale.com/download/mac")!
+}
+
+enum Paths {
+    static let home = FileManager.default.homeDirectoryForCurrentUser.path
+    /// The first herdr and Bun on `path`: install.sh puts them in ~/.local/bin and ~/.bun/bin, but keeps
+    /// one it finds already (Homebrew's), so the app looks where the installer looked. Asked each time:
+    /// an install can add one.
+    static var herdr: String { which("herdr") ?? "\(home)/.local/bin/herdr" }
+    static var bun: String { which("bun") ?? "\(home)/.bun/bin/bun" }
+    static let launchAgent = "\(home)/Library/LaunchAgents/\(Ovis.agentLabel).plist"
+    static let logDir = "\(home)/Library/Logs/Ovis"
+    /// An app opened from Finder gets launchd's bare PATH; the installer and the tools it adds need these.
+    static let path = ["\(home)/.local/bin", "\(home)/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].joined(separator: ":")
+    private static func which(_ name: String) -> String? {
+        path.split(separator: ":").map { "\($0)/\(name)" }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+    static var tailscale: String? {
+        let candidates = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+}
+
+func L(_ en: String, _ ko: String) -> String {
+    Locale.preferredLanguages.first?.hasPrefix("ko") == true ? ko : en
+}
+
+struct RunResult {
+    let status: Int32
+    let output: String
+}
+
+/// Splits a child's output into lines as it arrives; the pipe's handler and the exit handler run on different threads.
+final class LineCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var lines: [String] = []
+    private let onLine: (@Sendable (String) -> Void)?
+
+    init(onLine: (@Sendable (String) -> Void)?) {
+        self.onLine = onLine
+    }
+
+    func append(_ data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        buffer.append(data)
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            emit(buffer[buffer.startIndex..<newline])
+            buffer = Data(buffer[buffer.index(after: newline)...])
+        }
+    }
+
+    func finish() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        if !buffer.isEmpty {
+            emit(buffer)
+            buffer = Data()
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func emit(_ data: Data) {
+        let line = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\r", with: "")
+        lines.append(line)
+        onLine?(line)
+    }
+}
+
+/// Runs a program to its end with the PATH above. stdin is empty, so nothing it runs can wait for an answer.
+func run(_ executable: String, _ arguments: [String], env extra: [String: String] = [:], keepStderr: Bool = true, onLine: (@Sendable (String) -> Void)? = nil) async -> RunResult {
+    await withCheckedContinuation { continuation in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = Paths.path
+        for (key, value) in extra { environment[key] = value }
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = keepStderr ? pipe : FileHandle.nullDevice
+        let collector = LineCollector(onLine: onLine)
+        let reader = pipe.fileHandleForReading
+        let done = DispatchGroup()
+        done.enter()
+        reader.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                done.leave()
+            } else {
+                collector.append(data)
+            }
+        }
+        process.terminationHandler = { finished in
+            // The output can still be in the pipe when the process exits: wait for its end of file, but
+            // briefly. A background child the program left behind (the installer's) can hold the pipe
+            // open for good, and the window would wait with it.
+            DispatchQueue.global().async {
+                _ = done.wait(timeout: .now() + 2)
+                reader.readabilityHandler = nil
+                continuation.resume(returning: RunResult(status: finished.terminationStatus, output: collector.finish()))
+            }
+        }
+        do {
+            try process.run()
+        } catch {
+            reader.readabilityHandler = nil
+            continuation.resume(returning: RunResult(status: -1, output: error.localizedDescription))
+        }
+    }
+}

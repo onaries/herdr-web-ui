@@ -1,0 +1,193 @@
+import type { DialogReader } from "./registry.ts";
+import { pickerPlan } from "./interaction-plan.ts";
+import { ANSI_RE, KEY, PI_MODEL_HINT_RE, PI_ROW_RE, type ParsedPrompt, cleanLine, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, piModelRows, wrapped } from "./shared.ts";
+
+/**
+ * pi draws one menu widget for its dialogs — an extension's `ctx.ui.select`, `confirm` and
+ * `input`, and the selectors `/login` and `/scoped-models` open — and names what it takes in a
+ * hint line at the dialog's end: `↑↓ navigate  enter select  escape/ctrl+c cancel`, or
+ * `enter submit  escape/ctrl+c cancel` while it wants text. Read off that hint, not off
+ * indentation: a confirm's message sits indented beside its options, so a row is told from
+ * prose only by the hint that follows it. `/tree` is left alone on purpose: its hint says
+ * `↑/↓ move`, and answering it from the chat would move the session's branch, which the chat
+ * has no way to undo by clicking. pi never reports itself blocked for a dialog — it stays idle
+ * while one waits — so the card can only come from the screen, as it does for the other agents.
+ */
+export const PI_MENU_HINT_RE = /\u2191\u2193 navigate\s+enter select\s+escape\/ctrl\+c cancel/i;
+
+export const PI_INPUT_HINT_RE = /enter submit\s+escape\/ctrl\+c cancel/i;
+
+/** the line pi types an answer into */
+const PI_INPUT_LINE_RE = /^[\u203a>\u276f]+\s*(.*)$/;
+
+/** `/model` types a filter into this line, then lists what is left under it */
+const PI_MODEL_FILTER_RE = /^[\u203a>\u276f]\s*$/;
+
+const PI_MODEL_DEFAULT_RE = /\s*\u00b7\s*default$/;
+
+/**
+ * The rows a dialog takes its answer from, and its own words over them. pi separates the two
+ * with a blank line and ends the block with its hint, so the run of lines directly above the
+ * hint is what its arrow keys move through, and what sits above the blank over it is what the
+ * dialog asks. The rule over the dialog is no use for this: it stands over the whole thing,
+ * title included, and a confirm indents its message level with its own options.
+ *
+ * A pane narrower than an option wraps it, and the rest of the label lands on a line of its own.
+ * pi sets a row three columns in (` → ` on the cursor's, three spaces on the others) and the
+ * wrapped rest one column in, which is all that tells them apart: read as a row of its own, the
+ * rest became one more option, and tapping it pressed Down once more than pi has rows, onto the
+ * option after it (measured on pi 0.87.1 at 46 columns). The title and a confirm's message wrap
+ * the same way, so they are read as one run of lines, the title first.
+ */
+const PI_WRAPPED_REST_RE = /^ (?![\u2192\u276f\u279c])\S/;
+
+function piDialogRows(lines: string[], hintIndex: number): { rows: { line: string; cursor: boolean }[]; title: string[] } {
+  const rows: { line: string; cursor: boolean }[] = [];
+  let index = hintIndex - 1;
+  while (index >= 0 && !cleanLine(lines[index]!)) index -= 1;
+  // read upwards, so the wrapped rest of a row is met before the row it belongs to
+  let rest: string[] = [];
+  for (; index >= 0; index -= 1) {
+    const raw = lines[index]!.replace(ANSI_RE, "");
+    const line = cleanLine(raw);
+    if (!line || isDivider(line)) break;
+    if (PI_WRAPPED_REST_RE.test(raw)) { rest.unshift(line); continue; }
+    rows.unshift({ line: [line, ...rest].join(" "), cursor: /^[\u2192\u276f\u279c]\s*\S/.test(line) });
+    rest = [];
+  }
+  // lines one column in with no row over them are not a wrapped option: they stand as they are,
+  // for the caller to refuse (the slash palette's own first line, for one)
+  rows.unshift(...rest.map((line) => ({ line, cursor: false })));
+  const title: string[] = [];
+  // the run of lines right over the rows' blank: past the next blank is whatever the pane showed before
+  for (; index >= 0 && title.length < 8; index -= 1) {
+    if (isDivider(lines[index]!)) break;
+    const line = cleanLine(lines[index]!);
+    if (!line) {
+      if (title.length > 0) break;
+      continue;
+    }
+    title.unshift(line);
+  }
+  return { rows, title };
+}
+
+function parsePiModel(screen: string): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
+  const hintIndex = findLastIndex(lines, (_, index) => PI_MODEL_HINT_RE.test(wrapped(lines, index)));
+  if (hintIndex < 0) return null;
+  // the filter line is the anchor: the catalogue is what sits under it, and anything above
+  // belongs to whatever the pane showed before `/model` was typed
+  const filterIndex = findLastIndex(lines.slice(0, hintIndex), (line) => PI_MODEL_FILTER_RE.test(cleanLine(line)));
+  if (filterIndex < 0) return null;
+  const rows = piModelRows(lines, filterIndex + 1);
+  if (rows === null) return null;
+  const selectedIndex = rows.findIndex((row) => row.cursor);
+  const labels = rows.map((row) => row.label);
+  // the card names the model answering now, because the answer switches it and whoever taps
+  // should know what they are switching from; pi's tick is the only mark that says so
+  const current = rows.find((row) => row.current);
+  const question = current
+    ? `Select model (currently ${current.label.replace(PI_MODEL_DEFAULT_RE, "")})`
+    : "Select model";
+  return finishPrompt("pi", {
+    kind: "question",
+    title: "",
+    question,
+    body: null,
+    options: labels.map((label) => ({ label, description: null })),
+    multi_select: false,
+    custom_option_index: null,
+  }, {
+    responder: "pi-model", menuLabels: labels, selectedIndex, checkedOptionIndices: [], customMenuIndex: null,
+    rejectWithEscapeIndex: null,
+  });
+}
+
+export function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
+  const hintIndex = findLastIndex(lines, (_, index) => PI_MENU_HINT_RE.test(wrapped(lines, index)) || PI_INPUT_HINT_RE.test(wrapped(lines, index)));
+  if (hintIndex < 0) return null;
+  const block = piDialogRows(lines, hintIndex);
+  if (block.rows.length === 0) return null;
+  // the first line is the dialog's own; what follows is a confirm's message, or more of a wrapped line
+  const title = block.title[0];
+  const body = block.title.length > 1 ? block.title.slice(1).join(" ") : undefined;
+  // pi wants text on a `>` line: there is nothing to pick, and the answer is typed into it
+  if (PI_INPUT_HINT_RE.test(wrapped(lines, hintIndex))) {
+    if (!block.rows.every((row) => PI_INPUT_LINE_RE.test(row.line))) return null;
+    return finishPrompt("pi", {
+      kind: "question", title: body ?? "", question: title ?? "", body: null,
+      options: [{ label: "Type your answer", description: null }], multi_select: false, custom_option_index: 0,
+    }, { responder: "pi-input", menuLabels: [], selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: 0, rejectWithEscapeIndex: null });
+  }
+  // every line of the block must be a row, and a row must be a single label: pi sets its
+  // command palette out in two columns, and offering those as options would run a slash
+  // command on a click. The palette ends in a row count of its own, not this hint.
+  const rows = block.rows.map((row) => row.line.match(PI_ROW_RE)).filter((row): row is RegExpMatchArray => row !== null && row[2] !== undefined);
+  if (rows.length !== block.rows.length || rows.length < 2) return null;
+  if (rows.some((row) => /\s{2,}/.test(row[2]!))) return null;
+  // a dialog moved through by hand sits wherever its last key left the cursor, and the chat
+  // would then navigate from a position it cannot see. `moved`: an answer's own keys moved it,
+  // and the read before its Enter looks where it stands (the answer route)
+  const cursor = block.rows.findIndex((row) => row.cursor);
+  if (moved ? cursor < 0 : cursor !== 0) return null;
+  // Yes/No reads as a confirmation; anything else is a question asked among its options
+  const labels = rows.map((row) => row[2]!.trim());
+  const confirming = labels.length === 2 && /^yes\b/i.test(labels[0]!) && /^no\b/i.test(labels[1]!);
+  return finishPrompt("pi", {
+    kind: confirming ? "approval" : "question",
+    title: confirming ? (title ?? "") : "",
+    // a select has a title alone: a second line is the rest of it, wrapped
+    question: confirming ? (body ?? title ?? "") : block.title.join(" "),
+    body: null,
+    options: labels.map((label) => ({ label, description: null })),
+    multi_select: false,
+    custom_option_index: null,
+  }, {
+    responder: confirming ? "pi-confirm" : "pi-question",
+    menuLabels: block.rows.map((row) => row.line),
+    selectedIndex: cursor, checkedOptionIndices: [], customMenuIndex: null,
+    // "No" is pressed, not cancelled: pi's own Yes/No answers the question false, which is
+    // what a confirmation means, where Escape would leave it unanswered
+    rejectWithEscapeIndex: null,
+  });
+}
+
+export const readers: readonly DialogReader[] = [
+  {
+    id: "pi-model", agents: ["pi"], priority: 10,
+    reread: "before-commit", list: "none",
+    interaction: (parsed) => pickerPlan(parsed, parsePiModel,
+      parsed.options.map((_, index) => keySteps([...navigationKeys(index - parsed.selectedIndex), KEY.enter])),
+      (shown, cursor) => shown.options[cursor]?.label),
+    parse: (screen) => {
+      const parsed = parsePiModel(screen);
+      return parsed?.responder === "pi-model" ? parsed : null;
+    },
+  },
+  {
+    id: "pi-question", agents: ["pi"], priority: 90,
+    reread: "none", list: "none",
+    parse: (screen) => {
+      const parsed = parsePiDialog(screen);
+      return parsed?.responder === "pi-question" ? parsed : null;
+    },
+  },
+  {
+    id: "pi-confirm", agents: ["pi"], priority: 90,
+    reread: "none", list: "none",
+    parse: (screen) => {
+      const parsed = parsePiDialog(screen);
+      return parsed?.responder === "pi-confirm" ? parsed : null;
+    },
+  },
+  {
+    id: "pi-input", agents: ["pi"], priority: 90,
+    reread: "none", list: "none",
+    parse: (screen) => {
+      const parsed = parsePiDialog(screen);
+      return parsed?.responder === "pi-input" ? parsed : null;
+    },
+  },
+];

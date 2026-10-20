@@ -271,7 +271,8 @@ try {
   await insecureLog.getByRole("button", { name: "Copied", exact: true }).waitFor();
   assert.equal(await clipboard(), answer);
   assert.equal(await insecureLog.getByRole("button", { name: "Copied", exact: true }).evaluate((node) => node === document.activeElement), true, "fallback restores the triggering button's focus");
-  assert.equal(await insecure.locator("textarea[readonly]").count(), 0);
+  // the copy fallback's own field is appended to the body; the composer's measurement textarea is readonly for good
+  assert.equal(await insecure.locator("body > textarea[readonly]").count(), 0);
   await insecureLog.getByRole("button", { name: "Copy code", exact: true }).focus();
   await insecureLog.getByRole("button", { name: "Copy code", exact: true }).click();
   await insecureLog.getByRole("button", { name: "Code copied", exact: true }).waitFor();
@@ -310,7 +311,7 @@ try {
   await insecureLog.getByRole("alert").filter({ hasText: "Couldn't copy. Select the text and copy it manually." }).nth(1).waitFor();
   assert.equal(await insecureLog.getByRole("alert").filter({ hasText: "Couldn't copy. Select the text and copy it manually." }).count(), 2);
   assert.equal(await insecureLog.getByRole("button", { name: "Code copied", exact: true }).count(), 0);
-  assert.equal(await insecure.locator("textarea[readonly]").count(), 0, "temporary copy field is removed");
+  assert.equal(await insecure.locator("body > textarea[readonly]").count(), 0, "temporary copy field is removed");
   await insecure.screenshot({ path: "evidence/chat-mode/clipboard-refused.png", fullPage: true, animations: "disabled" });
   await insecure.close();
   console.log("PASS actual clipboard contents on HTTP, denied API fallback, and refused-copy feedback");

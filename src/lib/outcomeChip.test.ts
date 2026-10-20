@@ -1,0 +1,180 @@
+import { describe, expect, test } from "bun:test";
+
+import type { CommandOutcome, ConversationTurn } from "../../shared/protocol.ts";
+import { translate } from "./i18n.ts";
+import { noteCatalogChanges, outcomeChip, outcomeCommand, outcomeLabel, outcomeResultText, outcomeRows } from "./outcomeChip.ts";
+
+const en = (key: string, vars?: Record<string, string | number>): string => translate("en", key, vars);
+
+const STATES: CommandOutcome["state"][] = ["accepted", "interaction-required", "result-observed", "terminal-required", "unknown"];
+const EVIDENCE: CommandOutcome["evidence"][number]["kind"][] = ["transcript", "dialog", "recognized-result", "native", "side-store"];
+
+function outcome(over: Partial<CommandOutcome> & { text: string; created_at: string }): CommandOutcome {
+  return { id: `o-${over.text}-${over.created_at}`, pane_id: "w1:p1", state: "accepted", evidence: [], updated_at: over.created_at, ...over };
+}
+
+function user(text: string, ts: string | null): ConversationTurn {
+  return { role: "user", ts, parts: [{ kind: "text", text }] };
+}
+
+function assistant(text: string, ts: string | null): ConversationTurn {
+  return { role: "assistant", ts, parts: [{ kind: "text", text }] };
+}
+
+describe("outcomeChip", () => {
+  test("maps every state to its own chip, with a result's latest evidence and the one action the state offers", () => {
+    const chips = STATES.map((state) => outcomeChip(outcome({ text: "/context", created_at: "2026-10-20T10:00:00.000Z", state, evidence: state === "result-observed" ? [{ kind: "native", at: "2026-10-20T10:00:01.000Z" }, { kind: "transcript", at: "2026-10-20T10:00:02.000Z" }] : [] })));
+    expect(chips.map((chip) => chip.state)).toEqual(STATES);
+    expect(chips.map((chip) => chip.evidence)).toEqual([null, null, "transcript", null, null]);
+    expect(chips.map((chip) => chip.action)).toEqual([null, "answer", null, "terminal", null]);
+    const labels = new Set(chips.map((chip) => outcomeLabel(en, chip)));
+    expect(labels.size).toBe(STATES.length);
+    for (const kind of EVIDENCE) {
+      const chip = outcomeChip(outcome({ text: "/context", created_at: "2026-10-20T10:00:00.000Z", state: "result-observed", evidence: [{ kind, at: "2026-10-20T10:00:01.000Z" }] }));
+      expect(chip.evidence).toBe(kind);
+      expect(outcomeLabel(en, chip)).not.toBe(outcomeLabel(en, { state: "result-observed", evidence: null, action: null }));
+    }
+  });
+
+  test("a preview never reads as done: the state alone names the chip", () => {
+    const done = outcomeChip(outcome({ text: "/cost", created_at: "2026-10-20T10:00:00.000Z", state: "result-observed", evidence: [{ kind: "transcript", at: "2026-10-20T10:00:01.000Z" }] }));
+    for (const state of STATES.filter((candidate) => candidate !== "result-observed")) {
+      const chip = outcomeChip(outcome({ text: "/cost", created_at: "2026-10-20T10:00:00.000Z", state, preview: "Total cost: $0.42\nTotal duration: 2m" }));
+      expect(chip.state).toBe(state);
+      expect(chip.evidence).toBeNull();
+      expect(outcomeLabel(en, chip)).not.toBe(outcomeLabel(en, done));
+    }
+  });
+
+  test("names the command a text invoked for the preview's summary", () => {
+    expect(outcomeCommand("/btw is this safe?")).toBe("/btw");
+    expect(outcomeCommand("Please use $review now")).toBe("$review");
+    expect(outcomeCommand("a plain message\nsecond line")).toBe("a plain message");
+    expect(outcomeCommand("x".repeat(60))).toBe(`${"x".repeat(39)}…`);
+  });
+});
+
+describe("noteCatalogChanges", () => {
+  test("invalidates once per outcome that changed the catalog, and never for one that did not", () => {
+    let calls = 0;
+    const noted = new Set<string>();
+    const changed = outcome({ id: "a", text: "/plugin install x", created_at: "2026-10-20T10:00:00.000Z", state: "result-observed", catalog_changed: true });
+    const plain = outcome({ id: "b", text: "/context", created_at: "2026-10-20T10:00:05.000Z" });
+    noteCatalogChanges([changed, plain], noted, () => { calls += 1; });
+    expect(calls).toBe(1);
+    noteCatalogChanges([changed, plain], noted, () => { calls += 1; });
+    expect(calls).toBe(1);
+    noteCatalogChanges([plain], noted, () => { calls += 1; });
+    expect(calls).toBe(1);
+    noteCatalogChanges([{ ...changed, id: "c" }], noted, () => { calls += 1; });
+    expect(calls).toBe(2);
+  });
+});
+
+describe("outcomeRows", () => {
+  const earlier = [user("hello", "2026-10-20T09:00:00.000Z"), assistant("hi", "2026-10-20T09:00:05.000Z")];
+
+  test("an outcome without a transcript turn yields one provisional row after the turns before its send", () => {
+    const sent = outcome({ text: "/btw is this safe?", created_at: "2026-10-20T10:00:00.000Z", state: "terminal-required" });
+    const rows = outcomeRows(earlier, [sent]);
+    expect(rows).toEqual([
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: null },
+      { kind: "sent", outcome: sent },
+    ]);
+    expect(rows.filter((row) => row.outcome === sent)).toHaveLength(1);
+  });
+
+  test("a later matching user turn takes the chip and the provisional row goes: never two rows", () => {
+    const sent = outcome({ text: "/context", created_at: "2026-10-20T10:00:00.000Z" });
+    const before = outcomeRows(earlier, [sent]);
+    expect(before.filter((row) => row.kind === "sent")).toHaveLength(1);
+    const turns = [...earlier, user("/context", "2026-10-20T10:00:01.000Z"), assistant("Context: 42% used", "2026-10-20T10:00:03.000Z")];
+    const after = outcomeRows(turns, [sent]);
+    expect(after).toEqual([
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: null },
+      { kind: "turn", index: 2, outcome: sent },
+      { kind: "turn", index: 3, outcome: null },
+    ]);
+    expect(after.filter((row) => row.outcome === sent)).toHaveLength(1);
+  });
+
+  test("only a turn after the send time matches, wrapped the same text is the same, and each turn takes one outcome", () => {
+    const first = outcome({ id: "first", text: "/compact", created_at: "2026-10-20T10:00:00.000Z" });
+    const second = outcome({ id: "second", text: "/compact", created_at: "2026-10-20T10:00:10.000Z" });
+    const turns = [
+      user("/compact", "2026-10-20T09:59:00.000Z"),
+      user("/ compact", "2026-10-20T10:00:01.000Z"),
+      user("/compact", "2026-10-20T10:00:11.000Z"),
+    ];
+    const rows = outcomeRows(turns, [second, first]);
+    expect(rows).toEqual([
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: first },
+      { kind: "turn", index: 2, outcome: second },
+    ]);
+  });
+
+  test("a provisional row sits before the first turn that came after its send, and a turn without a time counts unless a timed turn below it is before the send", () => {
+    const sent = outcome({ text: "/btw hi", created_at: "2026-10-20T10:00:00.000Z", state: "terminal-required" });
+    const late = outcome({ text: "/model opus", created_at: "2026-10-20T10:00:20.000Z" });
+    const turns = [...earlier, user("next question", "2026-10-20T10:00:10.000Z"), user("/model opus", null)];
+    expect(outcomeRows(turns, [sent, late])).toEqual([
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: null },
+      { kind: "sent", outcome: sent },
+      { kind: "turn", index: 2, outcome: null },
+      { kind: "turn", index: 3, outcome: late },
+    ]);
+  });
+
+  test("a cancelled send the agent put back gets no row, and an outcome older than the loaded page waits for its page", () => {
+    const restored = outcome({ text: "/btw hi", created_at: "2026-10-20T10:00:00.000Z" });
+    expect(outcomeRows(earlier, [restored], { restored: "/btw hi" })).toEqual([
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: null },
+    ]);
+    // only the send put back is cancelled: the latest one; an earlier identical send keeps its receipt
+    const done = outcome({ id: "done", text: "/compact", created_at: "2026-10-20T10:00:00.000Z", state: "result-observed", evidence: [{ kind: "transcript", at: "2026-10-20T10:00:03.000Z" }] });
+    const cancelled = outcome({ id: "cancelled", text: "/compact", created_at: "2026-10-20T10:05:00.000Z" });
+    const turns = [...earlier, user("/compact", "2026-10-20T10:00:01.000Z"), assistant("Compacted.", "2026-10-20T10:00:03.000Z")];
+    expect(outcomeRows(turns, [cancelled, done], { restored: "/compact" })).toEqual([
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: null },
+      { kind: "turn", index: 2, outcome: done },
+      { kind: "turn", index: 3, outcome: null },
+    ]);
+    const alone = outcome({ id: "alone", text: "/btw solo", created_at: "2026-10-20T10:06:00.000Z", state: "terminal-required" });
+    expect(outcomeRows(turns, [done, cancelled, alone], { restored: "/compact" }).filter((row) => row.outcome !== null).map((row) => row.outcome?.id)).toEqual(["done", "alone"]);
+    const old = outcome({ text: "/btw earlier", created_at: "2026-10-20T08:00:00.000Z", state: "terminal-required" });
+    expect(outcomeRows(earlier, [old]).filter((row) => row.kind === "sent")).toHaveLength(0);
+    expect(outcomeRows(earlier, [old], { beginningLoaded: true })).toEqual([
+      { kind: "sent", outcome: old },
+      { kind: "turn", index: 0, outcome: null },
+      { kind: "turn", index: 1, outcome: null },
+    ]);
+    expect(outcomeRows([], [old])).toEqual([{ kind: "sent", outcome: old }]);
+  });
+});
+
+describe("outcomeResultText", () => {
+  const at = "2026-10-20T10:00:00.000Z";
+  const printed = "Hermes CLI Status\n\nSession ID: fixture\nAgent Running: No";
+  const recognized = outcome({ text: "/status", created_at: at, state: "result-observed", evidence: [{ kind: "recognized-result", at }], result_text: printed });
+
+  test("shows a recognized result's text verbatim, line breaks kept, until it is dismissed here", () => {
+    expect(outcomeResultText(recognized, false)).toBe(printed);
+    expect(outcomeResultText(recognized, true)).toBeNull();
+    // dismissing only flips this view's flag: the outcome itself is untouched, so nothing is sent or changed
+    expect(recognized.result_text).toBe(printed);
+    expect(outcomeChip(recognized)).toEqual({ state: "result-observed", evidence: "recognized-result", action: null });
+  });
+
+  test("shows no card without a recognized result, whatever text came along", () => {
+    expect(outcomeResultText({ ...recognized, evidence: [{ kind: "transcript", at }] }, false)).toBeNull();
+    expect(outcomeResultText({ ...recognized, state: "accepted", evidence: [] }, false)).toBeNull();
+    expect(outcomeResultText({ ...recognized, result_text: undefined }, false)).toBeNull();
+    expect(outcomeResultText({ ...recognized, result_text: "" }, false)).toBeNull();
+  });
+});

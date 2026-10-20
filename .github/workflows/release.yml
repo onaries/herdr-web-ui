@@ -63,4 +63,4 @@ jobs:
             echo 'Tag appeared during validation; refusing to publish it.' >&2
             exit 1
           fi
-          gh release create "v$RELEASE_VERSION" --target "$GITHUB_SHA" --title "herdr web ui v$RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
+          gh release create "v$RELEASE_VERSION" --target "$GITHUB_SHA" --title "Ovis v$RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"

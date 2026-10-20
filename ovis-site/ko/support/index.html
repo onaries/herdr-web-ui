@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>지원 · Ovis</title>
+<meta name="description" content="Ovis 도움말: PC 연결, 페어링, 문제 신고.">
+<link rel="canonical" href="https://ovis.sh/ko/support/">
+<link rel="alternate" hreflang="en" href="https://ovis.sh/support/">
+<link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/support/">
+<link rel="alternate" hreflang="x-default" href="https://ovis.sh/support/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ovis.sh/ko/support/">
+<meta property="og:title" content="지원 · Ovis">
+<meta property="og:description" content="Ovis 도움말: PC 연결, 페어링, 문제 신고.">
+<meta property="og:image" content="https://ovis.sh/assets/icon-512.png">
+<meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131a2b" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/assets/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="wrap top">
+<a class="brand" href="/ko/"><picture><source srcset="/assets/logo-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/logo-light.png" alt="Ovis" width="113" height="40"></picture></a>
+<nav><a href="/ko/privacy/">개인정보</a><a href="/ko/support/" aria-current="page">지원</a><a href="/support/" hreflang="en" lang="en">English</a></nav>
+</header>
+<main>
+<article class="wrap doc">
+<h1>지원</h1>
+<p class="date">iPhone·Android용 Ovis</p>
+<div class="box"><p><strong>도움이 필요하거나 버그를 찾으셨나요?</strong> <a href="https://github.com/devswha/herdr-web-ui/issues/new">GitHub에 이슈를 남겨</a> 주세요. 휴대폰 기종, 앱 버전, 그리고 PC의 <strong>설정 → 정보</strong>에 나오는 herdr web UI 버전을 함께 적어 주시면 좋습니다. 한국어로 쓰셔도 됩니다.</p></div>
+<h2>Ovis가 PC에 연결되지 않아요</h2>
+<ul>
+<li>PC가 켜져 있고 herdr web UI가 실행 중인지 확인하세요. PC의 브라우저에서 그 주소를 열어 보면 됩니다.</li>
+<li>휴대폰에서 PC로 갈 길이 있는지 확인하세요. 예를 들어 두 기기 모두 Tailscale이 연결돼 있는지, 같은 Wi-Fi에 있는지 봅니다.</li>
+<li>휴대폰 브라우저에서 같은 주소를 열어 보세요. 거기서도 안 열리면 앱이 아니라 연결 경로의 문제입니다.</li>
+<li><code>https</code> 주소(PC에서 <code>tailscale serve</code>)가 <code>http</code> 주소보다 앱에서 더 빨리 열립니다.</li>
+</ul>
+<h2>페어링 코드를 물어봐요</h2>
+<p>내 Tailscale 계정으로 로그인되지 않은 휴대폰은 6자리 코드로 한 번 연결합니다. 코드는 PC의 <strong>설정 → 폰 및 기기</strong>에 있습니다.</p>
+<h2>QR 코드가 안 읽혀요</h2>
+<p>QR 코드 아래에 보이는 주소를 직접 입력하세요. 카메라가 안 열리면 휴대폰 설정에서 Ovis의 카메라 권한을 허용해 주세요.</p>
+<h2>다른 PC로 바꾸고 싶어요</h2>
+<p>앱의 <strong>Change PC</strong>를 누르면 연결 화면으로 돌아가고, 저장된 PC 목록이 나옵니다.</p>
+<h2>안내 문서 (영어)</h2>
+<ul>
+<li><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#on-your-phone">휴대폰 설정</a></li>
+<li><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#access-and-safety">접근과 보안</a></li>
+<li><a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md">herdr web UI 전체 안내</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap"><span>Ovis는 devswha가 만든 herdr web UI용 휴대폰 앱입니다.</span><a href="/ko/privacy/">개인정보처리방침</a><a href="/ko/support/">지원</a><a href="https://github.com/devswha/herdr-web-ui">GitHub 소스</a><a href="https://herdrweb.dev/">herdrweb.dev</a></div></footer>
+</body>
+</html>

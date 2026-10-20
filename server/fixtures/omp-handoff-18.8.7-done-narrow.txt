@@ -1,0 +1,19 @@
+
+              ████████████
+                 ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                 ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                 ▒▒  ██                  █
+                     ██       v18.8.7
+
+      Tip: Spaghetti code? Try complaining with /omfg
+
+ Fixture answer for the handoff recording.
+
+────────────────── 📷 handed-off · Ctrl+O ──────────────────
+
+ Session compacted 1 time
+
+ ✔ Context handed off and compacted in place
+
+ π > ⬢ Handoff fixture > 🗑 …ff-narrow-e5HzfC/cwd ▶─5%─┃131K─
+╰─

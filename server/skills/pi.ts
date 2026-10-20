@@ -13,17 +13,53 @@ import type { SlashCommand } from "../../shared/protocol.ts";
 
 /** pi states what each command opens or does, in its own words, read off its palette. */
 const PI_DESCRIPTIONS: Record<string, string> = {
-  settings: "Open settings menu", model: "<provider/model> — Select model", thinking: "<level> — Set thinking level",
-  "scoped-models": "Enable/disable models for Ctrl+P cycling", login: "<provider> — Configure provider authentication",
-  logout: "Remove provider authentication", llama: "[t] Manage llama.cpp router models", new: "Start a new session",
+  settings: "Open settings menu", model: "Select model (opens selector UI)", thinking: "Set thinking level",
+  "scoped-models": "Enable/disable models for Ctrl+P cycling", login: "Configure provider authentication",
+  logout: "Remove provider authentication", new: "Start a new session",
   resume: "Resume a different session", name: "Set session display name", session: "Show session info and stats",
   fork: "Create a new fork from a previous user message",
   clone: "Duplicate the current session at the current position", compact: "Manually compact the session context",
   import: "Import and resume a session from a JSONL file", copy: "Copy last agent message to clipboard",
-  export: "Export session (HTML default, or specify path: .html/.jsonl)", share: "Share session as a secret GitHub gist",
-  bug: "<description> — Report a bug to the Pi developers", trust: "Save project trust decision for future sessions",
+  export: "Export session (HTML default, or specify path: .html/.jsonl)", share: "Share session via a Radius artifact or a GitHub gist",
+  bug: "Report a bug to the Pi developers", trust: "Save project trust decision for future sessions",
   reload: "Reload keybindings, extensions, skills, prompts, themes, and context files", hotkeys: "Show all keyboard shortcuts",
-  changelog: "Show changelog entries", quit: "Quit pi",
+  changelog: "Show changelog entries", quit: "Quit pi", tree: "Navigate session tree (switch branches)",
+};
+
+// Canonical builtins and behavior from earendil-works/pi 5c1736f82d201d09664642ab0d88147da94b450e.
+const PI_BUILTINS = [
+  "settings", "model", "tree", "thinking", "scoped-models", "export", "import", "share", "bug", "copy",
+  "name", "session", "changelog", "hotkeys", "fork", "clone", "trust", "login", "logout", "new",
+  "compact", "resume", "reload", "quit",
+];
+const PI_TERMINAL_BOUND = [
+  "tree",
+];
+const PI_FORMS: NonNullable<AgentCommandSource["forms"]> = {
+  model: [{ match: "bare", interaction: "dialog", dialog: "pi-model" }, { match: { sub: "*" }, interaction: "none" }],
+  thinking: [{ match: "bare", interaction: "dialog", dialog: "pi-model" }, { match: { sub: "*" }, interaction: "none" }],
+  tree: [{ match: "bare", interaction: "terminal" }],
+  fork: [{ match: "bare", interaction: "terminal" }],
+  resume: [{ match: "bare", interaction: "terminal" }],
+  settings: [{ match: "bare", interaction: "terminal" }],
+  "scoped-models": [{ match: "bare", interaction: "terminal" }],
+  login: [{ match: "bare", interaction: "terminal" }, { match: { sub: "*" }, interaction: "terminal" }],
+  compact: [{ match: "bare", interaction: "none" }],
+  session: [{ match: "bare", interaction: "terminal" }],
+  hotkeys: [{ match: "bare", interaction: "terminal" }],
+  changelog: [{ match: "bare", interaction: "terminal" }],
+  logout: [{ match: "bare", interaction: "terminal" }],
+  new: [{ match: "bare", interaction: "unknown" }],
+  name: [{ match: "bare", interaction: "terminal" }, { match: { sub: "*" }, interaction: "none" }],
+  clone: [{ match: "bare", interaction: "unknown" }],
+  import: [{ match: "bare", interaction: "terminal" }, { match: { sub: "*" }, interaction: "terminal" }],
+  copy: [{ match: "bare", interaction: "terminal" }],
+  export: [{ match: "bare", interaction: "terminal" }, { match: { sub: "*" }, interaction: "terminal" }],
+  share: [{ match: "bare", interaction: "terminal" }],
+  bug: [{ match: "bare", interaction: "terminal" }, { match: { sub: "*" }, interaction: "terminal" }],
+  trust: [{ match: "bare", interaction: "terminal" }],
+  reload: [{ match: "bare", interaction: "terminal" }],
+  quit: [{ match: "bare", interaction: "terminal" }],
 };
 
 
@@ -65,7 +101,7 @@ function projectTrusted(agentDir: string, settings: Record<string, unknown>, cwd
 }
 
 const asCommands = (found: ReturnType<typeof walkSkills>, origin: NonNullable<SlashCommand["origin"]>): SlashCommand[] =>
-  found.map(({ name, description }) => ({ name: `skill:${name}`, description, source: "skill", origin }));
+  found.map(({ name, description, path, id }) => ({ name: `skill:${name}`, description, source: "skill", origin, id: id ?? canonical(path) }));
 const recursive = (root: string): ReturnType<typeof walkSkills> => walkSkills(root, { depth: "recursive", looseMarkdown: "root", ignoreFiles: false, requireDescription: true });
 
 /** One settings entry's skills: a directory is walked, a .md file is one skill. */
@@ -77,7 +113,7 @@ function entrySkills(path: string): ReturnType<typeof walkSkills> {
   const fields = readFrontmatter(path);
   if (typeof fields?.["description"] !== "string" || !fields["description"].trim()) return [];
   const name = typeof fields["name"] === "string" && fields["name"] ? fields["name"] : basename(path) === "SKILL.md" ? basename(dirname(path)) : basename(path, ".md");
-  return [{ name, description: fields["description"], path, fields }];
+  return [{ name, description: fields["description"], path, fields, id: canonical(path) }];
 }
 
 /** The settings `skills` array: plain paths add, `+path` forces in, `-path` and `!glob` exclude. */
@@ -121,13 +157,14 @@ function discoverSkills({ home, cwd, env }: AgentCommandContext): SlashCommand[]
 }
 
 export const source: AgentCommandSource = {
-  // pi 0.87.1, as its own palette lists them, less /tree — the way omp's list curates its own
-  // commands. The chat reads pi's tree browser as nothing at all: no card, and the pane still looks
-  // idle while the terminal waits for arrow keys. Offering the one command that opens it from the
-  // chat would walk a reader into a state only the terminal lens can leave. Navigating stays in the
-  // terminal; the chat's place is the abandoned-turns marker, which says where a /tree left off
-  builtins: ["settings", "model", "thinking", "scoped-models", "login", "logout", "llama", "new", "resume", "name", "session", "fork", "clone", "compact", "import", "copy", "export", "share", "bug", "trust", "reload", "hotkeys", "changelog", "quit"],
+  // Extension and package commands are runtime-only and are not listed; typed commands still send
+  // through the terminal and receive an unknown outcome.
+  // The upstream quit description uses `${APP_NAME}`; its pinned app name is "pi".
+  pin: "1.3.0",
+  builtins: PI_BUILTINS,
   descriptions: PI_DESCRIPTIONS,
+  forms: PI_FORMS,
+  terminalBound: PI_TERMINAL_BOUND,
   discover(ctx) {
     // pi's packages and extension commands stay out: no file scan can know them, and they are in
     // the terminal's own `/` menu either way

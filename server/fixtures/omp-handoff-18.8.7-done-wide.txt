@@ -1,0 +1,19 @@
+
+                                            ████████████
+                                               ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                               ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                               ▒▒  ██                  █
+                                                   ██       v18.8.7
+
+                           Tip: Type `/` at the start of your prompt to browse every command
+
+ Fixture answer for the handoff recording.
+
+─────────────────────────────────────────────── 📷 handed-off · Ctrl+O ────────────────────────────────────────────────
+
+ Session compacted 1 time
+
+ ✔ Context handed off and compacted in place
+
+ π > ⬢ Handoff fixture > 🗑 ….rNDqT98uuU/omp-handoff-wide-Hnn7tX/cwd ▶──5%─────────────────────────────╎────┃──────131K─
+╰─

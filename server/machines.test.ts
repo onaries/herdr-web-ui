@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { describeProgress } from "../src/lib/bridgeProgress.ts";
 import type { SetupJob } from "../shared/machines.ts";
+import type { PanePromptResponse } from "../shared/protocol.ts";
 import { paneNotificationTag } from "../shared/notify-policy.ts";
 import { BRIDGE_PROTOCOL, machinePath, paneStorageId, REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import { canSendSecret, sameOrigin, shellQuote, validateTarget } from "./machine-security.ts";
@@ -76,6 +77,30 @@ describe("independently managed bridge updates", () => {
 });
 
 describe("machine boundaries", () => {
+  for (const older of [false, true]) it(`strips command previews for observers while preserving ${older ? "older" : "current"} bridge responses`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-outcome-proxy-"));
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });
+    const answer: PanePromptResponse = { prompt: null, ...(older ? {} : { outcomes: [{
+      id: "send-1", pane_id: "pane-1", text: "/context", state: "accepted" as const, evidence: [],
+      preview: "fixture-preview", result_text: "fixture-result", created_at: "2026-10-20T00:00:00Z", updated_at: "2026-10-20T00:00:00Z",
+    }] }) };
+    const bridge = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json(answer) });
+    const endpoint = spyOn(manager, "endpoint").mockReturnValue({ url: `http://127.0.0.1:${bridge.port}`, token: "fixture" });
+    try {
+      const request = new Request("http://localhost/api/machines/fixture/pane/prompt?pane_id=pane-1");
+      const watched = await (await handleMachineRequest(request, manager, undefined, undefined, true)).json() as PanePromptResponse;
+      expect(watched.prompt).toBeNull();
+      if (older) expect(watched.outcomes).toBeUndefined();
+      else {
+        expect(watched.outcomes?.[0]?.state).toBe("accepted");
+        expect(watched.outcomes?.[0]).not.toHaveProperty("preview");
+        expect(watched.outcomes?.[0]).not.toHaveProperty("result_text");
+        const owner = await (await handleMachineRequest(request, manager)).json() as PanePromptResponse;
+        expect(owner.outcomes?.[0]?.preview).toBe(answer.outcomes?.[0]?.preview);
+        expect(owner.outcomes?.[0]?.result_text).toBe(answer.outcomes?.[0]?.result_text);
+      }
+    } finally { endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it("separates equal pane IDs while preserving historical local storage", () => {
     expect(paneStorageId("local", "p:1")).toBe("p:1");
     expect(new Set(["local", "one", "two"].map((id) => paneStorageId(id, "p:1"))).size).toBe(3);

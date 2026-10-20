@@ -1,8 +1,11 @@
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
+import type { SeenFinish } from "../../shared/seen.ts";
+import { resumeConnectionTraces } from "./connectionTrace.ts";
 import { machinePath, type BridgeHealth, type HerdrIdentity, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
   AgentRenameRequest,
+  CommandOutcome,
   ConversationResponse,
   CreateWorktreeRequest,
   CreateTabRequest,
@@ -24,6 +27,7 @@ import type {
   PaneDirection,
   PaneInfo,
   PanePlan,
+  PanePromptResponse,
   PaneReadResult,
   PaneResized,
   RepoDiffFileList,
@@ -35,6 +39,7 @@ import type {
   PaneFindRequest,
   PaneFindResponse,
   PlanStep,
+  ProjectFavicon,
   PromptAnswer,
   PushKey,
   PortalStatus,
@@ -155,6 +160,17 @@ export async function savePreferences(body: PreferencesChange): Promise<SharedPr
   return (await response.json()) as SharedPreferences;
 }
 
+/**
+ * Tells every browser of this server that this one presented a finish (shared/seen.ts). A server
+ * that predates it (404) or a watching device (403) keeps the read to this browser.
+ */
+export async function shareSeen(finish: SeenFinish): Promise<void> {
+  const url = "/api/seen";
+  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(finish) });
+  if (response.ok || response.status === 404 || response.status === 403) return;
+  throw await errorFrom(url, response);
+}
+
 export async function fetchTelemetry(): Promise<TelemetryStatus | null> {
   try { return await getJson<TelemetryStatus>("/api/telemetry"); }
   catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
@@ -244,7 +260,7 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
 }
 
 /** Which turns (ConversationResponse.cursor): the page `before` a cursor, not past `since`; the newest ones `from` a held start. */
-export type ConversationPageQuery = { before?: string; since?: string; from?: string; limit?: number };
+export type ConversationPageQuery = { before?: string; since?: string; from?: string; limit?: number; /** Revalidate a new finish without borrowing another key's 304. */ fresh?: boolean };
 
 /**
  * The last answer per newest-page conversation URL and its ETag. The chat reads it again on
@@ -316,7 +332,7 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   const polled = page.before === undefined;
   const known = polled ? conversationAnswers.get(url) : undefined;
   const { response, body } = await withChatReadDeadline(async (signal) => {
-    const response = await fetch(url, { cache: "no-store", signal, ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
+    const response = await fetch(url, { cache: "no-store", signal, ...(known && !page.fresh ? { headers: { "if-none-match": known.etag } } : {}) });
     if (response.status === 304 && known) return { response, body: known.body };
     if (!response.ok) throw await errorFrom(url, response);
     return { response, body: (await response.json()) as ConversationResponse };
@@ -363,12 +379,14 @@ export async function authenticate(token: string): Promise<void> {
     body: JSON.stringify({ token }),
   });
   if (!response.ok) throw await errorFrom("/api/auth", response);
+  resumeConnectionTraces();
 }
 
 /** POST /api/devices/pair: the code shown on the PC, once; the server answers with this device's own HttpOnly cookie. */
 export async function pairDevice(code: string, label: string): Promise<void> {
   const response = await fetch("/api/devices/pair", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ code, label }) });
   if (!response.ok) throw await errorFrom("/api/devices/pair", response);
+  resumeConnectionTraces();
 }
 
 export async function fetchDevices(): Promise<PairedDevice[]> {
@@ -607,6 +625,11 @@ export async function fetchFileInfo(path: string, paneId: string | null, machine
   return (await response.json()) as FileInfo;
 }
 
+/** GET /api/fs/favicon: the icon the project in folder `root` keeps, or null, in one request. */
+export async function fetchProjectFavicon(root: string, machineId = "local"): Promise<FileInfo | null> {
+  return (await getJson<ProjectFavicon>(machinePath(machineId, `fs/favicon?${new URLSearchParams({ root }).toString()}`))).icon;
+}
+
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
 export function fileUrl(path: string, paneId: string | null, machineId = "local", download = false): string {
   return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
@@ -749,14 +772,15 @@ export async function fetchPanePrompt(paneId: string, machineId = "local"): Prom
   return (await fetchPanePromptState(paneId, machineId)).prompt;
 }
 
-/** The waiting prompt, and with none, the next prompt the agent suggests; restored is a send the agent put back in its input box when it was cancelled (older servers send neither). */
-export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; restored: string | null; compacting: boolean }> {
-  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null; restored?: string | null; compacting?: boolean }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
+/** The waiting prompt, and with none, the next prompt the agent suggests; restored is a send the agent put back in its input box when it was cancelled; outcomes are the pane's tracked command sends (older servers send none of the three). */
+export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; restored: string | null; outcomes: CommandOutcome[]; compacting: boolean }> {
+  const body = await getJson<PanePromptResponse>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
   return {
     prompt: body.prompt,
     compacting: body.compacting === true,
     suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null,
     restored: typeof body.restored === "string" && body.restored !== "" ? body.restored : null,
+    outcomes: Array.isArray(body.outcomes) ? body.outcomes : [],
   };
 }
 

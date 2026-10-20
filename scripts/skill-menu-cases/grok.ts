@@ -31,12 +31,12 @@ export const expect = async ({ page, width, box, menu, scenario, log, clear, row
     assert.equal(await menu.count(), 0, "no .composer-menu");
     await clear();
     await box.fill("/");
-    await menu.locator(".menu-item").filter({ hasText: "/compact" }).waitFor();
+    await menu.locator(".menu-item-main").filter({ hasText: /^\/compact$/ }).waitFor();
     assert.equal(await box.getAttribute("aria-expanded"), "true", "the same pane's own / menu opens");
     const rows = await rowNames();
-    assert.deepEqual([...rows].sort(), commands.map((command) => command.name).sort(), "every grok command is offered, once");
+    assert.deepEqual([...rows].sort(), commands.filter((command) => command.visibility !== "agent-hidden").map((command) => command.name).sort(), "every grok command but those grok hides is offered, once");
     const headings = await menu.locator(".menu-heading").allTextContents();
-    assert.deepEqual([...headings].sort(), ["Built in", "Plugin skills", "Project skills", "Your skills"], `builtins and each origin stand under their own heading: ${headings.join(" | ")}`);
+    assert.deepEqual([...headings].sort(), ["Built in", "Plugin skills", "Project skills", "Terminal commands", "Your skills"], `builtins and each origin stand under their own heading: ${headings.join(" | ")}`);
     await menuFits("H");
     await rowsBrief("H");
     // the skills end the list: the capture shows their headings, icons and rows after the last builtins

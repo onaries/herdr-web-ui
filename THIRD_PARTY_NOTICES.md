@@ -1,6 +1,6 @@
 # Third-party notices
 
-herdr web ui includes material from the projects below, under their own licenses.
+Ovis includes material from the projects below, under their own licenses.
 
 ## Theme palettes
 
@@ -77,7 +77,7 @@ Copyright (c) Meta Platforms, Inc. and affiliates.
 
 ## T3 Code
 
-These herdr web ui files adapt logic from [t3code](https://github.com/pingdotgg/t3code) at revision
+These Ovis files adapt logic from [t3code](https://github.com/pingdotgg/t3code) at revision
 `e82a1ce3f369f113b0b33dff8249569c345e30e8`, under the MIT License printed above, with this
 copyright notice:
 

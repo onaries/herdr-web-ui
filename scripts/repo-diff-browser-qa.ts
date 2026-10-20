@@ -314,6 +314,29 @@ try {
     });
     await page.goto(origin);
 
+    await page.evaluate((directory) => window.repoDiffQA.openTurn("local", "pane-nested", directory), workspace);
+    const turnList = page.locator(".turn-changed-files ul");
+    await turnList.waitFor();
+    const turnBounds = await turnList.evaluate((list) => {
+      const row = list.querySelector("button")!.getBoundingClientRect();
+      const status = document.querySelector<HTMLElement>('[role="status"]')!.getBoundingClientRect();
+      return { rows: list.children.length, height: list.clientHeight, rowHeight: row.height, overflow: list.scrollHeight > list.clientHeight, horizontal: list.scrollWidth > list.clientWidth, statusVisible: status.bottom <= innerHeight };
+    });
+    assert.equal(turnBounds.rows, 12, `${label}: all edited files remain in the list`);
+    assert.ok(turnBounds.height <= 5 * turnBounds.rowHeight + 10, `${label}: file list stays near five rows`);
+    assert.ok(turnBounds.overflow && !turnBounds.horizontal && turnBounds.statusVisible, `${label}: internal scrolling keeps progress visible without horizontal overflow`);
+    await turnList.focus();
+    await page.keyboard.press("PageDown");
+    await page.waitForFunction(() => document.querySelector(".turn-changed-files ul")!.scrollTop > 0);
+    await turnList.locator("button").last().focus();
+    assert.equal(await turnList.evaluate((list) => {
+      const bounds = list.getBoundingClientRect(), last = list.lastElementChild!.getBoundingClientRect();
+      return last.bottom <= bounds.bottom + 1 && last.top >= bounds.top;
+    }), true, `${label}: keyboard focus reveals the final file`);
+    await shot(page, `turn-list-${width}-${theme}`);
+    await page.evaluate(() => window.repoDiffQA.closeFiles());
+    console.log(`PASS ${label}: twelve turn files stay in a five-row scroll area with progress visible and keyboard access`);
+
     // the working tree's changes, each with its status, counts and the repository they are in
     await openFiles(page, "pane-main");
     const rows = await changeRows(page);

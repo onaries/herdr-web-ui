@@ -59,7 +59,7 @@ describe("HERDR_WEB_APP_NAME", () => {
   it("renames the iOS home-screen title in the shell and nothing else", () => {
     const renamed = renameShell(shell, "laptop");
     expect(renamed).toContain('<meta name="apple-mobile-web-app-title" content="laptop" />');
-    expect(renamed.replace("content=\"laptop\"", "content=\"herdr\"")).toBe(shell);
+    expect(renamed.replace("content=\"laptop\"", "content=\"Ovis\"")).toBe(shell);
   });
 
   it("frames the other ports of the request's own host and no other host", () => {
@@ -74,6 +74,10 @@ describe("HERDR_WEB_APP_NAME", () => {
     expect(contentSecurityPolicy("not a url")).toBe(CONTENT_SECURITY_POLICY);
     expect(contentSecurityPolicy("http://a_b;script-src *")).toBe(CONTENT_SECURITY_POLICY);
     expect(CONTENT_SECURITY_POLICY).toContain("frame-src 'self';");
+  });
+
+  it("fetches the manifest with the page's cookies, so a sign-in proxy lets it through", () => {
+    expect(shell).toMatch(/<link rel="manifest" href="[^"]+" crossorigin="use-credentials" \/>/);
   });
 
   it("escapes the name in the shell", () => {

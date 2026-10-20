@@ -95,7 +95,7 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
     <p className="settings-hint">{t("Running {version}", { version: runningAppVersion(status, __APP_VERSION__) })}</p>
     {tabVersion && reload !== "restart" && <p className="settings-hint">{t("This tab still runs {version} until it is reloaded.", { version: tabVersion })}</p>}
     {installing && !error ? <div role="status"><UpdateProgress status={status} fallback={t(status?.phase === "building" ? "Installing dependencies and building…" : "Restarting the bridge…")} /></div> : <p className="settings-hint" role="status">
-      {error ?? status?.error ?? (restart ? <><span>{t("herdr web ui was updated on this PC. Restart it there to load the update.")}</span> <a className="settings-link" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
+      {error ?? status?.error ?? (restart ? <><span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span> <a className="settings-link" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
         status?.available ? t("Version {version} is available.", { version: versionLabel(status.latest_version, status.latest_revision) ?? "" }) : status?.checked_at ? t("Up to date.") : t("Waiting for an update check…"))}
     </p>}
     {restart && !error && !status?.error && blocked && <p className="settings-hint">{blocked}</p>}
@@ -176,7 +176,7 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
     if (!installed?.version || !announcesUpdate(status, installed, announced, Date.now())) return null;
     const version = installed.version;
     const close = () => { writeAnnounced(version); setAnnounced(version); };
-    const text = t("herdr web ui was updated to v{version}.", { version });
+    const text = t("Ovis was updated to v{version}.", { version });
     return <div className="update-notice is-line" role="status">
       <span title={text}>{text}</span>
       {installed.releases.length > 0 && <button type="button" className="btn btn-ghost" onClick={() => { close(); onOpen(); }}>{t("What's new")}</button>}
@@ -191,7 +191,7 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
   if (needsReload) {
     // a reload cannot help here: the line only tells what to do, and goes when the server restarts
     if (reload === "restart") return <div className="update-notice is-line is-warning" role="status">
-      <span>{t("herdr web ui was updated on this PC. Restart it there to load the update.")}</span>
+      <span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span>
       <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>
     </div>;
     // a warning before a step that loses unsent drafts: read in full, so this line alone may wrap
@@ -203,7 +203,7 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
   }
   // without a release in reach the server refuses an install: ask it to look again first
   const retry = status?.available ? "install" : "check";
-  const text = failed ? t("The update could not be installed.") : status?.latest_version ? t("herdr web ui v{version} is available.", { version: status.latest_version }) : t("A herdr web ui update is available.");
+  const text = failed ? t("The update could not be installed.") : status?.latest_version ? t("Ovis v{version} is available.", { version: status.latest_version }) : t("An Ovis update is available.");
   return <div className="update-notice is-line" role="status">
     <span title={text}>{text}</span>
     {failed ? <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("Details")}</button>

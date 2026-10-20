@@ -182,6 +182,11 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
     // the shared settings: a watching device reads them, and cannot change them for every browser
     expect((await fetch(`${base}/api/preferences`, { headers })).status).toBe(200);
     expect((await fetch(`${base}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ settings: { theme: "light" }, pins: [] }) })).status).toBe(403);
+    // what was read in the other browsers: a watching device sees it, and its own views stay its own
+    expect((await fetch(`${base}/api/seen`, { headers })).status).toBe(200);
+    const told = await fetch(`${base}/api/seen`, { method: "POST", headers, body: JSON.stringify({ pc: "local", epoch: "e", pane: "p", id: 1 }) });
+    expect(told.status).toBe(403);
+    expect(await told.json()).toMatchObject({ error: { code: "read_only" } });
     expect((await fetch(`${base}/api/fs/file?path=${encodeURIComponent(join(root, "devices.json"))}`, { headers })).status).toBe(403);
     // a PC's file is read without the origin check (#448, Android's Open button): the watch refusal still comes first, for GET and HEAD alike
     for (const method of ["GET", "HEAD"]) {

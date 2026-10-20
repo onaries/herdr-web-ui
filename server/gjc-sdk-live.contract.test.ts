@@ -363,6 +363,8 @@ it.skipIf(!TEST_BIN || !SUPPORTED_PLATFORM)(
 
       // A real GJC may hold its transcript open. That must not become an identity fallback
       // when the SDK CLI fails: replace only our disposable PATH shim, not the supplied binary.
+      // Force discovery rather than relying on an incidental heartbeat to expire a kept binding.
+      forgetTranscriptState();
       unlinkSync(join(shimDir, "gjc"));
       writeFileSync(join(shimDir, "gjc"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
       await expect(gjcTranscriptPath(resumedPane.paneId, cwd, home)).rejects.toBeInstanceOf(ConversationUnavailable);

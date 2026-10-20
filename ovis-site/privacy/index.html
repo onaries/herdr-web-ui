@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · Ovis</title>
+<meta name="description" content="What the Ovis app keeps, what it sends, and to whom.">
+<link rel="canonical" href="https://ovis.sh/privacy/">
+<link rel="alternate" hreflang="en" href="https://ovis.sh/privacy/">
+<link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/privacy/">
+<link rel="alternate" hreflang="x-default" href="https://ovis.sh/privacy/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ovis.sh/privacy/">
+<meta property="og:title" content="Privacy policy · Ovis">
+<meta property="og:description" content="What the Ovis app keeps, what it sends, and to whom.">
+<meta property="og:image" content="https://ovis.sh/assets/icon-512.png">
+<meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131a2b" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/assets/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="wrap top">
+<a class="brand" href="/"><picture><source srcset="/assets/logo-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/logo-light.png" alt="Ovis" width="113" height="40"></picture></a>
+<nav><a href="/privacy/" aria-current="page">Privacy</a><a href="/support/">Support</a><a href="/ko/privacy/" hreflang="ko" lang="ko">한국어</a></nav>
+</header>
+<main>
+<article class="wrap doc">
+<h1>Privacy policy</h1>
+<p class="date">Effective October 20, 2026</p>
+<div class="box"><p><strong>In short:</strong> Ovis has no account, no ads, no analytics and no tracking. The app sends nothing to us. It connects only to the computers you add to it.</p></div>
+<h2>Who we are</h2>
+<p>Ovis is made by devswha, the maintainer of <a href="https://github.com/devswha/herdr-web-ui">herdr web UI</a>. "We" on this page means devswha.</p>
+<h2>What the app keeps on your phone</h2>
+<ul>
+<li>The addresses of the PCs you add, so you can open them again.</li>
+<li>The sign-in cookie a PC gives your phone when you pair it, so you stay signed in to that PC.</li>
+</ul>
+<p>Both stay on your phone and are never sent to us. <strong>Forget</strong> on the connect screen removes a PC from the list, and uninstalling the app deletes everything it keeps.</p>
+<h2>Camera</h2>
+<p>The camera is used only when you tap <strong>Scan QR code</strong>, to read the pairing QR code your PC shows. The picture is not saved or sent anywhere; only the address in the code is used.</p>
+<h2>What travels over the network</h2>
+<p>The app connects only to the PC addresses you add or scan. What you see and type in the app, such as agent conversations, terminal output and files, travels between your phone and your own PC over the route you set up (for example Tailscale or your Wi-Fi). We do not run a server in between and never see it.</p>
+<p>The demo on the connect screen runs entirely on your phone.</p>
+<h2>The software on your PC</h2>
+<p>Ovis shows herdr web UI, a separate open-source program that runs on your computer, under your control:</p>
+<ul>
+<li>herdr web UI sends anonymous usage counts to its maintainer: when it is installed, when it is updated, and once a day it is opened. They hold a random ID made on your PC, the version, the operating system and CPU type, how it was installed, the app settings people choose, and the kinds of coding agents running (such as <code>claude</code> or <code>codex</code>). The receiver keeps the country the message came from (two letters) and never stores your IP address. Never included: pane names, paths, terminal content, code or messages. You can see exactly what is sent, and turn it off, under <strong>Settings → About → Anonymous usage counts</strong> on the PC. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#anonymous-usage-counts">Details</a>.</li>
+<li>Features you turn on there, such as voice input or subscription usage meters, contact the providers you set up, under those providers' terms.</li>
+</ul>
+<h2>Coding agents</h2>
+<p>The agents you run on your PC, such as Claude Code or Codex, talk to their own model providers under their own terms. Ovis is not involved in those connections.</p>
+<h2>App stores</h2>
+<p>Apple and Google may collect information when you download or use apps from their stores, such as download counts and, if you allow it, crash reports. That is covered by their privacy policies.</p>
+<h2>Children</h2>
+<p>Ovis is a tool for software developers and is not directed at children under 13.</p>
+<h2>Changes</h2>
+<p>If this policy changes, the new version is posted on this page with a new date.</p>
+<h2>Contact</h2>
+<p>Questions about privacy: <a href="https://github.com/devswha/herdr-web-ui/issues/new">open an issue on GitHub</a>.</p>
+</article>
+</main>
+<footer><div class="wrap"><span>Ovis is the phone app for herdr web UI, made by devswha.</span><a href="/privacy/">Privacy</a><a href="/support/">Support</a><a href="https://github.com/devswha/herdr-web-ui">Source on GitHub</a><a href="https://herdrweb.dev/">herdrweb.dev</a></div></footer>
+</body>
+</html>

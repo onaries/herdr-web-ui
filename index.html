@@ -6,14 +6,14 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
-    <meta name="description" content="Chat with your coding agents and use live herdr terminals from your browser or phone." />
-    <meta property="og:title" content="herdr web ui" />
+    <meta name="description" content="Ovis, the browser and phone client for herdr. Chat with your coding agents and use live herdr terminals." />
+    <meta property="og:title" content="Ovis" />
     <meta property="og:description" content="Your agents. Any screen. Chat, terminal and mobile access for herdr." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="https://raw.githubusercontent.com/devswha/herdr-web-ui/main/public/social-preview.png" />
     <meta property="og:image:width" content="1280" />
     <meta property="og:image:height" content="640" />
-    <meta property="og:image:alt" content="herdr web ui — ram, terminal prompt, browser window and pointer" />
+    <meta property="og:image:alt" content="Ovis — ram, terminal prompt, browser window and pointer" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#1f1f1f" />
     <meta name="color-scheme" content="dark" />
@@ -22,8 +22,10 @@
     <meta name="google" content="notranslate" />
     <!-- The query is a URL no pre-0.3.32 service worker has cached: those serve the plain
          URL cache-first, which handed Chrome the old `orientation: "any"` manifest on the
-         first launch after an upgrade and spent that day's installed-app update check. -->
-    <link rel="manifest" href="/manifest.webmanifest?v=2" />
+         first launch after an upgrade and spent that day's installed-app update check.
+         use-credentials: a browser fetches the manifest without cookies otherwise, and a
+         proxy that signs every request in answers that with its login page, not the app. -->
+    <link rel="manifest" href="/manifest.webmanifest?v=2" crossorigin="use-credentials" />
     <link rel="icon" href="/favicon.ico?v=ram1" sizes="32x32" />
     <link rel="icon" type="image/png" href="/favicon.png?v=ram1" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=ram1" />
@@ -32,8 +34,8 @@
     <!-- Leave apple-mobile-web-app-status-bar-style unset to use the normal home-screen
          status-bar layout instead of drawing beneath it (#164). Existing installs and
          viewport behavior need separate checks; see docs/ios-home-screen-testing.md. -->
-    <meta name="apple-mobile-web-app-title" content="herdr" />
-    <title>herdr web ui</title>
+    <meta name="apple-mobile-web-app-title" content="Ovis" />
+    <title>Ovis</title>
   </head>
   <body>
     <div id="root"></div>

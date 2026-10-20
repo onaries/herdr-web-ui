@@ -94,7 +94,9 @@ describe("shared skill walk", () => {
     }
     const opencode = paneCommands("opencode", home, home);
     expect(opencode.filter(({ source }) => source === "builtin").map(({ name }) => name)).toEqual([
-      "debug", "diff", "exit", "help", "init", "mcps", "models", "move", "new", "review", "status", "variants",
+      "agents", "compact", "connect", "copy", "debug", "diff", "editor", "exit", "export", "fork", "help", "init", "mcps", "models", "move",
+      "new", "org", "redo", "rename", "review", "sessions", "skills", "status", "themes", "thinking", "timeline", "timestamps", "undo",
+      "update", "variants", "warp", "workspaces",
     ]);
     expect(opencode.filter(({ source }) => source !== "builtin").map(({ name, source, origin }) => ({ name, source, origin }))).toEqual([
       { name: "customize-opencode", source: "skill", origin: "bundled" },

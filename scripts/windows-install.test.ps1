@@ -50,7 +50,7 @@ function herdr {
                 Remove-Item -LiteralPath $pluginRoot -Recurse -Force -ErrorAction SilentlyContinue
                 New-Item -ItemType Directory -Force -Path (Split-Path $launcher) | Out-Null
                 if ($state.windowsRelease) { Set-Content -LiteralPath $launcher -Value '' }
-                'Installed herdr web ui'
+                'Installed Ovis'
             } else { throw "Unexpected herdr command: $args" }
         }
     }

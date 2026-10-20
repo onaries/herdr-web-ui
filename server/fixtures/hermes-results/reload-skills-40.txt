@@ -1,0 +1,40 @@
+✦ Tip: Set browser.record_sessions: true
+to auto-record browser sessions as WebM
+videos.
+
+
+⚙️  /status
+Hermes CLI Status
+
+Session ID: 20261020_185258_c28886
+Path: /tmp/acc-t24-wPla/hermes-home
+Model: fixture-model (custom)
+Approvals: smart
+Created: 2026-10-20 18:52
+Last Activity: 2026-10-20 18:52
+Tokens: 0
+Agent Running: No
+
+⚙️  /version
+Hermes Agent v0.21.5+8892.g354724f (2026
+.9.24) · upstream 354724fb
+Install directory: /home/devswha/.hermes
+/hermes-agent
+Install method: git
+Python: 3.14.7
+OpenAI SDK: 2.24.0
+Update available — run 'hermes update'
+
+⚙️  /profile
+
+  Profile: default
+  Home:    /tmp/acc-t24-wPla/hermes-home
+
+
+⚙️  /reload-skills
+⏳ Reloading skills...
+  No new skills detected.
+  📚 55 skill(s) available
+ ☤ fixture-model · 34s
+────────────────────────────────────────
+❯ What changed in this repo recently?

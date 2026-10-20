@@ -1,0 +1,33 @@
+
+              ████████████
+                 ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                 ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                 ▒▒  ██                  █
+                     ██       v18.8.7
+
+      Tip: Spaghetti code? Try complaining with /omfg
+
+ Warning: Nothing to hand off (no messages yet)
+
+────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.12.3 is available. Run: omp update
+────────────────────────────────────────────────────────────
+
+
+ FIXTURE-TURN say hello
+
+
+ Fixture answer for the handoff recording.
+
+
+ FIXTURE-TURN say goodbye
+
+
+ Fixture answer for the handoff recording.
+
+ Error: Handoff cancelled
+
+ ⠙ Generating handoff… (⎋ to cancel)
+ π > ⬢ Handoff fixture > 🗑 …ff-narrow-e5HzfC/cwd ▶─5%─┃131K─
+╰─

@@ -1,0 +1,827 @@
+import { describe, expect, it, spyOn } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { PanePromptResponse, SlashCommand } from "../shared/protocol.ts";
+import { commandInvocations, commandOutcome, CommandReservations, type CommandSend } from "./outcome.ts";
+import { finishPrompt, type DialogReader } from "./dialogs/shared.ts";
+import { handlePromptRequest, noteSubmitted } from "./prompt.ts";
+import { socketAddress } from "./herdr/client.ts";
+import { registry } from "./dialogs/registry.ts";
+import { source as claudeSource } from "./skills/claude.ts";
+import { source as ompSource } from "./skills/omp.ts";
+
+const at = Date.parse("2026-10-20T00:00:00Z");
+const row = (name: string, interaction: "none" | "dialog" | "terminal" | "unknown" = "none"): SlashCommand => ({
+  name, source: "builtin", description: "", forms: [{ match: "bare", interaction }, { match: "other", interaction }],
+});
+const send = (text = "/context", agent = "claude", commands = [row("context")]): CommandSend => ({
+  id: "send-1", text, at, agent, screen: "", identity: "session-1",
+  invocations: commandInvocations(agent, text, commands),
+  form: commandInvocations(agent, text, commands)[0]?.form ?? null,
+});
+const outcome = (sent: CommandSend, input: Partial<Parameters<typeof commandOutcome>[2]> = {}) => commandOutcome("pane-1", sent, { now: at + 100, ...input });
+const local = (command: string, time = at + 10) => [
+  { type: "system", subtype: "local_command", timestamp: new Date(time).toISOString(), content: `<command-name>${command}</command-name>\n<command-message>${command.slice(1)}</command-message>\n<command-args></command-args>` },
+  { type: "system", subtype: "local_command", timestamp: new Date(time + 1).toISOString(), content: "<local-command-stdout>fixture-output</local-command-stdout>" },
+].map((entry) => JSON.stringify(entry)).join("\n");
+
+describe("command invocation syntax", () => {
+  it("records inline skills only in the pane's syntax and keeps every match", () => {
+    const review: SlashCommand = { ...row("review"), source: "skill", trigger: "$" };
+    expect(commandInvocations("codex", "Please use $review now $review", [review])).toHaveLength(2);
+    expect(commandInvocations("omo", "Please use $review", [review])).toHaveLength(1);
+    expect(commandInvocations("omo", "Please use $review", [{ ...review, trigger: undefined }])).toHaveLength(1);
+    expect(commandInvocations("pi", "Please use $review now", [review])).toEqual([]);
+    expect(commandInvocations("claude", "Use /review now", [{ ...review, trigger: undefined }])).toHaveLength(1);
+    expect(commandInvocations("claude", "Use /context now", [row("context")])).toEqual([]);
+  });
+  it("records only catalog-backed at tokens, not file mentions", () => {
+    const skill: SlashCommand = { ...row("review"), trigger: "@", source: "skill" };
+    expect(commandInvocations("opencode", "Use @review", [skill])).toHaveLength(1);
+    expect(commandInvocations("opencode", "Read @path", [skill])).toEqual([]);
+  });
+  it("keeps unknown leading commands and selects specific, wildcard and other forms", () => {
+    expect(commandInvocations("pi", "/myext run", [])).toMatchObject([{ form: null }]);
+    expect(commandInvocations("pi", "$myext run", [])).toEqual([]);
+    const model: SlashCommand = { ...row("model"), forms: [{ match: "bare", interaction: "dialog" }, { match: { sub: "*" }, interaction: "none" }] };
+    expect(commandInvocations("pi", "/model test-model", [model])[0]?.form?.interaction).toBe("none");
+  });
+  it("keeps absolute paths plain unless the catalog explicitly names that invocation", () => {
+    for (const agent of ["claude", "pi", "codex", "omo"]) {
+      expect(commandInvocations(agent, "/tmp/build.log shows a failure, why?", [])).toEqual([]);
+      expect(commandInvocations(agent, "/etc/hosts", [])).toEqual([]);
+      expect(commandInvocations(agent, "/myext run", [])).toHaveLength(1);
+    }
+    expect(commandInvocations("claude", "/plugin/task run", [{ ...row("plugin/task"), source: "skill" }])).toHaveLength(1);
+  });
+});
+
+describe("evidence-only command outcomes", () => {
+  it("never resolves from an idle screen, a generic delta, or elapsed time", () => {
+    expect(outcome(send()).state).toBe("accepted");
+    const changed = outcome({ ...send(), screen: "fixture-before" }, { screen: "a\n".repeat(2000) });
+    expect(changed.state).toBe("accepted");
+    expect(changed.preview?.length).toBe(2000);
+    expect(changed.preview?.includes("\n")).toBe(true);
+    expect(outcome(send(), { now: at + 600_000 }).state).toBe("unknown");
+  });
+  it("expires live previews at the deadline and after a later delivery", () => {
+    const sent = { ...send("/model", "claude", [row("model", "dialog")]), screen: "fixture-before" };
+    expect(outcome(sent, { screen: "fixture-live", now: at + 599_999 }).preview).toBeDefined();
+    expect(outcome(sent, { screen: "fixture-live", now: at + 600_000 }).preview).toBeUndefined();
+    expect(outcome(sent, { screen: "fixture-live", now: at + 3 * 60 * 60_000 }).preview).toBeUndefined();
+    expect(outcome({ ...sent, closedAt: at + 20 }, { screen: "fixture-live" }).preview).toBeUndefined();
+  });
+  it("correlates Claude local output with this send, not another command or an old echo", () => {
+    expect(outcome(send(), { transcript: local("/context") })).toMatchObject({ state: "result-observed", evidence: [{ kind: "transcript" }] });
+    expect(outcome(send(), { transcript: local("/cost") }).state).toBe("accepted");
+    expect(outcome(send(), { transcript: local("/context", at - 10) }).state).toBe("accepted");
+    expect(outcome(send(), { transcript: local("/context").split("\n")[1] }).state).toBe("accepted");
+  });
+  it("gives identical sends disjoint evidence windows", () => {
+    const first = send();
+    const second = { ...send(), id: "send-2", at: at + 100 };
+    expect(outcome(first, { transcript: local("/context", at + 110), nextAt: second.at }).state).toBe("unknown");
+    expect(outcome(second, { transcript: local("/context"), now: at + 200 }).state).toBe("accepted");
+    expect(outcome(second, { transcript: local("/context", at + 110), now: at + 200 }).state).toBe("result-observed");
+  });
+  it("returns terminal-required immediately even with no waiting screen", () => {
+    expect(outcome(send("/status", "devin", [row("status", "terminal")])).state).toBe("terminal-required");
+    expect(outcome(send("/btw hi", "claude", [row("btw", "terminal")]), { transcript: local("/btw") }).state).toBe("terminal-required");
+    expect(outcome(send("/btw hi", "omp", [row("btw")])).state).toBe("terminal-required");
+  });
+  it("requires a matching persisted state value after the send", () => {
+    const sent = send("/model test-model", "pi", [row("model")]);
+    const record = (modelId: string, timestamp = at + 1) => JSON.stringify({ type: "model_change", timestamp: new Date(timestamp).toISOString(), modelId, provider: "test" });
+    expect(outcome(sent, { transcript: record("test-model") }).state).toBe("result-observed");
+    expect(outcome(sent, { transcript: record("another") }).state).toBe("accepted");
+    expect(outcome(sent, { transcript: record("test-model", at - 1) }).state).toBe("accepted");
+    expect(outcome(send("/myext run", "pi", []), { now: at + 600_000 }).state).toBe("unknown");
+  });
+  it("requires a continuously unrecognized wait for two seconds", () => {
+    expect(outcome(send(), { waitingSince: at + 10, now: at + 2009 }).state).toBe("accepted");
+    expect(outcome(send(), { waitingSince: at + 10, now: at + 2010 }).state).toBe("terminal-required");
+  });
+  for (const [agent, command] of [["hermes", "help"], ["claude", "goal"]] as const) {
+    it(`offers the terminal for an unrecognized ${agent} /${command} after idle settling`, () => {
+      const sent = send(`/${command}`, agent, [row(command, "dialog")]);
+      expect(outcome(sent, { settledSince: at, now: at + 1999 }).state).toBe("accepted");
+      expect(outcome(sent, { settledSince: at, now: at + 2000 })).toMatchObject({ state: "terminal-required", evidence: [] });
+    });
+  }
+  it("does not apply idle settling to none, unknown, or unlisted forms", () => {
+    for (const sent of [send(), send("/myext", "pi", []), send("/custom", "hermes", [row("custom", "unknown")])]) {
+      expect(outcome(sent, { settledSince: at, now: at + 2000 }).state).toBe("accepted");
+    }
+  });
+  it("does not treat a previously recognized dialog as an unrecognized settled screen", () => {
+    const sent = { ...send("/model", "claude", [row("model", "dialog")]), dialogObserved: true as const };
+    expect(outcome(sent, { settledSince: at, now: at + 2000 }).state).toBe("accepted");
+  });
+  it("retains confirmed evidence after the card or result leaves the screen", () => {
+    const sent = send();
+    sent.outcome = outcome(sent, { transcript: local("/context") });
+    expect(outcome(sent, { now: at + 700_000, nextAt: at + 200 }).state).toBe("result-observed");
+  });
+  it("resolves only this send's reader commit, never just the existence of a card", () => {
+    const sent = send();
+    expect(outcome(sent, { dialog: { id: "card-1", reader: "claude-model" } }).state).toBe("interaction-required");
+    expect(outcome(sent, { evidence: { kind: "dialog", at: at + 1 } }).state).toBe("result-observed");
+    expect(outcome(sent, { evidence: { kind: "dialog", at: at - 1 } }).state).toBe("accepted");
+  });
+  it("accepts persisted effort and compaction only for the matching command", () => {
+    const entry = (type: string) => JSON.stringify({ type, timestamp: new Date(at + 10).toISOString(), thinkingLevel: "high" });
+    for (const agent of ["pi", "omp", "gjc", "omo"]) {
+      expect(outcome(send("/thinking high", agent, [row("thinking")]), { transcript: entry("thinking_level_change") }).state).toBe("result-observed");
+      expect(outcome(send("/compact", agent, [row("compact")]), { transcript: entry("compaction") }).state).toBe("accepted");
+      expect(outcome(send("/myext", agent, []), { transcript: entry("compaction") }).state).toBe("accepted");
+    }
+    expect(outcome(send("/compact", "codex", [row("compact")]), { transcript: entry("compacted") }).state).toBe("accepted");
+    expect(outcome(send("/context", "codex"), { transcript: local("/context") }).state).toBe("accepted");
+  });
+});
+
+it("serves bounded outcomes, strips observer previews, and records only a successful card commit", async () => {
+  const root = mkdtempSync(join(tmpdir(), "herdr-outcome-route-"));
+  const socketPath = join(root, "herdr.sock");
+  const previous = process.env.HERDR_SOCKET;
+  const paneId = `outcome-${Date.now()}`;
+  let agent = "pi";
+  let status = "idle";
+  let screen = "fixture-screen\nsecond-line";
+  let onRead: (() => void) | undefined;
+  const server = createServer((socket) => {
+    let input = "";
+    socket.on("data", (chunk) => {
+      input += chunk;
+      if (!input.includes("\n")) return;
+      const request = JSON.parse(input) as { id: string; method: string };
+      if (request.method === "pane.read") { const run = onRead; onRead = undefined; run?.(); }
+      const result = request.method === "session.snapshot"
+        ? { snapshot: { panes: [{ pane_id: paneId, agent, agent_status: status }], layouts: [] } }
+        : { read: { text: screen } };
+      socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
+    });
+  });
+  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketAddress(socketPath), resolve); });
+  process.env.HERDR_SOCKET = socketPath;
+  try {
+    for (let index = 0; index < 6; index++) {
+      const sent = { ...send("/myext run", "pi", []), at: Date.now() - 600_001, id: `unknown-${index}`, identity: JSON.stringify([undefined, undefined]), store: null };
+      expect(sent.form).toBeNull();
+      noteSubmitted(paneId, sent.text, sent);
+    }
+    const url = new URL(`http://localhost/api/pane/prompt?pane_id=${paneId}`);
+    const response = await handlePromptRequest(new Request(url), url);
+    expect(response?.status).toBe(200);
+    const answer = await response?.json() as { outcomes: { id: string; state: string; preview?: string }[] };
+    expect(answer.outcomes).toHaveLength(5);
+    expect(answer.outcomes[0]?.id).toBe("unknown-1");
+    expect(answer.outcomes.every((outcome) => outcome.state === "unknown")).toBe(true);
+    expect(answer.outcomes.at(-1)?.preview).toBeUndefined();
+    const observer = await handlePromptRequest(new Request(url), url, { readOnly: true });
+    const watched = await observer?.json() as { outcomes: { preview?: string }[] };
+    expect(watched.outcomes.every((outcome) => outcome.preview === undefined)).toBe(true);
+    agent = "claude";
+    status = "blocked";
+    screen = " Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel";
+    const current = { ...send("/myext", "claude", []), at: Date.now() - 1, id: "card-send", identity: JSON.stringify([undefined, undefined]), store: null };
+    noteSubmitted(paneId, current.text, current);
+    const shown = await (await handlePromptRequest(new Request(url), url))?.json() as PanePromptResponse;
+    expect(shown.prompt).not.toBeNull();
+    const answerUrl = new URL("http://localhost/api/pane/prompt/answer");
+    const request = (promptId: string) => new Request(answerUrl, { method: "POST", body: JSON.stringify({ pane_id: paneId, prompt_id: promptId, option_index: 0 }) });
+    expect((await handlePromptRequest(request("stale-card"), answerUrl))?.status).toBe(409);
+    if (!shown.prompt) throw new Error("fixture card missing");
+    expect((await handlePromptRequest(request(shown.prompt.id), answerUrl))?.status).toBe(200);
+    const committed = await (await handlePromptRequest(new Request(url), url))?.json() as PanePromptResponse;
+    expect(committed.outcomes?.at(-1)).toMatchObject({ state: "accepted", evidence: [] });
+    onRead = () => noteSubmitted(paneId, current.text, { ...current, id: "racing-send", outcome: undefined, dialogId: undefined });
+    const raced = await (await handlePromptRequest(new Request(url), url))?.json() as PanePromptResponse;
+    expect(raced.outcomes?.at(-1)).toMatchObject({ id: "racing-send", state: "accepted", evidence: [] });
+    agent = "hermes";
+    status = "idle";
+    const tail = "fixture-route-tail-1\nfixture-route-tail-2\nfixture-route-tail-3";
+    screen = tail;
+    const readers = spyOn(registry, "readersFor").mockReturnValue([resultReader]);
+    try {
+      for (const id of ["route-result-1", "route-result-2"]) {
+        const command = { ...send("/status", "hermes", [row("status", "unknown")]), at: Date.now() - 1, id,
+          screen: tail, identity: JSON.stringify([undefined, undefined]), store: null };
+        noteSubmitted(paneId, command.text, command);
+      }
+      screen = `${tail}\n> /status\n${block}`;
+      const first = await (await handlePromptRequest(new Request(url), url))?.json() as PanePromptResponse;
+      expect(first.outcomes?.slice(-2).map(({ id, state }) => [id, state])).toEqual([
+        ["route-result-1", "result-observed"], ["route-result-2", "accepted"],
+      ]);
+      screen += `\n> /status\n${block}`;
+      const both = await (await handlePromptRequest(new Request(url), url))?.json() as PanePromptResponse;
+      expect(both.outcomes?.slice(-2).map(({ id, state }) => [id, state])).toEqual([
+        ["route-result-1", "result-observed"], ["route-result-2", "result-observed"],
+      ]);
+      let now = Date.now();
+      const clock = spyOn(Date, "now").mockImplementation(() => now);
+      const poll = async () => (await (await handlePromptRequest(new Request(url), url))?.json() as PanePromptResponse).outcomes?.at(-1);
+      try {
+        for (const [kind, name] of [["hermes", "help"], ["claude", "goal"]] as const) {
+          agent = kind;
+          status = "idle";
+          screen = `> /${name}\nfixture-unrecognized-layout`;
+          noteSubmitted(paneId, `/${name}`, { ...send(`/${name}`, kind, [row(name, "dialog")]), at: now - 1,
+            id: `settling-${name}`, identity: JSON.stringify([undefined, undefined]), store: null });
+          expect((await poll())?.state).toBe("accepted");
+          now += 1999;
+          expect((await poll())?.state).toBe("accepted");
+          screen += "\nfixture-output-progress";
+          expect((await poll())?.state).toBe("accepted");
+          now += 1999;
+          expect((await poll())?.state).toBe("accepted");
+          status = "working";
+          expect((await poll())?.state).toBe("accepted");
+          now += 1000;
+          status = "done";
+          expect((await poll())?.state).toBe("accepted");
+          now += 2000;
+          expect((await poll())?.state).toBe("terminal-required");
+          screen = `> /${name}\n${block}`;
+          now += 100;
+          expect((await poll())?.state).toBe("terminal-required");
+        }
+        agent = "hermes";
+        status = "idle";
+        readers.mockReturnValue([{ ...resultReader, chromeStart: (lines) => lines.findIndex((line) => line.startsWith("fixture-chrome:")) }]);
+        screen = "fixture-help-top\nfixture-help-tail\nfixture-chrome: 1s";
+        noteSubmitted(paneId, "/help", { ...send("/help", agent, [row("help", "dialog")]), at: now - 1,
+          id: "settling-chrome", identity: JSON.stringify([undefined, undefined]), store: null });
+        expect((await poll())?.state).toBe("accepted");
+        now += 2000;
+        screen = screen.replace("1s", "3s");
+        expect((await poll())?.state).toBe("terminal-required");
+        for (const [kind, name] of [["hermes", "status"], ["claude", "goal"]] as const) {
+          agent = kind;
+          screen = `${tail}\nfixture-chrome: 1s`;
+          const silent = { ...send(`/${name}`, kind, [row(name, "dialog")]), at: now - 1, screen,
+            id: `silent-${name}`, identity: JSON.stringify([undefined, undefined]), store: null };
+          noteSubmitted(paneId, silent.text, silent);
+          expect((await poll())?.state).toBe("accepted");
+          now += 2100;
+          expect((await poll())?.state).toBe("accepted");
+          screen = screen.replace("1s", "3s");
+          expect((await poll())?.state).toBe("accepted");
+          now = silent.at + 600_000;
+          expect((await poll())?.state).toBe("unknown");
+        }
+        agent = "hermes";
+        readers.mockReturnValue([resultReader]);
+        screen = tail;
+        const slow = { ...send("/status", agent, [row("status", "dialog")]), at: now - 1, screen,
+          id: "slow-status", identity: JSON.stringify([undefined, undefined]), store: null };
+        noteSubmitted(paneId, slow.text, slow);
+        screen += "\n> /status";
+        expect((await poll())?.state).toBe("accepted");
+        now += 2000;
+        expect((await poll())?.state).toBe("terminal-required");
+        now += 100;
+        screen += `\n${block}`;
+        expect(await poll()).toMatchObject({ state: "result-observed", evidence: [{ kind: "recognized-result" }] });
+      } finally { clock.mockRestore(); }
+    } finally { readers.mockRestore(); }
+  } finally {
+    if (previous === undefined) delete process.env.HERDR_SOCKET;
+    else process.env.HERDR_SOCKET = previous;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const block = "RESULT-BEGIN\nfixture-payload\nRESULT-END";
+const resultReader: DialogReader = {
+  id: "fixture-result", agents: ["hermes"], priority: 1, kind: "result", reread: "none", list: "none",
+  parse(screen) {
+    if (!screen.includes(block)) return null;
+    return { ...finishPrompt("hermes", {
+      kind: "question", title: "", question: "", body: block, options: [], multi_select: false, custom_option_index: null,
+    }, { responder: "hermes-input", selectedIndex: 0, checkedOptionIndices: [], menuLabels: [], customMenuIndex: null, rejectWithEscapeIndex: null }),
+    resultText: block, catalogChanged: true };
+  },
+};
+
+/** A herdr stand-in serving one pane whose screen the test sets; keys sent to it are kept. */
+async function withFakeHerdr(pane: { agent: string; status: string; screen: string }, run: (paneId: string, keys: unknown[]) => Promise<void>): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), "herdr-outcome-reader-"));
+  const socketPath = join(root, "herdr.sock");
+  const previous = process.env.HERDR_SOCKET;
+  const paneId = `outcome-reader-${Date.now()}`;
+  const keys: unknown[] = [];
+  const server = createServer((socket) => {
+    let input = "";
+    socket.on("data", (chunk) => {
+      input += chunk;
+      if (!input.includes("\n")) return;
+      const request = JSON.parse(input) as { id: string; method: string; params?: { keys?: unknown; text?: unknown } };
+      if (request.method === "pane.send_keys") keys.push(request.params?.keys);
+      if (request.method === "pane.send_text") keys.push(request.params?.text);
+      const result = request.method === "session.snapshot"
+        ? { snapshot: { panes: [{ pane_id: paneId, agent: pane.agent, agent_status: pane.status }], layouts: [] } }
+        : { read: { text: pane.screen } };
+      socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
+    });
+  });
+  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketAddress(socketPath), resolve); });
+  process.env.HERDR_SOCKET = socketPath;
+  try {
+    await run(paneId, keys);
+  } finally {
+    if (previous === undefined) delete process.env.HERDR_SOCKET;
+    else process.env.HERDR_SOCKET = previous;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+const promptUrl = (paneId: string): URL => new URL(`http://localhost/api/pane/prompt?pane_id=${paneId}`);
+const served = async (paneId: string): Promise<PanePromptResponse> =>
+  await (await handlePromptRequest(new Request(promptUrl(paneId)), promptUrl(paneId)))?.json() as PanePromptResponse;
+
+describe("integrated dialog readers", () => {
+  it("keeps a skill running after answering its incidental question below the echo", async () => {
+    const pane = { agent: "claude", status: "blocked", screen: `fixture-anchor\n> /review
+☐ Dataset
+
+Which evaluation dataset should we use?
+
+❯ 1. LM-O
+     Occlusion benchmark.
+  2. YCB-V
+     Household objects.
+  3. Type something.
+────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+` };
+    await withFakeHerdr(pane, async (paneId) => {
+      const current = { ...send("/review", "claude", [{ ...row("review"), source: "skill" }]),
+        at: Date.now() - 10, screen: "fixture-anchor", identity: JSON.stringify([undefined, undefined]), store: null };
+      noteSubmitted(paneId, current.text, current);
+      const shown = await served(paneId);
+      expect(shown.prompt?.kind).toBe("question");
+      expect(shown.outcomes?.at(-1)?.state).toBe("interaction-required");
+      const url = new URL("http://localhost/api/pane/prompt/answer");
+      const answered = await handlePromptRequest(new Request(url, { method: "POST",
+        body: JSON.stringify({ pane_id: paneId, prompt_id: shown.prompt!.id, option_index: 0 }) }), url);
+      expect(answered?.status).toBe(200);
+      pane.status = "working";
+      pane.screen = "fixture-anchor\n> /review\n● Working on it…";
+      expect((await served(paneId)).outcomes?.at(-1)).toMatchObject({ state: "accepted", evidence: [] });
+    });
+  });
+
+  it("completes a named Claude model card through the real answer handler", async () => {
+    const pane = { agent: "claude", status: "idle", screen: `❯ /model
+
+────────────────────────────────────────────────────────────────────────────────
+  Select model
+  Switch between Claude models. Your pick becomes the default for new sessions.
+
+  ❯ 1. Opus 5.5 ✔             For complex work and everyday tasks
+    2. Sonnet 5.5             Most efficient for simpler tasks
+
+  ◐ Medium effort (default) ←/→ to adjust
+
+  Enter to set as default · s to use this session only · Esc to cancel
+` };
+    await withFakeHerdr(pane, async (paneId, keys) => {
+      const current = { ...send("/model", "claude", [{ ...row("model", "dialog"), forms: claudeSource.forms!.model }]),
+        at: Date.now() - 10, screen: "fixture-anchor", identity: JSON.stringify([undefined, undefined]), store: null };
+      noteSubmitted(paneId, current.text, current);
+      const shown = await served(paneId);
+      expect(shown.outcomes?.at(-1)?.state).toBe("interaction-required");
+      expect(shown.prompt?.kind).toBe("question");
+      const url = new URL("http://localhost/api/pane/prompt/answer");
+      const answered = await handlePromptRequest(new Request(url, { method: "POST",
+        body: JSON.stringify({ pane_id: paneId, prompt_id: shown.prompt!.id, option_index: 0 }) }), url);
+      expect(answered?.status).toBe(200);
+      expect(keys.length).toBeGreaterThan(0);
+      pane.screen = "fixture-anchor\n> ";
+      expect((await served(paneId)).outcomes?.at(-1)).toMatchObject({ state: "result-observed", evidence: [{ kind: "dialog" }] });
+    });
+  });
+
+  it("closes a command's card correlation when a later plain message is sent", async () => {
+    const pane = { agent: "claude", status: "idle", screen: fixture("claude-goal-2.1.304-active-120.txt") };
+    await withFakeHerdr(pane, async (paneId) => {
+      const goal: SlashCommand = { ...row("goal", "dialog"), forms: claudeSource.forms!.goal };
+      const current = { ...send("/goal", "claude", [goal]), at: Date.now() - 10,
+        identity: JSON.stringify([undefined, undefined]), store: null };
+      noteSubmitted(paneId, current.text, current);
+      expect((await served(paneId)).outcomes?.at(-1)?.state).toBe("interaction-required");
+      noteSubmitted(paneId, "Please continue with the next task");
+      const shown = await served(paneId);
+      expect(shown.outcomes?.at(-1)).toMatchObject({ state: "unknown", evidence: [] });
+      expect(current.dialogId).toBeUndefined();
+    });
+  });
+
+  it("does not complete a skill after answering a Bash approval below its echo", async () => {
+    const pane = { agent: "claude", status: "blocked",
+      screen: "fixture-anchor\n> /review\n Bash command\n\n   pwd\n\n This command requires approval\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel" };
+    await withFakeHerdr(pane, async (paneId) => {
+      const current = { ...send("/review", "claude", [{ ...row("review"), source: "skill" }]),
+        at: Date.now() - 10, screen: "fixture-anchor", identity: JSON.stringify([undefined, undefined]), store: null };
+      noteSubmitted(paneId, current.text, current);
+      const shown = await served(paneId);
+      expect(shown.prompt?.kind).toBe("approval");
+      if (!shown.prompt) throw new Error("fixture approval missing");
+      const url = new URL("http://localhost/api/pane/prompt/answer");
+      const answered = await handlePromptRequest(new Request(url, { method: "POST",
+        body: JSON.stringify({ pane_id: paneId, prompt_id: shown.prompt.id, option_index: 0 }) }), url);
+      expect(answered?.status).toBe(200);
+      expect((await served(paneId)).outcomes?.at(-1)).toMatchObject({ state: "accepted", evidence: [] });
+    });
+  });
+
+  it("keeps a bare Claude /goal interaction-required while its own goal card is up", async () => {
+    const goal: SlashCommand = { name: "goal", source: "builtin", description: "", forms: claudeSource.forms!.goal };
+    const sent = send("/goal", "claude", [goal]);
+    expect(sent.form).toEqual({ match: "bare", interaction: "dialog", dialog: "claude-goal" });
+    expect(registry.readerFor("claude-goal")?.id).toBe(sent.form!.dialog!);
+    await withFakeHerdr({ agent: "claude", status: "idle", screen: fixture("claude-goal-2.1.304-active-120.txt") }, async (paneId) => {
+      const current = { ...sent, at: Date.now() - 1, id: "goal-send", identity: JSON.stringify([undefined, undefined]), store: null };
+      noteSubmitted(paneId, current.text, current);
+      const shown = await served(paneId);
+      expect(shown.prompt).toMatchObject({ agent: "claude", title: "Goal active", options: [{ label: "Close" }] });
+      expect(shown.outcomes?.at(-1)).toMatchObject({ id: "goal-send", state: "interaction-required" });
+      expect(current.dialogId).toBe(shown.prompt!.id);
+      // a form naming another reader's dialog is not waiting on this card
+      const other = { ...current, id: "other-send", form: { match: "bare" as const, interaction: "dialog" as const, dialog: "claude-model" }, outcome: undefined, dialogId: undefined };
+      noteSubmitted(paneId, other.text, other);
+      expect((await served(paneId)).outcomes?.at(-1)).toMatchObject({ id: "other-send", state: "accepted" });
+    });
+  });
+
+  const handoffRow: SlashCommand = { name: "handoff", source: "builtin", description: "", forms: ompSource.forms!.handoff };
+  const compaction = (method: string, time: number): string => {
+    const recorded = fixture("omp-handoff-18.8.7-session.jsonl").split("\n").find((line) => line.includes('"type":"compaction"'))!;
+    return JSON.stringify({ ...JSON.parse(recorded), method, timestamp: new Date(time).toISOString() });
+  };
+  it("resolves omp's /handoff only from the handoff compaction appended after the send", () => {
+    const sent = send("/handoff", "omp", [handoffRow]);
+    expect(sent.form).toEqual({ match: "bare", interaction: "dialog", dialog: "omp-handoff" });
+    expect(registry.readerFor("omp-handoff")?.id).toBe(sent.form!.dialog!);
+    expect(outcome(sent, { transcript: compaction("handoff", at + 10) })).toMatchObject({ state: "result-observed", evidence: [{ kind: "transcript" }] });
+    expect(outcome(send("/handoff focus on tests", "omp", [handoffRow]), { transcript: compaction("handoff", at + 10) }).state).toBe("result-observed");
+    expect(outcome(sent, { transcript: compaction("handoff", at - 10) }).state).toBe("accepted");
+    expect(outcome(sent, { transcript: compaction("auto", at + 10) }).state).toBe("accepted");
+  });
+  it("keeps omp's /handoff interaction-required on its card, and a cancel from it never resolves the send", async () => {
+    const pane = { agent: "omp", status: "working", screen: fixture("omp-handoff-18.8.7-generating-narrow.txt") };
+    await withFakeHerdr(pane, async (paneId, keys) => {
+      const current = { ...send("/handoff", "omp", [handoffRow]), at: Date.now() - 1, id: "handoff-send", identity: JSON.stringify([undefined, undefined]), store: null };
+      noteSubmitted(paneId, current.text, current);
+      const shown = await served(paneId);
+      expect(shown.prompt).toMatchObject({ agent: "omp", question: "Generating handoff…", options: [{ label: "Cancel" }] });
+      expect(shown.outcomes?.at(-1)).toMatchObject({ id: "handoff-send", state: "interaction-required" });
+      expect(current.dialogId).toBe(shown.prompt!.id);
+      const answerUrl = new URL("http://localhost/api/pane/prompt/answer");
+      const answered = await handlePromptRequest(new Request(answerUrl, { method: "POST", body: JSON.stringify({ pane_id: paneId, prompt_id: shown.prompt!.id, option_index: 0 }) }), answerUrl);
+      expect(answered?.status).toBe(200);
+      expect(keys).toEqual([["esc"]]);
+      pane.screen = fixture("omp-handoff-18.8.7-cancelled-narrow.txt");
+      const after = await served(paneId);
+      expect(after.prompt).toBeNull();
+      expect(after.outcomes?.at(-1)).toMatchObject({ id: "handoff-send", state: "accepted", evidence: [] });
+    });
+  });
+});
+
+describe("registered result evidence", () => {
+  const anchor = "fixture-tail-1\nfixture-tail-2\nfixture-tail-3";
+  const sent = () => ({ ...send("/reload-skills", "hermes", [row("reload-skills", "unknown")]), screen: anchor });
+  it("requires a new complete block below this send's new command echo", () => {
+    const input = { screen: `${anchor}\n> /reload-skills\n${block}`, readers: [resultReader] };
+    expect(outcome(sent(), input)).toMatchObject({ state: "result-observed", catalog_changed: true, evidence: [{ kind: "recognized-result" }] });
+    expect(outcome({ ...sent(), screen: block }, input).state).toBe("accepted");
+    expect(outcome(sent(), { ...input, screen: `${block}\n> /reload-skills` }).state).toBe("accepted");
+    expect(outcome(sent(), { ...input, screen: block }).state).toBe("accepted");
+    expect(outcome(sent(), { ...input, screen: `> /other\n${block}` }).state).toBe("accepted");
+    expect(outcome(sent(), { ...input, screen: `> /reload-skills\n> /other\n${block}` }).state).toBe("accepted");
+    expect(outcome(sent(), { ...input, readers: [{ ...resultReader, kind: undefined }] }).state).toBe("accepted");
+  });
+  it("does not reuse unchanged output and accepts a new anchored result", () => {
+    const input = { screen: `${anchor}\n> /reload-skills\n${block}`, readers: [resultReader] };
+    expect(outcome({ ...sent(), id: "send-2", screen: input.screen }, input).state).toBe("accepted");
+    expect(outcome({ ...sent(), id: "send-3", screen: anchor }, input).state).toBe("result-observed");
+  });
+  it("upgrades an unrecognized-dialog terminal fallback when a correlated result arrives later", () => {
+    const command = { ...send("/status", "hermes", [row("status", "dialog")]), screen: anchor };
+    command.outcome = outcome(command, { now: at + 2000, settledSince: at });
+    expect(command.outcome.state).toBe("terminal-required");
+    expect(outcome(command, { now: at + 2100, screen: `${anchor}\n> /status\n${block}`, readers: [resultReader] }))
+      .toMatchObject({ state: "result-observed", evidence: [{ kind: "recognized-result" }] });
+  });
+  it("upgrades a dialog fallback only for a correlated card commit", () => {
+    const command = send("/model", "claude", [row("model", "dialog")]);
+    command.outcome = outcome(command, { now: at + 2000, settledSince: at });
+    expect(outcome(command, { now: at + 2100, evidence: { kind: "dialog", at: at - 1 } }))
+      .toMatchObject({ state: "terminal-required", evidence: [] });
+    expect(outcome(command, { now: at + 2100, evidence: { kind: "dialog", at: at + 2100 } }))
+      .toMatchObject({ state: "result-observed", evidence: [{ kind: "dialog" }] });
+  });
+  it("keeps terminal-form commands terminal even when later result or card evidence arrives", () => {
+    const command = { ...send("/status", "hermes", [row("status", "terminal")]), screen: anchor };
+    command.outcome = outcome(command);
+    expect(outcome(command, { now: at + 2100, screen: `${anchor}\n> /status\n${block}`, readers: [resultReader] }))
+      .toMatchObject({ state: "terminal-required", evidence: [] });
+    expect(outcome(command, { now: at + 2100, evidence: { kind: "dialog", at: at + 2100 } }))
+      .toMatchObject({ state: "terminal-required", evidence: [] });
+  });
+  it("observes a recognized dialog result before its screen settles", () => {
+    const command = { ...send("/status", "hermes", [row("status", "dialog")]), screen: anchor };
+    expect(outcome(command, { now: at + 1000, settledSince: at, screen: `${anchor}\n> /status\n${block}`, readers: [resultReader] }))
+      .toMatchObject({ state: "result-observed", evidence: [{ kind: "recognized-result" }] });
+  });
+});
+
+describe("anchored result echo ownership", () => {
+  const anchor = "fixture-tail-1\nfixture-tail-2\nfixture-tail-3";
+  const echo = "> /status";
+  const result = `${echo}\n${block}`;
+  const sent = (screen = anchor): CommandSend => ({ ...send("/status", "hermes", [row("status", "unknown")]), screen });
+  const readers = [resultReader];
+  let pane = 0;
+  const queued = (screens: string[], registeredReaders = readers, commands?: readonly string[]): CommandSend[] => {
+    const paneId = `result-order-${++pane}`;
+    const registered = spyOn(registry, "readersFor").mockReturnValue(registeredReaders);
+    try {
+      return screens.map((screen, index) => {
+        const text = commands?.[index] ?? "/status";
+        const command = { ...send(text, "hermes", [row(text.slice(1), "unknown")]), screen,
+          id: `${paneId}-${index}`, at: at + index, store: null };
+        noteSubmitted(paneId, command.text, command);
+        return command;
+      });
+    } finally { registered.mockRestore(); }
+  };
+
+  it("does not resolve a redraw duplicating an old echo and block before the snapshot tail", () => {
+    const before = `${result}\n${anchor}`;
+    expect(outcome(sent(before), { screen: `${result}\n${result}\n${anchor}`, readers }).state).toBe("accepted");
+  });
+
+  it("does not resolve an old block scrolled into view above the snapshot tail", () => {
+    expect(outcome(sent(), { screen: `${result}\n${anchor}`, readers }).state).toBe("accepted");
+  });
+
+  it("does not give a terminal-typed same-command result to the earlier Chat echo", () => {
+    expect(outcome(sent(), { screen: `${anchor}\n${echo}\n${result}`, readers }).state).toBe("accepted");
+  });
+
+  it("does not claim an unreserved terminal result printed before the Chat echo", () => {
+    expect(outcome(sent(), { screen: `${anchor}\n${result}\n${echo}`, readers }).state).toBe("accepted");
+    expect(outcome(sent(), { screen: `${anchor}\n${result}\n${result}`, readers }).state).toBe("accepted");
+  });
+
+  it("keeps a previously resolved result when an extra terminal echo appears later", () => {
+    const command = sent();
+    command.outcome = outcome(command, { screen: `${anchor}\n${result}`, readers });
+    expect(command.outcome.state).toBe("result-observed");
+    expect(outcome(command, { screen: `${anchor}\n${result}\n${result}`, readers }).state).toBe("result-observed");
+  });
+
+  it("resolves only the first of two quick sends when only its echo and result arrived", () => {
+    const [first, second] = queued([anchor, anchor]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const observation = { screen: `${anchor}\n${result}`, readers };
+    expect(outcome(first, { ...observation, nextAt: second.at }).state).toBe("result-observed");
+    expect(outcome(second, observation).state).toBe("accepted");
+  });
+
+  it("resolves two quick sends from their own echoes even when their outputs are identical", () => {
+    const [first, second] = queued([anchor, anchor]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const observation = { screen: `${anchor}\n${result}\n${result}`, readers };
+    expect(outcome(first, { ...observation, nextAt: second.at }).state).toBe("result-observed");
+    expect(outcome(second, observation).state).toBe("result-observed");
+  });
+
+  it("resolves a second identical output below its echo while the first block stays visible", () => {
+    const before = `${anchor}\n${result}`;
+    const [first, second] = queued([anchor, before]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    expect(outcome(second, { screen: `${before}\n${result}`, readers }).state).toBe("result-observed");
+    expect(outcome(second, { screen: before, readers }).state).toBe("accepted");
+  });
+
+  it("does not recognize any result when the send-time anchor is lost or empty", () => {
+    expect(outcome(sent(), { screen: result, readers }).state).toBe("accepted");
+    expect(outcome(sent(""), { screen: result, readers }).state).toBe("accepted");
+    expect(outcome(sent(), { screen: `${anchor}\n${result}\n${anchor}\n${result}`, readers }).state).toBe("accepted");
+  });
+
+  it("keeps echo reservations when older outcomes leave the five-send response window", () => {
+    const sends = queued(Array.from({ length: 6 }, () => anchor));
+    const last = sends.at(-1);
+    if (!last) throw new Error("missing fixture send");
+    expect(outcome(last, { screen: `${anchor}\n${result}`, readers }).state).toBe("accepted");
+    expect(outcome(last, { screen: `${anchor}\n${Array.from({ length: 6 }, () => result).join("\n")}`, readers }).state).toBe("result-observed");
+  });
+
+  it("keeps an unresolved command reservation after five other commands evict its displayed outcome", () => {
+    const commands = ["/status", "/help", "/version", "/profile", "/cost", "/context", "/status"];
+    const sends = queued(commands.map(() => anchor), readers, commands);
+    const last = sends.at(-1);
+    if (!last) throw new Error("missing fixture send");
+    expect(last.resultEchoes?.[resultReader.id]).toBe(2);
+    expect(outcome(last, { screen: `${anchor}\n${result}`, readers }).state).toBe("accepted");
+    expect(outcome(last, { screen: `${anchor}\n${result}\n${result}`, readers }).state).toBe("result-observed");
+  });
+
+  it("marks correlation ambiguous instead of renumbering when the reservation cap drops an unresolved command", () => {
+    const commands = ["/status", ...Array.from({ length: 64 }, (_, index) => `/other-${index}`), "/status"];
+    const last = queued(commands.map(() => anchor), readers, commands).at(-1);
+    if (!last) throw new Error("missing fixture send");
+    expect(outcome(last, { screen: `${anchor}\n${result}`, readers }).state).toBe("accepted");
+    expect(outcome(last, { screen: `${anchor}\n${result}\n${result}`, readers }).state).toBe("accepted");
+  });
+
+  it("does not treat terminal excess echoes as additional Chat reservations for either pending send", () => {
+    const [first, second] = queued([anchor, anchor]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const screen = `${anchor}\n${result}\n${result}\n${echo}`;
+    expect(outcome(first, { screen, readers, nextAt: second.at }).state).toBe("unknown");
+    expect(outcome(second, { screen, readers }).state).toBe("accepted");
+  });
+
+  it("expires capped ownership without a timer and keeps the loss-marker overflow fail-closed", () => {
+    const reservations = new CommandReservations();
+    for (let index = 0; index < 130; index++) {
+      const command = { ...sent(), text: `/unresolved-${index}`, id: `capped-${index}`, at: at + index };
+      reservations.add(command, readers);
+    }
+    const blocked = { ...sent(), id: "blocked-by-overflow", at: at + 131 };
+    reservations.add(blocked, readers);
+    expect(outcome(blocked, { screen: `${anchor}\n${result}`, readers }).state).toBe("accepted");
+    const fresh = { ...sent(), id: "after-deadline", at: at + 700_000 };
+    reservations.add(fresh, readers);
+    expect(fresh.resultEchoes?.[resultReader.id]).toBe(1);
+    expect(outcome(fresh, { now: fresh.at + 100, screen: `${anchor}\n${result}`, readers }).state).toBe("result-observed");
+  });
+
+  it("does not reuse a resolved later send's echo position while an earlier reservation remains", () => {
+    const reservations = new CommandReservations();
+    const first = { ...sent(), id: "pending-first" };
+    const second = { ...sent(), id: "resolved-second", at: at + 1 };
+    reservations.add(first, readers);
+    reservations.add(second, readers);
+    second.outcome = outcome(second, { screen: `${anchor}\n${echo}\n${result}`, readers });
+    expect(second.outcome.state).toBe("result-observed");
+    const third = { ...sent(), id: "pending-third", at: at + 2 };
+    reservations.add(third, readers);
+    expect(third.resultEchoes?.[resultReader.id]).toBe(3);
+    expect(outcome(third, { screen: `${anchor}\n${echo}\n${result}`, readers }).state).toBe("accepted");
+  });
+
+  it("carries pending echo order across a changing tail before either command echo arrives", () => {
+    const later = `${anchor}\nfixture-progress-1\nfixture-progress-2\nfixture-progress-3`;
+    const [first, second] = queued([anchor, later]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const observation = { screen: `${later}\n${result}`, readers };
+    expect(outcome(first, { ...observation, nextAt: second.at }).state).toBe("result-observed");
+    expect(outcome(second, observation).state).toBe("accepted");
+  });
+
+  it("uses a reader's echo shape for ownership and every following command boundary", () => {
+    const native = { ...resultReader, echoOf: (line: string, command: string) => line.trim() === `⚙️  ${command}` };
+    const readers = [native];
+    const [first, second] = queued([anchor, anchor], readers);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const completed = `⚙️  /status\n${block}`;
+    expect(outcome(first, { screen: `${anchor}\n${completed}`, readers, nextAt: second.at }).state).toBe("result-observed");
+    expect(outcome(second, { screen: `${anchor}\n${completed}`, readers }).state).toBe("accepted");
+    expect(outcome(second, { screen: `${anchor}\n${completed}\n${completed}`, readers }).state).toBe("result-observed");
+    expect(outcome(sent(), { screen: `${anchor}\n⚙️  /status\n⚙️  /other\n${block}`, readers }).state).toBe("accepted");
+    expect(outcome(sent(), { screen: `${anchor}\n⚙️  /status\n${completed}`, readers }).state).toBe("accepted");
+    expect(outcome(sent(), { screen: `${anchor}\n${completed}`, readers: [resultReader] }).state).toBe("accepted");
+  });
+
+  const chrome = "fixture-status: idle\n────────\n❯ fixture-input\n────────";
+  const chromeReader = {
+    ...resultReader,
+    chromeStart: (lines: string[]) => lines.findIndex((line) => line.startsWith("fixture-status:")),
+    parse(screen: string) {
+      // The uncut idle input is required evidence that this fixture result finished.
+      return screen.includes("\n❯ fixture-input\n") ? resultReader.parse(screen, {
+        agent: "hermes", omoAsk: null, omoTrusted: false, omoOpen: [], sent: "/status", working: false,
+      }) : null;
+    },
+  };
+
+  it("anchors above unchanged bottom chrome while retaining the idle prompt for the reader", () => {
+    const snapshot = `${anchor}\n${chrome}`;
+    const screen = `${anchor}\n${result}\n${chrome}`;
+    expect(outcome(sent(snapshot), { screen, readers: [chromeReader] })).toMatchObject({
+      state: "result-observed", evidence: [{ kind: "recognized-result" }], catalog_changed: true,
+    });
+    // Without the reader hook, the unchanged chrome remains the anchor at the screen's end.
+    expect(outcome(sent(snapshot), { screen, readers })).toMatchObject({ state: "accepted", evidence: [] });
+    expect(outcome(sent(snapshot), { screen, readers: [{ ...chromeReader, agents: ["claude"] }, resultReader] }).state).toBe("accepted");
+    // Chrome is per agent, so one registered result reader can provide the shared boundary.
+    expect(outcome(sent(snapshot), { screen, readers: [
+      { ...chromeReader, id: "fixture-chrome", parse: () => null }, resultReader,
+    ] }).state).toBe("result-observed");
+  });
+
+  it("does not resolve when only chrome changes, even if that chrome contains an echo and result", () => {
+    const snapshot = `${anchor}\n${chrome}`;
+    const changed = `${anchor}\nfixture-status: changed\n${result}\n────────\n❯ fixture-input\n────────`;
+    expect(outcome(sent(snapshot), { screen: changed, readers: [chromeReader] })).toMatchObject({ state: "accepted", evidence: [] });
+    expect(outcome(sent(snapshot), { screen: `${anchor}\n${chrome.replace("idle", "busy")}`, readers: [chromeReader] }).state).toBe("accepted");
+  });
+
+  it("reserves ordered echoes above chrome for two quick sends with identical input areas", () => {
+    const snapshot = `${anchor}\n${chrome}`;
+    const [first, second] = queued([snapshot, snapshot], [chromeReader]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const one = `${anchor}\n${result}\n${chrome}`;
+    expect(outcome(first, { screen: one, readers: [chromeReader], nextAt: second.at }).state).toBe("result-observed");
+    expect(outcome(second, { screen: one, readers: [chromeReader] }).state).toBe("accepted");
+    const both = `${anchor}\n${result}\n${result}\n${chrome}`;
+    expect(outcome(second, { screen: both, readers: [chromeReader] }).state).toBe("result-observed");
+  });
+
+  it("does not count command-shaped input chrome as an already emitted echo when reserving", () => {
+    const commandChrome = chrome.replace("❯ fixture-input", "❯ /status");
+    const native = { ...chromeReader, echoOf: (line: string, command: string) => line.trim() === `⚙️  ${command}` };
+    const [first, second] = queued([`${anchor}\n${commandChrome}`, `${anchor}\n${commandChrome}`], [native]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    expect(second.resultEchoes?.[chromeReader.id]).toBe(2);
+  });
+
+  it("keeps the whole screen when a chrome hook finds no persistent input area", () => {
+    const absent = { ...resultReader, chromeStart: chromeReader.chromeStart };
+    expect(outcome(sent(), { screen: `${anchor}\n${result}`, readers: [absent] }).state).toBe("result-observed");
+  });
+
+  for (const [label, chromeStart] of [
+    ["past the end", (lines: string[]) => lines.length + 10],
+    ["below minus one", (_lines: string[]) => -5],
+    ["fractional", (_lines: string[]) => -0.5],
+    ["not a number", (_lines: string[]) => NaN],
+  ] as const) it(`rejects a chrome boundary ${label} instead of treating it as no chrome`, () => {
+    const reader = { ...resultReader, chromeStart };
+    const command = sent(anchor);
+    expect(outcome(command, { screen: `${anchor}\n${result}`, readers: [reader] })).toMatchObject({ state: "accepted", evidence: [] });
+    new CommandReservations().add(command, [reader]);
+    expect(command.resultEchoes?.[reader.id]).toBeNull();
+  });
+
+  it("rejects a too-low send-time boundary hiding an old command echo and complete block", () => {
+    const reader = {
+      ...resultReader,
+      chromeStart: (lines: string[]) => lines.at(-1) === "CHROME 00:00" ? 2 : lines.findIndex((line) => line.startsWith("CHROME")),
+    };
+    const command = sent(`${anchor}\n${result}\nCHROME 00:00`);
+    const screen = `${anchor}\n${result}\nCHROME 00:01`;
+    expect(outcome(command, { screen, readers: [reader] })).toMatchObject({ state: "accepted", evidence: [] });
+  });
+
+  it("rejects read-time chrome containing any command echo recognized by an applicable reader", () => {
+    const boundary = { ...resultReader, chromeStart: (lines: string[]) => lines.findIndex((line) => line.startsWith("CHROME")) };
+    const gear = { ...resultReader, id: "gear-echo", echoOf: (line: string, command: string) => line === `⚙️  ${command}`, parse: () => null };
+    const snapshot = `${anchor}\nCHROME 00:00`;
+    const screen = `${anchor}\n${result}\nCHROME 00:01\n⚙️  /other\n${block}`;
+    expect(outcome(sent(snapshot), { screen, readers: [boundary, gear] }).state).toBe("accepted");
+    expect(outcome(sent(snapshot), { screen, readers: [boundary, { ...gear, agents: ["claude"] }] }).state).toBe("result-observed");
+    expect(outcome(sent(snapshot), { screen: `${anchor}\n${result}\nCHROME 00:01\n> /other`, readers: [boundary] }).state).toBe("accepted");
+  });
+
+  it("passes the next echo line as a completion boundary without the following send's block", () => {
+    const firstBlock = block.replace("fixture-payload", "fixture-first");
+    const secondBlock = block.replace("fixture-payload", "fixture-second");
+    const idle = "❯ fixture-idle";
+    const parsedScreens: string[] = [];
+    const reader: DialogReader = {
+      ...resultReader,
+      parse(screen, ctx) {
+        parsedScreens.push(screen);
+        const lines = screen.split("\n");
+        if (lines.at(-1) !== echo && lines.at(-1) !== idle) return null;
+        const ownBlock = lines.slice(0, -1).join("\n");
+        if (ownBlock !== firstBlock && ownBlock !== secondBlock) return null;
+        const parsed = resultReader.parse(block, ctx);
+        return parsed ? { ...parsed, body: ownBlock, resultText: ownBlock } : null;
+      },
+    };
+    const [first, second] = queued([anchor, anchor], [reader]);
+    if (!first || !second) throw new Error("missing fixture sends");
+    const screen = `${anchor}\n${echo}\n${firstBlock}\n${echo}\n${secondBlock}\n${idle}`;
+    expect(outcome(first, { screen, readers: [reader], nextAt: second.at }).state).toBe("result-observed");
+    expect(outcome(second, { screen, readers: [reader] }).state).toBe("result-observed");
+    expect(parsedScreens).toEqual([`${firstBlock}\n${echo}`, `${secondBlock}\n${idle}`]);
+  });
+});

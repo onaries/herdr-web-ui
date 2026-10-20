@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexOpenRollout, codexTranscriptPath } from "./codex.ts";
+import { codexOpenRollout, codexTranscriptPath, paneRunsCodex } from "./codex.ts";
 import { processStartedAt, processStartUpperBound } from "./process-start.ts";
 
 // Native stores and the real RPC client; only herdr's foreground metadata is synthetic.
@@ -78,6 +78,17 @@ const resolve = () => codexTranscriptPath(root, root, home, [{
   pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
   agent: "codex", agent_status: "working", cwd: root, focused: false, revision: 0,
 }]);
+
+it("native queue keys require an interactive Codex executable", async () => {
+  for (const argv of [["/usr/bin/codex"], ["node", "--no-warnings", "/opt/codex.js", "resume", thread]]) {
+    foreground = [{ pid: process.pid, argv }];
+    expect(await paneRunsCodex(root)).toBe(true);
+  }
+  for (const argv of [["codex", "exec", "task"], ["codex", "app-server"], ["node", "-e", "codex"], ["sh", "-c", "codex"], ["cat", "codex"]]) {
+    foreground = [{ pid: process.pid, argv }];
+    expect(await paneRunsCodex(root)).toBe(false);
+  }
+});
 
 /** A ready, owned process with Codex's argv[0], no rollout descriptor and no timer. */
 async function runningCodex(resume = false): Promise<ReturnType<typeof Bun.spawn>> {

@@ -1,0 +1,109 @@
+/* ovis.sh: one stylesheet for every page. The colors are the app icon's: navy, cream and pink. */
+:root {
+  color-scheme: light dark;
+  --navy: #2e3a59;
+  --pink: #f29ca3;
+  /* pink for text: the icon's pink is 2:1 on the light background, this one 4.7:1 */
+  --pink-text: #b84a60;
+  --bg: #fbf7f2;
+  --surface: #ffffff;
+  --ink: #1f2740;
+  --muted: #5d6680;
+  --line: #e7e0d6;
+  --accent: #2e3a59;
+  --accent-ink: #ffffff;
+  --code: #f3ede4;
+  --radius: 18px;
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pink-text: #f29ca3;
+    --bg: #131a2b;
+    --surface: #1b2339;
+    --ink: #eef0f6;
+    --muted: #a3abc2;
+    --line: #2b3552;
+    --accent: #fce9d8;
+    --accent-ink: #1f2740;
+    --code: #222b45;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); -webkit-text-size-adjust: 100%; }
+:lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
+a { color: inherit; text-decoration-color: var(--pink); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+img { max-width: 100%; height: auto; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; background: var(--code); padding: 0.1em 0.35em; border-radius: 6px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+.top { display: flex; align-items: center; gap: 20px; padding-block: 20px; }
+.top .brand { display: block; line-height: 0; margin-right: auto; }
+.top .brand img { height: 40px; width: auto; }
+.top nav { display: flex; gap: 18px; font-size: 15px; }
+.top nav a { text-decoration: none; color: var(--muted); white-space: nowrap; }
+.top nav a:hover, .top nav a[aria-current="page"] { color: var(--ink); }
+
+.hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; padding-block: 48px 72px; }
+.hero h1 { font-size: clamp(34px, 5vw, 54px); line-height: 1.12; letter-spacing: -0.02em; margin: 0 0 18px; }
+.hero h1 em { font-style: normal; color: var(--pink-text); }
+.hero p.lead { font-size: 19px; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+.stores { display: flex; flex-wrap: wrap; gap: 12px; }
+.store { display: inline-flex; flex-direction: column; justify-content: center; min-width: 168px; padding: 10px 18px; border-radius: 14px; background: var(--accent); color: var(--accent-ink); text-decoration: none; }
+.store small { font-size: 12px; opacity: 0.75; }
+.store strong { font-size: 17px; }
+.store[aria-disabled="true"] { cursor: default; }
+.hero .shot { position: relative; justify-self: center; }
+.hero .shot img.phone { width: 300px; border-radius: 34px; border: 8px solid var(--navy); box-shadow: 0 30px 60px -20px rgb(20 26 43 / 0.45); display: block; }
+.hero .shot img.sheep { position: absolute; width: 128px; left: -64px; bottom: -28px; filter: drop-shadow(0 10px 18px rgb(20 26 43 / 0.25)); }
+
+section.block { padding: 64px 0; border-top: 1px solid var(--line); }
+section.block h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -0.01em; margin: 0 0 12px; }
+section.block > .wrap > p.sub { color: var(--muted); margin: 0 0 32px; max-width: 40em; }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; list-style: none; padding: 0; margin: 0; counter-reset: step; }
+.steps li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; counter-increment: step; }
+.steps li::before { content: counter(step); display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--pink); color: #1f2740; font-weight: 700; margin-bottom: 12px; }
+.steps h3 { margin: 0 0 6px; font-size: 18px; }
+.steps p { margin: 0; color: var(--muted); }
+.steps pre { margin: 12px 0 0; white-space: pre-wrap; word-break: break-all; }
+.steps pre code { display: block; padding: 10px 12px; }
+.gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 300px)); gap: 32px; justify-content: center; }
+.gallery figure { margin: 0; text-align: center; }
+.gallery img { border-radius: 26px; border: 6px solid var(--navy); display: block; margin: 0 auto 12px; }
+.gallery figcaption { color: var(--muted); font-size: 15px; }
+.points { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.points div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+.points h3 { margin: 0 0 6px; font-size: 17px; }
+.points p { margin: 0; color: var(--muted); }
+details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+details summary { cursor: pointer; font-weight: 600; font-size: 17px; }
+details p { color: var(--muted); margin: 10px 0 0; }
+
+.doc { max-width: 768px; padding-block: 32px 72px; }
+.doc h1 { font-size: clamp(30px, 4vw, 40px); margin: 0 0 6px; letter-spacing: -0.01em; }
+.doc .date { color: var(--muted); margin: 0 0 28px; }
+.doc h2 { font-size: 21px; margin: 36px 0 8px; }
+.doc p, .doc li { color: var(--ink); }
+.doc ul { padding-left: 1.2em; }
+.doc .box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 22px; }
+
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+footer .wrap span { margin-right: auto; }
+footer a { text-decoration: none; }
+footer a:hover { color: var(--ink); }
+
+@media (max-width: 820px) {
+  .hero { grid-template-columns: 1fr; gap: 40px; padding-block: 24px 56px; }
+  .hero .shot img.phone { width: 260px; }
+  .hero .shot img.sheep { width: 96px; left: -40px; }
+  .steps, .points { grid-template-columns: 1fr; }
+  .gallery { grid-template-columns: minmax(0, 280px); }
+}
+@media (max-width: 520px) {
+  .top { gap: 12px; }
+  .top .brand img { height: 32px; }
+  .top nav { gap: 12px; font-size: 14px; }
+  .store { min-width: 0; flex: 1; }
+}

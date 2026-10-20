@@ -6,6 +6,7 @@ import { ApiError, authenticate, pairDevice } from "../lib/api.ts";
 import { deviceLabel } from "../lib/phone.ts";
 import type { AccessRefusal } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
+import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 
 
@@ -80,7 +81,7 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
       <div className="access-gate" data-testid="token-gate">
         <img src="/icons/icon-192.png?v=ram1" alt="" width="44" height="44" className="access-gate-mark" />
         <h1 id="access-gate-title" className="access-gate-title">
-          herdr <span className="brand-sub">web ui</span>
+          Ovis
         </h1>
         {reason === "other_user" && (
           <p className="access-gate-refused" role="status">{t("Tailscale says this device belongs to someone other than this PC's owner. The owner can still let it in with a pairing code.")}</p>
@@ -133,6 +134,10 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
         </details>
         {error !== null && (
           <p id="access-gate-error" className="access-gate-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>
+        )}
+        {/* in the iOS app (app/) this page is all there is: the way back to its list of PCs */}
+        {inNativeApp() && (
+          <p className="access-gate-copy"><button type="button" className="btn" onClick={() => void changePc()}>{t("Change PC")}</button></p>
         )}
       </div>
     </main>

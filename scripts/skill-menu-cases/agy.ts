@@ -26,7 +26,7 @@ export const expect = async ({ page, width, box, menu, scenario, clear, rowNames
     await menu.locator(".menu-item").filter({ hasText: "/probe-skill" }).waitFor();
     assert.deepEqual((await rowNames()).sort(), commands.map(({ name }) => name).sort());
     assert.deepEqual(await menu.locator(".menu-heading").allTextContents(), [
-      "Built in", "Your skills", "Project skills", "Built-in skills", "Plugin skills",
+      "Built in", "Your skills", "Project skills", "Built-in skills", "Plugin skills", "Terminal commands",
     ]);
     await menuFits("agy menu");
     await rowsBrief("agy menu");

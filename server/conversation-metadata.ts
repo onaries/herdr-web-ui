@@ -1,5 +1,6 @@
 import { isContextClear, piMessage } from "./transcript-records.ts";
 import { piContextWindow } from "./pi-models.ts";
+import { cmdContextWindow } from "./cmd.ts";
 import type { ConversationMetadata, ConversationResponse } from "../shared/protocol.ts";
 
 type RecordValue = Record<string, unknown>;
@@ -69,7 +70,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       if (model) metadata.model = model;
       // A new complete context without effort must not retain an older value.
       if (model || effort !== undefined) metadata.reasoning_effort = label(effort);
-    } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "pi-transcript") {
+    } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "pi-transcript" || source === "cmd-transcript") {
       if (entry.type === "model_change") {
         // pi and omo name `provider` and `modelId`; omp names one `model`, "provider/id", where
         // the id is what its answers name as their model
@@ -83,21 +84,30 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       // a turn answers at whatever model it ran at, and that is the one the window belongs to
       if (entry.type === "message" && message.role === "assistant" && label(message.model)) {
         metadata.model = label(message.model);
-        if (label(message.provider)) piProvider = label(message.provider);
+        if (source === "cmd-transcript") piProvider = "commandcode";
+        else if (label(message.provider)) piProvider = label(message.provider);
       }
       if (entry.type === "message" && message.role === "assistant") {
         const usage = record(message.usage);
-        if (source !== "pi-transcript") {
+        if (source === "cmd-transcript") {
+          // cmd (Command Code) uses camelCase usage fields and resolves its window through
+          // the commandcode catalog; otherwise it is pi-shaped (counts the answer too)
+          const filled = message.stopReason === "error" || message.stopReason === "aborted" ? 0
+            : count(usage.totalTokens) || count(usage.inputTokens) + count(usage.outputTokens) + count(usage.cacheReadTokens) + count(usage.cacheWriteTokens);
+          const window = metadata.model === null ? null : cmdContextWindow(metadata.model);
+          metadata.context = contextOf(filled, metadata.model, window, metadata.context);
+        } else if (source !== "pi-transcript") {
           // omp, omo and gjc are read the same way but resolve no window, so their figure
           // stays as it was rather than moving to a rule only pi states
           metadata.context = contextOf(count(usage.input) + count(usage.cacheRead) + count(usage.cacheWrite), metadata.model, null, metadata.context);
           continue;
+        } else {
+          // pi's own figure for what one request filled: it counts the answer too, and leaves a
+          // failed or aborted request out, which filled nothing
+          const filled = message.stopReason === "error" || message.stopReason === "aborted" ? 0
+            : count(usage.totalTokens) || count(usage.input) + count(usage.output) + count(usage.cacheRead) + count(usage.cacheWrite);
+          metadata.context = contextOf(filled, metadata.model, null, metadata.context, piProvider);
         }
-        // pi's own figure for what one request filled: it counts the answer too, and leaves a
-        // failed or aborted request out, which filled nothing
-        const filled = message.stopReason === "error" || message.stopReason === "aborted" ? 0
-          : count(usage.totalTokens) || count(usage.input) + count(usage.output) + count(usage.cacheRead) + count(usage.cacheWrite);
-        metadata.context = contextOf(filled, metadata.model, null, metadata.context, piProvider);
       }
     } else if (source === "claude-transcript") {
       const message = record(entry.message);

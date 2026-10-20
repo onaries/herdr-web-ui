@@ -126,7 +126,7 @@ try {
   // A reload is explicit. The new frontend's build revision must match the server.
   await page.locator(".update-notice").getByRole("button", { name: "Reload app" }).click();
   // the new version tells of the update: its line opens Settings on what the update brought
-  await page.locator(".update-notice").getByText("herdr web ui was updated to v99.0.0.", { exact: true }).waitFor();
+  await page.locator(".update-notice").getByText("Ovis was updated to v99.0.0.", { exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, "updated-line-desktop.png") });
   await page.locator(".update-notice").getByRole("button", { name: "What's new", exact: true }).click();
   await page.getByRole("region", { name: "What the last update brought", exact: true }).waitFor();

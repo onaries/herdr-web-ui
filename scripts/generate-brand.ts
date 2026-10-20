@@ -33,7 +33,7 @@ exportImage("public/favicon.ico", "scale=32:32:flags=lanczos", ["-c:v", "bmp"]);
 exportImage("public/social-preview.png", [
   "scale=640:640:flags=lanczos",
   "pad=1280:640:0:0:color=0xd7d8d8",
-  "drawtext=font=DejaVu Sans:fontcolor=0x2c3133:fontsize=76:text='herdr web ui':x=660:y=218",
+  "drawtext=font=DejaVu Sans:fontcolor=0x2c3133:fontsize=76:text='Ovis':x=660:y=218",
   "drawtext=font=DejaVu Sans:fontcolor=0x454c50:fontsize=28:text='Run herdr from anywhere.':x=664:y=330",
   "drawtext=font=DejaVu Sans:fontcolor=0x454c50:fontsize=20:text='CHAT  /  TERMINAL  /  MOBILE':x=666:y=410",
 ].join(","));

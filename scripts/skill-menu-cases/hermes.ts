@@ -21,8 +21,10 @@ export const expect = async ({ page, width, box, menu, scenario, clear, rowNames
     const rows = await rowNames();
     assert.deepEqual([...rows].sort(), commands.map((command) => command.name).sort());
     assert.ok(rows.includes("new") && rows.includes("status") && rows.includes("prompt"));
-    for (const omitted of ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin", "start"]) assert.ok(!rows.includes(omitted));
-    assert.deepEqual(await menu.locator(".menu-heading").allTextContents(), ["Built in", "User", "Your skills", "Project skills", "Built-in skills"]);
+    // Hermes's terminal screens are listed, in the Terminal commands group; start is not a command of its own
+    for (const screen of ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin"]) assert.ok(rows.includes(screen), screen);
+    assert.ok(!rows.includes("start"));
+    assert.deepEqual(await menu.locator(".menu-heading").allTextContents(), ["Built in", "User", "Your skills", "Project skills", "Built-in skills", "Terminal commands"]);
     await menuFits("Hermes full menu");
     await rowsBrief("Hermes full menu");
     await menu.evaluate((node) => { node.scrollTop = node.scrollHeight; });

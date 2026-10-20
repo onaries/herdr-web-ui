@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
-import { paneSplit, sessionSnapshot, tabCreate, workspaceClose, workspaceCreate } from "./herdr/client.ts";
-import type { ApiError, PaneLayoutSnapshot, PaneSwapped } from "../shared/protocol.ts";
+import { paneFocus, paneSplit, sessionSnapshot, tabCreate, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import type { ApiError, PaneLayoutSnapshot, PaneSwapped, ServerMessage } from "../shared/protocol.ts";
 
 describe("pane canvas: focus, explicit swap and dragged split ratio", () => {
   const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-canvas-contract-"));
@@ -99,5 +99,34 @@ describe("pane canvas: focus, explicit swap and dragged split ratio", () => {
     const unknown = await post("layout/ratio", { tab_id: "no-such-tab", path: [], ratio: 0.5 });
     expect(unknown.status).toBe(404);
     expect(((await unknown.json()) as ApiError).error.code).toBe("layout_not_found");
+  });
+
+  it("tells a browser where herdr's focus moved when herdr itself moved it", async () => {
+    const focused: string[] = [];
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    socket.addEventListener("message", (event) => {
+      const frame = JSON.parse(String(event.data)) as ServerMessage;
+      if (frame.type === "pane-focused") focused.push(frame.pane_id);
+    });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (socket.readyState !== WebSocket.OPEN) {
+        if (Date.now() > deadline) throw new Error("socket did not open");
+        await Bun.sleep(25);
+      }
+      // straight to herdr, as `herdr tab focus` or a script does: another tab's pane comes to the
+      // front. The server's focus subscription may still be opening, so the focus moves again
+      // (away and back) until a frame tells of it
+      let next = anotherTab;
+      while (!focused.includes(anotherTab)) {
+        if (Date.now() > deadline) throw new Error(`no pane-focused frame for ${anotherTab}: ${JSON.stringify(focused)}`);
+        await paneFocus(next);
+        next = next === anotherTab ? root : anotherTab;
+        await Bun.sleep(100);
+      }
+      expect(focused).toContain(anotherTab);
+    } finally {
+      socket.close();
+    }
   });
 });

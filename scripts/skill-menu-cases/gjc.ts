@@ -35,7 +35,8 @@ export const expect = async ({ page, width, box, menu, scenario, log, clear, row
     await box.fill("/");
     await menu.locator(".menu-item").first().waitFor();
     assert.deepEqual((await rowNames()).sort(), commands.map((command) => command.name).sort());
-    assert.ok(!(await rowNames()).includes("tree"));
+    // tree runs only in the terminal: it is listed, in the Terminal commands group
+    assert.ok((await rowNames()).includes("tree"));
     await menuFits("slash");
     await rowsBrief("slash");
     await menu.evaluate((node) => { node.scrollTop = node.scrollHeight; });
@@ -48,7 +49,7 @@ export const expect = async ({ page, width, box, menu, scenario, log, clear, row
     await box.fill("/");
     await menu.locator(".menu-item").first().waitFor();
     const headings = await menu.locator(".menu-heading").allTextContents();
-    assert.deepEqual(headings, ["Built in", "User", "Your skills", "Project skills", "Built-in skills"]);
+    assert.deepEqual(headings, ["Built in", "User", "Your skills", "Project skills", "Built-in skills", "Terminal commands"]);
     await menuFits("origins");
     await rowsBrief("origins");
     await menu.evaluate((node) => { node.scrollTop = node.scrollHeight; });

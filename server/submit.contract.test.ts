@@ -38,10 +38,13 @@ let shell: Recorder;
 let agent: Recorder;
 let codex: Recorder;
 let codexApproval: Recorder;
+let codexWorking: Recorder;
+let codexExtended: Recorder;
 let claudeQueue: Recorder;
 let omoAgent: Recorder;
 let omoExtended: Recorder;
 let hermes: Recorder;
+let omp: Recorder;
 
 const chunks = (recorder: Recorder): Chunk[] =>
   readFileSync(recorder.log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Chunk);
@@ -154,6 +157,7 @@ async function attached(socket: Socket, pane: string): Promise<number> {
   return mark;
 }
 const collapsedCodexScreen = "\n• Queued follow-up inputs\n  ? 1 question\n    alt+↑ to answer\n› Ask Codex to do anything\n";
+const codexWorkingScreen = "• Working (2s • esc to interrupt)\n›\n  gpt-6.1 high · /tmp/work\n";
 
 beforeAll(async () => {
   server = createServer({ port: 0, stateDir: join(root, "push") });
@@ -165,6 +169,8 @@ beforeAll(async () => {
   chmodSync(join(root, "codex"), 0o755);
   copyFileSync(process.execPath, join(root, "hermes"));
   chmodSync(join(root, "hermes"), 0o755);
+  copyFileSync(process.execPath, join(root, "omp"));
+  chmodSync(join(root, "omp"), 0o755);
   shell = await recorder("shell", process.execPath);
   agent = await recorder("agent", join(root, "claude"));
   await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
@@ -175,6 +181,10 @@ beforeAll(async () => {
   // the queue above an approval: the approval holds the input, and y / Enter would answer it
   codexApproval = await recorder("codex-approval", join(root, "codex"), `${queue}\nWould you like to run the following command?\n\n$ rm -rf junk\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel\n`);
   await herdrRpc("pane.report_agent", { pane_id: codexApproval.pane, source: "manual", agent: "codex", state: "blocked" });
+  codexWorking = await recorder("codex-working", join(root, "codex"), codexWorkingScreen);
+  await herdrRpc("pane.report_agent", { pane_id: codexWorking.pane, source: "manual", agent: "codex", state: "working" });
+  codexExtended = await recorder("codex-extended", join(root, "codex"), "--csi-u");
+  await herdrRpc("pane.report_agent", { pane_id: codexExtended.pane, source: "manual", agent: "codex", state: "working" });
   // the same text in a pane whose agent is not Codex
   claudeQueue = await recorder("claude-queue", join(root, "claude"), `${queue}› Ask Codex to do anything\n`);
   await herdrRpc("pane.report_agent", { pane_id: claudeQueue.pane, source: "manual", agent: "claude", state: "blocked" });
@@ -187,6 +197,11 @@ beforeAll(async () => {
   await herdrRpc("pane.report_agent", { pane_id: omoExtended.pane, source: "manual", agent: "pi", state: "working" });
   hermes = await recorder("hermes", join(root, "hermes"));
   await herdrRpc("pane.report_agent", { pane_id: hermes.pane, source: "manual", agent: "hermes", state: "idle" });
+  omp = await recorder("omp", join(root, "omp"));
+  await herdrRpc("pane.report_agent", { pane_id: omp.pane, source: "manual", agent: "omp", state: "idle" });
+  // an omp with herdr's integration reports its session once it takes input; a send waits for that
+  await herdrRpc("pane.report_agent_session", { pane_id: omp.pane, source: "herdr:omp", agent: "omp", seq: Date.now() * 1000,
+    agent_session_path: join(root, "omp-session.jsonl"), session_start_source: "startup" });
 }, 30_000);
 
 afterAll(async () => {
@@ -196,6 +211,82 @@ afterAll(async () => {
 });
 
 describe("WebSocket submit", () => {
+  for (const failure of ["idle", "draft", "question", "slash", "finished-after-paste"] as const) it(`Codex native queue protects ${failure}`, async () => {
+    const socket = await Socket.connect();
+    const target = failure === "question" ? codexApproval : codexWorking;
+    const { read, scroll } = mockClaudeInput(target.pane, failure === "draft" ? codexWorkingScreen.replace("›", "› user draft") : failure === "question" ? "Would you like to run the following command?\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\nPress enter to confirm or esc to cancel\n" : codexWorkingScreen);
+    const originalText = herdr.paneSendText;
+    const text = spyOn(herdr, "paneSendText").mockImplementation(async (...args) => {
+      const result = await originalText(...args);
+      if (args[0] === target.pane && failure === "finished-after-paste") await herdrRpc("pane.report_agent", { pane_id: target.pane, source: "manual", agent: "codex", state: "idle" });
+      return result;
+    });
+    const keys = spyOn(herdr, "paneSendKeys");
+    try {
+      if (failure === "idle") await herdrRpc("pane.report_agent", { pane_id: target.pane, source: "manual", agent: "codex", state: "idle" });
+      await attached(socket, target.pane);
+      socket.send({ type: "submit", id: 9690, pane_id: target.pane, text: failure === "slash" ? "/help" : "native follow-up", payload: "unused", delivery: "agent-queue" });
+      expect(await socket.result(9690)).toMatchObject({ ok: false, code: failure === "idle" ? "agent_not_ready" : failure === "draft" ? "input_draft" : failure === "question" ? "agent_blocked" : failure === "slash" ? "invalid_delivery" : "submit_partial" });
+      if (failure !== "finished-after-paste") expect(text).not.toHaveBeenCalled();
+      expect(keys).not.toHaveBeenCalled();
+    } finally {
+      text.mockRestore(); keys.mockRestore(); read.mockRestore(); scroll.mockRestore(); socket.close();
+      if (target === codexWorking) await herdrRpc("pane.report_agent", { pane_id: target.pane, source: "manual", agent: "codex", state: "working" });
+    }
+  });
+
+  for (const extended of [false, true]) it(`Codex native queue delivers paste then Tab once (${extended ? "CSI-u" : "legacy"})`, async () => {
+    const socket = await Socket.connect();
+    const target = extended ? codexExtended : codexWorking;
+    const { read, scroll } = mockClaudeInput(target.pane, codexWorkingScreen);
+    const key = extended ? "\u001b[9u" : "\t";
+    const prompt = spyOn(herdr, "agentPrompt");
+    try {
+      await attached(socket, target.pane);
+      const from = chunks(target).length;
+      const message = { type: "submit", id: 9700, pane_id: target.pane, text: extended ? "next Codex task\nsecond line @file" : "next Codex task\nsecond line", payload: "unused", delivery: "agent-queue" };
+      socket.send(message);
+      expect(await socket.result(message.id)).toMatchObject({ ok: true });
+      const deadline = Date.now() + 4000;
+      while (!typed(target, from).endsWith(key)) {
+        expect(Date.now()).toBeLessThan(deadline);
+        await Bun.sleep(20);
+      }
+      expect(typed(target, from)).toBe(`${paste(message.text + (extended ? " " : ""))}${key}`);
+      expect(prompt).not.toHaveBeenCalled();
+      const text = spyOn(herdr, "paneSendText");
+      const keys = spyOn(herdr, "paneSendKeys");
+      try {
+        const mark = socket.seen.length;
+        const reply = socket.waitFor((frame) => socket.seen.indexOf(frame) >= mark && frame.type === "submit-result" && frame.id === message.id);
+        socket.send(message);
+        expect(await reply).toMatchObject({ ok: true });
+        expect(text).not.toHaveBeenCalled();
+        expect(keys).not.toHaveBeenCalled();
+      } finally { text.mockRestore(); keys.mockRestore(); }
+    } finally { read.mockRestore(); scroll.mockRestore(); prompt.mockRestore(); socket.close(); }
+  });
+
+  it("shares a Codex native transfer receipt with the restored copy and original pending ID", async () => {
+    const first = await Socket.connect(), second = await Socket.connect();
+    const { read, scroll } = mockClaudeInput(codexWorking.pane, codexWorkingScreen);
+    const text = spyOn(herdr, "paneSendText"), keys = spyOn(herdr, "paneSendKeys");
+    try {
+      await attached(first, codexWorking.pane); await attached(second, codexWorking.pane);
+      first.send({ type: "submit", id: 9720, pane_id: codexWorking.pane, text: "restored native follow-up", payload: "unused", delivery: "hold" });
+      const accepted = await first.result(9720);
+      expect(accepted).toMatchObject({ ok: true, pending: { state: "held" } });
+      second.send({ type: "submit", id: 9721, pane_id: codexWorking.pane, text: accepted.pending.text, payload: "unused", delivery: "agent-queue", resend_id: accepted.pending.id });
+      expect(await second.result(9721)).toMatchObject({ ok: true });
+      const reply = first.waitFor((frame) => frame.type === "pending-result" && frame.id === 9722);
+      first.send({ type: "pending-action", id: 9722, pane_id: codexWorking.pane, pending_id: accepted.pending.id, action: "steer" });
+      expect(await reply).toMatchObject({ ok: true });
+      expect(text).toHaveBeenCalledTimes(1);
+      expect(keys).toHaveBeenCalledTimes(1);
+      expect(keys.mock.calls[0]?.[1]).toEqual(["Tab"]);
+    } finally { text.mockRestore(); keys.mockRestore(); read.mockRestore(); scroll.mockRestore(); first.close(); second.close(); }
+  });
+
   it("transfers one held ID once across duplicate and steer races, then drains the next item", async () => {
     const socket = await Socket.connect();
     const entered = deferred(); const release = deferred();
@@ -337,7 +428,7 @@ describe("WebSocket submit", () => {
         { typed: true, code: "invalid_delivery" },
         { clear_draft: "draft", code: "invalid_delivery" },
         { send_anyway: true, code: "invalid_delivery" },
-        { resend_id: "native-queue-copy", code: "invalid_delivery" },
+        { resend_id: "", code: "invalid_delivery" },
         { pane_id: shell.pane, code: "agent_queue_unsupported" },
         { pane_id: agent.pane, code: "agent_queue_unsupported" },
         { pane_id: codex.pane, code: "input_not_ready" },
@@ -686,6 +777,27 @@ describe("WebSocket submit", () => {
       expect(read.slice(0, enter).map((chunk) => chunk.data).join("")).toBe(paste("line one\nline two"));
       expect(read[enter]!.data).toBe("\r");
       expect(read[enter]!.at - read[enter - 1]!.at).toBeGreaterThanOrEqual(SUBMIT_DELAY_MS);
+    } finally {
+      socket.close();
+    }
+  }, 30_000);
+
+  it("sends omp a bare /model as /switch, whose picker is the session's alone, and anything else as written", async () => {
+    const socket = await Socket.connect();
+    try {
+      let from = chunks(omp).length;
+      socket.send({ type: "submit", id: 3, pane_id: omp.pane, text: "/model", payload: "/model" });
+      expect(await socket.result(3)).toMatchObject({ ok: true });
+      expect((await received(omp, from, 1)).map((chunk) => chunk.data).join("")).toBe(`${paste("/switch")}\r`);
+      from = chunks(omp).length;
+      socket.send({ type: "submit", id: 4, pane_id: omp.pane, text: "/model gpt-6-sol", payload: "/model gpt-6-sol" });
+      expect(await socket.result(4)).toMatchObject({ ok: true });
+      expect((await received(omp, from, 1)).map((chunk) => chunk.data).join("")).toBe(`${paste("/model gpt-6-sol")}\r`);
+      // Claude's own /model is its own list, picked for the session by its card
+      from = chunks(agent).length;
+      socket.send({ type: "submit", id: 5, pane_id: agent.pane, text: "/model", payload: "/model" });
+      expect(await socket.result(5)).toMatchObject({ ok: true });
+      expect((await received(agent, from, 1)).map((chunk) => chunk.data).join("")).toBe(`${paste("/model")}\r`);
     } finally {
       socket.close();
     }

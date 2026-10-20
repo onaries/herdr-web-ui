@@ -102,7 +102,7 @@ try {
   assert.equal(await fold.locator("> summary").innerText(), "Details", "the rest is folded");
   assert.equal(await fold.evaluate((node: HTMLDetailsElement) => node.open), false, "and folded until asked");
   await fold.locator("> summary").click();
-  assert.ok((await fold.innerText()).includes("Try again; if it keeps failing, restart herdr web ui on the PC."), "opened, Details holds the advice");
+  assert.ok((await fold.innerText()).includes("Try again; if it keeps failing, restart Ovis on the PC."), "opened, Details holds the advice");
   assert.equal(await fold.locator("code").innerText(), "Terminal output unavailable", "and the server's words, selectable, beside it");
   assert.equal(await page.locator(".chat-empty").count(), 0, "a fallback failure is not an empty structured conversation");
   await page.evaluate(() => window.chatFallbackQA.pane("empty"));

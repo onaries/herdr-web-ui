@@ -9,7 +9,7 @@
  * Pure logic, DOM-free, so the policy is unit-testable (see compose.test.ts).
  */
 
-import type { AgentStatus, SlashCommand } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, CommandForm, SlashCommand } from "../../shared/protocol.ts";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { knownStatus, STATUS_WORD } from "./status.ts";
 import { t } from "./i18n.ts";
@@ -128,35 +128,78 @@ export function insertLeadingMention(
 export const QUEUE_READY_STATUS: Readonly<Partial<Record<string, true>>> = { done: true, idle: true };
 
 /**
- * Commands an agent runs that the chat can start but cannot finish, by the agents that have them.
- *
- * `/tree` opens pi's tree browser, and omp documents the same command, the same navigator and the
- * same three branch-summary choices — it moves the session's branch, and no entry names where the
- * leaf was left, so the browser that opens reads as nothing at all through the chat: no card (its
- * hint says "up/down move", not the hint a live dialog is read from), and the pane still reports
- * itself done while the terminal waits for arrow keys a phone cannot send. The chat keeps its half
- * honest — it says where a /tree left the conversation — and leaves navigating to the terminal.
- *
- * Deliberately not a block: the composer sends text as written and nothing filters it, so typing
- * these still reaches the agent. The point is that the chat no longer points at them and says why
- * when they are typed anyway. claude and codex are absent because there is no evidence they have
- * the command, and telling a reader about a browser their agent does not have is its own wrong; omo
- * and gjc are absent for the same reason, unverified rather than found wanting.
+ * Whether the menu lists a row. The agent's own menu hides an `agent-hidden` row (Claude's agents,
+ * heapdump, setup-bedrock), and this one mirrors it: never listed, and typed by hand it is sent
+ * like any other text. A row without the field (an older server) is listed as it always was.
  */
-const TERMINAL_ONLY_COMMANDS: Readonly<Record<string, readonly string[]>> = {
-  tree: ["pi", "omp"],
-};
+export function commandListed(command: SlashCommand): boolean {
+  return command.visibility !== "agent-hidden";
+}
 
-/** The command `text` types, if it is one of those: its name, or null. Case and arguments aside,
- * a message only has to *be* the command — prose that merely mentions it, or a word that only
- * begins like it (`/treemap`), is not one. */
-export function terminalOnlyCommand(agent: string | null, text: string): string | null {
-  if (agent === null) return null;
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return null;
-  const [word] = trimmed.slice(1).toLowerCase().split(/\s+/);
-  const agents = TERMINAL_ONLY_COMMANDS[word ?? ""];
-  return agents !== undefined && agents.includes(agent) ? (word ?? null) : null;
+/**
+ * A command the agent runs in the terminal, which the chat can start but cannot finish: the
+ * catalog says so (`visibility: "terminal"`, or a bare form whose interaction is the terminal,
+ * as pi's and omp's `/tree` browser or Claude's `/config` screen). The chat lists these apart and
+ * never sends one on its own: picking or typing one offers the terminal instead (Composer.tsx).
+ * A row the agent's own menu hides is not one of them: it is never listed at all.
+ */
+export function terminalCommand(command: SlashCommand): boolean {
+  if (!commandListed(command)) return false;
+  return command.visibility === "terminal" || (command.forms ?? []).some((form) => form.match === "bare" && form.interaction === "terminal");
+}
+
+/**
+ * The form `argument` types a command in: the subcommand's own, else the one for any other
+ * argument, else the bare one. A stray argument to a command that takes none is still that
+ * command typed (`/tree w13:p2` opens the tree), so the bare form answers for it too.
+ */
+function typedForm(command: SlashCommand, argument: string): CommandForm | undefined {
+  const forms = command.forms ?? [];
+  const bare = forms.find((form) => form.match === "bare");
+  if (argument === "") return bare;
+  const sub = argument.split(/\s+/u)[0]!.toLocaleLowerCase();
+  return forms.find((form) => typeof form.match === "object" && form.match.sub.toLocaleLowerCase() === sub)
+    ?? forms.find((form) => form.match === "other")
+    ?? bare;
+}
+
+/**
+ * The terminal command `text` types, or null. Case and arguments aside, a message only has to
+ * *be* the command: prose that merely mentions it, a word that only begins like it (`/configure`
+ * for `/config`), or the name behind another trigger (`$config` for a `/` row) is not one. The
+ * form it was typed in decides where the catalog tells forms apart: `/model` may open a dialog
+ * while `/model sonnet` needs nothing, and only `/resume list` may need the terminal. A row the
+ * agent's own menu hides is sent as typed, whatever its forms say.
+ */
+export function typedTerminalCommand(commands: readonly SlashCommand[], text: string): SlashCommand | null {
+  const match = /^([/$])([^\s/$]\S*)(?:\s+([\s\S]*))?$/u.exec(text.trim());
+  if (match === null) return null;
+  const [, trigger, word, argument = ""] = match;
+  const name = word!.toLocaleLowerCase();
+  const command = commands.find((row) => commandListed(row) && (row.trigger ?? "/") === trigger && row.name.toLocaleLowerCase() === name);
+  if (command === undefined) return null;
+  if (command.visibility === "terminal") return command;
+  return typedForm(command, argument.trim())?.interaction === "terminal" ? command : null;
+}
+
+/**
+ * What a terminal command offers instead of a send: Open Terminal switches the lens and sends
+ * nothing, Run in Terminal sends it through the usual path and then switches. A connection that
+ * only observes the pane may look, never send, so it gets the first alone (PaneTerminal mounts no
+ * composer for it at all; the rule is kept where the actions are drawn).
+ */
+export function terminalCommandActions(role: ClientRole): ("open" | "run")[] {
+  return role === "observe" ? ["open"] : ["open", "run"];
+}
+
+/** The pane's `@` skills (OpenCode v2 attachments), listed in the `@` menu beside the files; none for other panes. */
+export function atSkillCommands(commands: readonly SlashCommand[]): SlashCommand[] {
+  return commands.filter((command) => command.trigger === "@" && commandListed(command));
+}
+
+/** What picking an `@` skill inserts: `@` and its name, the skill id OpenCode expects (the row's `id` is its file's path). */
+export function atSkillReplacement(command: SlashCommand): string {
+  return `@${command.name} `;
 }
 
 /** The composer's status word: the shared vocabulary, with a blank state reading as READY (a shell is always ready). */
@@ -264,6 +307,7 @@ export function commandsForTrigger(commands: readonly SlashCommand[], agent: str
   const syntax = skillSyntax(agent);
   const prefix = trigger.prefix ?? "/";
   return commands.filter((command) => {
+    if (!commandListed(command)) return false;
     if (trigger.start === 0) {
       return syntax.skillTriggers.length > 1
         ? prefix === "/" || command.source === "skill"
@@ -291,12 +335,14 @@ export function briefDescription(description: string): string {
 
 /**
  * Where a bare `/` or `$` lists a command: a skill under where it comes from, yours before the
- * project's, then the ones without a known origin, the agent's own and its plugins'.
+ * project's, then the ones without a known origin, the agent's own and its plugins'; last, apart
+ * from their sources, the commands that run in the terminal.
  */
-export const COMMAND_GROUPS = ["builtin", "user", "project", "skill-user", "skill-project", "skill", "skill-bundled", "skill-plugin", "plugin"] as const;
+export const COMMAND_GROUPS = ["builtin", "user", "project", "skill-user", "skill-project", "skill", "skill-bundled", "skill-plugin", "plugin", "terminal"] as const;
 export type CommandGroup = (typeof COMMAND_GROUPS)[number];
 
 export function commandGroup(command: SlashCommand): CommandGroup {
+  if (terminalCommand(command)) return "terminal";
   if (command.source === "skill" && command.origin !== undefined) return `skill-${command.origin}`;
   return command.source;
 }

@@ -1,0 +1,45 @@
+
+  Tip: /help skills lists skill commands · /help <text> filters · Ctrl+P opens the command palette
+  Multi-line: Ctrl+J, Alt+Enter, or \\+Enter for a new line
+  Draft editor: Ctrl+G (Alt+G in VSCode/Cursor)
+  Paste image: Alt+V (or /paste)
+
+
+⚙️  /reload-skills
+⏳ Reloading skills...
+  ➕ Added Skills:
+      - fixture-added: A fixture skill added on disk before the reload
+  📚 55 skill(s) available
+
+⚙️  /reload-skills
+⏳ Reloading skills...
+  No new skills detected.
+  📚 54 skill(s) available
+
+⚙️  /status
+Hermes CLI Status
+
+Session ID: 20261020_184853_b7a650
+Path: /tmp/acc-t24-wPla/hermes-home
+Model: fixture-model (custom)
+Approvals: smart
+Created: 2026-10-20 18:48
+Last Activity: 2026-10-20 18:48
+Tokens: 0
+Agent Running: No
+
+⚙️  /status
+Hermes CLI Status
+
+Session ID: 20261020_184853_b7a650
+Path: /tmp/acc-t24-wPla/hermes-home
+Model: fixture-model (custom)
+Approvals: smart
+Created: 2026-10-20 18:48
+Last Activity: 2026-10-20 18:48
+Tokens: 0
+Agent Running: No
+ ☤ fixture-model │ ctx -- │ [░░░░░░░░░░] -- │ 7m │ ⏲ 0s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Plan a feature, then build it step by step
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

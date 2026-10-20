@@ -1,9 +1,10 @@
 import { afterAll, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { herdrRpc, herdrSocketPath, sessionSnapshot, workspaceClose, workspaceCreate, paneRead } from "./herdr/client.ts";
-import { ConversationUnavailable, gjcTranscriptPath, paneConversation } from "./conversation.ts";
+import { ConversationUnavailable, forgetTranscriptState, gjcTranscriptPath, paneConversation } from "./conversation.ts";
 import { isGjcProcess } from "./gjc-runtime.ts";
 import { startShellAgent } from "./shell-agent.ts";
 import { createServer } from "./index.ts";
@@ -24,7 +25,8 @@ writeFileSync(script, "if (process.env.GJC_TEST_CWD) process.chdir(process.env.G
 mkdirSync(bin);
 // The fixture accepts only the public raw global session.list operation. Its registry is test-owned JSON, never SDK state.
 writeFileSync(sdkCli, `
-const { readFileSync } = require("node:fs");
+const { appendFileSync, readFileSync } = require("node:fs");
+if (process.env.GJC_TEST_CALLS) appendFileSync(process.env.GJC_TEST_CALLS, "sdk\\n");
 const args = process.argv.slice(2);
 const value = (flag) => { const i = args.indexOf(flag); return i < 0 ? undefined : args[i + 1]; };
 if (args[0] !== "sdk" || args[1] !== "session" || args[2] !== "raw" || args[3] !== "global"
@@ -150,7 +152,7 @@ function writeRegistry(rows: Record<string, unknown>[], paths: Record<string, st
 }
 
 async function withSdkFixture<T>(run: () => Promise<T>): Promise<T> {
-  const keys = ["HOME", "HERDR_SOCKET", "PATH", "GJC_TEST_REGISTRY", "GJC_TEST_AGENT_DIR"] as const;
+  const keys = ["HOME", "HERDR_SOCKET", "PATH", "GJC_TEST_REGISTRY", "GJC_TEST_AGENT_DIR", "GJC_TEST_CALLS"] as const;
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
   process.env["HOME"] = home;
   process.env["HERDR_SOCKET"] = herdrSocketPath();
@@ -170,6 +172,30 @@ async function withSdkFixture<T>(run: () => Promise<T>): Promise<T> {
 function record(cwd: string, answer: string, id: string, title = "shared title"): string {
   return JSON.stringify({ type: "session", cwd, id, title }) + "\n"
     + JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: answer }] } }) + "\n";
+}
+
+function signedSdkIndexRow(
+  indexSeq: number,
+  type: string,
+  sessionId: string,
+  pid: number,
+  ts: number,
+): string {
+  const unsigned = {
+    version: 4,
+    indexSeq,
+    type,
+    sessionId,
+    locator: { cwd: home, worktreeRoot: null, stateRoot: home },
+    pid,
+    processIncarnation: `test-process-${pid}`,
+    hostIncarnation: "test-host-incarnation",
+    endpointGeneration: 1,
+    activity: { state: "idle", at: ts },
+    ts,
+  };
+  const checksum = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+  return `${JSON.stringify({ ...unsigned, checksum })}\n`;
 }
 
 async function expectConversation(id: string, answer: string): Promise<void> {
@@ -194,6 +220,86 @@ it("SDK identity ignores a copied neighboring answer on the pane screen", async 
   expect(await gjcTranscriptPath(id, home, home)).toBe(a);
   await expectConversation(id, "OK");
 }));
+
+it("keeps subprocess-resolved SDK pane bindings across unrelated signed heartbeat appends and invalidates /new", async () => withSdkFixture(async () => {
+  const indexDir = join(agentDir, "sdk", "sessions");
+  const indexPath = join(indexDir, "index.jsonl");
+  const callsPath = join(home, "sdk-cli-calls.log");
+  try {
+    mkdirSync(indexDir, { recursive: true });
+    process.env["GJC_TEST_CALLS"] = callsPath;
+
+    const firstSession = "heartbeat-pane-first";
+    const secondSession = "heartbeat-pane-second";
+    const freshSession = "heartbeat-pane-first-new";
+    const firstPath = join(dir, `${firstSession}.jsonl`);
+    const secondPath = join(dir, `${secondSession}.jsonl`);
+    const freshPath = join(dir, `${freshSession}.jsonl`);
+    writeFileSync(firstPath, record(home, "first answer", firstSession));
+    writeFileSync(secondPath, record(home, "second answer", secondSession));
+    writeFileSync(freshPath, record(home, "fresh answer", freshSession));
+
+    const firstPane = await pane([dir], "first answer");
+    const secondPane = await pane([dir], "second answer");
+    await waitForScreen(firstPane, "first answer");
+    await waitForScreen(secondPane, "second answer");
+    await setAgent(firstPane, "gjc");
+    await setAgent(secondPane, "gjc");
+    const firstProcess = await gjcProcess(firstPane);
+    const secondProcess = await gjcProcess(secondPane);
+    expect(firstProcess.pid).not.toBe(secondProcess.pid);
+
+    const timestamp = Date.now();
+    writeFileSync(indexPath,
+      signedSdkIndexRow(1, "host_registered", firstSession, firstProcess.pid, timestamp)
+      + signedSdkIndexRow(2, "host_registered", secondSession, secondProcess.pid, timestamp + 1));
+    const paths = { [firstSession]: firstPath, [secondSession]: secondPath, [freshSession]: freshPath };
+    writeRegistry([
+      sdkRow(firstProcess.pid, home, firstSession),
+      sdkRow(secondProcess.pid, home, secondSession),
+    ], paths);
+
+    expect(await gjcTranscriptPath(firstPane, home, home)).toBe(firstPath);
+    expect(readFileSync(callsPath, "utf8").split("\n").filter(Boolean)).toHaveLength(2);
+    expect(await gjcTranscriptPath(secondPane, home, home)).toBe(secondPath);
+    expect(readFileSync(callsPath, "utf8").split("\n").filter(Boolean)).toHaveLength(4);
+
+    let indexSeq = 2;
+    for (let wave = 1; wave <= 3; wave += 1) {
+      const heartbeatSeq = ++indexSeq;
+      const heartbeatPid = 900_000 + heartbeatSeq;
+      appendFileSync(indexPath, signedSdkIndexRow(
+        heartbeatSeq,
+        "host_heartbeat",
+        `unrelated-heartbeat-${heartbeatSeq}`,
+        heartbeatPid,
+        timestamp + heartbeatSeq,
+      ));
+      expect(await gjcTranscriptPath(firstPane, home, home)).toBe(firstPath);
+      expect(await gjcTranscriptPath(secondPane, home, home)).toBe(secondPath);
+      expect(readFileSync(callsPath, "utf8").split("\n").filter(Boolean)).toHaveLength(4);
+    }
+
+    writeRegistry([
+      sdkRow(firstProcess.pid, home, freshSession),
+      sdkRow(secondProcess.pid, home, secondSession),
+    ], paths);
+    const registeredSeq = ++indexSeq;
+    appendFileSync(indexPath, signedSdkIndexRow(
+      registeredSeq,
+      "host_registered",
+      freshSession,
+      firstProcess.pid,
+      timestamp + registeredSeq,
+    ));
+    expect(await gjcTranscriptPath(firstPane, home, home)).toBe(freshPath);
+    expect(readFileSync(callsPath, "utf8").split("\n").filter(Boolean)).toHaveLength(6);
+  } finally {
+    forgetTranscriptState();
+    rmSync(indexDir, { recursive: true, force: true });
+    rmSync(callsPath, { force: true });
+  }
+}), 15_000);
 
 it("SDK maps same-cwd panes by exact GJC PID despite identical answers, titles, and mtimes", async () => withSdkFixture(async () => {
   const a = join(dir, "same-answer-a.jsonl"), b = join(dir, "same-answer-b.jsonl");

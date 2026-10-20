@@ -18,7 +18,7 @@ describe("HTML blocks in a markdown file", () => {
     const logo = blocks.find((block) => block.type === "paragraph" && block.lines.flat().some((node) => node.type === "image"));
     expect(logo).toMatchObject({ type: "paragraph", align: "center" });
     const image = logo?.type === "paragraph" ? logo.lines.flat().find((node) => node.type === "image") : undefined;
-    expect(image).toMatchObject({ type: "image", src: "public/icons/icon-192.png", alt: "herdr web ui", width: 100 });
+    expect(image).toMatchObject({ type: "image", src: "public/icons/icon-192.png", alt: "Ovis", width: 100 });
     const languages = blocks.find((block) => block.type === "paragraph" && text(block.lines.flat()).includes("English"));
     expect(languages?.type === "paragraph" && languages.lines.flat().some((node) => node.type === "file" && node.path === "README.ko.md")).toBe(true);
     const site = blocks.find((block) => block.type === "paragraph" && text(block.lines.flat()).includes("website"));

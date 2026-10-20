@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createServer } from "./index.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
-import type { ConversationResponse } from "../shared/protocol.ts";
+import type { ConversationResponse, InteractivePrompt } from "../shared/protocol.ts";
 
 // omp names its session file when it starts and writes it with the first message (seen on a
 // fresh omp pane: herdr held the path, the file was not there). A fake omp stands in.
@@ -15,6 +16,27 @@ const fresh = join(slug, "2026-10-06T00-00-00-000Z_omp-fresh.jsonl");
 const originalHome = process.env["HOME"];
 let workspaceId: string | undefined;
 let paneId: string;
+let handoffPaneId: string;
+// omp 18.8.7's /handoff as recorded (server/fixtures/omp-handoff-18.8.7-*): a stand-in draws the
+// "Generating handoff" status and, on Esc, the cancelled screen, then notes the key it got.
+const fixture = (name: string) => readFileSync(new URL(`./fixtures/omp-handoff-18.8.7-${name}`, import.meta.url), "utf8");
+const recorded = fixture("session.jsonl").split("\n").filter(Boolean);
+const compaction = recorded.find((line) => JSON.parse(line).type === "compaction")!;
+const handoffSession = join(slug, "2026-10-20T09-51-33-687Z_omp-handoff.jsonl");
+const handoffMarker = join(root, "handoff-keys");
+const HANDOFF = `
+const { readFileSync, writeFileSync } = require("node:fs");
+const [generating, cancelled, marker] = process.argv.slice(2);
+const draw = (file) => process.stdout.write("\\x1b[2J\\x1b[H" + readFileSync(file, "utf8").replace(/\\n$/, "").split("\\n").join("\\r\\n"));
+process.stdin.setRawMode(true);
+process.stdin.resume();
+process.stdin.on("data", (data) => {
+  if (!data.includes(0x1b)) return;
+  draw(cancelled);
+  writeFileSync(marker, JSON.stringify([...data]));
+});
+draw(generating);
+`;
 let server: ReturnType<typeof createServer>;
 let seq = Date.now() * 1000;
 
@@ -36,6 +58,25 @@ beforeAll(async () => {
   }
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "herdr:omp", agent: "omp", state: "idle", seq: ++seq });
   await herdrRpc("pane.report_agent_session", { pane_id: paneId, source: "herdr:omp", agent: "omp", seq: ++seq, agent_session_path: fresh, session_start_source: "startup" });
+  // omp writes the pane's cwd into its session header
+  writeFileSync(handoffSession, recorded.filter((line) => line !== compaction)
+    .map((line) => JSON.parse(line).type === "session" ? JSON.stringify({ ...JSON.parse(line), cwd: root }) : line).join("\n") + "\n");
+  writeFileSync(join(root, "handoff.js"), HANDOFF);
+  const handoffBin = join(root, "handoff-bin");
+  mkdirSync(handoffBin, { recursive: true });
+  copyFileSync(process.execPath, join(handoffBin, "omp"));
+  chmodSync(join(handoffBin, "omp"), 0o755);
+  const split = await herdrRpc<{ pane: { pane_id: string } }>("pane.split", { target_pane_id: paneId, direction: "down", focus: false });
+  handoffPaneId = split.pane.pane_id;
+  const screens = ["generating-narrow.txt", "cancelled-narrow.txt"].map((name) => fileURLToPath(new URL(`./fixtures/omp-handoff-18.8.7-${name}`, import.meta.url)));
+  await herdrRpc("pane.send_text", { pane_id: handoffPaneId, text: `exec '${join(handoffBin, "omp")}' '${join(root, "handoff.js")}' '${screens[0]}' '${screens[1]}' '${handoffMarker}'\n` });
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === handoffPaneId);
+    if (pane?.agent === "omp") break;
+    await Bun.sleep(50);
+  }
+  await herdrRpc("pane.report_agent", { pane_id: handoffPaneId, source: "herdr:omp", agent: "omp", state: "idle", seq: ++seq });
+  await herdrRpc("pane.report_agent_session", { pane_id: handoffPaneId, source: "herdr:omp", agent: "omp", seq: ++seq, agent_session_path: handoffSession, session_start_source: "startup" });
   process.env["HOME"] = root;
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
 });
@@ -48,8 +89,8 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const read = async (): Promise<ConversationResponse> => {
-  const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`);
+const read = async (pane = paneId): Promise<ConversationResponse> => {
+  const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(pane)}`);
   expect(response.status).toBe(200);
   return await response.json() as ConversationResponse;
 };
@@ -65,4 +106,45 @@ it("answers a session omp has not written yet as an empty conversation, then fol
   expect(written.source).toBe("omp-transcript");
   expect(written.history_id).not.toBe("unwritten:2026-10-06T00-00-00-000Z_omp-fresh");
   expect(written.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+});
+
+/** The pane's card once `wanted` holds for it, within a deadline. */
+async function promptWhen(wanted: (prompt: InteractivePrompt | null) => boolean): Promise<InteractivePrompt | null> {
+  let last: InteractivePrompt | null = null;
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline; await Bun.sleep(50)) {
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/prompt?pane_id=${encodeURIComponent(handoffPaneId)}`);
+    expect(response.status).toBe(200);
+    last = (await response.json() as { prompt: InteractivePrompt | null }).prompt;
+    if (wanted(last)) return last;
+  }
+  throw new Error(`the handoff pane's card did not settle: ${JSON.stringify(last)}`);
+}
+
+it("cancels omp's /handoff from its card, and keeps the same conversation when a handoff compacts it in place", async () => {
+  const original = readFileSync(handoffSession, "utf8");
+  const before = await read(handoffPaneId);
+  expect(before.source).toBe("omp-transcript");
+  expect(before.turns.filter((turn) => turn.role === "user")).toHaveLength(2);
+
+  const card = await promptWhen((prompt) => prompt !== null);
+  expect(card).toMatchObject({ agent: "omp", question: "Generating handoff…", options: [{ label: "Cancel", description: null }] });
+  const answered = await fetch(`http://127.0.0.1:${server.port}/api/pane/prompt/answer`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pane_id: handoffPaneId, prompt_id: card!.id, option_index: 0 }),
+  });
+  expect(answered.status).toBe(200);
+  for (const deadline = Date.now() + 10_000; !existsSync(handoffMarker); await Bun.sleep(50)) {
+    if (Date.now() > deadline) throw new Error("the stand-in omp got no key");
+  }
+  expect(JSON.parse(readFileSync(handoffMarker, "utf8"))).toEqual([0x1b]);
+  expect(await promptWhen((prompt) => prompt === null)).toBeNull();
+  // cancelled: omp left the session as it was, and the chat on the same conversation
+  expect(readFileSync(handoffSession, "utf8")).toBe(original);
+  expect((await read(handoffPaneId)).history_id).toBe(before.history_id);
+
+  // a finished handoff appends its compaction entry to the same session file
+  appendFileSync(handoffSession, compaction + "\n");
+  const after = await read(handoffPaneId);
+  expect(after.history_id).toBe(before.history_id);
+  expect(after.turns.slice(0, before.turns.length)).toEqual(before.turns);
 });

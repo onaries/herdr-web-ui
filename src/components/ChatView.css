@@ -54,6 +54,8 @@
   padding-top: calc(var(--space-4) + var(--header-over, 0px));
   padding-bottom: calc(var(--space-5) + var(--composer-over, 0px));
   scroll-padding-top: var(--header-over, 0px);
+  /* and a row brought into view (an opened screen preview) stops clear of the card, not under it */
+  scroll-padding-bottom: var(--composer-over, 0px);
   background: var(--bg);
 }
 
@@ -1629,6 +1631,125 @@
 
 /* under the message that invoked it, on the message's side */
 .chat-turn-user .chat-skills { justify-content: flex-end; margin: 0; }
+
+/* what became of a command sent from here (lib/outcomeChip.ts): one quiet line under the bubble,
+   on the message's side, in the meta register, as a messaging app's delivery receipt sits under a
+   sent bubble. The word changes on evidence alone and never moves: no animation marks a state */
+.chat-outcome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  max-width: 80%;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.chat-outcome-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-height: var(--chip-h);
+}
+
+.chat-outcome-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chat-outcome-state > svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* a result and a question waiting take their status colours; the rest stay dim: the word is the signal */
+.chat-outcome[data-outcome-state="result-observed"] .chat-outcome-state { color: var(--status-done); }
+.chat-outcome[data-outcome-state="interaction-required"] .chat-outcome-state { color: var(--status-blocked); }
+
+/* the chip's one action, a text button in the fold control's register */
+.chat-outcome-action {
+  min-height: var(--chip-h);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.chat-outcome-action:hover { background: var(--bg-hover); }
+
+/* a changed screen after the send: a passing view folded under the chip, never a result */
+.chat-outcome-preview {
+  max-width: 100%;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.chat-outcome-preview > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat-outcome-preview > summary::-webkit-details-marker { display: none; }
+
+.chat-outcome-caret { width: 14px; height: 14px; flex-shrink: 0; }
+
+.chat-outcome-preview[open] .chat-outcome-caret { transform: rotate(180deg); }
+
+/* screen text, as the terminal showed it: verbatim with its line breaks, bounded like a notice */
+.chat-outcome-preview-text {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  max-height: 60vh;
+  overflow: auto;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* what a recognized command printed (Hermes /status), verbatim: the preview's card, open, with its Dismiss */
+.chat-outcome-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.chat-outcome-result-text {
+  align-self: stretch;
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .chat-outcome-action,
+  .chat-outcome-preview > summary { min-height: var(--touch-target); }
+
+  /* the chip sits clear of the copy target that reaches below the bubble's row */
+  .chat-turn-user .chat-user-row + .chat-outcome { margin-top: calc((var(--touch-target) - var(--chip-h)) / 2); }
+}
 
 /* pi moved its leaf and wrote nothing: the turns above are not all the file holds, and this is
    the only place that can say so. Read-only, so it is quieter than a compaction, which changed

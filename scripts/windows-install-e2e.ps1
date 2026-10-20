@@ -4,7 +4,7 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-install-e2e.ps1 [-Installer <path|url>] [-Ref <tag|commit>] [-Update] [-Fresh]
 #
-# It replaces an installed herdr web ui and leaves the one it installed. A herdr server it had to
+# It replaces an installed Ovis and leaves the one it installed. A herdr server it had to
 # start is stopped again; one that was already running is left alone.
 param(
     # install.ps1 in this checkout, or a URL to pipe into Invoke-Expression as the README says
@@ -70,7 +70,7 @@ function Assert-App([string]$Expected) {
     Assert ((Invoke-WebRequest "$origin/$bundle" -UseBasicParsing -TimeoutSec 30).StatusCode -eq 200) 'The app page cannot load its script'
     $session = Get-Json '/api/session'
     Assert ([bool]$session.snapshot.version) 'The app does not reach herdr'
-    Write-Host "PASS herdr web ui $($updates.current_version) ($($health.web_ui.revision)) runs with herdr $($session.snapshot.version)"
+    Write-Host "PASS Ovis $($updates.current_version) ($($health.web_ui.revision)) runs with herdr $($session.snapshot.version)"
 }
 
 if ($Fresh) {
@@ -85,7 +85,7 @@ $startedServer = $false
 try {
     $plugin = Find-Plugin
     if ($plugin) {
-        Write-Host "e2e: removing the installed herdr web ui $($plugin.version)"
+        Write-Host "e2e: removing the installed Ovis $($plugin.version)"
         if (Test-ServerRunning) { herdr plugin action invoke "$pluginId.stop-windows" | Out-Null }
         Wait-Until { -not (Get-NetTCPConnection -LocalPort 7317 -State Listen -ErrorAction SilentlyContinue) } 30 'the installed app to stop' | Out-Null
         herdr plugin uninstall $pluginId | Out-Null

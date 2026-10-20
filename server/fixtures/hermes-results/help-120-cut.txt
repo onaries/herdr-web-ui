@@ -1,0 +1,45 @@
+[name...])
+    /toolsets       - List available toolsets
+    /skills         - Search, install, inspect, or manage skills
+    /memory         - Review pending memory writes / toggle the approval gate (usage: /memory
+[pending|approve|reject|approval] [id|on|off])
+    /bundles        - List skill bundles (aliases /<name> for multiple skills)
+    /pet            - Toggle or adopt a petdex mascot (/pet, /pet list, /pet <slug>) (usage: /pet [toggle|list|scale
+<n>|<slug>])
+    /hatch          - Generate a new petdex pet from a description (usage: /hatch [description])
+    /generate-pet   - Generate a new petdex pet from a description (alias for /hatch)
+    /learn          - Learn a reusable skill from anything you describe (dirs, URLs, this chat, notes) (usage: /learn
+<what to learn from>)
+    /init           - Generate or update AGENTS.md project instructions from a repo scan (usage: /init [notes])
+    /cron           - Manage scheduled tasks (usage: /cron [subcommand])
+    /suggestions    - Review suggested automations (accept/dismiss) (usage: /suggestions [accept|dismiss N | catalog])
+    /suggest        - Review suggested automations (accept/dismiss) (alias for /suggestions)
+    /blueprint      - Set up an automation from a blueprint template (usage: /blueprint [name] [slot=value ...])
+    /bp             - Set up an automation from a blueprint template (alias for /blueprint)
+    /curator        - Background skill maintenance (status, run, pin, archive, list-archived) (usage: /curator
+[subcommand])
+    /kanban         - Multi-profile collaboration board (tasks, links, comments) (usage: /kanban [subcommand])
+    /reload         - Reload .env variables into the running session
+    /reload-mcp     - Reload MCP servers from config
+    /reload_mcp     - Reload MCP servers from config (alias for /reload-mcp)
+    /reload-skills  - Re-scan ~/.hermes/skills/ for newly installed or removed skills
+    /reload_skills  - Re-scan ~/.hermes/skills/ for newly installed or removed skills (alias for /reload-skills)
+    /browser        - Connect browser tools to your live Chromium-family browser via CDP, or switch to Browser Use mode
+(usage: /browser [connect|disconnect|status|use])
+    /plugins        - List installed plugins and their status
+
+  ── Exit ──
+    /quit           - Exit the CLI (use --delete to also remove session history) (usage: /quit [--delete])
+    /exit           - Exit the CLI (use --delete to also remove session history) (alias for /quit)
+
+  ⚡ Skill Commands: 54 installed — /help skills to list them
+
+  Tip: /help skills lists skill commands · /help <text> filters · Ctrl+P opens the command palette
+  Multi-line: Ctrl+J, Alt+Enter, or \\+Enter for a new line
+  Draft editor: Ctrl+G (Alt+G in VSCode/Cursor)
+  Paste image: Alt+V (or /paste)
+
+ ☤ fixture-model │ ctx -- │ [░░░░░░░░░░] -- │ 53s │ ⏲ 0s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Plan a feature, then build it step by step
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

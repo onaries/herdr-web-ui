@@ -67,7 +67,7 @@ export function TurnChangedFiles({ paneId, parts }: { paneId: string; parts: rea
   };
   return <section className="turn-changed-files" aria-label={t("Files edited in this turn")}>
     <p className="turn-changed-files-title">{t("Files edited in this turn")} <span>· {t("Working tree")}</span></p>
-    <ul>{files.map((path) => <li key={path}>{context === null ? path : <button type="button" disabled={opening !== null} title={t("Open working-tree diff for {path}", { path })} onClick={() => void open(path)}>{path}</button>}</li>)}</ul>
+    <ul tabIndex={files.length > 5 ? 0 : undefined} aria-label={t("Files edited in this turn")}>{files.map((path) => <li key={path}>{context === null ? path : <button type="button" disabled={opening !== null} title={t("Open working-tree diff for {path}", { path })} onClick={() => void open(path)}>{path}</button>}</li>)}</ul>
     {opening !== null && <p role="status">{t("Opening…")}</p>}
     {error !== null && <p className="chat-copy-error" role="alert">{error}</p>}
   </section>;

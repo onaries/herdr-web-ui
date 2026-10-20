@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paneCommands } from "../commands.ts";
+import { source } from "./pi.ts";
 
 const roots: string[] = [];
 const previousHome = process.env.HOME;
@@ -24,7 +25,8 @@ function put(path: string, content: string): void {
   writeFileSync(path, content);
 }
 const skill = (root: string, name: string, description = `${name} skill`) => put(join(root, name, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nbody\n`);
-const extra = (home: string, cwd: string | null) => paneCommands("pi", cwd, home).filter((command) => command.source !== "builtin");
+const scan = (home: string, cwd: string | null) => source.discover({ home, cwd, repoRoot: null, env: null, roots: {} }).sort((left, right) => left.name.localeCompare(right.name));
+const extra = (home: string, cwd: string | null) => scan(home, cwd);
 const names = (home: string, cwd: string | null) => extra(home, cwd).map((command) => command.name);
 
 /** a home, and a project that is a repository with a pane working in a subfolder of it */
@@ -39,10 +41,103 @@ function setup(): { home: string; repo: string; cwd: string; agentDir: string } 
 }
 
 describe("pi's builtins", () => {
-  it("keeps every 0.87.1 name except tree", () => {
-    const commands = paneCommands("pi", null, temp()).map((command) => command.name);
-    expect(commands.sort()).toEqual(["settings", "model", "thinking", "scoped-models", "login", "logout", "llama", "new", "resume", "name", "session", "fork", "clone", "compact", "import", "copy", "export", "share", "bug", "trust", "reload", "hotkeys", "changelog", "quit"].sort());
-    expect(commands).not.toContain("tree");
+  it("matches the pinned builtin names and descriptions", () => {
+    const upstream = [
+      ["settings", "Open settings menu"],
+      ["model", "Select model (opens selector UI)"],
+      ["tree", "Navigate session tree (switch branches)"],
+      ["thinking", "Set thinking level"],
+      ["scoped-models", "Enable/disable models for Ctrl+P cycling"],
+      ["export", "Export session (HTML default, or specify path: .html/.jsonl)"],
+      ["import", "Import and resume a session from a JSONL file"],
+      ["share", "Share session via a Radius artifact or a GitHub gist"],
+      ["bug", "Report a bug to the Pi developers"],
+      ["copy", "Copy last agent message to clipboard"],
+      ["name", "Set session display name"],
+      ["session", "Show session info and stats"],
+      ["changelog", "Show changelog entries"],
+      ["hotkeys", "Show all keyboard shortcuts"],
+      ["fork", "Create a new fork from a previous user message"],
+      ["clone", "Duplicate the current session at the current position"],
+      ["trust", "Save project trust decision for future sessions"],
+      ["login", "Configure provider authentication"],
+      ["logout", "Remove provider authentication"],
+      ["new", "Start a new session"],
+      ["compact", "Manually compact the session context"],
+      ["resume", "Resume a different session"],
+      ["reload", "Reload keybindings, extensions, skills, prompts, themes, and context files"],
+      ["quit", "Quit pi"],
+    ] as const;
+    expect(source.builtins).toEqual(upstream.map(([name]) => name));
+    expect(Object.fromEntries(source.builtins.map((name) => [name, source.descriptions?.[name]]))).toEqual(Object.fromEntries(upstream));
+  });
+
+  it("defines the canonical 24 builtins with forms, including terminal tree", () => {
+    expect(source.builtins).toEqual([
+      "settings", "model", "tree", "thinking", "scoped-models", "export", "import", "share", "bug", "copy",
+      "name", "session", "changelog", "hotkeys", "fork", "clone", "trust", "login", "logout", "new",
+      "compact", "resume", "reload", "quit",
+    ]);
+    expect(source.terminalBound).toEqual(["tree"]);
+    expect(source.forms?.["tree"]).toEqual([{ match: "bare", interaction: "terminal" }]);
+    expect(source.forms?.["model"]).toEqual([
+      { match: "bare", interaction: "dialog", dialog: "pi-model" },
+      { match: { sub: "*" }, interaction: "none" },
+    ]);
+    expect(source.forms?.["thinking"]).toEqual(source.forms?.["model"]);
+  });
+
+  it("keeps bare logout terminal-bound when OAuth credentials can open its selector", () => {
+    expect(source.forms?.["logout"]?.[0]).toEqual({ match: "bare", interaction: "terminal" });
+  });
+
+  it("uses the canonical share description from pi's builtin command table", () => {
+    expect(source.descriptions?.["share"]).toBe("Share session via a Radius artifact or a GitHub gist");
+  });
+
+  it("marks bare share, bug, copy and name output terminal when it is not persisted", () => {
+    for (const name of ["share", "bug", "copy", "name"]) {
+      expect(source.forms?.[name]?.[0]).toEqual({ match: "bare", interaction: "terminal" });
+    }
+    expect(source.forms?.["bug"]?.[1]).toEqual({ match: { sub: "*" }, interaction: "terminal" });
+    expect(source.forms?.["name"]?.[1]).toEqual({ match: { sub: "*" }, interaction: "none" });
+  });
+
+  it("keeps reload and quit terminal because neither leaves bridge-readable result evidence", () => {
+    expect(source.forms?.["reload"]).toEqual([{ match: "bare", interaction: "terminal" }]);
+    expect(source.forms?.["quit"]).toEqual([{ match: "bare", interaction: "terminal" }]);
+  });
+
+  it("keeps new and clone unknown until an empty session has a persisted conversation", () => {
+    expect(source.forms?.["new"]).toEqual([{ match: "bare", interaction: "unknown" }]);
+    expect(source.forms?.["clone"]).toEqual([{ match: "bare", interaction: "unknown" }]);
+  });
+
+  it("limits none forms to effects recorded in the session or persisted state", () => {
+    const noneForms = Object.fromEntries(Object.entries(source.forms ?? {})
+      .map(([name, forms]) => [name, (forms ?? []).filter((form) => form.interaction === "none")] as const)
+      .filter(([, forms]) => forms.length > 0));
+    expect(noneForms).toEqual({
+      model: [{ match: { sub: "*" }, interaction: "none" }],
+      thinking: [{ match: { sub: "*" }, interaction: "none" }],
+      compact: [{ match: "bare", interaction: "none" }],
+      name: [{ match: { sub: "*" }, interaction: "none" }],
+    });
+  });
+
+  it("pins builtins to Pi 1.3 and verifies only a matching major-minor version", () => {
+    expect(source.pin).toBe("1.3.0");
+    expect(paneCommands("pi", null, temp(), {}, "1.3.9").filter((row) => row.source === "builtin").every((row) => row.provenance?.verified)).toBeTrue();
+    expect(paneCommands("pi", null, temp(), {}, "1.4.0").filter((row) => row.source === "builtin").some((row) => row.provenance?.verified)).toBeFalse();
+  });
+
+  it("compiles the scanner forms and terminal-bound names into catalog rows", () => {
+    const rows = paneCommands("pi", null, temp());
+    expect(rows.find(({ name }) => name === "tree")).toMatchObject({
+      visibility: "terminal",
+      forms: [{ match: "bare", interaction: "terminal" }],
+    });
+    expect(rows.find(({ name }) => name === "model")?.forms).toEqual(source.forms?.["model"]);
   });
 });
 
@@ -53,7 +148,7 @@ describe("pi's user skills", () => {
     skill(join(home, ".agents", "skills"), "shared");
     put(join(agentDir, "skills", "loose.md"), "---\nname: loose\ndescription: A loose root file\n---\n");
     put(join(agentDir, "skills", "group", "ignored.md"), "---\nname: nested-loose\ndescription: Not at the root\n---\n");
-    expect(extra(home, null)).toEqual([
+    expect(extra(home, null)).toMatchObject([
       { name: "skill:deep-one", description: "deep-one skill", source: "skill", origin: "user" },
       { name: "skill:loose", description: "A loose root file", source: "skill", origin: "user" },
       { name: "skill:shared", description: "shared skill", source: "skill", origin: "user" },
@@ -70,8 +165,8 @@ describe("pi's user skills", () => {
     const { home } = setup();
     const other = temp();
     skill(join(other, "skills"), "elsewhere");
-    const commands = paneCommands("pi", null, home, { environ: [`PI_CODING_AGENT_DIR=${other}`] });
-    expect(commands.filter((command) => command.source !== "builtin").map((command) => command.name)).toEqual(["skill:elsewhere"]);
+    const commands = source.discover({ home, cwd: null, repoRoot: null, env: [`PI_CODING_AGENT_DIR=${other}`], roots: {} });
+    expect(commands.map((command) => command.name)).toEqual(["skill:elsewhere"]);
   });
 });
 
@@ -107,7 +202,7 @@ describe("pi's project skills and prompts", () => {
     const { home, repo, cwd, agentDir } = setup();
     plant(repo, cwd);
     put(join(agentDir, "trust.json"), JSON.stringify({ [repo]: true }));
-    expect(extra(home, cwd)).toEqual([
+    expect(extra(home, cwd)).toMatchObject([
       { name: "ship", description: "Ship it", source: "project" },
       { name: "skill:agents-skill", description: "agents-skill skill", source: "skill", origin: "project" },
       { name: "skill:repo-skill", description: "repo-skill skill", source: "skill", origin: "project" },
@@ -121,5 +216,29 @@ describe("pi's project skills and prompts", () => {
     expect(names(home, cwd)).toEqual(["ship", "skill:agents-skill", "skill:repo-skill"]);
     put(join(agentDir, "trust.json"), JSON.stringify({ [repo]: false }));
     expect(names(home, cwd)).toEqual([]);
+  });
+});
+
+describe("pi skill identity", () => {
+  it("lists a skill reached through a symlinked alias root once, identified by its real file", () => {
+    const { home, agentDir } = setup();
+    delete process.env["PI_CODING_AGENT_DIR"];
+    skill(join(agentDir, "skills"), "aliased");
+    mkdirSync(join(home, ".agents"), { recursive: true });
+    symlinkSync(join(agentDir, "skills"), join(home, ".agents", "skills"), "dir");
+    const rows = paneCommands("pi", null, home).filter(({ name }) => name === "skill:aliased");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: "skill", origin: "user", id: realpathSync(join(agentDir, "skills", "aliased", "SKILL.md")) });
+  });
+
+  it("identifies a skill a settings entry names through a link by its real file", () => {
+    const { home, agentDir } = setup();
+    delete process.env["PI_CODING_AGENT_DIR"];
+    skill(join(agentDir, "skills"), "entry");
+    symlinkSync(join(agentDir, "skills"), join(home, "linked"), "dir");
+    put(join(agentDir, "settings.json"), JSON.stringify({ skills: [join(home, "linked", "entry", "SKILL.md")] }));
+    const rows = paneCommands("pi", null, home).filter(({ name }) => name === "skill:entry");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: realpathSync(join(agentDir, "skills", "entry", "SKILL.md")) });
   });
 });

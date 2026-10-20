@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { decideAccess, type AccessInput } from "./access.ts";
-import { parseSoleTailnetLogin, parseTailscale, parseTailscaleIp, TailnetIdentitySource, type TailnetIdentity } from "./tailscale.ts";
+import { HTTPS_PORTS, httpsPorts, parseSoleTailnetLogin, parseTailscale, parseTailscaleIp, TailnetIdentitySource, type TailnetIdentity } from "./tailscale.ts";
 
 const status = (state = "Running", dns = "pc.example.ts.net.") => JSON.stringify({ BackendState: state, Self: { DNSName: dns } });
 /** a `tailscale serve status --json` document: listeners by port, and one "/" proxy per host:port */
@@ -225,5 +225,37 @@ describe("parseTailscale", () => {
     expect(access.dns_name).toBeNull();
     expect(access.serve_command).toBe("tailscale serve --bg --https=443 http://127.0.0.1:7317");
     expect(access.serve_url).toBeNull();
+  });
+
+  it("publishes only on the port the user chose, while it is free", () => {
+    const output = { status: status(), serve: serve({ "443": { HTTPS: true } }, { "pc.example.ts.net:443": "http://127.0.0.1:8787" }) };
+    expect(parseTailscale(output, 7317, [9443])).toEqual({
+      state: "running", dns_name: "pc.example.ts.net", serving_url: null,
+      serve_command: "tailscale serve --bg --https=9443 http://127.0.0.1:7317", serve_url: "https://pc.example.ts.net:9443",
+    });
+  });
+
+  it("never trades a chosen port another service holds for a free one, nor offers any port for a value that names none", () => {
+    const taken = { status: status(), serve: serve({ "9443": { HTTPS: true } }, { "pc.example.ts.net:9443": "http://127.0.0.1:8787" }) };
+    expect(parseTailscale(taken, 7317, [9443])).toMatchObject({ serving_url: null, serve_command: null, serve_url: null });
+    expect(parseTailscale({ status: status(), serve: serve({}, {}) }, 7317, [])).toMatchObject({ serving_url: null, serve_command: null, serve_url: null });
+  });
+
+  it("keeps the address that already serves the app when the user chose another port", () => {
+    const output = { status: status(), serve: serve({ "443": { HTTPS: true } }, { "pc.example.ts.net:443": "http://127.0.0.1:7317" }) };
+    expect(parseTailscale(output, 7317, [9443])).toMatchObject({ serving_url: "https://pc.example.ts.net", serve_command: null });
+  });
+});
+
+describe("httpsPorts", () => {
+  it("offers the usual ports while HERDR_WEB_TAILSCALE_HTTPS_PORT is unset or blank", () => {
+    for (const value of [undefined, "", "  "]) expect(httpsPorts(value)).toEqual(HTTPS_PORTS);
+  });
+
+  it("offers only the port a value names, and none for a value that names no port", () => {
+    expect(httpsPorts("9443")).toEqual([9443]);
+    expect(httpsPorts(" 9443 ")).toEqual([9443]);
+    expect(httpsPorts("65535")).toEqual([65535]);
+    for (const value of ["0", "65536", "abc", "94.43", "-443", "443x"]) expect(httpsPorts(value)).toEqual([]);
   });
 });

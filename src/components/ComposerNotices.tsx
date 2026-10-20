@@ -18,13 +18,15 @@ interface ComposerNoticesProps {
   /** as arranged by lib/composerNotices.ts: the top row first */
   notices: readonly ComposerNoticeRow[];
   onDismiss: (notice: ComposerNoticeRow) => void;
+  /** what the group is, for assistive tech; the pane's notices by default */
+  label?: string;
 }
 
 /** The notices over the input card: a row per notice, its own way on at its end, then its dismiss (an activity has none). */
-export function ComposerNotices({ notices, onDismiss }: ComposerNoticesProps) {
+export function ComposerNotices({ notices, onDismiss, label }: ComposerNoticesProps) {
   const t = useT();
   return (
-    <section className="composer-notices" aria-label={t("Notices")}>
+    <section className="composer-notices" aria-label={label ?? t("Notices")}>
       {notices.map((notice) => (
         <div key={notice.id} className={`composer-notice${notice.warning ? " is-warning" : ""}`} role="status">
           <span className="composer-notice-mark" aria-hidden="true">{notice.mark}</span>

@@ -8,6 +8,7 @@ import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
 import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
+import { paneCovered, paneContentKey, paneContentPresented } from "./lib/panePresentation.ts";
 import { PANE_TABPANEL_ID, paneTabPanelLabel } from "./lib/paneRegion.ts";
 import { worktreeRepoName } from "./lib/composerStrip.ts";
 import { AccessGate } from "./components/AccessGate.tsx";
@@ -27,6 +28,7 @@ import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
+import { receiveSeen } from "./lib/seenFinishes.ts";
 import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
 import { FILE_PANEL_DOCK_QUERY, storedFilePanelWidth } from "./lib/filePanelWidth.ts";
 import { openPresentation, type FilePresentation } from "./lib/filePresentation.ts";
@@ -37,6 +39,7 @@ import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { LOCAL_MACHINE, paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
+import { setAgentRowTokens } from "./lib/agentRowTokens.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
 import { SnapshotRequests } from "./lib/snapshotRequests.ts";
 import { alertPrefs, useSettings } from "./lib/settings.ts";
@@ -74,6 +77,7 @@ import { useFocusReturn } from "./lib/useFocusTrap.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
 import { useT } from "./lib/i18n.ts";
 import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
+import { followsHerdrFocus } from "./lib/followFocus.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
 import { watchDrawerSwipe } from "./lib/edgeSwipe.ts";
 import { Droplet } from "./components/Droplet.tsx";
@@ -87,7 +91,7 @@ import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 
-const APP_TITLE = "herdr web ui";
+const APP_TITLE = "Ovis";
 /** how soon after a key press a focus counts as the user's own (lastKeyAtRef) */
 const KEY_FOCUS_MS = 1000;
 const POLL_MS = 5000;
@@ -197,7 +201,7 @@ function Brand() {
     <h1 className="brand">
       <img src="/icons/icon-192.png?v=ram1" alt="" width="22" height="22" className="brand-mark" />
       <span className="brand-name">
-        herdr <span className="brand-sub">web ui</span>
+        Ovis
       </span>
     </h1>
   );
@@ -542,6 +546,8 @@ export function App() {
   alertInAppRef.current = settings.alertInApp;
   const alertSoundRef = useRef(settings.alertSound);
   alertSoundRef.current = settings.alertSound;
+  const followFocusRef = useRef(settings.followHerdrFocus);
+  followFocusRef.current = settings.followHerdrFocus;
   const refetchTimer = useRef<number | null>(null);
   const snapshotRef = useRef<typeof snapshot>(null);
   snapshotRef.current = snapshot;
@@ -669,6 +675,8 @@ export function App() {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
+      if (payload.type === "herdr-sidebar") { setAgentRowTokens(payload.agents); return; }
+      if (payload.type === "seen") { receiveSeen(payload.finishes); return; }
       // A poll started before this event can carry an older roster or pane status.
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
@@ -699,7 +707,7 @@ export function App() {
           let changed = false;
           const next = list.map((m) => {
             if (m.id !== machine.id || !m.snapshot) return m;
-            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status, message.background_tasks, message.background_wait === true, message.plan);
+            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status, message.background_tasks, message.background_wait === true, message.plan, message.finish_id, message.finish_epoch);
             if (snapshot === m.snapshot) return m;
             changed = true;
             return { ...m, snapshot };
@@ -719,6 +727,18 @@ export function App() {
       if (message.type === "pane-exited" && alertsOnRef.current && !pushOnRef.current && alertsRef.current.done !== "off") {
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
         if (pane) showPaneEndedNotification(message.pane_id, `${machine.name} · ${alertPaneTitle(pane)}`, () => takeNotificationTargetRef.current({ machine_id: machine.id, pane_id: message.pane_id, view: "chat", workspace_id: pane.workspace_id }), machine.id, pane.workspace_id);
+      }
+      // herdr's own window moved to another pane: this device follows it when asked to. As an
+      // automatic pick it raises no keyboard and adds no Back entry; a pane too new for the roster
+      // is confirmed with its PC first, as a pane made here is (the selection effect below)
+      if (message.type === "pane-focused" && followsHerdrFocus({
+        enabled: followFocusRef.current, machineId: machine.id, paneId: message.pane_id, selection: selectionRef.current,
+        splitOther: splitShownRef.current ? splitRef.current?.other ?? null : null, linkPending: pendingLink.current !== null,
+      })) {
+        selectionHint.current = null;
+        setSelectedPaneId(message.pane_id);
+        setNotificationViewTarget(null);
+        setAutoSelected(true);
       }
       if (message.type === "session-changed" || message.type === "pane-exited") scheduleRefetch();
     };
@@ -951,6 +971,13 @@ export function App() {
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
   const selectedLayout = snapshot?.layouts.find((layout) => layout.tab_id === selectedPane?.tab_id);
+  // Selection can precede rendering: in a zoomed tab the layout effect below redirects it,
+  // but the sidebar's passive effect can still see that first selection. Only the selected
+  // pane the canvas actually draws counts; paneInFront checks coverage at acknowledgement time.
+  const presentedPaneId = !drawerOpen && selectedPane && !selectedPane.restore_error
+    && (!selectedLayout?.panes.length || selectedLayout.panes.some((pane) => pane.pane_id === selectedPane.pane_id))
+    && (!selectedLayout?.zoomed || selectedLayout.focused_pane_id === selectedPane.pane_id)
+    ? selectedPane.pane_id : null;
   useLayoutEffect(() => {
     if (selectedLayout?.zoomed && selectedLayout.focused_pane_id !== selectedPaneId
       && snapshot?.panes.some((pane) => pane.pane_id === selectedLayout.focused_pane_id)) {
@@ -985,6 +1012,28 @@ export function App() {
   // its lens picked by hand) the pane is back on the lens it had. A shell has no conversation to
   // show (storedView), so its alert opens its own lens; until the snapshot says, it counts as an agent
   if (notificationView !== null && !(notificationView === "chat" && selectedPane !== null && selectedAgent === null)) view = notificationView;
+
+  const contentKey = paneContentKey(selectedMachine, selectedPane, view);
+  // App-owned coverage, plus dialogs/menus mounted by descendants (rename, worktree, lightbox,
+  // confirmations). A desktop popup counts as covered too; docked file/web panels do not.
+  const [dialogCover, setDialogCover] = useState(false);
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    const update = () => {
+      setDialogCover(paneCovered());
+      setContentReady(paneContentPresented(contentKey));
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "role", "aria-modal", "data-pane-content", "hidden", "inert", "aria-hidden", "class"] });
+    update();
+    return () => observer.disconnect();
+  }, [contentKey]);
+  const paneInFront = useCallback(() => locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
+    && !drawerOpen && !settingsOpen && !newSessionOpen
+    && !filesOpen && !machineDialog && !paletteOpen && !diffViewing && !(viewing && !fileDocked)
+    && !dialogCover && !paneCovered()
+    && contentReady && paneContentPresented(contentKey),
+  [locked, linkLanded, drawerOpen, settingsOpen, newSessionOpen, filesOpen, machineDialog, paletteOpen, diffViewing, viewing, fileDocked, dialogCover, contentReady, contentKey]);
 
   const pickView = useCallback((machineId: string, paneId: string, next: PaneView) => {
     const key = paneStorageId(machineId, paneId);
@@ -1300,7 +1349,7 @@ export function App() {
     : null;
 
   useEffect(() => {
-    document.title = selectedTitle ? `${selectedTitle} · herdr` : APP_TITLE;
+    document.title = selectedTitle ? `${selectedTitle} · Ovis` : APP_TITLE;
   }, [selectedTitle]);
 
   // A new tab's workspace: the named one, else the selected pane's. Its folder is the workspace's:
@@ -1490,7 +1539,7 @@ export function App() {
           <main className="terminal-host">
             <div className="terminal-placeholder">
               <div className="terminal-placeholder-inner">
-                <span>{t("Connecting to herdr web ui…")}</span>
+                <span>{t("Connecting to Ovis…")}</span>
               </div>
             </div>
           </main>
@@ -1626,7 +1675,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} presentedPaneId={presentedPaneId} paneInFront={paneInFront} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1730,6 +1779,9 @@ export function App() {
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal
                          onOpenDiff={openDiff}
+                        presentationKey={paneContentKey(machine, item, item ? lensOf(item) : slotView)}
+                        finishEpoch={machine?.snapshot?.finish_epoch}
+                        finishId={item?.finish_id}
                         title={item ? displayPaneTitle(item) : active ? selectedTitle : null}
                         // Wait for the roster before attaching: the loading placeholder is replaced
                         // by the keyed tile, and must never claim the pane on a throwaway connection.
@@ -1748,6 +1800,8 @@ export function App() {
                         worktreeRepo={worktreeRepoName(item === null ? undefined : slotSnapshot?.workspaces.find((workspace) => workspace.workspace_id === item.workspace_id))}
                         machineName={machine?.name ?? machineId}
                         view={item ? lensOf(item) : slotView}
+                        // the composer's way to the terminal: the selected pane's lens, or the pane's own remembered one
+                        onOpenTerminal={item ? () => { if (active && item.pane_id === selectedPaneId) setView("terminal"); else pickView(machineId, item.pane_id, "terminal"); } : undefined}
                         // the other half never takes the keyboard: a press in it makes it active first
                         active={active && itemActive}
                         // the paging shortcuts reach the selected pane of the active half only

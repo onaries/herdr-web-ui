@@ -1,5 +1,6 @@
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { parse } from "jsonc-parser";
 import { SkillIgnore } from "../skill-ignore.ts";
 import type { SlashCommand } from "../../shared/protocol.ts";
 
@@ -9,15 +10,26 @@ export interface WalkRules {
   readonly ignoreFiles: boolean;
   readonly requireDescription: boolean;
   readonly skipNames?: (name: string) => boolean;
+  /** folders the walk may still visit, shared by every walk given the same object */
+  readonly budget?: { folders: number };
 }
 export interface WalkedSkill {
   readonly name: string;
   readonly description: string;
   readonly path: string;
   readonly fields: Readonly<Record<string, unknown>>;
+  /** the file's canonical (real) path: one file reached through a link has the same id; walkSkills always sets it */
+  readonly id?: string;
 }
 
-const FRONTMATTER = /^\uFEFF?---\s*\r?\n([\s\S]*?)\r?\n---(?:\s*\r?\n|$)/;
+/** The file's real path, links resolved: the `id` of a row read from that file. */
+export function canonicalFile(path: string): string {
+  try { return realpathSync(path); } catch { return resolve(path); }
+}
+
+// Only blanks may follow the opening `---` on its line: `\s*` there also took newlines, so a header
+// left unclosed (a file cut at 64 KiB) was retried at every split of them, quadratic in its length.
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---(?:\s*\r?\n|$)/;
 
 /** The YAML fields of `markdown`'s frontmatter; null without a well-formed header. */
 function parseFrontmatter(markdown: string): Readonly<Record<string, unknown>> | null {
@@ -33,10 +45,26 @@ function parseFrontmatter(markdown: string): Readonly<Record<string, unknown>> |
 // much, and only when it is a regular file (a link to /dev/zero or a huge file would stall it).
 const MAX_SKILL_BYTES = 64 * 1024;
 
+// A walk visits at most this many folders. Its link guard covers the current branch only, so sibling
+// links to shared folders make an acyclic tree exponential, and discovery runs on the server's thread.
+export const MAX_WALK_FOLDERS = 4096;
+
+/**
+ * The path checked before it is opened, then the descriptor itself: a FIFO swapped in between would
+ * block a plain open, so it opens non-blocking (a regular file ignores the flag) and is refused there.
+ */
+function openRegular(path: string): number {
+  if (!statSync(path).isFile()) throw new Error(`not a regular file: ${path}`);
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  let regular = false;
+  try { regular = fstatSync(fd).isFile(); } finally { if (!regular) closeSync(fd); }
+  if (!regular) throw new Error(`not a regular file: ${path}`);
+  return fd;
+}
+
 /** The first MAX_SKILL_BYTES of a regular file; throws when `path` is no regular file. */
 export function readSkillText(path: string): string {
-  if (!statSync(path).isFile()) throw new Error(`not a regular file: ${path}`);
-  const fd = openSync(path, "r");
+  const fd = openRegular(path);
   try {
     const buffer = Buffer.alloc(MAX_SKILL_BYTES);
     let length = 0;
@@ -48,8 +76,7 @@ export function readSkillText(path: string): string {
 /** Reads only through the closing frontmatter delimiter, without reading the skill body. */
 export function readFrontmatter(path: string): Readonly<Record<string, unknown>> | null {
   try {
-    if (!statSync(path).isFile()) return null;
-    const fd = openSync(path, "r");
+    const fd = openRegular(path);
     let markdown = "";
     try {
       // one buffer, bounded: a header longer than MAX_SKILL_BYTES is no frontmatter
@@ -91,7 +118,7 @@ export function description(markdown: string): string {
 
 /** `name:` from a SKILL.md's frontmatter, else its directory's name. */
 function skillName(markdown: string, directory: string): string {
-  const frontmatter = markdown.match(/^---\s*\n([\s\S]*?)\n---(?:\s*\n|$)/);
+  const frontmatter = markdown.match(/^---[ \t]*\r?\n([\s\S]*?)\n---(?:\s*\n|$)/);
   const named = frontmatter?.[1]?.match(/^name:\s*(.+?)\s*$/m)?.[1]?.trim().replace(/^(["'])(.*)\1$/, "$2");
   return named && /^[\p{L}\p{N}_:-]+$/u.test(named) ? named : directory;
 }
@@ -108,7 +135,7 @@ export function walkSkills(root: string, rules: WalkRules): WalkedSkill[] {
       const name = rules.requireDescription
         ? typeof fields.name === "string" && fields.name ? fields.name : basename(dirname(path))
         : skillName(markdown, basename(dirname(path)));
-      result.push({ name, description: rules.requireDescription && typeof fields.description === "string" ? fields.description : description(markdown), path, fields });
+      result.push({ name, description: rules.requireDescription && typeof fields.description === "string" ? fields.description : description(markdown), path, fields, id: canonicalFile(path) });
     } catch { return; /* unreadable skill */ }
   };
   if (rules.depth === "one") {
@@ -118,7 +145,8 @@ export function walkSkills(root: string, rules: WalkRules): WalkedSkill[] {
         try { ignore.add(readFileSync(join(root, filename), "utf8")); } catch { /* optional ignore file */ }
       }
     }
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entries = readdirSync(root, { withFileTypes: true });
+    for (const entry of entries) {
       if (entry.name.startsWith(".") || rules.skipNames?.(entry.name)) continue;
       const directory = join(root, entry.name);
       try {
@@ -128,7 +156,11 @@ export function walkSkills(root: string, rules: WalkRules): WalkedSkill[] {
     }
     return result;
   }
+  const budget = rules.budget ?? { folders: MAX_WALK_FOLDERS };
   const visit = (directory: string): void => {
+    // every visit counts, a link back to an ancestor too: each one is a lookup on the server's thread
+    if (budget.folders <= 0) return;
+    budget.folders -= 1;
     let canonical: string;
     try { canonical = realpathSync(directory); } catch { return; }
     if (ancestors.has(canonical)) return;
@@ -184,18 +216,24 @@ export function plainObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};
 }
 
-/** JSONC as JSON: comments and trailing commas removed outside strings (URLs and escaped quotes kept). */
-export function stripJsonc(text: string): string {
-  return text
-    .replace(/"(?:\\.|[^"\\])*"|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g, (part) => part.startsWith('"') ? part : "")
-    .replace(/("(?:\\.|[^"\\])*")|,\s*(?=[}\]])/g, (_part, quoted: string | undefined) => quoted ?? "");
+/** The pinned OmO loader removes one leading BOM, then parses JSONC with comments and trailing commas. */
+export function parseJsonc(text: string): unknown {
+  const contents = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const errors: { error: number; length: number; offset: number }[] = [];
+  const value = parse(contents, errors, { allowTrailingComma: true, disallowComments: false });
+  if (errors.length > 0) throw new SyntaxError("Invalid JSONC");
+  return value;
 }
 
-export function customCommands(root: string, source: SlashCommand["source"]): SlashCommand[] {  if (!existsSync(root)) return [];
+/** `budget`: folders this walk may still visit, shared by every walk given the same object. */
+export function customCommands(root: string, source: SlashCommand["source"], budget = { folders: MAX_WALK_FOLDERS }): SlashCommand[] {  if (!existsSync(root)) return [];
   const result: SlashCommand[] = [];
   // Guard only the current ancestry: sibling links can expose different command namespaces.
   const ancestors = new Set<string>();
   const visit = (directory: string): void => {
+    // every visit counts, a link back to an ancestor too: each one is a lookup on the server's thread
+    if (budget.folders <= 0) return;
+    budget.folders -= 1;
     let canonical: string;
     try { canonical = realpathSync(directory); } catch { return; }
     if (ancestors.has(canonical)) return;
@@ -208,7 +246,7 @@ export function customCommands(root: string, source: SlashCommand["source"]): Sl
           if (target.isDirectory()) visit(path);
           else if (target.isFile() && entry.name.endsWith(".md")) {
             const relativeName = relative(root, path).slice(0, -3).split(sep).join(":");
-            result.push({ name: relativeName, description: description(readFileSync(path, "utf8")), source });
+            result.push({ name: relativeName, description: description(readSkillText(path)), source, id: canonicalFile(path) });
           }
         } catch { continue; }
       }
@@ -242,7 +280,7 @@ export function piTemplates(root: string, source: SlashCommand["source"]): Slash
     } catch {
       continue;
     }
-    result.push({ name: entry.name.slice(0, -3), description: description(markdown), source });
+    result.push({ name: entry.name.slice(0, -3), description: description(markdown), source, id: canonicalFile(join(root, entry.name)) });
   }
   return result;
 }

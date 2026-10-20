@@ -89,7 +89,7 @@ async function oneLineInstall(): Promise<void> {
   assert.match(running, /exit=0/, running.slice(-2500));
   assert.match(running, /Installed /, running.slice(-2500));
   assert.doesNotMatch(running, /not running yet|did not start/, running.slice(-1500));
-  console.log(`\nA bare Ubuntu 24.04 goes from one line to a running herdr web ui. install.sh said:\n${out.split("\n").filter((line) => /^herdr web ui|Installed /.test(line)).map((l) => `  ${l.trim()}`).join("\n")}`);
+  console.log(`\nA bare Ubuntu 24.04 goes from one line to Ovis running. install.sh said:\n${out.split("\n").filter((line) => /^Ovis|Installed /.test(line)).map((l) => `  ${l.trim()}`).join("\n")}`);
 }
 
 async function pluginInstall(): Promise<void> {
@@ -124,5 +124,5 @@ async function pluginInstall(): Promise<void> {
     console.log(`  ${/up after \d+s/.exec(health)?.[0] ?? health.trim().split("\n").pop()}`);
   });
   const said = install.split("\n").filter((line) => /Installed |Config:/.test(line));
-  console.log(`\nA new user on a bare Ubuntu 24.04 gets a working herdr web ui. herdr said:\n${said.map((l) => `  ${l.trim()}`).join("\n")}`);
+  console.log(`\nA new user on a bare Ubuntu 24.04 gets Ovis working. herdr said:\n${said.map((l) => `  ${l.trim()}`).join("\n")}`);
 }

@@ -157,7 +157,7 @@ describe("port", () => {
       try {
         writeFileSync(join(configDir, ".env"), `PORT=${stranger.port}\n`);
         const started = await run("start");
-        expect(started.err).not.toContain("herdr web ui is running");
+        expect(started.err).not.toContain("Ovis is running");
         expect(started.exitCode).toBe(1);
         expect(started.err).toContain(`port ${stranger.port} on 127.0.0.1 cannot be opened`);
       } finally { await stranger.stop(true); }
@@ -209,7 +209,7 @@ describe("port", () => {
       const started = await run("start", { HERDR_PLUGIN_ROOT: scratch });
       expect(started.out).not.toContain("instead");
       expect(started.exitCode).toBe(1);
-      expect(started.err).toContain(`herdr web ui is running at http://127.0.0.1:${ours.port} (pid ${process.pid}) but cannot reach herdr: herdr socket unreachable`);
+      expect(started.err).toContain(`Ovis is running at http://127.0.0.1:${ours.port} (pid ${process.pid}) but cannot reach herdr: herdr socket unreachable`);
       expect(readFileSync(join(scratch, ".config", "herdr-web-ui", "plugin-port"), "utf8")).toBe(`${ours.port}\n`);
       expect(readFileSync(join(scratch, "state", "server.pid"), "utf8")).toBe(`${process.pid}\n`);
     } finally { await ours.stop(true); }
@@ -234,7 +234,7 @@ describe("port", () => {
       const started = await run("start", { HERDR_PLUGIN_ROOT: scratch });
       expect(started.err).not.toContain("cannot reach herdr");
       expect(started.exitCode).toBe(0);
-      expect(started.out).toContain(`herdr web ui already running at http://127.0.0.1:${ours.port}`);
+      expect(started.out).toContain(`Ovis already running at http://127.0.0.1:${ours.port}`);
     } finally { await ours.stop(true); }
   }, 40_000);
 });
@@ -249,7 +249,7 @@ describe("stop", () => {
     const started = Date.now();
     const stopped = await run("stop");
     expect(stopped.exitCode, stopped.err).toBe(0);
-    expect(stopped.out).toContain(`stopped herdr web ui (pid ${pid})`);
+    expect(stopped.out).toContain(`stopped Ovis (pid ${pid})`);
     expect(Date.now() - started).toBeGreaterThanOrEqual(900);
     expect(() => process.kill(-pid, 0)).toThrow();
     expect(existsSync(join(scratch, "state", "server.pid"))).toBe(false);
@@ -272,7 +272,7 @@ describe("stop", () => {
       const started = Date.now();
       const stopped = await run("stop");
       expect(stopped.exitCode, stopped.err).toBe(0);
-      expect(stopped.out).toContain(`stopped herdr web ui (pid ${pid})`);
+      expect(stopped.out).toContain(`stopped Ovis (pid ${pid})`);
       expect(Date.now() - started).toBeLessThan(5_000);
       expect(existsSync(join(scratch, "state", "server.pid"))).toBe(false);
     } finally { parent.kill("SIGKILL"); }

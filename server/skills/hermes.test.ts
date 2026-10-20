@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paneCommands } from "../commands.ts";
+import { source } from "./hermes.ts";
 
 const temporary: string[] = [];
 afterEach(() => {
@@ -31,15 +32,18 @@ function fixture() {
 }
 
 describe("Hermes commands", () => {
-  it("keeps CLI CommandDefs and palette aliases, excluding gateway and unrepresentable screens", () => {
+  it("keeps CLI CommandDefs and palette aliases, including terminal-bound screens", () => {
     const f = fixture();
     const rows = f.commands();
     const names = new Set(rows.map((command) => command.name));
-    expect(rows).toHaveLength(110);
     expect(rows.every((command) => command.source === "builtin")).toBeTrue();
     for (const name of ["new", "status", "clear", "reset", "prompt", "compose", "voice", "login", "tasks", "reload_skills"]) expect(names.has(name)).toBeTrue();
     for (const name of ["start", "topic", "pause", "approve", "deny", "sethome", "set-home", "commands", "restart", "platform"]) expect(names.has(name)).toBeFalse();
-    for (const name of ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin"]) expect(names.has(name)).toBeFalse();
+    for (const name of ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin"]) expect(names.has(name)).toBeTrue();
+    for (const [name, dialog] of [["help", "hermes-help"], ["status", "hermes-status"], ["version", "hermes-version"], ["v", "hermes-version"],
+      ["profile", "hermes-profile"], ["reload-skills", "hermes-reload-skills"], ["reload_skills", "hermes-reload-skills"]]) {
+      expect(source.forms?.[name!]).toEqual([{ match: "bare", interaction: "dialog", dialog }]);
+    }
     expect(rows.find((command) => command.name === "reset")?.description).toBe(rows.find((command) => command.name === "new")?.description);
   });
 
@@ -53,7 +57,7 @@ describe("Hermes commands", () => {
     f.skill(join(f.repo, ".hermes", "skills"), "project", { description: "Project." });
     f.skill(join(f.repo, ".agents", "skills"), "agent-project");
     f.skill(join(f.cwd, ".hermes", "skills"), "not-root");
-    expect(f.discovered()).toEqual([
+    expect(f.discovered()).toMatchObject([
       { name: "agent-project", description: "Probe body.", source: "skill", origin: "project" },
       { name: "my-skill", description: "Personal.", source: "skill", origin: "user" },
       { name: "project", description: "Project.", source: "skill", origin: "project" },
@@ -132,7 +136,7 @@ describe("Hermes commands", () => {
     f.skill(root, "parent/scripts/support", { name: "support" });
     f.skill(root, "parent/child", { name: "child" });
     put(join(root, "loose.md"), "Not a skill.");
-    expect(f.discovered()).toEqual([
+    expect(f.discovered()).toMatchObject([
       { name: "child", description: "Probe body.", source: "skill", origin: "user" },
       { name: "git-helper", description: "First.", source: "skill", origin: "user" },
       { name: "parent", description: "Probe body.", source: "skill", origin: "user" },
@@ -158,7 +162,7 @@ describe("Hermes commands", () => {
     put(join(f.profile, "skill-bundles", "bad.yaml"), "skills: [\n");
     put(join(f.profile, "skill-bundles", "empty.yaml"), "skills: []\n");
     put(join(f.profile, "skill-bundles", "scalar.yaml"), "skills: release\n");
-    expect(f.discovered()).toEqual([
+    expect(f.discovered()).toMatchObject([
       { name: "bundle-only", description: "Bundle description.", source: "skill", origin: "user" },
       { name: "fallback", description: "Load 1 skills as a bundle", source: "skill", origin: "user" },
       { name: "fastcheck", description: "Quick check.", source: "user" },
@@ -173,8 +177,57 @@ describe("Hermes commands", () => {
     f.skill(join(f.home, ".agents", "skills"), "not-external");
     f.skill(join(f.home, ".hermes", "plugins", "enabled", "skills"), "plugin");
     put(join(f.home, ".hermes", "config.yaml"), "skills: [\n");
-    expect(paneCommands("hermes", f.cwd, f.home).filter((command) => command.source === "skill")).toEqual([
+    expect(paneCommands("hermes", f.cwd, f.home).filter((command) => command.source === "skill")).toMatchObject([
       { name: "probe-skill", description: "Probe body.", source: "skill", origin: "user" },
     ]);
+  });
+
+  it("declares formerly terminal-bound builtins in the scanner source", () => {
+    expect(source.terminalBound).toEqual(["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin"]);
+  });
+
+  it("emits former screen commands as terminal-visible catalog rows", () => {
+    const f = fixture();
+    for (const name of source.terminalBound ?? []) {
+      expect(f.commands().find((command) => command.name === name)).toMatchObject({
+        visibility: "terminal",
+        provenance: { transport: "static", verified: false },
+      });
+    }
+  });
+
+  it("compiles Hermes status to its result reader's bare dialog form", () => {
+    const f = fixture();
+    expect(f.commands().find((command) => command.name === "status")).toMatchObject({
+      forms: [{ match: "bare", interaction: "dialog", dialog: "hermes-status" }],
+    });
+  });
+});
+
+describe("Hermes skill identity", () => {
+  it("lists a skill reached through a symlinked alias root once, identified by its real file", () => {
+    const f = fixture();
+    const alias = join(f.root, "alias");
+    f.skill(join(f.profile, "skills"), "aliased", { description: "Aliased." });
+    symlinkSync(join(f.profile, "skills"), alias, "dir");
+    f.config({ external_dirs: [alias] });
+    const rows = f.discovered().filter((command) => command.name === "aliased");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: "skill", id: realpathSync(join(f.profile, "skills", "aliased", "SKILL.md")) });
+  });
+
+  it("offers no command for one file reached through two roots of the same tier, as Hermes leaves it ambiguous", () => {
+    // Hermes 354724fb: os.walk(followlinks=True) finds the file under both roots (agent/skill_utils.py:842-851);
+    // pick_skill_candidate settles same-tier contenders only inside one root (agent/skill_utils.py:431-442),
+    // so the entry is "ambiguous" and scan_skill_commands registers only "unique" ones (agent/skill_commands.py:497-500)
+    const f = fixture();
+    const first = join(f.root, "first"), second = join(f.root, "second");
+    f.skill(first, "aliased", { description: "Aliased." });
+    mkdirSync(second, { recursive: true });
+    symlinkSync(join(first, "aliased"), join(second, "aliased"), "dir");
+    f.config({ external_dirs: [first] });
+    expect(f.discovered().filter((command) => command.name === "aliased")).toHaveLength(1);
+    f.config({ external_dirs: [first, second] });
+    expect(f.discovered().filter((command) => command.name === "aliased")).toHaveLength(0);
   });
 });

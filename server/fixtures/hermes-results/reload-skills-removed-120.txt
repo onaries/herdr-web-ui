@@ -1,0 +1,45 @@
+<what to learn from>)
+    /init           - Generate or update AGENTS.md project instructions from a repo scan (usage: /init [notes])
+    /cron           - Manage scheduled tasks (usage: /cron [subcommand])
+    /suggestions    - Review suggested automations (accept/dismiss) (usage: /suggestions [accept|dismiss N | catalog])
+    /suggest        - Review suggested automations (accept/dismiss) (alias for /suggestions)
+    /blueprint      - Set up an automation from a blueprint template (usage: /blueprint [name] [slot=value ...])
+    /bp             - Set up an automation from a blueprint template (alias for /blueprint)
+    /curator        - Background skill maintenance (status, run, pin, archive, list-archived) (usage: /curator
+[subcommand])
+    /kanban         - Multi-profile collaboration board (tasks, links, comments) (usage: /kanban [subcommand])
+    /reload         - Reload .env variables into the running session
+    /reload-mcp     - Reload MCP servers from config
+    /reload_mcp     - Reload MCP servers from config (alias for /reload-mcp)
+    /reload-skills  - Re-scan ~/.hermes/skills/ for newly installed or removed skills
+    /reload_skills  - Re-scan ~/.hermes/skills/ for newly installed or removed skills (alias for /reload-skills)
+    /browser        - Connect browser tools to your live Chromium-family browser via CDP, or switch to Browser Use mode
+(usage: /browser [connect|disconnect|status|use])
+    /plugins        - List installed plugins and their status
+
+  ── Exit ──
+    /quit           - Exit the CLI (use --delete to also remove session history) (usage: /quit [--delete])
+    /exit           - Exit the CLI (use --delete to also remove session history) (alias for /quit)
+
+  ⚡ Skill Commands: 54 installed — /help skills to list them
+
+  Tip: /help skills lists skill commands · /help <text> filters · Ctrl+P opens the command palette
+  Multi-line: Ctrl+J, Alt+Enter, or \\+Enter for a new line
+  Draft editor: Ctrl+G (Alt+G in VSCode/Cursor)
+  Paste image: Alt+V (or /paste)
+
+
+⚙️  /reload-skills
+⏳ Reloading skills...
+  ➕ Added Skills:
+      - fixture-added: A fixture skill added on disk before the reload
+  📚 55 skill(s) available
+
+⚙️  /reload-skills
+⏳ Reloading skills...
+  No new skills detected.
+  📚 54 skill(s) available
+ ☤ fixture-model │ ctx -- │ [░░░░░░░░░░] -- │ 5m │ ⏲ 0s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Plan a feature, then build it step by step
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

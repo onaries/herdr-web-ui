@@ -1,8 +1,9 @@
 import { afterEach, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paneCommands } from "../commands.ts";
+import { source } from "./agy.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -33,9 +34,13 @@ it("discovers each agy root with nearest-project precedence and no undocumented 
   skill(join(home, ".agents", "skills", "outside-repo"));
   const commands = paneCommands("agy", cwd, home).filter(({ source }) => source === "skill");
   expect(commands.map(({ name, origin }) => [name, origin])).toEqual([
-    ["agent", "project"], ["agents", "project"], ["bundled-skill", "bundled"], ["collision", "project"],
+    ["agent", "project"], ["agents", "project"], ["collision", "project"],
     ["personal", "user"], ["plugin-skill", "plugin"],
   ]);
+  expect(commands.find(({ name }) => name === "personal")).toMatchObject({
+    id: join(home, ".gemini", "config", "skills", "personal", "SKILL.md"),
+    provenance: { transport: "scan", verified: false },
+  });
 });
 
 it("requires descriptions, skips disabled skills, and scans only one level by default", () => {
@@ -67,23 +72,98 @@ it("loads nested include_only registrations with path resolution and excludes", 
   ]);
 });
 
-it("offers a bundled skill once when it is a builtin, and never as an unrepresentable command", () => {
+it("offers only bundled skills loaded by the CLI", () => {
   const home = temp(), bundled = join(home, ".gemini", "antigravity-cli", "builtin", "skills");
   for (const name of ["agy-customizations", "plugin", "kept"]) skill(join(bundled, name));
   const commands = paneCommands("agy", null, home);
   expect(commands.filter(({ name }) => name === "agy-customizations").map(({ source }) => source)).toEqual(["builtin"]);
-  expect(commands.some(({ name }) => name === "plugin")).toBeFalse();
-  expect(commands.filter(({ source }) => source === "skill").map(({ name }) => name)).toEqual(["kept"]);
+  expect(commands.filter(({ source }) => source === "skill").map(({ name }) => name)).toEqual([]);
 });
 
-it("retains the recorded palette and aliases except unrepresentable screens", () => {
+it("retains the recorded palette and aliases", () => {
   const commands = paneCommands("agy", null, temp());
   expect(commands.map(({ name }) => name).sort()).toEqual([
-    "add-dir", "agy-customizations", "antigravity-guide", "artifact", "boost", "branch", "browser",
-    "btw", "changelog", "clear", "codesearch", "context", "copy", "cs", "diff", "exit", "feedback",
-    "fork", "goal", "grill-me", "help", "learn", "logout", "new", "open", "plan", "quit", "quota",
-    "remote-control", "rename", "rewind", "schedule", "search", "statusline", "tasks",
-    "teamwork-preview", "title", "undo", "usage",
+    "add-dir", "agents", "agy-customizations", "antigravity-guide", "artifact", "boost", "branch", "browser",
+    "btw", "changelog", "clear", "codesearch", "compact", "config", "context", "conversation", "copy",
+    "credits", "cs", "diff", "effort", "exit", "fast", "feedback", "fork", "goal", "grill-me",
+    "help", "hooks", "keybindings", "learn", "logout", "mcp", "model", "new", "open", "permissions",
+    "plan", "planning", "plugin", "quit", "quota", "record", "remote-control", "rename", "resume",
+    "rewind", "schedule", "search", "skills", "statusline", "switch", "tasks", "teamwork",
+    "teamwork-preview", "title", "undo", "usage", "voice",
   ].sort());
+  expect(commands.filter(({ name }) => ["usage", "credits", "changelog"].includes(name)).every(({ source }) => source === "builtin")).toBeTrue();
   expect(commands.every(({ source }) => source === "builtin")).toBeTrue();
+});
+
+it("lists only the bundled skills loaded by Antigravity CLI", () => {
+  const home = temp(), bundled = join(home, ".gemini", "antigravity-cli", "builtin", "skills");
+  for (const name of [
+    "agy-customizations", "antigravity-guide", "automation", "browser", "browser-agent",
+    "code-review", "creative-writing", "data-analysis", "design",
+  ]) skill(join(bundled, name));
+  for (const name of ["agy-customizations", "antigravity-guide"]) skill(join(home, ".gemini", "config", "skills", name));
+  const commands = paneCommands("agy", null, home);
+  expect(commands.filter(({ source }) => source === "builtin").map(({ name }) => name)).toEqual(expect.arrayContaining([
+    "agy-customizations", "antigravity-guide",
+  ]));
+  expect(commands.filter(({ source, origin }) => source === "skill" && origin === "bundled").map(({ name }) => name)).toEqual([]);
+});
+
+it("offers every former exclusion as a terminal command", () => {
+  const former = ["model", "resume", "config", "permissions", "agents", "hooks", "mcp", "plugin", "skills", "voice", "effort", "keybindings"];
+  expect(source.builtins).toEqual(expect.arrayContaining([...former, "usage", "credits", "changelog"]));
+  expect(source.terminalBound).toEqual(expect.arrayContaining([...former, "usage", "credits", "changelog"]));
+  expect(source.forms?.usage).toEqual([{ match: "bare", interaction: "terminal" }]);
+});
+
+it("isolated scan lists config as a terminal command", () => {
+  const home = temp();
+  const commands = paneCommands("agy", null, home);
+  for (const name of ["model", "resume", "config", "permissions", "agents", "hooks", "mcp", "plugin", "skills", "voice", "effort", "keybindings"]) {
+    expect(commands.find(({ name: commandName }) => commandName === name)).toMatchObject({
+      visibility: "terminal",
+      forms: [{ match: "bare", interaction: "terminal" }],
+    });
+  }
+  expect(commands.find(({ name }) => name === "config")).toMatchObject({ name: "config", visibility: "terminal" });
+  expect(commands.find(({ name }) => name === "usage")).toMatchObject({
+    visibility: "terminal",
+    forms: [{ match: "bare", interaction: "terminal" }],
+  });
+});
+
+it("includes the current CLI commands and aliases", () => {
+  const commands = paneCommands("agy", null, temp());
+  expect(commands.map(({ name }) => name)).toEqual(expect.arrayContaining([
+    "credits", "fast", "planning", "compact", "switch", "conversation", "teamwork", "record",
+  ]));
+});
+
+it("gives aliases the canonical command visibility and forms", () => {
+  const commands = paneCommands("agy", null, temp());
+  for (const [alias, canonical] of [
+    ["switch", "resume"],
+    ["conversation", "resume"],
+    ["record", "voice"],
+    ["quota", "usage"],
+  ]) {
+    const aliasRow = commands.find(({ name }) => name === alias);
+    const canonicalRow = commands.find(({ name }) => name === canonical);
+    expect(aliasRow?.visibility).toBe(canonicalRow?.visibility);
+    expect(aliasRow?.forms).toEqual(canonicalRow?.forms);
+  }
+});
+
+it("describes record as microphone dictation into the prompt", () => {
+  expect(source.descriptions?.record).toBe("Dictate a prompt using your microphone");
+});
+
+it("lists a skill reached through a symlinked alias root once, identified by its real file", () => {
+  const home = temp(), config = join(home, ".gemini", "config");
+  skill(join(config, "skills", "aliased"));
+  mkdirSync(join(config, "plugins", "mirror"), { recursive: true });
+  symlinkSync(join(config, "skills"), join(config, "plugins", "mirror", "skills"), "dir");
+  const rows = paneCommands("agy", null, home).filter(({ name }) => name === "aliased");
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ origin: "user", id: realpathSync(join(config, "skills", "aliased", "SKILL.md")) });
 });

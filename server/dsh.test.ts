@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 
 import {
   dshConversation, DshHistoryChanged, dshOutputRef, dshSessionFromPids, dshToolOutput, dshTranscriptPath, parseDshRecords, readDshSession,
@@ -166,6 +167,54 @@ describe("dsh tool output", () => {
 });
 
 describe("dsh session lookup", () => {
+  it("follows the attached socket while both sessions stay open", async () => {
+    const home = join(root, "switch");
+    const otherId = "1b0c6063-8d61-4b71-b33a-6afcfedabf46";
+    const first = writeSession([header()], join(home, "sessions", "project", id));
+    const second = writeSession([header(otherId)], join(home, "sessions", "project", otherId));
+    const descriptors = [first, second].map((path) => openSync(path, "r"));
+    const sockets = join(home, "inject");
+    mkdirSync(sockets, { recursive: true });
+    const firstSocket = createServer();
+    const secondSocket = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        firstSocket.once("error", reject);
+        firstSocket.listen(join(sockets, `${id}.sock`), resolve);
+      });
+      expect(dshSessionFromPids([process.pid], home, sockets)).toBe(first);
+      await new Promise<void>((resolve, reject) => firstSocket.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => {
+        secondSocket.once("error", reject);
+        secondSocket.listen(join(sockets, `${otherId}.sock`), resolve);
+      });
+      expect(dshSessionFromPids([process.pid], home, sockets)).toBe(second);
+      await new Promise<void>((resolve, reject) => secondSocket.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => {
+        firstSocket.once("error", reject);
+        firstSocket.listen(join(sockets, `${id}.sock`), resolve);
+      });
+      expect(dshSessionFromPids([process.pid], home, sockets)).toBe(first);
+      expect(dshSessionFromPids([process.pid], join(root, "missing"), sockets)).toBeNull();
+    } finally {
+      if (firstSocket.listening) await new Promise<void>((resolve) => firstSocket.close(() => resolve()));
+      if (secondSocket.listening) await new Promise<void>((resolve) => secondSocket.close(() => resolve()));
+      for (const descriptor of descriptors) closeSync(descriptor);
+    }
+  });
+
+  it("refuses to guess between parked sessions without an attached socket", () => {
+    const home = join(root, "ambiguous");
+    const otherId = "1b0c6063-8d61-4b71-b33a-6afcfedabf46";
+    const paths = [id, otherId].map((sessionId) => writeSession([header(sessionId)], join(home, "sessions", "project", sessionId)));
+    const descriptors = paths.map((path) => openSync(path, "r"));
+    try {
+      expect(dshSessionFromPids([process.pid], home)).toBeNull();
+    } finally {
+      for (const descriptor of descriptors) closeSync(descriptor);
+    }
+  });
+
   it("finds the session a live process holds open", () => {
     const home = join(root, "home");
     const path = writeSession([header()], join(home, "sessions", "--home-seonwookim--", id));

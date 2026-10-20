@@ -18,7 +18,7 @@ export const expect = async ({ page, width, box, menu, scenario, clear, rowNames
     await box.fill("/");
     await menu.locator(".menu-item").first().waitFor();
     assert.deepEqual((await rowNames()).sort(), commands.map((row) => row.name).sort());
-    assert.deepEqual(await menu.locator(".menu-heading").allTextContents(), ["Built in", "Project", "Your skills", "Project skills", "Built-in skills"]);
+    assert.deepEqual(await menu.locator(".menu-heading").allTextContents(), ["Built in", "Project", "Your skills", "Project skills", "Built-in skills", "Terminal commands"]);
     await menuFits("OpenCode menu");
     await rowsBrief("OpenCode menu");
     await menu.evaluate((node) => { node.scrollTop = node.scrollHeight; });

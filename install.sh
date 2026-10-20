@@ -1,21 +1,23 @@
 #!/bin/sh
-# herdr web ui in one line, from a PC that may have none of it yet:
+# Ovis in one line, from a PC that may have none of it yet:
 #
 #   curl -fsSL https://herdrweb.dev/install.sh | sh
 #
 # 1. Installs what is missing, for this user only and without sudo: herdr (its own installer, into
 #    ~/.local/bin), Bun (its own installer, into ~/.bun) and Node 22 (the official build, checked
 #    against its published SHA-256, into ~/.local/share/herdr-web-ui/node).
-# 2. Installs herdr web ui as a herdr plugin, so it starts with herdr and Settings → Updates keeps it
+# 2. Installs Ovis as a herdr plugin, so it starts with herdr and Settings → Updates keeps it
 #    current, and starts it now when herdr is running.
 # 3. When Tailscale runs on this PC, serves the app to your tailnet (`tailscale serve`, on the first
-#    free HTTPS port) and prints the address a phone opens as a QR code (scripts/plugin.ts phone).
+#    free HTTPS port, or only the one HERDR_WEB_TAILSCALE_HTTPS_PORT names) and prints the address
+#    a phone opens as a QR code (scripts/plugin.ts phone).
 # 4. On a first install, mentions a GitHub star once. When the gh CLI is signed in and has not
 #    starred the repository, it asks at the terminal, for 20 seconds, and stars only on "y"; it
 #    never stars by itself.
 #
 # Run it again at any time: what is already there is kept, and step 3 is repeated.
 #   HERDR_WEB_UI_REF=<branch or tag>   install that ref instead of the latest release
+#   HERDR_WEB_TAILSCALE_HTTPS_PORT=<port>   serve the app on that HTTPS port only, keeping 443 free
 set -eu
 
 REPO="devswha/herdr-web-ui"
@@ -25,11 +27,11 @@ NODE_DIR="$HOME/.local/share/herdr-web-ui/node"
 # Official digests from nodejs.org/dist/v22.23.2/SHASUMS256.txt, as scripts/build-remote-bundle.ts pins them
 NODE_VERSION="v22.23.2"
 
-say() { printf '%s\n' "herdr web ui: $*"; }
+say() { printf '%s\n' "Ovis: $*"; }
 # a clickable address in a terminal (OSC 8); $terminal is set once, since $(link …) runs in a pipe
 # shellcheck disable=SC1003 # the backslashes end OSC 8 escapes (ESC \\), no quote is escaped
 link() { if [ "$terminal" = 1 ]; then printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$1"; else printf '%s' "$1"; fi; }
-fail() { printf '%s\n' "herdr web ui: $*" >&2; exit 1; }
+fail() { printf '%s\n' "Ovis: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "needs '$1', which is not installed. Install it and run this again."; }
 # The highest vX.Y.Z tag, as the updater picks it: a new install gets what existing ones run,
 # never the commits merged to main since the last release.
@@ -99,7 +101,7 @@ offer_star() {
   # the install is done: leaving the question with Ctrl-C is an answer, not a failure. The trap
   # comes before the question: a Ctrl-C the moment it shows must not end the script with 130
   trap 'echo; exit 0' INT
-  printf '%s' "herdr web ui: star it now with the GitHub account gh is signed in to? [y/N] " >/dev/tty 2>/dev/null || { trap - INT; return 0; }
+  printf '%s' "Ovis: star it now with the GitHub account gh is signed in to? [y/N] " >/dev/tty 2>/dev/null || { trap - INT; return 0; }
   # shellcheck disable=SC2016 # bash's variable, not this shell's
   answer=$(bash -c 'read -r -t 20 answer </dev/tty && printf %s "$answer"' 2>/dev/null) || { answer=""; echo; }
   trap - INT

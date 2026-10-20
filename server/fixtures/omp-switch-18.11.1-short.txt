@@ -1,0 +1,18 @@
+ Model scope: claude-opus-4-6-thinking, claude-sonnet-4-6, claude-opus-5-5,
+ claude-sonnet-5-5, deepseek-v4-flash, gemini-3.1-flash-image, gpt-5.5, gpt-5.6-luna,
+ gpt-5.6-sol, gpt-5.6-terra, gpt-6-astra, gpt-6-luna, gpt-6-sol, gpt-6.1-sol, gpt-image-1.5,
+ gpt-image-2, gpt-image-2.5, gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-oss-120b,
+╭─ Switch Model ─────────────────────────────────────────────────────────────────────────────╮
+│  Session-only switch — role models stay unchanged                                          │
+│  🔍 >                                                                                      │
+│                                                                                            │
+│ ❯ litellm/claude-opus-5-5 ●                                     51t/s    1m ◫       $4/20█ │
+│   litellm/gpt-5.6-sol                                                  1.1m ◫       $4/20│ │
+│   litellm/deepseek-v4-flash                                    136t/s    1m ◫  $0.14/0.28│ │
+│   litellm/gpt-6.1-sol                                           27t/s  1.1m ◫       $2/10│ │
+│   litellm-anthropic/gemini-3.8-flash-high                       49t/s    1m ◫  $0.75/3.75│ │
+│                                                                                            │
+│   Claude Opus 5.5 (LiteLLM) · 1m ctx · 128k out · $4/20 per M · reasoning · vision · ~51t… │
+│   ● current · ● default ⟳ · ○ smol · ○ slow · ○ tiny · ○ memory · ○ judge                  │
+│ ↑/↓ models · ⏎ use for this session · type to search · @ quick roles · ⎋ close · ⌥P task … │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯

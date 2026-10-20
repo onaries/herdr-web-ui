@@ -1,14 +1,14 @@
 /**
  * dsh-tui (DeepSeek Harness) writes one zstd-compressed JSONL session per directory:
  * `<DSH_HOME>/sessions/<cwd-slug>/<session-uuid>/session.v*.jsonl.zstd`, records shaped
- * `{ type, seq, time, data }`. The TUI that is on screen holds the sibling `session.lock`
- * open for its whole life, so the pane's own foreground process — never a file mtime —
- * names the session: two dsh panes in one directory have two live locks.
+ * `{ type, seq, time, data }`. Parked sessions stay open, but the TUI rebinds its
+ * injection socket to the attached session. Only the pane's own socket descriptors
+ * identify that session; file mtimes and the cross-process resume marker cannot.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, readlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
 
@@ -24,14 +24,15 @@ export function dshHome(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * Resolve a pane's session from the descriptors its own processes hold: the lock sits in the
- * session directory beside the transcript, so an open fd on either names it. A pane whose
- * processes are not dsh answers null, and the chat falls back to the terminal.
+ * The current injection listener follows dsh's channel binding, unlike parked file handles.
+ * Older TUIs without that listener are usable only when their descriptors name one session.
  */
-export function dshSessionFromPids(pids: readonly number[], home = dshHome()): string | null {
+export function dshSessionFromPids(pids: readonly number[], home = dshHome(), injectDir = join(process.env["HOME"] || homedir(), ".dsh-tui", "inject")): string | null {
   const root = join(home, "sessions");
+  const paths = new Set<string>();
   for (const pid of pids) {
     if (!Number.isInteger(pid) || pid <= 0) continue;
+    const sockets = new Set<string>();
     let fds: string[];
     try {
       fds = readdirSync(`/proc/${pid}/fd`);
@@ -45,6 +46,8 @@ export function dshSessionFromPids(pids: readonly number[], home = dshHome()): s
       } catch {
         continue;
       }
+      const socket = /^socket:\[(\d+)\]$/.exec(target);
+      if (socket?.[1]) sockets.add(socket[1]);
       // /proc appends " (deleted)" to an unlinked target; that is not a live session.
       if (!/\/session\.(lock|v\d+\.jsonl\.zstd)$/.test(target)) continue;
       const directory = dirname(target);
@@ -58,13 +61,29 @@ export function dshSessionFromPids(pids: readonly number[], home = dshHome()): s
       const file = names.filter((name) => SESSION_FILE.test(name)).sort().at(-1);
       if (!file) continue;
       try {
-        if (statSync(join(directory, file)).isFile()) return join(directory, file);
+        if (statSync(join(directory, file)).isFile()) paths.add(join(directory, file));
       } catch {
         continue;
       }
     }
+    const attached = new Set<string>();
+    try {
+      for (const line of readFileSync(`/proc/${pid}/net/unix`, "utf8").split("\n").slice(1)) {
+        const entry = /^\S+\s+\S+\s+\S+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(.+)$/.exec(line.trim());
+        if (!entry || entry[1] !== "00010000" || entry[2] !== "0001" || entry[3] !== "01" || !entry[4] || !sockets.has(entry[4])) continue;
+        const socketPath = entry[5];
+        if (!socketPath) continue;
+        const sessionId = basename(socketPath, ".sock");
+        if (dirname(socketPath) === injectDir && socketPath.endsWith(".sock") && SESSION_ID.test(sessionId)) attached.add(sessionId);
+      }
+    } catch {
+      // No socket evidence: only an unambiguous legacy file binding is safe.
+    }
+    if (attached.size > 1) return null;
+    const sessionId = attached.values().next().value;
+    if (sessionId) return dshTranscriptPath(sessionId, home);
   }
-  return null;
+  return paths.size === 1 ? paths.values().next().value ?? null : null;
 }
 
 export function dshTranscriptPath(id: string, home = dshHome()): string | null {
