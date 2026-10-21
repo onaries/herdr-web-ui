@@ -10,9 +10,9 @@
  * HERDR_TEST_MODE=unit points HERDR_SOCKET at a socket that does not exist, so a test that
  * reaches for herdr in a unit run fails instead of working in the user's herdr.
  */
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { ping, sessionSnapshot, workspaceCreate } from "../server/herdr/client.ts";
 import { testShellEnv } from "./test-shell.ts";
 
@@ -44,6 +44,21 @@ async function answers(socket: string): Promise<boolean> {
   try { await ping(socket); return true; } catch { return false; }
 }
 
+/**
+ * The agent kinds a contract test launches with no program behind it ("muse"). On a PC where that CLI
+ * is installed, a pane would run the real one, which checks for updates and writes beside itself in
+ * the user's bin: these stand-ins, first on the test server's PATH, exit as a missing command does.
+ */
+export function agentStandIns(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  for (const name of ["muse"]) {
+    const path = join(dir, name);
+    writeFileSync(path, "#!/bin/sh\nexit 127\n");
+    chmodSync(path, 0o755);
+  }
+  return dir;
+}
+
 /** Point this process (and what it spawns) at the test session, starting its server if needed. */
 export async function useTestHerdr(): Promise<string | null> {
   // Unit tests must not discover or start herdr, even on a developer's PC. Nor may they fall back
@@ -61,9 +76,11 @@ export async function useTestHerdr(): Promise<string | null> {
   // where a shell integration can start a CLI herdr takes for an agent, ending the agent a test
   // reported, or set a title that names the pane's tab
   const zdotdir = join(dirname(socket), "zdotdir");
-  // a server left running from before that directory existed has panes reading those files:
-  // it is stopped once, and started again below
-  if (!existsSync(zdotdir) && await answers(socket)) {
+  // Windows panes cannot run the stand-ins (and keep their own PATH)
+  const standIns = process.platform === "win32" ? null : join(dirname(socket), "agent-stand-ins");
+  // a server left running from before either directory existed has panes reading those files, or
+  // the user's agents on their PATH: it is stopped once, and started again below
+  if ((!existsSync(zdotdir) || (standIns !== null && !existsSync(join(standIns, "muse")))) && await answers(socket)) {
     Bun.spawnSync([herdr, "--session", TEST_SESSION, "server", "stop"]);
     for (const deadline = Date.now() + 15_000; await answers(socket);) {
       if (Date.now() > deadline) throw new Error(`The test herdr session "${TEST_SESSION}" did not stop`);
@@ -77,6 +94,7 @@ export async function useTestHerdr(): Promise<string | null> {
   mkdirSync(zdotdir, { recursive: true });
   if (!existsSync(join(zdotdir, ".zshrc"))) writeFileSync(join(zdotdir, ".zshrc"), "");
   if (!(await answers(socket))) {
+    const path = standIns === null ? {} : { PATH: [agentStandIns(standIns), process.env["PATH"]].filter(Boolean).join(delimiter) };
     Bun.spawn([herdr, "--session", TEST_SESSION, "server"], {
       stdin: "ignore",
       stdout: Bun.file(join(dirname(socket), "test-server.log")),
@@ -84,7 +102,7 @@ export async function useTestHerdr(): Promise<string | null> {
       // run from inside a herdr pane, this process carries that pane's HERDR_* variables; run by
       // an agent, it carries the agent's too (OMO_CODING_AGENT_DIR moves where a pane's omo is
       // read from), and every pane of this server would inherit them
-      env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(HERDR|OMO|SENPI|PI)_/.test(name))), ...testShellEnv(dirname(socket)), ZDOTDIR: zdotdir },
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(HERDR|OMO|SENPI|PI)_/.test(name))), ...testShellEnv(dirname(socket)), ...path, ZDOTDIR: zdotdir },
     }).unref();
     const deadline = Date.now() + 15_000;
     while (!(existsSync(socket) && await answers(socket))) {

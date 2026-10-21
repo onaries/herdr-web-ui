@@ -1,0 +1,94 @@
+/** Browser-only regression fixture, bundled by session-history-browser-qa.ts: the sidebar and the session list over a fictional roster. */
+import React, { useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import type { HerdrPane, SessionSnapshot, TabCreated } from "../shared/protocol.ts";
+import type { AppActions } from "../src/lib/actions.ts";
+import { MachineContext } from "../src/lib/machineContext.tsx";
+import { sessionHistoryAgent } from "../src/lib/sessionHistory.ts";
+import { useRecentResumes } from "../src/lib/useRecentResumes.ts";
+import { SettingsProvider } from "../src/lib/settings.ts";
+import { Sidebar } from "../src/components/Sidebar.tsx";
+import { SessionHistory } from "../src/components/SessionHistory.tsx";
+import { SHOWN_SESSION } from "./session-history-fixture-data.ts";
+import "../src/styles.css";
+declare global { interface Window { qa: {
+  machine: (id: string) => void; selected: string | null; resumed: TabCreated[]; historyOpen: boolean;
+  /** herdr reporting the pane's session later, as it does once it has looked at the new agent */
+  reportSession: (paneId: string, id: string) => void;
+  /** the pane closed (its tab with it) */
+  closePane: (paneId: string) => void;
+  /** true: a resumed tab's pane stays out of the roster until rosterCatchUp, as before load() answers */
+  holdRoster: boolean;
+  rosterCatchUp: () => void;
+  /** this device only watches (its paired role): App passes it to the sidebar */
+  watch: (watching: boolean) => void;
+} } }
+const pane = (id: string, workspace: string, overrides: Partial<HerdrPane> = {}): HerdrPane => ({
+  pane_id: id, tab_id: `${workspace}:t1`, terminal_id: `${id}:term`, workspace_id: workspace, agent: "codex", agent_status: "idle", focused: false, revision: 1,
+  cwd: `/fixture/${workspace}`, title: "codex", ...overrides,
+}) as HerdrPane;
+const SNAPSHOT: SessionSnapshot = {
+  protocol: 22, version: "fixture", agents: [], layouts: [],
+  workspaces: [
+    { workspace_id: "w1", label: "fixture-folder", number: 1, active_tab_id: "w1:t1", agent_status: "idle", focused: true, pane_count: 1, tab_count: 1 },
+    { workspace_id: "w2", label: "shown-folder", number: 2, active_tab_id: "w2:t1", agent_status: "idle", focused: false, pane_count: 1, tab_count: 1 },
+  ],
+  tabs: [
+    { tab_id: "w1:t1", workspace_id: "w1", label: "Tab 1", number: 1, agent_status: "idle", focused: true, pane_count: 1 },
+    { tab_id: "w2:t1", workspace_id: "w2", label: "Tab 1", number: 1, agent_status: "idle", focused: false, pane_count: 1 },
+  ],
+  panes: [
+    pane("p1", "w1"),
+    pane("p2", "w2", { agent_session: { agent: "codex", kind: "id", source: "herdr:codex", value: SHOWN_SESSION } }),
+  ],
+};
+const noop = () => {};
+window.qa = { machine: () => {}, selected: null, resumed: [], historyOpen: false, reportSession: () => {}, closePane: () => {}, holdRoster: false, rosterCatchUp: () => {}, watch: () => {} };
+function Root() {
+  const [machine, setMachine] = useState("local");
+  const [watching, setWatching] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [history, setHistory] = useState<{ workspaceId: string; agent: string | null } | null>(null);
+  // the PC's roster as App holds it: a resumed tab's pane joins it (as load() brings it), reporting no session until told
+  const [snapshot, setSnapshot] = useState<SessionSnapshot>(SNAPSHOT);
+  const machines = useMemo(() => [{ id: machine, snapshot }], [machine, snapshot]);
+  const { standing: recentResumes, remember: rememberResume } = useRecentResumes(machines);
+  window.qa.machine = setMachine;
+  window.qa.watch = setWatching;
+  window.qa.selected = selected;
+  window.qa.historyOpen = history !== null;
+  window.qa.reportSession = (paneId, id) => setSnapshot((current) => ({ ...current, panes: current.panes.map((candidate) => candidate.pane_id === paneId ? { ...candidate, agent_session: { agent: "codex", kind: "id", source: "herdr:codex", value: id } } : candidate) }));
+  window.qa.closePane = (paneId) => setSnapshot((current) => ({ ...current, panes: current.panes.filter((candidate) => candidate.pane_id !== paneId) }));
+  const held = useRef<HerdrPane[]>([]);
+  const join = (panes: HerdrPane[]) => setSnapshot((current) => ({ ...current, panes: [...current.panes, ...panes] }));
+  window.qa.rosterCatchUp = () => join(held.current.splice(0));
+  const actions: AppActions = {
+    selectPane: setSelected, selectAdjacentPane: noop, setView: noop, toggleView: noop, focusInput: noop, scrollPage: noop, openNewSession: noop, openNewTab: noop,
+    openTerminalTab: async () => {}, openSessionHistory: (target) => { if (target) setHistory({ workspaceId: target.workspaceId, agent: target.agent ?? null }); },
+    openPalette: noop, agentStarted: noop, openFind: noop, openSettings: noop, openAddPc: noop, toggleSidebar: noop, toggleTheme: noop, lock: null, enableNotifications: null,
+    refresh: noop, openFiles: null, splitPane: null, zoomPane: null,
+  };
+  const workspace = history ? snapshot.workspaces.find((candidate) => candidate.workspace_id === history.workspaceId) : undefined;
+  return <SettingsProvider><MachineContext.Provider value={machine}>
+    <div className="sidebar-shell" style={{ width: 320, height: 600 }}>
+      <Sidebar key={machine} snapshot={snapshot} online watching={watching} selectedPaneId={selected} actions={actions} />
+    </div>
+    {history && workspace && <SessionHistory
+      workspace={workspace}
+      panes={snapshot.panes}
+      agent={sessionHistoryAgent(history.agent) ?? "codex"}
+      recent={recentResumes}
+      onClose={() => setHistory(null)}
+      onSelectPane={(paneId) => { setHistory(null); setSelected(paneId); }}
+      onResumed={(opened, session) => {
+        setHistory(null);
+        window.qa.resumed.push(opened);
+        if (!opened.agent_started) return;
+        rememberResume({ machineId: machine, workspaceId: workspace.workspace_id, agent: session.agent, id: session.id, paneId: opened.pane_id });
+        const made = pane(opened.pane_id, workspace.workspace_id, { agent_session: null });
+        if (window.qa.holdRoster) held.current.push(made); else join([made]);
+      }}
+    />}
+  </MachineContext.Provider></SettingsProvider>;
+}
+createRoot(document.getElementById("root")!).render(<React.StrictMode><Root /></React.StrictMode>);

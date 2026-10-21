@@ -11,11 +11,11 @@
  * `builtins` holds the names both versions share; a source has one static list, so the version-only ones
  * (the v1 and v2 additions) come from discover with their own provenance.
  */
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
 import type { AgentCommandSource } from "./index.ts";
-import { ancestorsToRepoRoot, description, environRecord, parseJsonc, readSkillText, walkSkills } from "./walk.ts";
+import { ancestorsToRepoRoot, description, environRecord, MAX_WALK_FOLDERS, parseJsonc, readConfigText, readSkillText, walkSkills } from "./walk.ts";
 
 const BUNDLED_DESCRIPTION = "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself.";
 const DESCRIPTIONS = {
@@ -91,7 +91,8 @@ const canonical = (path: string): string => { try { return realpathSync(path); }
 
 function configCommands(path: string, source: "user" | "project", key: string): SlashCommand[] {
   try {
-    const config: unknown = parseJsonc(readFileSync(path, "utf8"));
+    // bounded and regular files only: a FIFO or a huge file here would hold the server's one thread
+    const config: unknown = parseJsonc(readConfigText(path));
     if (typeof config !== "object" || config === null || !(key in config)) return [];
     const commands = (config as Record<string, unknown>)[key];
     if (typeof commands !== "object" || commands === null || Array.isArray(commands)) return [];
@@ -102,11 +103,18 @@ function configCommands(path: string, source: "user" | "project", key: string): 
   } catch { return []; /* missing, unreadable or malformed optional config */ }
 }
 
+/** Command files one folder may contribute: links can name one file under many paths, each a command. */
+export const MAX_COMMAND_FILES = 1024;
+
 /** Every .md under `root`, dot directories included; a nested path is the name (team/check). */
 function commandFiles(root: string): { name: string; path: string }[] {
   const files: { name: string; path: string }[] = [];
   const ancestors = new Set<string>();
+  let folders = 0;
   const visit = (directory: string): void => {
+    // the link guard covers the current branch only: sibling links to shared folders make an acyclic
+    // tree exponential, and this runs on the server's thread, so it shares the skill walk's bound
+    if (++folders > MAX_WALK_FOLDERS) return;
     const real = canonical(directory);
     if (ancestors.has(real)) return;
     ancestors.add(real);
@@ -115,6 +123,7 @@ function commandFiles(root: string): { name: string; path: string }[] {
         const path = join(directory, entry.name);
         try {
           const target = statSync(path);
+          if (files.length >= MAX_COMMAND_FILES) return;
           if (target.isDirectory()) visit(path);
           else if (target.isFile() && entry.name.endsWith(".md")) files.push({ name: relative(root, path).slice(0, -3).split(sep).join("/"), path });
         } catch { continue; /* broken link */ }
@@ -142,6 +151,7 @@ export const source: AgentCommandSource = {
       [config, "user"],
       ...projects.flatMap((directory): [string, "project"][] => [[directory, "project"], [join(directory, ".opencode"), "project"]]),
     ];
+    const descriptions = new Map<string, string>();
     for (const [directory, source] of directories) {
       // File commands override config commands at the same root.
       for (const filename of ["opencode.json", "opencode.jsonc"]) {
@@ -151,7 +161,14 @@ export const source: AgentCommandSource = {
       // the singular directory is legacy in v2 and still read; the plural one wins a clash
       for (const kind of ["command", "commands"]) {
         for (const { name, path } of commandFiles(join(directory, kind))) {
-          try { commands.set(name, { name, description: description(readSkillText(path)), source, id: canonical(path) }); } catch { continue; /* unreadable */ }
+          const id = canonical(path);
+          // one read per file, however many links name it
+          let text = descriptions.get(id);
+          if (text === undefined) {
+            try { text = description(readSkillText(path)); } catch { continue; /* unreadable */ }
+            descriptions.set(id, text);
+          }
+          commands.set(name, { name, description: text, source, id });
         }
       }
     }

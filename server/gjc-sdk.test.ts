@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   GjcSdkLookupError,
+  gjcSdkQuery,
   gjcSdkTranscriptWithRunner as sdkTranscriptWithRunner,
   type GjcSdkCommandOptions,
   type GjcSdkCommandRunner,
@@ -628,5 +629,25 @@ describe("GJC SDK transcript identity binding", () => {
     expect(captured?.options.timeout).toBeGreaterThan(0);
     expect(captured?.options.timeout).toBeLessThanOrEqual(5_000);
     expect(captured?.options.killSignal).toBe("SIGKILL");
+  });
+});
+
+describe("gjcSdkQuery", () => {
+  it("asks one read query, attach-only, and refuses anything else", async () => {
+    const seen: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+    const runner: GjcSdkCommandRunner = async (_command, args, options) => {
+      seen.push({ args, env: options.env });
+      return JSON.stringify({ ok: true, page: { items: [], complete: true } });
+    };
+    const response = await gjcSdkQuery(agentDir, "session-1", "skill.list/state", { runner });
+    expect(response?.ok).toBe(true);
+    expect(seen[0]!.args).toEqual(["sdk", "session", "raw", "query", "session-1", "--query", "skill.list/state", "--agent-dir", agentDir, "--attach-only", "--json"]);
+    expect(seen[0]!.env.GJC_SDK_BROKER_AUTOSTART).toBe("0");
+    // a control operation or a flag-shaped session id never reaches the CLI
+    expect(await gjcSdkQuery(agentDir, "session-1", "skill.invoke" as never, { runner })).toBeNull();
+    expect(await gjcSdkQuery(agentDir, "--op", "skill.list/state", { runner })).toBeNull();
+    expect(seen).toHaveLength(1);
+    const refused: GjcSdkCommandRunner = async () => JSON.stringify({ type: "broker_response", ok: false });
+    expect(await gjcSdkQuery(agentDir, "session-1", "skill.list/state", { runner: refused })).toBeNull();
   });
 });

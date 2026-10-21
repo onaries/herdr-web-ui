@@ -56,10 +56,6 @@ export function shownStatus(pane: FinishPane, seen: SeenRecord | null): AgentSta
   return seen && isSeenDone(pane, seen) ? "idle" : pane.agent_status;
 }
 
-export function markSeen(record: SeenRecord, paneId: string, finishId: number): SeenRecord {
-  return (record[paneId] ?? 0) >= finishId ? record : { ...record, [paneId]: finishId };
-}
-
 /** Blocked first, then herdr's latest state change, then the order given. */
 export function activityOrder<T>(rows: readonly T[], paneOf: (row: T) => Pick<PaneInfo, "pane_id" | "agent_status">, seqs: ReadonlyMap<string, number>): T[] {
   return rows

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
 import { handlePromptRequest, promptWaitEnded } from "./prompt.ts";
+import * as service from "./opencode-service.ts";
 import type { OpenCodeFormInfo } from "./opencode-service.ts";
 
 const deferred = <T>() => Promise.withResolvers<T>();
@@ -74,6 +75,8 @@ async function fixture(run: (f: {
   const service = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     async fetch(request) {
+      // the identity check: the process service.json names answers at its URL
+      if (request.method === "GET" && new URL(request.url).pathname === "/api/info") return Response.json({ version: "2.0.32", pid: process.pid, urls: [], paths: { tmp: root } });
       if (request.method === "GET") {
         const listing = f.listing;
         f.listing = undefined;
@@ -119,6 +122,23 @@ async function fixture(run: (f: {
 }
 
 describe("OpenCode answer ordering", () => {
+  it("asks for the verified service on Windows too, for the question card and its answer", async () => {
+    const asked = spyOn(service, "openCodeService");
+    try {
+      await fixture(async (f) => {
+        f.forms[0]!.fields.length = 1;
+        const prompt = await f.read();
+        expect((await f.answer(prompt, { custom_text: "answered" })).status).toBe(200);
+        expect(f.replies).toHaveLength(1);
+      });
+      // the card's read and its answer both asked, and each asked for Windows too (opencode-service.test.ts)
+      expect(asked.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(asked.mock.calls.every((call) => call[2]?.onWindows === true)).toBe(true);
+    } finally {
+      asked.mockRestore();
+    }
+  });
+
   it("keeps the prompt id and defaults after a failed reply and allows immediate retry", async () => {
     await fixture(async (f) => {
       f.forms[0]!.fields.length = 1;

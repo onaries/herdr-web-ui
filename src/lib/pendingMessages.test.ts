@@ -9,6 +9,22 @@ const storage = () => {
 const message = (id: string, state: PendingMessage["state"] = "queued", text = "check the tests"): PendingMessage => ({ id, request_id: 1, text, state, created_at: "2026-10-06T00:00:00Z" });
 
 describe("pending message ownership", () => {
+  it("drops a first message delivered while its connection was down once the new connection's receipt says so", () => {
+    const store = new PendingMessageStore(() => storage());
+    // listed on the first connection, which then drops: kept, as not confirmed (a first message: no connection's request id)
+    store.publish("p", [{ ...message("first", "queued", "Plan the config file"), request_id: -1 }], [], "connection-1");
+    store.suspendScope("connection-1");
+    expect(store.read("p")[0]!.state).toBe("uncertain");
+    // the next connection is told it went: no copy is left uncertain
+    store.publish("p", [], [{ id: "first", outcome: "sent" }], "connection-2");
+    expect(store.read("p")).toEqual([]);
+  });
+  it("keeps a row a live connection proves when another connection's receipt names it (control)", () => {
+    const store = new PendingMessageStore(() => storage());
+    store.publish("p", [message("own")], [], "connection-1");
+    store.publish("p", [], [{ id: "own", outcome: "sent" }], "connection-2");
+    expect(store.read("p").map((row) => row.id)).toEqual(["own"]);
+  });
   it("regression: advances a persisted attempt only on a definitive no-input refusal", () => {
     const port = storage(), store = new PendingMessageStore(() => port);
     store.accept("p", message("h", "held"), null);

@@ -53,7 +53,9 @@ it("posts the full safe telemetry snapshot and current notice version", async ()
 
   expect(requestUrl).toBe("/api/telemetry");
   expect(requestInit?.method).toBe("POST");
-  expect(requestInit?.headers).toEqual({ "content-type": "application/json", "x-herdr-update": "1" });
+  expect(new Headers(requestInit?.headers).get("content-type")).toBe("application/json");
+  expect(new Headers(requestInit?.headers).get("x-herdr-update")).toBe("1");
+  expect(new Headers(requestInit?.headers).get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
   const body = JSON.parse(String(requestInit?.body)) as Record<string, unknown>;
   expect(body).toEqual(change);
   expect(body).not.toHaveProperty("changed_settings");

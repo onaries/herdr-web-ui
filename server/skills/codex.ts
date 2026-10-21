@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "no
 import { basename, dirname, join, relative, resolve, sep, win32 } from "node:path";
 import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
 import type { AgentCommandSource } from "./index.ts";
-import { ancestorsToRepoRoot, environRecord, environValue, piTemplates, plainObject, readFrontmatter, readSkillText } from "./walk.ts";
+import { ancestorsToRepoRoot, environRecord, environValue, MAX_WALK_FOLDERS, piTemplates, plainObject, readFrontmatter, readSkillText } from "./walk.ts";
 
 /**
  * Pinned to codex-rs at 83086188ae0614bd882818ff1aa23f3194962012 (rust-v0.163.0 for the slash table):
@@ -59,11 +59,17 @@ function manifestName(root: string): string | null {
 
 interface FoundSkill { readonly name: string; readonly description: string; readonly path: string }
 
-/** SKILL.md files under `root`, to depth 6; `ancestors` guards link cycles along one branch only. */
-function scanSkills(root: string): FoundSkill[] {
+/**
+ * SKILL.md files under `root`, to depth 6; `ancestors` guards link cycles along one branch only, so
+ * sibling links to one folder multiply the paths: every folder resolved counts against `budget`, which
+ * the roots of one discovery share (walk.ts MAX_WALK_FOLDERS).
+ */
+function scanSkills(root: string, budget: { folders: number }): FoundSkill[] {
   const found: FoundSkill[] = [];
   const ancestors = new Set<string>();
   const visit = (directory: string, depth: number): void => {
+    if (budget.folders <= 0) return;
+    budget.folders -= 1;
     let real: string;
     try { real = realpathSync(directory); } catch { return; }
     if (ancestors.has(real)) return;
@@ -175,8 +181,9 @@ export const source: AgentCommandSource = {
       namespaces.set(directory, found);
       return found;
     };
+    const budget = { folders: MAX_WALK_FOLDERS };
     const load = (root: string, origin: SlashCommand["origin"], fallback?: string): void => {
-      for (const skill of scanSkills(root)) {
+      for (const skill of scanSkills(root, budget)) {
         const id = canonical(skill.path);
         if (disabled.has(id) || seen.has(id)) continue;
         seen.add(id);

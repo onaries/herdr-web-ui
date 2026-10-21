@@ -11,6 +11,7 @@ import * as processStart from "./process-start.ts";
 import * as pendingInput from "./pending-input.ts";
 import { OmoStatus } from "./omo-status.ts";
 import * as claudeStore from "./claude-store.ts";
+import * as agentLaunchModule from "./agent-launch.ts";
 
 type PendingUpdate = Extract<ServerMessage, { type: "pending-messages" }>;
 
@@ -32,6 +33,24 @@ mock.module("./herdr/client.ts", () => ({
   ...herdrClient,
   paneSendText: async (...args: Parameters<typeof sendText>) => { if (args[1].startsWith("\u001b[200~")) await holding("text"); return sendText(...args); },
   paneSendKeys: async (...args: Parameters<typeof sendKeys>) => { await holding("keys"); return sendKeys(...args); },
+}));
+// The create routes' launch, for the first-message cases: nothing is started (an agent kind may be a
+// real program on this PC); the case starts its recorder in the pane itself, after the route answered,
+// as a real agent comes up after herdr typed its launch.
+// Only while `standInLaunch` is set; every other launch (another contract file in the same process) is the real one.
+const launches: string[] = [];
+const realLaunch = agentLaunchModule.agentLaunch;
+let standInLaunch = false;
+/** the process the stood-in launch says it brought up, as a shell-started agent's launch does */
+let standInPid: number | null = null;
+mock.module("./agent-launch.ts", () => ({
+  ...agentLaunchModule,
+  agentLaunch: async (...args: Parameters<typeof realLaunch>) => {
+    if (!standInLaunch) return realLaunch(...args);
+    launches.push(String(args[1].kind));
+    if (standInPid !== null) args[2]?.(standInPid);
+    return { agent_started: true as const };
+  },
 }));
 /** Holds the next paste (`text`) or key (`keys`) RPC before it connects; `reached` resolves there. */
 function holdConnect(rpc: "text" | "keys"): { reached: Promise<void>; release: () => void } {
@@ -77,9 +96,12 @@ class Socket {
   send(frame: unknown) { this.ws.send(JSON.stringify(frame)); }
   result(id: number) { return this.wait((frame) => frame.type === "submit-result" && frame.id === id); }
   action(id: number) { return this.wait((frame) => frame.type === "pending-result" && frame.id === id); }
-  async attach(pane: string) {
+  /** this connection's id, from its first snapshot: what a create request names as `first_message_connection` */
+  async connection(): Promise<string> { return (await this.wait((frame) => frame.type === "snapshot")).connection; }
+  /** `chat`: as the chat lens attaches, over a covered grid */
+  async attach(pane: string, chat = false) {
     await this.wait((frame) => frame.type === "snapshot");
-    this.send({ type: "attach", pane_id: pane, cols: 100, rows: 30 });
+    this.send({ type: "attach", pane_id: pane, cols: 100, rows: 30, ...(chat ? { keep_size: true } : {}) });
     await this.wait((frame) => frame.type === "input-ready" && frame.pane_id === pane && frame.ready !== false);
   }
   close() { this.ws.close(); }
@@ -147,8 +169,8 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
     const answer = await socket.result(id); expect(answer.ok).toBe(true); expect(answer.pending?.request_id).toBe(id); return answer.pending;
   };
   const removed = (id: string, outcome = "sent", reader = socket) => reader.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane && frame.removed?.some((entry: any) => entry.id === id && entry.outcome === outcome));
-  const another = async (attach = true) => { const reader = new Socket(server.port); entry.sockets.push(reader); if (attach) await reader.attach(pane); else await reader.wait((frame) => frame.type === "snapshot"); return reader; };
-  return { screenFile, pane, port: server.port, socket, bytes, waitBytes, state, showScreen, queue, removed, another, replacementLog };
+  const another = async (attach = true, chat = false) => { const reader = new Socket(server.port); entry.sockets.push(reader); if (attach) await reader.attach(pane, chat); else await reader.wait((frame) => frame.type === "snapshot"); return reader; };
+  return { screenFile, pane, port: server.port, server, socket, bytes, waitBytes, state, showScreen, queue, removed, another, replacementLog };
 }
 
 describe("connection-owned pending input", () => {
@@ -957,5 +979,595 @@ describe("connection-owned pending input", () => {
     expect(await f.socket.result(20)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r");
     expect(f.bytes()).toBe(`${paste("pasted only")}barrier\r`);
     expect(f.socket.seen.filter((frame) => frame.type === "pending-messages").at(-1)?.messages).toContainEqual(expect.objectContaining({ id: message.id, state: "uncertain" }));
+  }, 30_000);
+});
+
+/**
+ * A create request's first message (POST /api/workspace/create and /api/tab/create `first_message`):
+ * the bridge's own pending message for the new pane, queued through the same path as a connection's
+ * queued message but owned by the bridge, so a connection's loss never holds it, a page that attaches
+ * later is told it, and it goes exactly once, through a connection that has the pane attached, when the
+ * agent is first ready. queueFirstMessage is what the create routes call once the agent started.
+ */
+/** Resolves once `done` holds, checked at each change to the files under the test's root (a recorder's log, a screen). */
+function written(done: () => boolean, what: string, ms: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = (): boolean => { if (!done()) return false; clearTimeout(timer); watcher.close(); resolve(); return true; };
+    const watcher = watch(root, finish);
+    const timer = setTimeout(() => { watcher.close(); reject(new Error(what)); }, ms);
+    finish();
+  });
+}
+
+describe("a create request's first message", () => {
+  const rule = "\u2500".repeat(60);
+  const footer = "[Haiku 4.5] \u2502 project";
+  const listed = (reader: Socket, pane: string, id: string, state = "queued") => reader.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane
+    && frame.messages.some((item: PendingMessage) => item.id === id && item.state === state));
+  /**
+   * Resolves once the drains of `pane` asked for so far have run, a rerun included. The pane's work runs in
+   * order, and a second first message for it is refused there after what is ahead. A drain asked for while
+   * one runs runs again after it, which is behind the first refusal: the second refusal waits for it too.
+   */
+  const drained = async (server: ReturnType<typeof createServer>, pane: string): Promise<void> => {
+    for (let step = 0; step < 2; step += 1) await expect(server.queueFirstMessage(pane, "SECOND", "claude")).rejects.toMatchObject({ code: "pending_limit" });
+  };
+  /**
+   * Resolves once herdr's snapshot names `agent` (null: none) in `pane`. herdr's own detection and a
+   * reported state change it at their own pace, so the snapshot is read now and again after each status
+   * or roster frame `reader` gets from `from` on, never on a timer.
+   */
+  const herdrNames = async (reader: Socket, pane: string, agent: string | null, from: number): Promise<void> => {
+    for (let at = from; ;) {
+      if (((await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === pane)?.agent ?? null) === agent) return;
+      const frame = await reader.wait((candidate) => (candidate.type === "pane-status" && candidate.pane_id === pane) || candidate.type === "session-changed", at);
+      at = reader.seen.indexOf(frame) + 1;
+    }
+  };
+  /**
+   * Resolves once the bridge has learned what runs in `pane` while herdr names `agent` there: then a
+   * connection attaching the pane drains it, and drained() waits for that drain.
+   */
+  const learned = async (server: ReturnType<typeof createServer>, reader: Socket, pane: string, agent: string, from: number, sockets: Socket[]): Promise<void> => {
+    await herdrNames(reader, pane, agent, from);
+    const probe = new Socket(server.port); sockets.push(probe);
+    await probe.attach(pane);
+    await drained(server, pane);
+  };
+
+  it("is told to the attached connection and typed once, when the agent is first ready, never again at a later turn's end", async () => {
+    const f = await setup("first-once");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-MESSAGE", "claude", await f.socket.connection());
+    expect(message).toMatchObject({ text: "FIRST-MESSAGE", state: "queued" });
+    expect(message.request_id).toBeLessThan(0); // no connection submitted it
+    await listed(f.socket, f.pane, message.id);
+    expect(f.bytes()).toBe(""); // control: nothing typed while the agent works
+    const removed = f.removed(message.id);
+    await f.state("idle");
+    await removed;
+    await f.waitBytes(`${paste("FIRST-MESSAGE")}\r`);
+    // the next turn's end sends nothing more: a marker queued after it is the next thing typed
+    await f.state("working");
+    const marker = await f.queue(1, "MARKER");
+    const markerSent = f.removed(marker.id);
+    await f.state("idle");
+    await markerSent;
+    await f.waitBytes(`${paste("MARKER")}\r`);
+    expect(f.bytes()).toBe(`${paste("FIRST-MESSAGE")}\r${paste("MARKER")}\r`);
+  }, 30_000);
+
+  it("is not typed into Claude Code's open rewind dialog: it waits, and goes once the dialog is closed", async () => {
+    const f = await setup("first-rewind-open");
+    // Claude Code 2.1.304's confirm step on a Summarize row (recorded): an add-context field, where a
+    // message and its Enter would summarize the conversation
+    const dialog = readFileSync(new URL("./fixtures/claude-rewind-2.1.304-confirm-apple-summarize-from-40.txt", import.meta.url), "utf8");
+    await f.showScreen(dialog, "4. Never mind");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-OVER-REWIND", "claude", await f.socket.connection());
+    await f.state("idle");
+    const held = await listed(f.socket, f.pane, message.id, "held");
+    expect(held.messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("rewind_dialog_open");
+    expect(f.bytes()).toBe("");
+    // closed in the terminal: Send now types it once
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f \u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer}\n`, footer);
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true });
+    await f.removed(message.id);
+    await f.waitBytes(`${paste("FIRST-OVER-REWIND")}\r`);
+  }, 30_000);
+
+  it("is held, never typed on its own, once the page that sent it disconnects before the agent is ready: a device attaching later in Terminal or Chat gets Send now or Discard", async () => {
+    const f = await setup("first-requester-gone");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-GONE", "claude", await f.socket.connection());
+    await listed(f.socket, f.pane, message.id);
+    await f.socket.disconnect();
+    // another device, in the terminal lens: told the message, held for an explicit send
+    const terminal = await f.another();
+    const held = await listed(terminal, f.pane, message.id, "held");
+    expect(held.messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("first_message_unattended");
+    // the agent rests: the turn's end types the next waiting message (the terminal device's own), never the held one
+    terminal.send({ type: "submit", id: 7, pane_id: f.pane, text: "MARKER", payload: "unused\r", delivery: "queue" });
+    const queued = await terminal.result(7);
+    expect(queued.ok).toBe(true);
+    const markerSent = f.removed(queued.pending.id, "sent", terminal);
+    await f.state("idle", terminal);
+    await markerSent;
+    await f.waitBytes(`${paste("MARKER")}\r`);
+    expect(f.bytes()).toBe(`${paste("MARKER")}\r`);
+    // and in the chat lens: still held there; its Send now types it, once
+    const chat = await f.another(true, true);
+    await listed(chat, f.pane, message.id, "held");
+    chat.send({ type: "pending-action", id: 12, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await chat.action(12)).toMatchObject({ ok: true });
+    await f.removed(message.id, "sent", chat);
+    await f.waitBytes(`${paste("FIRST-GONE")}\r`);
+    expect(f.bytes()).toBe(`${paste("MARKER")}\r${paste("FIRST-GONE")}\r`);
+    // a page attaching after that is told the receipt, not the message
+    const later = await f.another();
+    const receipt = await later.wait((frame) => frame.type === "pending-messages" && frame.pane_id === f.pane && frame.removed?.some((entry: any) => entry.id === message.id && entry.outcome === "sent"));
+    expect(receipt.messages.some((item: PendingMessage) => item.id === message.id)).toBe(false);
+  }, 30_000);
+
+  it("is held from the start when the request names no page connection, and Discard ends it", async () => {
+    const f = await setup("first-no-requester");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-NOBODY", "claude");
+    expect(message).toMatchObject({ state: "held", error: { code: "first_message_unattended" } });
+    await listed(f.socket, f.pane, message.id, "held");
+    f.socket.send({ type: "pending-action", id: 13, pane_id: f.pane, pending_id: message.id, action: "discard" });
+    expect(await f.socket.action(13)).toMatchObject({ ok: true });
+    await f.removed(message.id, "discarded");
+    expect(f.bytes()).toBe("");
+  }, 30_000);
+
+  it("holds one first message per pane: a second for the same pane is refused, whatever other panes hold", async () => {
+    const f = await setup("first-per-pane");
+    const requester = await f.socket.connection();
+    await f.server.queueFirstMessage(f.pane, "FIRST-ONE", "claude", requester);
+    await expect(f.server.queueFirstMessage(f.pane, "FIRST-TWO", "claude", requester)).rejects.toMatchObject({ code: "pending_limit" });
+  }, 30_000);
+
+  it("is bound to the agent process it was queued under: a replacement of the same kind in its terminal gets it held with pending_target_changed", async () => {
+    const f = await setup("first-replaced", "claude", "SESSION1", {}, true);
+    const first = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.find((entry) => entry.name === "claude");
+    if (!first) throw new Error("SESSION1 has no foreground claude process");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-FOR-SESSION-1", "claude", await f.socket.connection());
+    const started = new Promise<void>((resolve, reject) => {
+      const watcher = watch(root, () => {
+        if (!existsSync(f.replacementLog)) return;
+        clearTimeout(timeout); watcher.close(); resolve();
+      });
+      const timeout = setTimeout(() => { watcher.close(); reject(new Error("SESSION2 did not start")); }, 10_000);
+    });
+    globalThis.process.kill(first.pid, "SIGKILL");
+    await started;
+    const replacement = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.find((entry) => entry.name === "claude");
+    expect(replacement?.pid).not.toBe(first.pid); // control: the process really changed, in the same terminal
+    const held = listed(f.socket, f.pane, message.id, "held");
+    await f.state("idle");
+    expect((await held).messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("pending_target_changed");
+    expect(readFileSync(f.replacementLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string).join("")).toBe("");
+  }, 30_000);
+
+  it("is bound to the agent session it was queued under: a /resume in the same process before its page attaches gets it held with pending_target_changed, never typed", async () => {
+    const f = await setup("first-resumed");
+    let sessionId = "11111111-1111-4111-8111-111111111111";
+    // the recorder runs as `claude`; its PID record is supplied, so no real Claude store is read
+    const session = spyOn(claudeStore, "claudeForegroundSession").mockImplementation(async (processes) =>
+      processes.some((entry) => entry.name === "claude") ? sessionId : null);
+    try {
+      // the page that sends the request is connected and has not attached the new pane yet
+      const page = await f.another(false);
+      const process = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0]?.pid;
+      const message = await f.server.queueFirstMessage(f.pane, "FIRST-FOR-A", "claude", await page.connection());
+      // /resume in the terminal: Claude's PID record names another session, in the same process
+      sessionId = "22222222-2222-4222-8222-222222222222";
+      expect((await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0]?.pid).toBe(process); // control: the same process
+      const held = listed(f.socket, f.pane, message.id, "held");
+      await page.attach(f.pane);
+      await f.state("idle");
+      expect((await held).messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("pending_target_changed");
+      expect(f.bytes()).toBe("");
+    } finally { session.mockRestore(); }
+  }, 30_000);
+
+  it("is held, so the pane's other messages are not stuck behind it, once the page that sent it leaves the pane while still connected", async () => {
+    const f = await setup("first-requester-left");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-LEFT", "claude", await f.socket.connection());
+    await listed(f.socket, f.pane, message.id);
+    const device = await f.another();
+    const held = listed(device, f.pane, message.id, "held");
+    f.socket.send({ type: "detach", pane_id: f.pane });
+    expect((await held).messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("first_message_unattended");
+    // the other device's next-turn message goes at the turn's end
+    device.send({ type: "submit", id: 7, pane_id: f.pane, text: "MARKER", payload: "unused\r", delivery: "queue" });
+    const queued = await device.result(7);
+    expect(queued.ok).toBe(true);
+    const markerSent = f.removed(queued.pending.id, "sent", device);
+    await f.state("idle", device);
+    await markerSent;
+    await f.waitBytes(`${paste("MARKER")}\r`);
+    expect(f.bytes()).toBe(`${paste("MARKER")}\r`);
+    // the first message waits for Send now or Discard: Send now types it once
+    device.send({ type: "pending-action", id: 12, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await device.action(12)).toMatchObject({ ok: true });
+    await f.removed(message.id, "sent", device);
+    await f.waitBytes(`${paste("FIRST-LEFT")}\r`);
+    expect(f.bytes()).toBe(`${paste("MARKER")}\r${paste("FIRST-LEFT")}\r`);
+  }, 30_000);
+
+  it("is held over a draft typed in Claude's input box, as a connection's own queued message is, and goes on Send now from the attached connection", async () => {
+    const f = await setup("first-draft");
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f half a thought typed in the terminal\n${rule}\n  ${footer}\n`, footer);
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-DRAFT", "claude", await f.socket.connection());
+    await listed(f.socket, f.pane, message.id);
+    await f.state("idle");
+    const held = await listed(f.socket, f.pane, message.id, "held");
+    expect(held.messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("input_draft");
+    expect(f.bytes()).toBe("");
+    // the draft sent or cleared in the terminal, the attached connection's Send now delivers it
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f \u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer} \n`, `${footer} `);
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true });
+    await f.removed(message.id);
+    await f.waitBytes(`${paste("FIRST-DRAFT")}\r`);
+  }, 30_000);
+
+  /**
+   * Through the real POST /api/tab/create: the route queues the message while herdr detects no agent in
+   * the new pane yet, as right after a real launch. The launch itself is stood in for (`launches`); the
+   * recorder then starts in the pane under the name of the agent that comes up.
+   */
+  const launched = async (label: string, comesUp: string) => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: `herdr-web-ui-test-pending-${label}`, cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, `state-${label}`) });
+    entry.stop = server.stop;
+    // the page's connection is open before its Start, as the app's is: the request names it
+    const socket = new Socket(server.port); entry.sockets.push(socket);
+    standInLaunch = true;
+    const res = await fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: `FIRST-${label}`, first_message_connection: await socket.connection() }),
+    }).finally(() => { standInLaunch = false; });
+    expect(res.status).toBe(200);
+    const tab = await res.json() as { pane_id: string; agent_started: boolean; first_message: { id: string } | null };
+    expect(tab.agent_started).toBeTrue();
+    expect(tab.first_message).not.toBeNull();
+    expect(launches.at(-1)).toBe("claude");
+    const pane = tab.pane_id;
+    // the case's own control: the route queued it while herdr named no agent in the pane
+    expect((await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === pane)?.agent ?? null).toBeNull();
+    await socket.attach(pane);
+    await listed(socket, pane, tab.first_message!.id);
+    const log = join(root, `${label}.jsonl`);
+    const screenFile = join(root, `${label}.screen`);
+    writeFileSync(screenFile, "");
+    if (!existsSync(join(root, comesUp))) { copyFileSync(process.execPath, join(root, comesUp)); chmodSync(join(root, comesUp), 0o755); }
+    const bytes = () => existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string).join("") : "";
+    const recorder = written(() => existsSync(log), "recorder did not start", 10_000);
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `exec '${join(root, comesUp)}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'\n` });
+    await recorder;
+    return { pane, socket, id: tab.first_message!.id, bytes };
+  };
+
+  it("queued by the create route before herdr detects the launched agent, is typed once when that agent is first ready", async () => {
+    const f = await launched("first-launched", "claude");
+    const sent = f.socket.wait((frame) => frame.type === "pending-messages" && frame.pane_id === f.pane && frame.removed?.some((entry: any) => entry.id === f.id && entry.outcome === "sent"));
+    await herdrRpc("pane.report_agent", { pane_id: f.pane, source: "manual", agent: "claude", state: "idle" });
+    await sent;
+    await written(() => f.bytes().endsWith(`${paste("FIRST-first-launched")}\r`), "input timeout", 8_000);
+    expect(f.bytes()).toBe(`${paste("FIRST-first-launched")}\r`);
+  }, 30_000);
+
+  it("queued for one launched agent, is held, not typed, when another agent comes up in its terminal", async () => {
+    const f = await launched("first-other", "codex");
+    await herdrRpc("pane.report_agent", { pane_id: f.pane, source: "manual", agent: "codex", state: "idle" });
+    const held = await listed(f.socket, f.pane, f.id, "held");
+    expect(held.messages.find((item: PendingMessage) => item.id === f.id).error.code).toBe("pending_target_changed");
+    // Send now refuses it as well: it was never meant for this agent
+    f.socket.send({ type: "pending-action", id: 12, pane_id: f.pane, pending_id: f.id, action: "steer" });
+    expect(await f.socket.action(12)).toMatchObject({ ok: false, code: "pending_target_changed" });
+    expect(f.bytes()).toBe("");
+  }, 30_000);
+
+  it("queued while the shell was still in front, is bound to the agent the launch brought up: a same-kind replacement before its page attaches gets it held, never typed", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-launch-replaced", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-launch-replaced") });
+    entry.stop = server.stop;
+    // the page is connected and attaches the new pane only later; another device has it attached throughout
+    const page = new Socket(server.port); entry.sockets.push(page);
+    standInLaunch = true;
+    const res = await fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: "FIRST-FOR-LAUNCHED", first_message_connection: await page.connection() }),
+    }).finally(() => { standInLaunch = false; });
+    const tab = await res.json() as { pane_id: string; first_message: { id: string } };
+    const pane = tab.pane_id;
+    expect((await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === pane)?.agent ?? null).toBeNull(); // control: queued with no agent named
+    const device = new Socket(server.port); entry.sockets.push(device);
+    await device.attach(pane);
+    // the launched agent comes up as the shell's child; when it ends, the shell runs another of the same kind
+    const launchedLog = join(root, "first-launch-replaced-1.jsonl");
+    const replacementLog = join(root, "first-launch-replaced-2.jsonl");
+    const screenFile = join(root, "first-launch-replaced.screen");
+    writeFileSync(screenFile, "");
+    const recorder = (log: string) => `'${join(root, "claude")}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'`;
+    const up = written(() => existsSync(launchedLog), "the launched agent did not start", 10_000);
+    const before = device.seen.length;
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `${recorder(launchedLog)}; exec ${recorder(replacementLog)}\n` });
+    await up;
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
+    await learned(server, device, pane, "claude", before, entry.sockets);
+    const launched = (await herdrClient.paneProcessInfo(pane))?.foreground_processes?.find((entry) => entry.name === "claude");
+    if (!launched) throw new Error("the launched agent has no foreground process");
+    const replaced = written(() => existsSync(replacementLog), "the replacement did not start", 10_000);
+    globalThis.process.kill(launched.pid, "SIGKILL");
+    await replaced;
+    expect((await herdrClient.paneProcessInfo(pane))?.foreground_processes?.find((entry) => entry.name === "claude")?.pid).not.toBe(launched.pid); // control
+    await page.attach(pane);
+    const held = listed(page, pane, tab.first_message.id, "held");
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "idle" });
+    expect((await held).messages.find((item: PendingMessage) => item.id === tab.first_message.id).error.code).toBe("pending_target_changed");
+    expect(readFileSync(replacementLog, "utf8")).toBe("");
+  }, 30_000);
+
+  it("queued for a launched agent that came up and then quit before it went, is held for Send now or Discard, never left waiting and never typed", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-launch-quit", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-launch-quit") });
+    entry.stop = server.stop;
+    const page = new Socket(server.port); entry.sockets.push(page);
+    standInLaunch = true;
+    const res = await fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: "FIRST-FOR-QUIT", first_message_connection: await page.connection() }),
+    }).finally(() => { standInLaunch = false; });
+    const tab = await res.json() as { pane_id: string; first_message: { id: string } };
+    const pane = tab.pane_id;
+    // another device has the pane attached throughout; the page attaches once the agent has quit
+    const device = new Socket(server.port); entry.sockets.push(device);
+    await device.attach(pane);
+    await drained(server, pane);
+    // the launched agent comes up as the shell's child, and is learned at its first status event
+    const log = join(root, "first-launch-quit.jsonl");
+    const screenFile = join(root, "first-launch-quit.screen");
+    writeFileSync(screenFile, "");
+    // the shell marks the agent's end once it is back in front
+    const ended = join(root, "first-launch-quit.ended");
+    const up = written(() => existsSync(log), "the launched agent did not start", 10_000);
+    const before = device.seen.length;
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `'${join(root, "claude")}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'; : > '${ended}'\n` });
+    await up;
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
+    await learned(server, device, pane, "claude", before, entry.sockets);
+    const launched = (await herdrClient.paneProcessInfo(pane))?.foreground_processes?.find((process) => process.name === "claude");
+    if (!launched) throw new Error("the launched agent has no foreground process");
+    // the user quits it: the shell is back in front, and herdr names no agent there (its own detection may
+    // still name it a while: the message is held either way, at the pane's next event)
+    const shell = (await herdrClient.paneProcessInfo(pane))?.shell_pid;
+    const quit = written(() => existsSync(ended), "the launched agent did not end", 10_000);
+    globalThis.process.kill(launched.pid, "SIGKILL");
+    await quit;
+    await herdrRpc("pane.release_agent", { pane_id: pane, source: "manual", agent: "claude" });
+    expect(shell).not.toBe(launched.pid); // control: the agent was the shell's child, so the shell is back
+    const held = listed(page, pane, tab.first_message.id, "held");
+    await page.attach(pane);
+    const message = (await held).messages.find((item: PendingMessage) => item.id === tab.first_message.id);
+    expect(message.error.code).toBe("pending_target_changed");
+    // Send now refuses it, Discard ends it, and nothing was ever typed
+    page.send({ type: "pending-action", id: 21, pane_id: pane, pending_id: tab.first_message.id, action: "steer" });
+    expect(await page.action(21)).toMatchObject({ ok: false, code: "pending_target_changed" });
+    page.send({ type: "pending-action", id: 22, pane_id: pane, pending_id: tab.first_message.id, action: "discard" });
+    expect(await page.action(22)).toMatchObject({ ok: true });
+    expect(readFileSync(log, "utf8")).toBe("");
+  }, 30_000);
+
+  it("held from the start, still learns its launched agent: once that agent came up and quit, Send now answers pending_target_changed, not that it is not up yet", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-held-quit", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-held-quit") });
+    entry.stop = server.stop;
+    // the request names no page connection: held from the start
+    standInLaunch = true;
+    const res = await fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: "FIRST-HELD-QUIT" }),
+    }).finally(() => { standInLaunch = false; });
+    const tab = await res.json() as { pane_id: string; first_message: { id: string } };
+    const pane = tab.pane_id;
+    const device = new Socket(server.port); entry.sockets.push(device);
+    await device.attach(pane);
+    expect((await listed(device, pane, tab.first_message.id, "held")).messages[0].error.code).toBe("first_message_unattended");
+    await drained(server, pane);
+    const log = join(root, "first-held-quit.jsonl");
+    const screenFile = join(root, "first-held-quit.screen");
+    writeFileSync(screenFile, "");
+    const ended = join(root, "first-held-quit.ended");
+    const up = written(() => existsSync(log), "the launched agent did not start", 10_000);
+    const before = device.seen.length;
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `'${join(root, "claude")}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'; : > '${ended}'\n` });
+    await up;
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
+    await learned(server, device, pane, "claude", before, entry.sockets);
+    const launched = (await herdrClient.paneProcessInfo(pane))?.foreground_processes?.find((process) => process.name === "claude");
+    if (!launched) throw new Error("the launched agent has no foreground process");
+    const quit = written(() => existsSync(ended), "the launched agent did not end", 10_000);
+    globalThis.process.kill(launched.pid, "SIGKILL");
+    await quit;
+    await herdrRpc("pane.release_agent", { pane_id: pane, source: "manual", agent: "claude" });
+    device.send({ type: "pending-action", id: 31, pane_id: pane, pending_id: tab.first_message.id, action: "steer" });
+    expect(await device.action(31)).toMatchObject({ ok: false, code: "pending_target_changed" });
+    device.send({ type: "pending-action", id: 32, pane_id: pane, pending_id: tab.first_message.id, action: "discard" });
+    expect(await device.action(32)).toMatchObject({ ok: true });
+    expect(readFileSync(log, "utf8")).toBe("");
+  }, 30_000);
+
+  it("held from the start, says pending_target_changed instead of the page being gone once its launched agent quit, and Send now answers the same", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-held-reason", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-held-reason") });
+    entry.stop = server.stop;
+    standInLaunch = true;
+    const res = await fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: "FIRST-HELD-REASON" }),
+    }).finally(() => { standInLaunch = false; });
+    const tab = await res.json() as { pane_id: string; first_message: { id: string } };
+    const pane = tab.pane_id;
+    const device = new Socket(server.port); entry.sockets.push(device);
+    await device.attach(pane);
+    expect((await listed(device, pane, tab.first_message.id, "held")).messages[0].error.code).toBe("first_message_unattended");
+    await drained(server, pane);
+    const log = join(root, "first-held-reason.jsonl");
+    const screenFile = join(root, "first-held-reason.screen");
+    writeFileSync(screenFile, "");
+    const ended = join(root, "first-held-reason.ended");
+    const up = written(() => existsSync(log), "the launched agent did not start", 10_000);
+    const before = device.seen.length;
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `'${join(root, "claude")}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'; : > '${ended}'\n` });
+    await up;
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
+    await learned(server, device, pane, "claude", before, entry.sockets);
+    const launched = (await herdrClient.paneProcessInfo(pane))?.foreground_processes?.find((process) => process.name === "claude");
+    if (!launched) throw new Error("the launched agent has no foreground process");
+    const quit = written(() => existsSync(ended), "the launched agent did not end", 10_000);
+    globalThis.process.kill(launched.pid, "SIGKILL");
+    await quit;
+    await herdrRpc("pane.release_agent", { pane_id: pane, source: "manual", agent: "claude" });
+    // the card's reason follows the hold's: a connection attaching the pane drains it, as any event of the pane does
+    const reason = device.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane
+      && frame.messages.some((item: PendingMessage) => item.id === tab.first_message.id && item.state === "held" && item.error?.code === "pending_target_changed"));
+    const probe = new Socket(server.port); entry.sockets.push(probe);
+    await probe.attach(pane);
+    await reason;
+    device.send({ type: "pending-action", id: 41, pane_id: pane, pending_id: tab.first_message.id, action: "steer" });
+    expect(await device.action(41)).toMatchObject({ ok: false, code: "pending_target_changed" });
+    expect(readFileSync(log, "utf8")).toBe("");
+  }, 30_000);
+
+  it("bound to a launch that runs behind a wrapper in front of the pane, is typed once into that agent, not held", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-wrapped", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-wrapped") });
+    entry.stop = server.stop;
+    const page = new Socket(server.port); entry.sockets.push(page);
+    const pane = (await herdrRpc<{ tab: { tab_id: string }; root_pane: { pane_id: string } }>("tab.create", { workspace_id: created.workspace.workspace_id, cwd: root, focus: false })).root_pane.pane_id;
+    await page.attach(pane);
+    // a wrapper that does not exec its agent (a shim, `sh -c` with more to run) stays in front of it
+    const log = join(root, "first-wrapped.jsonl");
+    const screenFile = join(root, "first-wrapped.screen");
+    writeFileSync(screenFile, "");
+    const up = written(() => existsSync(log), "the wrapped agent did not start", 10_000);
+    const before = page.seen.length;
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `sh -c "'${join(root, "claude")}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'; true"\n` });
+    await up;
+    const foreground = (await herdrClient.paneProcessInfo(pane))?.foreground_processes ?? [];
+    const agent = foreground.find((process) => process.name === "claude");
+    if (!agent) throw new Error("the wrapped agent is not in front of the pane");
+    expect(foreground[0]?.pid).not.toBe(agent.pid); // control: herdr lists the wrapper before the agent
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
+    await herdrNames(page, pane, "claude", before);
+    // queued as the create route queues it for a shell-started launch: bound to the process the launch saw come up
+    const message = await server.queueFirstMessage(pane, "FIRST-WRAPPED", "claude", await page.connection(), agent.pid);
+    const sent = page.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane && frame.removed?.some((item: any) => item.id === message.id && item.outcome === "sent"));
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "idle" });
+    await sent;
+    const bytes = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string).join("");
+    await written(() => bytes().endsWith(`${paste("FIRST-WRAPPED")}\r`), "input timeout", 8_000);
+    expect(bytes()).toBe(`${paste("FIRST-WRAPPED")}\r`);
+  }, 30_000);
+
+  it("whose page leaves during its own automatic send, is held for Send now or Discard, never re-queued ahead of the pane's other messages", async () => {
+    const f = await setup("first-left-mid-send", "codex");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-MID", "codex", await f.socket.connection());
+    await listed(f.socket, f.pane, message.id);
+    const device = await f.another();
+    device.send({ type: "submit", id: 7, pane_id: f.pane, text: "MARKER", payload: "unused\r", delivery: "queue" });
+    const queued = await device.result(7);
+    expect(queued.ok).toBe(true);
+    // the automatic send's own screen read, inside its checks (pendingContext), waits until the page has left
+    const realRead = herdrClient.paneRead;
+    let reached!: () => void; const atRead = new Promise<void>((resolve) => { reached = resolve; });
+    let release!: () => void; const released = new Promise<void>((resolve) => { release = resolve; });
+    const read = spyOn(herdrClient, "paneRead").mockImplementation(async (options) => {
+      if (options.paneId === f.pane && options.source === "detection" && new Error().stack?.includes("pendingContext")) { reached(); await released; }
+      return realRead(options);
+    });
+    try {
+      await f.state("idle", device);
+      await atRead;
+      // the page leaves the pane; its role's answer says the server has taken the detach
+      const from = f.socket.seen.length;
+      f.socket.send({ type: "detach", pane_id: f.pane });
+      f.socket.send({ type: "role", mode: "interact" });
+      await f.socket.wait((frame) => frame.type === "role-ack", from);
+      // an answerable prompt is on the screen when the read goes on: the send ends agent_blocked
+      await f.showScreen(approval);
+      const held = listed(device, f.pane, message.id, "held");
+      release();
+      expect((await held).messages.find((item: PendingMessage) => item.id === message.id).error.code).toBe("first_message_unattended");
+    } finally { release(); read.mockRestore(); }
+    // the pane's other message goes once the prompt is gone
+    await f.showScreen("\u203a Message\n");
+    await f.state("working", device);
+    const markerSent = f.removed(queued.pending.id, "sent", device);
+    await f.state("idle", device);
+    await markerSent;
+    await f.waitBytes(`${paste("MARKER")}\r`);
+    expect(f.bytes()).toBe(`${paste("MARKER")}\r`);
+  }, 30_000);
+
+  it("queued for a launch that died before any event saw it, is held when an agent of the same kind the user starts comes up, never typed into it", async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-launch-died", cwd: root, focus: false });
+    const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
+    const server = createServer({ port: 0, stateDir: join(root, "state-first-launch-died") });
+    entry.stop = server.stop;
+    const page = new Socket(server.port); entry.sockets.push(page);
+    // the launch says which process it brought up, and that process has ended before the pane's first event
+    const died = Bun.spawn(["true"]);
+    await died.exited;
+    standInLaunch = true; standInPid = died.pid;
+    const res = await fetch(`http://localhost:${server.port}/api/tab/create`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: created.workspace.workspace_id, cwd: root, agent: { kind: "claude" }, first_message: "FIRST-FOR-DIED", first_message_connection: await page.connection() }),
+    }).finally(() => { standInLaunch = false; standInPid = null; });
+    const tab = await res.json() as { pane_id: string; first_message: { id: string } };
+    expect(Object.keys(tab).sort()).toEqual(["agent_started", "first_message", "pane_id", "workspace_id"]); // the launch's process is not in the answer
+    const pane = tab.pane_id;
+    const device = new Socket(server.port); entry.sockets.push(device);
+    await device.attach(pane);
+    await drained(server, pane);
+    // the user starts an agent of the same kind in the shell
+    const log = join(root, "first-launch-died.jsonl");
+    const screenFile = join(root, "first-launch-died.screen");
+    writeFileSync(screenFile, "");
+    const up = written(() => existsSync(log), "the user's agent did not start", 10_000);
+    const before = device.seen.length;
+    await herdrRpc("pane.send_text", { pane_id: pane, text: `'${join(root, "claude")}' '${join(root, "record.cjs")}' '${log}' '\u203a Message' '${screenFile}'\n` });
+    await up;
+    const held = listed(device, pane, tab.first_message.id, "held");
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "working" });
+    await learned(server, device, pane, "claude", before, entry.sockets);
+    expect((await held).messages.find((item: PendingMessage) => item.id === tab.first_message.id).error.code).toBe("pending_target_changed");
+    // its page attaches and the agent rests: nothing is typed into the user's agent
+    await page.attach(pane);
+    await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "idle" });
+    await drained(server, pane);
+    expect(readFileSync(log, "utf8")).toBe("");
+  }, 30_000);
+
+  it("is discarded by an attached connection, and then never typed", async () => {
+    const f = await setup("first-discard");
+    const message = await f.server.queueFirstMessage(f.pane, "FIRST-DISCARD", "claude", await f.socket.connection());
+    await listed(f.socket, f.pane, message.id);
+    f.socket.send({ type: "pending-action", id: 11, pane_id: f.pane, pending_id: message.id, action: "discard" });
+    expect(await f.socket.action(11)).toMatchObject({ ok: true });
+    await f.removed(message.id, "discarded");
+    const marker = await f.queue(2, "AFTER-DISCARD");
+    const markerSent = f.removed(marker.id);
+    await f.state("idle");
+    await markerSent;
+    await f.waitBytes(`${paste("AFTER-DISCARD")}\r`);
+    expect(f.bytes()).toBe(`${paste("AFTER-DISCARD")}\r`);
   }, 30_000);
 });

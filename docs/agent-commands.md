@@ -1,0 +1,233 @@
+# Agent commands in Chat
+
+How the chat lists an agent's `/` commands and skills, sends them, and says what became of them.
+It covers every agent the bridge knows (Claude Code, Codex, OpenCode, pi, omp, OmO, gjc, Hermes,
+Grok, Antigravity, Devin CLI and Command Code) and is written for people who change that code.
+For what a user sees, read the [user guide](guide.md#features); for skill status inside an
+answer, read [Skill activity in chat](chat-skill-activity.md).
+
+## The three contracts
+
+Everything here rests on three rules. A change that breaks one of them is a bug, whatever it fixes.
+
+1. **The catalog describes forms, not just names.** Each row of `GET /api/pane/commands`
+   ([`SlashCommand`](../shared/protocol.ts)) says how each typed form behaves: bare, with a given
+   subcommand, or with any other argument. A form needs nothing (`none`), opens a dialog a reader
+   knows (`dialog`, naming the reader), only works in the terminal (`terminal`), or is not known
+   (`unknown`). Rows also carry `visibility`, `provenance` (scan, static or native, and whether it
+   was checked against the running version), `shadows` and a stable `id`.
+2. **The terminal is the only way a command is sent.** Chat types into the pane exactly as the
+   user would, through the same submit path as any message. No command goes through an agent's
+   API. The one native write the bridge keeps is answering a pending OpenCode v2 form, which is an
+   answer, not a command.
+3. **An outcome changes only on evidence tied to that send.** Sending a command records
+   `accepted` and nothing more. A later state needs evidence that belongs to this send, listed
+   under [Outcome states](#outcome-states-and-their-evidence). A screen that changed, an idle agent
+   or a timer proves nothing.
+
+## Where the rows come from
+
+Every agent has a source in [`server/skills/`](../server/skills/), registered in
+`AGENT_SOURCES` of [`server/skills/index.ts`](../server/skills/index.ts) and compiled into rows by
+[`server/commands.ts`](../server/commands.ts). A source has a static builtin table pinned to one
+upstream release (the pin is in the file header), and a scan of the skill and command folders the
+agent itself reads. A row is `verified` only when the pane's agent version, read from its own
+store by [`server/agent-version.ts`](../server/agent-version.ts), matches the pin.
+[`resolveAgent`](../server/pane-context.ts) is the one place that decides a pane's agent and
+version.
+
+Some agents also answer for themselves. A native provider registers in
+[`server/catalog-sources.ts`](../server/catalog-sources.ts); `/api/pane/commands` gives each
+provider 1.5 seconds and merges its answer over the scanned rows. A provider owns the backend
+commands and skills it answers with: those scanned rows are replaced and the new ones are marked
+`native` and verified. It can never remove or add a builtin. A timeout, an error or no answer
+leaves the scanned rows as they were. No provider starts an agent, a daemon or a broker, and none
+installs anything into the agent's configuration. The gjc provider is the one that runs a
+process: it asks the broker through the gjc CLI (`gjc sdk session raw query ... --attach-only`,
+with `GJC_SDK_BROKER_AUTOSTART=0`), so a broker that isn't running is never started. That query
+runs in a background refresh, at most every 30 seconds per pane and only while the chat holds a
+transcript binding for the pane; the commands request is answered from the last refresh.
+
+| Agent | Builtins pinned to | Folders scanned | Native source | Not listed (runtime only) |
+| --- | --- | --- | --- | --- |
+| Claude Code | the official commands reference, 2.1.301 | user, project and plugin `skills/` and `commands/`, `skillOverrides` | none | MCP prompts a server declares only at run time |
+| Codex | `codex-rs` rust-v0.163.0 slash table | `.codex/skills` of each ancestor, `$CODEX_HOME/skills`, `~/.agents/skills`, system and admin roots, plugin skills as `namespace:name`, to depth 6; custom prompts only before 0.118.0 | skills from a running app-server daemon's `skills/list`, 0.157 or later, never on Windows ([`codex-daemon.ts`](../server/codex-daemon.ts)) | none known |
+| OpenCode | shared builtins pinned to 1.19.3 (so unverified on v2); the rows only one version has are checked against 1.19.3 or 2.0.32, by major.minor | v1 `command/` and `commands/`; v2 skills as `@id`, both command dirs, loose `.md` skills | v2 only: `GET /api/command` and `GET /api/skill` of the service its `service.json` names, checked by pid and version, never started ([`opencode-native.ts`](../server/opencode-native.ts)) | plugin commands on v1 |
+| pi | `earendil-works/pi` slash-commands at 5c1736f8 | agent dir, `~/.agents`, `settings.json` skills, project roots that pi's trust allows | none | extension and package commands |
+| omp | `oh-my-pi` builtin registry at 53a0377d (18.12.3) | omp's skill providers, namespaced on a clash, `disabledProviders` and `enabledProviders` | none | extension and plugin commands |
+| OmO | Senpi 46d15a1c and OmO b6230fcd tables | bundled skills minus the `disabled_skills` union of user, project and profile config | none | extension commands not in the pinned tables |
+| gjc | `builtin-registry.ts` v0.18.12 | bundled workflow skills, `.gjc/commands` of the project and the active profile | `skill.list/state` from the SDK broker the bridge is already bound to, when `runtime.capabilities` offers it, read through the gjc CLI attach-only, never on Windows ([`gjc-runtime.ts`](../server/gjc-runtime.ts)) | none known |
+| Hermes | `CommandDef`s at 0.21.5 | skill roots and `quick_commands` | none | plugin slash commands, registered at run time |
+| Grok | `grok-build` 1.0.62 pager and shell tables | `.grok`, `.claude`, `.cursor` and `.agents` roots at every tier, bundled skills, collisions as `/local:x` and friends | none | none known |
+| Antigravity | the recorded agy 1.4.0 palette | `~/.gemini/config/skills` and the two loaded builtin skills | none | none known |
+| Devin CLI | 3000.11.92, checked against its changelog | native roots, plus Claude, Windsurf, Copilot and Cursor roots unless `read_config_from` turns them off | none | MCP prompts not declared on disk |
+| Command Code | its bundled reference at 1.84.0 | `skills/`, nested `commands/`, bundled skills | none | none known |
+
+A command typed by hand that no row lists (an extension command, an undeclared MCP prompt) still
+sends, and a leading command is still tracked. Its outcome stays `accepted` and ends as
+`unknown` unless evidence turns up: for Claude Code, its transcript's command echo or output, or a
+user turn with the exact text, gives `result-observed`.
+
+The new workspace and new tab dialogs list the same rows before any pane exists, from
+`GET /api/agent/commands?agent=&cwd=`. That route reads only the static tables and a scan of the
+folder and home, so its rows are never native and never verified.
+
+## The terminal group
+
+Some commands only make sense in the terminal: pickers the chat has no reader for, pagers, or
+reports the agent never writes to its transcript. Rows with `visibility: "terminal"`, or with a
+bare form whose interaction is `terminal`, are listed apart in the composer under Terminal
+commands ([`src/lib/compose.ts`](../src/lib/compose.ts)). Picking one, or typing it and pressing
+send, keeps the draft and offers two actions: **Open Terminal**, which only switches the lens, and
+**Run in Terminal**, which sends it through the usual path and then switches. Chat never sends a
+terminal command on its own.
+
+Rows marked `agent-hidden` mirror the agent's own menu, which hides them (Claude Code's
+`/heapdump`, for instance). They are left out of the menu too, but typing one sends it like any
+other command. No other row a source finds is ever hidden.
+
+## Outcome states and their evidence
+
+[`server/outcome.ts`](../server/outcome.ts) tracks each command sent from Chat per pane, found in
+the text by the same per-agent syntax the composer uses
+([`shared/skill-syntax.ts`](../shared/skill-syntax.ts)). Recording an outcome never delays the
+send: delivery comes first and tracking catches up. The pane's outcomes ride on
+`GET /api/pane/prompt` as `outcomes`, and the chat shows each one as a chip under its bubble
+([`src/lib/outcomeChip.ts`](../src/lib/outcomeChip.ts)).
+
+| State | Means | Set by |
+| --- | --- | --- |
+| `accepted` | the bridge typed it, nothing more | the send |
+| `interaction-required` | the agent shows a dialog this send opened | a registered reader parses the dialog the form names, or any dialog this send owns when the form names none |
+| `result-observed` | the command did what it does | correlated evidence, below |
+| `terminal-required` | the answer lives in the terminal | a `terminal` form, or a dialog form whose dialog never showed once the screen settled, or the agent still waiting two seconds later |
+| `unknown` | ten minutes passed, or a newer send closed the window, without evidence | the window closing |
+
+`result-observed` takes one of these evidence kinds, each tied to this send and seen after it:
+
+- `transcript`: the agent's own record. Claude Code's local command echo, or its user turn with
+  the exact text; a `model_change`, `thinking_level_change` or `compaction` record in pi, omp, gjc
+  and OmO sessions (omp's `/handoff` writes a compaction with method `handoff`); a `compacted`
+  record for Codex `/compact`. Records are claimed in send order, so two equal sends never share
+  one, and a rewritten transcript drops what it no longer holds.
+- `dialog`: a card answered from Chat, counted only for the send that raised that card.
+- `recognized-result`: a reader of kind `result` matched a complete, recorded layout that appeared
+  after this send's own echo and was not on screen when it was sent. Hermes `/help`, `/status`,
+  `/version`, `/profile` and `/reload-skills` work this way, and the text is shown verbatim on a
+  card with a **Dismiss** that sends no keys.
+- `native`: the agent's own event stream. Today only OpenCode v2, whose service announces the
+  session's message and the end of its execution.
+- `side-store`: reserved for an agent's own side store, such as omp's saved BTW answers. Nothing
+  produces it yet, so omp `/btw` is a terminal command.
+
+A screen that changed after the send folds under the chip as an unconfirmed preview, only when the
+send recorded the screen as it was at send time and only inside the send's window. It is never
+merged into history, never starts another action, and is withheld from observe-role connections.
+A command the agent keeps no transcript turn for, such as Claude Code's `/btw`, still shows a sent
+row.
+
+## Readers
+
+A reader turns a screen into a card. Each agent's readers live in
+`server/dialogs/<agent>.ts` and are registered, in a fixed order, by
+[`server/dialogs/index.ts`](../server/dialogs/index.ts) through
+[`registry.ts`](../server/dialogs/registry.ts). Each reader declares `reread: "each-move"`, `"before-commit"` or `"none"` in its descriptor
+([`shared.ts`](../server/dialogs/shared.ts)); omp's `omp-model` is an `each-move` reader. A picker reader also has an interaction plan
+([`interaction-plan.ts`](../server/dialogs/interaction-plan.ts)): where the cursor is, which keys
+move it, how it commits, and when it gives up to the terminal. Running a plan always reads the
+screen again before the committing key and refuses when the prompt changed; `rereadMoves`, set
+for `each-move` readers and for list readers, adds a check after each move as well.
+
+Readers that show results in Chat today include Claude Code's `/goal` status card and its
+`/rewind` steps, Hermes's informational results, and the steps of omp's `/handoff` that can be
+answered from a card. A step that needs an editor or native editing ends as `terminal-required`
+and keeps the draft.
+
+Rewinding from a message is Claude Code only: `POST /api/pane/rewind` walks its `/rewind` list
+key by key, each key sent once the screen shows the one before it worked, and the chat follows
+the restored conversation. Grok and agy keep their own rewind in the terminal, because nothing
+reads their input box and a draft there could join the command.
+
+## Earlier sessions
+
+`GET /api/sessions/history` lists a folder's earlier sessions from each agent's own store
+([`server/session-history.ts`](../server/session-history.ts)), newest first. It reads at most the
+first 64 KiB of a file, looks at most at 400 files and returns at most 50 rows, and refuses any
+path that resolves outside the store. Resume opens a new tab with the agent's own resume flag,
+only where that flag is cited in the code; a row without one has no Resume button.
+
+## Starting an agent with a first message
+
+New workspace and New tab can pass a model and an effort only where the agent's launch takes them:
+Claude Code (`--model`, `--effort`) and Codex (`--model`, `-c model_reasoning_effort=`). Every
+other agent starts with its own configuration. Any agent can get a first message. Codex takes the
+message as its own argument after `--`, so a message such as `logout` is never read as a
+subcommand. Claude Code and every other agent get it through the bridge's pending record
+(`first_message` on the create request): it is queued for the pane and sent once when the agent
+is ready, like any queued message, and it can be discarded or sent now. Only the page that sent the
+request (`first_message_connection`) types it on its own, while it has the pane attached; if that page
+disconnects or leaves the pane first, the message is held until someone sends it now or discards it,
+and the pane's other messages go at their turn. A pane holds one first message, bound to the agent
+the launch brought up: its process (the one a shell-started agent's launch saw come up) and session,
+as known when the message is queued and as learned at each event of the pane after. A `/resume`,
+another process of the same kind, or that agent ending before the message went holds it with
+`pending_target_changed`, at the pane's next event. First messages live in the
+bridge's memory, so a restart drops the ones not sent yet. The bridge checks launch arguments by the
+dialog's rules in `shared/launch-rules.ts`.
+
+## Adding a command form or a reader
+
+To describe a form, add it to the agent's source in `server/skills/<agent>.ts`: the name, its
+`match`, and its interaction. A `dialog` form names the reader id that will parse it.
+
+To add a reader:
+
+1. Record the screen at two widths from an isolated session of the pinned version, and save it
+   under `server/fixtures/`. A typical name is `<agent>-<feature>-<version>-<state>-<width>.txt`,
+   though not every fixture follows it (`omp-switch-18.11.1-*` and `omo-pending-5.1.30-extension-tail.txt` don't): the width is the column count (`claude-goal-2.1.304-active-40.txt`) or `narrow` and
+   `wide` (`omp-handoff-18.8.7-done-narrow.txt`). A set of result screens may get its own folder
+   (`server/fixtures/hermes-results/help-120.txt`).
+2. Add the reader to `server/dialogs/<agent>.ts`, with an interaction plan if it moves a cursor,
+   or `kind: "result"` if it recognizes a finished result.
+3. Switch the form to `dialog` with that reader's id.
+4. Test the reader against its fixtures in the agent's test file.
+
+[`server/catalog.conventions.test.ts`](../server/catalog.conventions.test.ts) fails when a
+`dialog` form names a reader that is not registered, a registered reader has no test, a static
+table has no pin, or a source, the session history or the Codex daemon client imports
+`node:child_process` or calls `Bun.spawn`.
+
+## Adding an agent
+
+There is no single place for a new agent. These files each need it:
+
+- [`server/pane-context.ts`](../server/pane-context.ts): `resolveAgent`, and the version source if
+  the agent's store records one ([`server/agent-version.ts`](../server/agent-version.ts)).
+- [`server/skills/index.ts`](../server/skills/index.ts) and a new `server/skills/<agent>.ts`, with
+  its test.
+- [`shared/skill-syntax.ts`](../shared/skill-syntax.ts): how the agent's commands and skills are
+  typed.
+- [`server/dialogs/index.ts`](../server/dialogs/index.ts) and a new `server/dialogs/<agent>.ts`
+  for any reader.
+- [`server/conversation.ts`](../server/conversation.ts) for its transcript, and
+  [`server/outcome.ts`](../server/outcome.ts) for the transcript records that count as evidence.
+- [`server/session-history.ts`](../server/session-history.ts) for its store and resume flag.
+- [`src/lib/agentLaunchMode.ts`](../src/lib/agentLaunchMode.ts) for model, effort and a first
+  message at launch.
+- [`shared/supported-agents.ts`](../shared/supported-agents.ts): `SUPPORTED_AGENT_KINDS`, the
+  agents the app treats as its own.
+- [`shared/telemetry.ts`](../shared/telemetry.ts): `TELEMETRY_HARNESSES`, or the agent counts as
+  `other`.
+- The agent-specific branches of [`server/prompt.ts`](../server/prompt.ts),
+  [`server/core/composer.ts`](../server/core/composer.ts) and
+  [`server/core/pending.ts`](../server/core/pending.ts) where its prompt, input box or queue
+  differs, and [`src/lib/sessionHistory.ts`](../src/lib/sessionHistory.ts) for its history rows.
+- The [Supported agents](guide.md#supported-agents) table in the user guide.
+
+## Not done yet
+
+These are tracked as issues rather than built: sending a command through an agent's own API, a
+link between a Codex pane and its thread, opt-in companions that would let an agent report its
+own runtime commands, probes that are certified free of side effects, versions for the nine
+agents whose stores do not record one, translations of card labels the server writes, rewind
+for more agents, and skill activity rows for Grok, agy and Devin.

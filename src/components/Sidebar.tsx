@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type AnimationEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, History, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -25,6 +25,7 @@ import { useSettings } from "../lib/settings.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
+import { useSessionHistoryOffered } from "../lib/useSessionHistoryOffered.ts";
 import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { placeBlock, workspaceMoves, worktreeGroups as groupWorktrees } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
@@ -175,19 +176,23 @@ export interface SidebarProps {
   online: boolean;
   selectedPaneId: string | null;
   actions: AppActions;
+  /** this device only watches: the row's menu offers no earlier sessions, which the server refuses it */
+  watching?: boolean;
 }
 
 /**
  * Spaces follow herdr's workspace roster. A workspace opens its current pane; tabs and split
  * panes are navigated through the tab strip, while Agents is an independent API-backed list.
  */
-export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarProps) {
+export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = false }: SidebarProps) {
   const t = useT();
   const { settings } = useSettings();
   const twoLine = settings.sidebarRows === "two";
   const machineId = useMachineId();
   const activity = useSidebarActivity();
   const { closeWorkspace, listWorktrees, moveWorkspace, removeWorktree, renameWorkspace } = useMachineApi();
+  // the row menu's Earlier sessions needs the PC's bridge to list them (lib/useSessionHistoryOffered.ts)
+  const historyOffered = useSessionHistoryOffered(online);
   // the roster's wait is a live region in the list from its first render, clipped while empty (never
   // display: none); its words land a frame after it (lib/useAnnouncedText.ts)
   const loadingWords = useAnnouncedText(snapshot ? null : t("Loading workspaces…"));
@@ -413,6 +418,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
         ? { id: "unpin-workspace", label: t("Unpin workspace"), icon: PinOff, run: () => togglePin(state) }
         : { id: "pin-workspace", label: t("Pin workspace"), icon: Pin, run: () => togglePin(state) },
       { id: "rename-workspace", label: t("Rename workspace"), icon: Pencil, run: () => beginWorkspaceRename(workspace) },
+      // the folder's earlier sessions, listed for the agent of the pane the row opens
+      ...(historyOffered && !watching ? [{ id: "session-history", label: t("Earlier sessions…"), icon: History, run: () => actions.openSessionHistory({ machineId, workspaceId: workspace.workspace_id, agent: (panes.length > 0 ? currentPane(workspace, panes) : null)?.agent ?? null }) }] : []),
       { ...closeItem, label: t(sameRepo.length > 0 ? "Close group" : "Close workspace"), divider: false },
       ...worktreeItems, ...deleteItems,
       ...(worktrees.length > 0 && repoKey ? [{ id: "fold", label: t(folded ? "Expand" : "Collapse"), icon: folded ? ChevronRight : ChevronDown, run: () => setWorktreeCollapsed(repoKey, !folded) }] : []),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_PENDING_PER_OWNER, PendingInputs, samePendingIdentity, type PendingIdentity } from "./pending-input.ts";
+import { MAX_PENDING_PER_OWNER, MAX_PENDING_PER_PANE, PendingInputs, PendingInputError, samePendingIdentity, type PendingIdentity } from "./pending-input.ts";
 import { PendingMessageStore } from "../src/lib/pendingMessages.ts";
 
 describe("pending target identity", () => {
@@ -363,5 +363,27 @@ describe("bridge pending input", () => {
     expect(f.queue.next("p1")).toBeNull();
     f.queue.status("p1", "working"); f.queue.status("p1", "done");
     expect(f.queue.next("p1")).toBe(second);
+  });
+});
+
+describe("an owner counted per pane", () => {
+  it("holds one message in each pane, so one pane's never fill the list for the others", () => {
+    const store = new PendingInputs<string, null>(() => {}, Date.now, undefined, undefined, (owner) => owner === "bridge");
+    const identity: PendingIdentity = { agent: "claude", terminalId: "t", session: null };
+    for (let pane = 0; pane < MAX_PENDING_PER_OWNER + 8; pane++) store.enqueue("bridge", `p${pane}`, -1 - pane, "first", null, identity);
+    expect(MAX_PENDING_PER_PANE).toBe(1);
+    expect(() => store.enqueue("bridge", "p0", -999, "second", null, identity)).toThrow(PendingInputError);
+    // a connection's own messages still count across panes (control)
+    for (let id = 1; id <= MAX_PENDING_PER_OWNER; id++) store.enqueue("connection", `q${id}`, id, "mine", null, identity);
+    expect(() => store.enqueue("connection", "q-more", 999, "mine", null, identity)).toThrow(PendingInputError);
+  });
+  it("holds one waiting message for an explicit send, with its reason", () => {
+    const store = new PendingInputs<string, null>(() => {}, Date.now, undefined, undefined, () => true);
+    const item = store.enqueue("bridge", "p", -1, "first", null, { agent: "claude", terminalId: "t", session: null });
+    store.status("p", "idle");
+    expect(store.next("p")).toBe(item); // control: a ready pane offers it
+    store.holdItem(item, { code: "first_message_unattended", message: "gone" });
+    expect(store.list("bridge", "p")).toEqual([expect.objectContaining({ state: "held", error: { code: "first_message_unattended", message: "gone" } })]);
+    expect(store.next("p")).toBeNull();
   });
 });

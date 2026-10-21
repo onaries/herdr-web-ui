@@ -1,6 +1,6 @@
 import { noInstalledNotes, noUpdateNotes, readInstalledNotes, readUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
 import { join } from "node:path";
-import { jsonResponse } from "./http.ts";
+import { jsonResponse, setRequestRoute } from "./http.ts";
 
 export interface UpdateService {
   status(): UpdateStatus;
@@ -94,12 +94,13 @@ export function handleUpdateRequest(request: Request, pathname: string, service?
     return response;
   };
   const fail = (code: string, message: string, http: number) => reply({ error: { code, message } }, http);
-  if (pathname === "/api/updates" && request.method === "GET") return withServed(status, service).then((value) => reply(value));
-  if (pathname === "/api/updates/notes" && request.method === "GET") return reply(service?.notes() ?? noUpdateNotes());
-  if (pathname === "/api/updates/installed" && request.method === "GET") return reply(service?.installed() ?? noInstalledNotes());
+  if (pathname === "/api/updates" && request.method === "GET") { setRequestRoute(pathname); return withServed(status, service).then((value) => reply(value)); }
+  if (pathname === "/api/updates/notes" && request.method === "GET") { setRequestRoute(pathname); return reply(service?.notes() ?? noUpdateNotes()); }
+  if (pathname === "/api/updates/installed" && request.method === "GET") { setRequestRoute(pathname); return reply(service?.installed() ?? noInstalledNotes()); }
   if (request.method !== "POST" || (pathname !== "/api/updates/check" && pathname !== "/api/updates/install")) {
     return fail("method_not_allowed", "Use GET /api/updates, /api/updates/notes or /api/updates/installed, or POST /api/updates/check or /install", 405);
   }
+  setRequestRoute(pathname);
   if (!updateRequestAllowed(request)) return fail("invalid_update_request", "Use the update controls from this app.", 403);
   if (!service || !status.managed) return fail("updates_unmanaged", status.blocked_reason ?? "Updates unavailable", 409);
   if (["checking", "building", "restarting"].includes(status.phase)) return fail("update_busy", "An update operation is already running.", 409);

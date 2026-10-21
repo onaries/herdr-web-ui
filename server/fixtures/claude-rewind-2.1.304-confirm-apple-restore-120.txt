@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.305
+▝▜██████▀  Sonnet 4.5 · API Usage Billing
+ ▝▝   ▝▝   /tmp/rec-rewind-aFnAun/proj
+
+⚠ Remote managed settings failed to load (authentication rejected (401)) · no remote policy applied · /status for
+  details
+
+❯ apple
+
+● Noted 0.
+
+❯ banana
+
+● Noted 1.
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Confirm you want to restore the conversation to the point before you sent this message:
+
+   │ apple
+   │ (3h ago)
+
+   The conversation will be forked.
+   The code will be unchanged.
+
+   ❯ 1. Restore conversation
+     2. Summarize from here
+     3. Summarize up to here
+     4. Never mind

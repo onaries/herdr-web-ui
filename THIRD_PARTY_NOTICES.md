@@ -2,6 +2,15 @@
 
 Ovis includes material from the projects below, under their own licenses.
 
+## Agent of Empires request correlation
+
+`server/request-log.ts` adapts the request-completion boundary and client correlation-ID
+validation approach from
+[`agent-of-empires/agent-of-empires`](https://github.com/agent-of-empires/agent-of-empires),
+`src/server/router.rs` and `src/server/access.rs`, under MIT, Copyright (c) 2026 Nathan Brake.
+The MIT license text below applies. Ovis uses independent server IDs,
+bounded private storage and absent-only response defaults.
+
 ## Theme palettes
 
 The CSS theme colors adapt herdr's pinned palettes, with readability adjustments recorded in
@@ -678,8 +687,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## LobeHub Icons
 
 The agent marks in `src/components/agentSvgMarks.ts` other than droid and maki, which the
-built client in `dist/` carries, come from [LobeHub Icons](https://github.com/lobehub/lobe-icons)
-(`@lobehub/icons-static-svg`). The marks themselves belong to their owners.
+built client in `dist/` and the ovis.sh home page (`ovis-site/index.html`) carry, come from
+[LobeHub Icons](https://github.com/lobehub/lobe-icons) (`@lobehub/icons-static-svg`). The marks themselves belong to their owners.
 
 ```
 MIT License
@@ -1302,6 +1311,12 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
+
+## Geist
+
+`ovis-site/assets/fonts/geist-latin-wght-normal.woff2` and `geist-latin-ext-wght-normal.woff2` are
+Geist Variable from [Geist](https://github.com/vercel/geist-font) (`@fontsource-variable/geist`
+5.3.0), under the SIL Open Font License 1.1. The full license is `ovis-site/assets/fonts/LICENSE`.
 
 ## Pretendard
 

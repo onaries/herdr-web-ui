@@ -7,6 +7,7 @@ import type { MachineManager } from "./machines.ts";
 const asked: (string | null)[] = [];
 const promptAsked: (string | null)[] = [];
 const PLAN_CARD = { id: "claude-plan:abc", agent: "claude", kind: "plan", title: "Plan", question: "Would you like to proceed?", options: [{ label: "Yes", description: null }], multi_select: false, custom_option_index: null };
+const historyAsked: (string | null)[] = [];
 const faviconAsked: { search: string; authorization: string | null; cookie: string | null }[] = [];
 const diffAsked: { path: string; search: string; authorization: string | null; cookie: string | null; forwarded: string | null }[] = [];
 const remote = Bun.serve({
@@ -16,6 +17,10 @@ const remote = Bun.serve({
     if (path === "/api/pane/conversation/image") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
     if (path === "/api/pane/conversation/tool-output") return new Response("complete remote output", { headers: { "content-type": "text/plain; charset=utf-8" } });
     if (path === "/api/fs/file") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
+    if (path === "/api/sessions/history") {
+      historyAsked.push(request.headers.get("authorization"));
+      return Response.json({ workspace_id: "w1", agent: "pi", cwd: "/work", sessions: [{ id: "s1", title: null, firstMessage: "a private prompt", startedAt: null, updatedAt: "2026-10-01T00:00:00.000Z", resume: null }] });
+    }
     if (path === "/api/fs/favicon") {
       faviconAsked.push({ search: new URL(request.url).search, authorization: request.headers.get("authorization"), cookie: request.headers.get("cookie") });
       return Response.json({ icon: null });
@@ -59,6 +64,26 @@ describe("PC proxy", () => {
     expect(await unchanged.text()).toBe("");
     expect(asked).toEqual([null, "\"v1\""]);
   });
+});
+
+it("never forwards a PC's session history to a watching device, nor a route spelled with a trailing, doubled or encoded slash", async () => {
+  const base = "http://127.0.0.1/api/machines/pc1";
+  const query = "?workspace_id=w1&agent=pi";
+  const watched = await handleMachineRequest(new Request(`${base}/sessions/history${query}`), manager, undefined, undefined, true);
+  expect(watched.status).toBe(403);
+  expect(await watched.text()).not.toContain("a private prompt");
+  for (const readOnly of [true, false]) {
+    for (const path of ["sessions/history/", "sessions//history", "sessions%2Fhistory", "sessions%2fhistory", "pane/commands/", "workspace/directories/"]) {
+      const response = await handleMachineRequest(new Request(`${base}/${path}${query}`), manager, undefined, undefined, readOnly);
+      expect([readOnly, path, response.status]).toEqual([readOnly, path, 404]);
+    }
+  }
+  expect(historyAsked).toEqual([]);
+  // a driving device gets the PC's answer, asked with the PC's credential
+  const driven = await handleMachineRequest(new Request(`${base}/sessions/history${query}`), manager);
+  expect(driven.status).toBe(200);
+  expect(JSON.stringify(await driven.json())).toContain("a private prompt");
+  expect(historyAsked).toEqual(["Bearer remote-token"]);
 });
 
 it("forwards conversation images and complete output, while rejecting arbitrary nested paths", async () => {

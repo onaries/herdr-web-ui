@@ -42,31 +42,44 @@ const inside = (root: string, path: string): boolean => {
   return child !== "" && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 };
 
+/** The resolved store and its cwd groups (URI-encoded or native hashed names), or null when
+ * the store is missing, not absolute or holds too many entries to trust. */
+export function grokSessionGroups(home: string): { store: string; groups: string[] } | null {
+  if (!isAbsolute(home)) return null;
+  try {
+    const store = realpathSync(join(home, "sessions"));
+    const entries = opendirSync(store);
+    const groups: string[] = [];
+    let count = 0;
+    try {
+      for (let group = entries.readSync(); group; group = entries.readSync()) {
+        if (++count > MAX_GROUPS) return null;
+        if (group.isDirectory()) groups.push(group.name);
+      }
+    } finally { entries.closeSync(); }
+    return { store, groups };
+  } catch { return null; }
+}
+
 /** Search by exact ID, including native hashed cwd groups. Neither cwd nor mtime selects
  * a conversation. Duplicate custom IDs across groups are ambiguous and fail closed. */
 export function grokTranscriptPath(home: string, session: string): string | null {
-  if (!isAbsolute(home) || !SESSION.test(session)) return null;
-  try {
-    const store = realpathSync(join(home, "sessions"));
-    const groups = opendirSync(store);
-    let found: string | null = null;
-    let count = 0;
+  if (!SESSION.test(session)) return null;
+  const listed = grokSessionGroups(home);
+  if (listed === null) return null;
+  const { store, groups } = listed;
+  let found: string | null = null;
+  for (const group of groups) {
+    const candidate = join(store, group, session, "updates.jsonl");
     try {
-      for (let group = groups.readSync(); group; group = groups.readSync()) {
-        if (++count > MAX_GROUPS) return null;
-        if (!group.isDirectory()) continue;
-        const candidate = join(store, group.name, session, "updates.jsonl");
-        try {
-          const path = realpathSync(candidate);
-          // Reject a link into another session as well as links outside the store.
-          if (path !== candidate || !inside(store, path) || !statSync(path).isFile()) continue;
-          if (found !== null) return null;
-          found = path;
-        } catch { /* no matching file in this group */ }
-      }
-    } finally { groups.closeSync(); }
-    return found;
-  } catch { return null; }
+      const path = realpathSync(candidate);
+      // Reject a link into another session as well as links outside the store.
+      if (path !== candidate || !inside(store, path) || !statSync(path).isFile()) continue;
+      if (found !== null) return null;
+      found = path;
+    } catch { /* no matching file in this group */ }
+  }
+  return found;
 }
 
 /** Do not substitute the bridge's home when the pane's environment is unreadable. */

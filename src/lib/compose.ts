@@ -37,6 +37,8 @@ export function composerPayload(text: string, bracketedPaste: boolean): string {
 export function submitNotTyped(code: string): boolean {
   return ["agent_blocked", "read_only", "submit_timeout", "agent_not_ready", "pending_input_unsupported", "agent_queue_unsupported", "invalid_delivery", "invalid_submit_text",
     "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft",
+    // Claude Code's rewind dialog was on screen: nothing went into it
+    "rewind_dialog_open",
     // refused by this view while the terminal holds input (PaneTerminal), before anything was sent
     "held_input",
     // the connection dropped before the request's frame left the browser (HerdrSocket)
@@ -81,10 +83,13 @@ export function submitNote(code: string, message: string, agent?: string | null)
   if (code === "read_only") return t("Not sent: this view only watches the pane.");
   if (code === "held_input") return t("Not sent: send or discard the held input first.");
   if (code === "input_draft" && agent === "hermes") return t("Not sent: Hermes' input in the terminal is not empty. Send or clear it there, then send this message.");
+  if (code === "input_draft" && agent === "codex") return t("Not sent: Codex's terminal input is not known to be empty. Check or clear it there, then send this message.");
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
+  if (code === "rewind_dialog_open") return t("Not sent: Claude Code's rewind dialog is open in the terminal. Finish or close it there (Esc), then send this message.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");
   if (code === "not_transmitted") return t("Not sent: the connection dropped before this message left. Send it again.");
+  if (code === "first_message_unattended") return t("Not sent: the page that started this agent left before it was ready. Send it now or discard it.");
   if (code === "disconnected" || code === "timeout") return t("Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.");
   return t("Not sent: {message}", { message });
 }

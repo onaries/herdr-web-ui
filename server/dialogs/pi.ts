@@ -12,10 +12,18 @@ import { ANSI_RE, KEY, PI_MODEL_HINT_RE, PI_ROW_RE, type ParsedPrompt, cleanLine
  * `↑/↓ move`, and answering it from the chat would move the session's branch, which the chat
  * has no way to undo by clicking. pi never reports itself blocked for a dialog — it stays idle
  * while one waits — so the card can only come from the screen, as it does for the other agents.
+ * OmO draws the same widget but names Escape `esc` (`esc/ctrl+c cancel`, senpi 2026.10.19).
  */
-export const PI_MENU_HINT_RE = /\u2191\u2193 navigate\s+enter select\s+escape\/ctrl\+c cancel/i;
+export const PI_MENU_HINT_RE = /\u2191\u2193 navigate\s+enter select\s+esc(?:ape)?\/ctrl\+c cancel/i;
 
-export const PI_INPUT_HINT_RE = /enter submit\s+escape\/ctrl\+c cancel/i;
+export const PI_INPUT_HINT_RE = /enter submit\s+esc(?:ape)?\/ctrl\+c cancel/i;
+
+/**
+ * A dialog asked with a timeout counts down in its title (`Init-deep (9s)`) and cancels itself at
+ * zero. The card's id reads the title without the count, or an answer tapped a second later
+ * would be refused as one to another card.
+ */
+const PI_COUNTDOWN_RE = / \(\d+s\)$/;
 
 /** the line pi types an answer into */
 const PI_INPUT_LINE_RE = /^[\u203a>\u276f]+\s*(.*)$/;
@@ -135,11 +143,12 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
   // Yes/No reads as a confirmation; anything else is a question asked among its options
   const labels = rows.map((row) => row[2]!.trim());
   const confirming = labels.length === 2 && /^yes\b/i.test(labels[0]!) && /^no\b/i.test(labels[1]!);
+  // a select has a title alone: a second line is the rest of it, wrapped
+  const question = confirming ? (body ?? title ?? "") : block.title.join(" ");
   return finishPrompt("pi", {
     kind: confirming ? "approval" : "question",
     title: confirming ? (title ?? "") : "",
-    // a select has a title alone: a second line is the rest of it, wrapped
-    question: confirming ? (body ?? title ?? "") : block.title.join(" "),
+    question,
     body: null,
     options: labels.map((label) => ({ label, description: null })),
     multi_select: false,
@@ -151,7 +160,9 @@ export function parsePiDialog(screen: string, moved = false): ParsedPrompt | nul
     // "No" is pressed, not cancelled: pi's own Yes/No answers the question false, which is
     // what a confirmation means, where Escape would leave it unanswered
     rejectWithEscapeIndex: null,
-  });
+  }, confirming
+    ? { title: (title ?? "").replace(PI_COUNTDOWN_RE, "") }
+    : { question: question.replace(PI_COUNTDOWN_RE, "") });
 }
 
 export const readers: readonly DialogReader[] = [

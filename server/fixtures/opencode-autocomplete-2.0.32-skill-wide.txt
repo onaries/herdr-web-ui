@@ -1,0 +1,29 @@
+
+
+
+
+
+
+
+
+
+                                                                          ▄
+                                         █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                                         █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+                       ┃ @effect Apply the Effect library conventions                      skill ┃
+                       ┃ .opencode/commands/later.md                                             ┃
+                       ┃ .opencode/commands/shipit.md                                            ┃
+                       ┃
+                       ┃  @effect
+                       ┃
+                       ┃  Build · MiniMax M3.1 Flash Free OpenCode
+                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                       /tmp/t27-root.IbYlLi/proj:main            shift+tab agents  ctrl+p commands
+
+
+
+
+
+
+
+                                                                                                                2.0.32

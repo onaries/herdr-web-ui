@@ -101,7 +101,7 @@ export function createSocket({ clients, present, stopped, admit, setRole, watchP
       const snapshot = clientSnapshot();
       countVisit(snapshot);
       try {
-        send(client, { type: "snapshot", snapshot: await snapshot, features: SERVER_FEATURES });
+        send(client, { type: "snapshot", snapshot: await snapshot, features: SERVER_FEATURES, connection: client.data.connectionId });
       } catch (error) {
         const code = error instanceof HerdrError ? error.code : "snapshot_failed";
         send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });

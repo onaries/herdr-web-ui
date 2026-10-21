@@ -13,15 +13,16 @@
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
 import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
+import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
+import { firstMessageFault } from "../../shared/launch-rules.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { movedTabOrder } from "../../src/lib/tabOrder.ts";
-import { CHATS, PROMPT, SPECS, type DemoSpec } from "./fixtures.ts";
+import { agentSkillRows, CHATS, PROMPT, SESSION_HISTORY_AGENTS, sessionHistoryRows, SPECS, type DemoSpec } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
@@ -387,9 +388,14 @@ const CLAUDE_HIDDEN: SlashCommand[] = [
   { name: "agents", description: "Manage agent configurations", source: "builtin", visibility: "agent-hidden", forms: [{ match: "bare", interaction: "dialog", dialog: "agents" }] },
   { name: "heapdump", description: "Write a heap snapshot", source: "builtin", visibility: "agent-hidden", forms: [{ match: "bare", interaction: "none" }] },
 ];
-/** Claude builtins the recording predates: a side question answered on the screen alone, and a context report the transcript keeps. */
+/**
+ * Claude builtins the recording predates: a side question answered on the screen alone, a context
+ * report the transcript keeps, and the terminal's session picker (the chat opens the folder's
+ * earlier sessions for it, components/SessionHistory.tsx).
+ */
 const CLAUDE_LATER: SlashCommand[] = [
   { name: "btw", description: "Ask a side question without adding it to the conversation", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
+  { name: "resume", description: "Resume a conversation by ID or name", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
   { name: "context", description: "Show how the context window is used", source: "builtin", forms: [{ match: "bare", interaction: "none" }] },
 ];
 
@@ -463,10 +469,57 @@ function terminalPreview(paneId: string, text: string, name: string): string {
 const now = () => new Date().toISOString();
 
 /** The bridge takes one accepted pending message when the current mock turn finishes. */
+/**
+ * The first messages create requests queued for new panes' agents (`first_message`), by pane, as the
+ * bridge keeps them: told to every socket attached to the pane, typed into the chat once when the
+ * agent is first ready through the socket that asked (`first_message_connection`) while it is
+ * attached, held once that socket closes first or when none was named, and discarded or sent now
+ * through pending-action by any attached socket.
+ */
+const firstMessages = new Map<string, PendingMessage>();
+/** the connection that asked for each pane's first message */
+const firstRequesters = new Map<string, string>();
+let nextFirst = 1;
+let nextConnection = 1;
+const FIRST_MESSAGE_UNATTENDED = { code: "first_message_unattended", message: "The page that sent this first message is gone; send it now or discard it" };
+
+function queueFirstMessage(paneId: string, text: string, requester: unknown): PendingMessage {
+  const asked = typeof requester === "string" && [...sockets].some((socket) => socket.connection === requester);
+  const message: PendingMessage = { id: `demo-first-${nextFirst}`, request_id: -nextFirst, text, state: asked ? "queued" : "held",
+    created_at: now(), ...(asked ? {} : { error: { ...FIRST_MESSAGE_UNATTENDED } }) };
+  nextFirst += 1;
+  firstMessages.set(paneId, message);
+  if (asked) firstRequesters.set(paneId, requester as string); else firstRequesters.delete(paneId);
+  publishFirstMessage(paneId);
+  return message;
+}
+
+function publishFirstMessage(paneId: string, removed?: { id: string; outcome: "sent" | "discarded" }[]): void {
+  const message = firstMessages.get(paneId);
+  for (const socket of sockets) if (socket.attachedTo(paneId)) socket.push({ type: "pending-messages", pane_id: paneId, messages: message ? [structuredClone(message)] : [], ...(removed ? { removed } : {}) });
+}
+
+/**
+ * The pane's first message typed into its chat: on its own (`by` null) only while it waits and the socket that
+ * asked is attached; on a socket's Send now (`by`) when that socket is attached. False when it was not typed.
+ */
+function deliverFirstMessage(paneId: string, by: DemoSocket | null = null): boolean {
+  const message = firstMessages.get(paneId);
+  if (!message) return false;
+  if (by === null ? message.state !== "queued" || ![...sockets].some((socket) => socket.connection === firstRequesters.get(paneId) && socket.attachedTo(paneId))
+    : !by.attachedTo(paneId)) return false;
+  firstMessages.delete(paneId);
+  firstRequesters.delete(paneId);
+  submitToChat(paneId, message.text);
+  publishFirstMessage(paneId, [{ id: message.id, outcome: "sent" }]);
+  return true;
+}
+
 function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void {
   replying.delete(paneId);
   if (!paneOf(paneId)) return;
   setStatus(paneId, status);
+  if (deliverFirstMessage(paneId)) return;
   for (const socket of [...sockets].sort((a, b) => a.pendingOrder(paneId) - b.pendingOrder(paneId))) {
     if (socket.drainPending(paneId)) break;
   }
@@ -708,6 +761,19 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/machines/settings") return json({ auto_update_bridges: true });
   if (path.startsWith("/api/machines/")) return error("demo", "remote PCs need a real machine", 404);
 
+  if (path === "/api/sessions/history") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    const workspaceId = query.get("workspace_id");
+    if (!workspaceId) return error("missing_workspace_id", "workspace_id is required", 400);
+    const agent = query.get("agent") ?? "";
+    if (!(SESSION_HISTORY_AGENTS as string[]).includes(agent)) return error("invalid_agent", "agent must name an agent whose sessions are listed", 400);
+    const workspace = snapshot().workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+    if (!workspace) return error("workspace_not_found", "no such workspace", 404);
+    const cwd = workspace.worktree?.checkout_path || snapshot().panes.find((pane) => pane.workspace_id === workspaceId)?.cwd || "";
+    const answer: SessionHistoryResponse = { workspace_id: workspaceId, agent: agent as SessionHistoryAgent, cwd, sessions: sessionHistoryRows(agent as SessionHistoryAgent) };
+    return json(answer, 200, { "cache-control": "no-store" });
+  }
+
   if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {
     const listing = path === "/api/worktree/list";
     if (method !== (listing ? "GET" : "POST")) return error("method_not_allowed", listing ? "use GET" : "use POST", 400);
@@ -793,6 +859,16 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json({ ok: true });
   }
   if (path === "/api/pane/commands") return json({ commands: paneCommandRows(paneId) });
+  // an agent's commands in a folder before any pane runs it: the new workspace and tab dialogs' skill
+  // chips. The static rows the bridge would read for the agent are not bundled here; the skills are
+  if (path === "/api/agent/commands") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    const agent = query.get("agent") ?? "";
+    if (agent === "") return error("missing_agent", "agent query parameter is required", 400);
+    const cwd = query.get("cwd") ?? "";
+    if (cwd !== "" && !cwd.startsWith("/home/demo") && !cwd.startsWith("~")) return error("invalid_cwd", "cwd must be an existing directory", 400);
+    return json({ commands: agentSkillRows(agent) });
+  }
   if (path === "/api/pane/scroll") {
     const body = method === "POST" ? await bodyOf(init, input) : {};
     const target = method === "POST" ? String(body["pane_id"] ?? "") : paneId;
@@ -844,6 +920,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json({ files: DEMO_FILES.filter((file) => file.toLowerCase().includes(q)).slice(0, Number(query.get("limit") ?? 20)) });
   }
   if (path === "/api/pane/input" || path === "/api/pane/keys") return json({ ok: true });
+  // the demo's agents have no rewind dialog to open: the chat says to choose in the terminal
+  if (path === "/api/pane/rewind") return json({ ok: true, outcome: "terminal-required" });
   if (path === "/api/plugins/actions") return json({ plugins: PLUGINS } satisfies PluginActionsResponse);
   if (path === "/api/plugin/action") {
     // nothing here is ever left running, so no run is asked about again
@@ -1134,18 +1212,27 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);
     const agent = (body["agent"] as { kind?: string } | null | undefined)?.kind ?? null;
+    const firstFault = firstMessageFault(body["first_message"], agent);
+    if (firstFault !== null) return error("invalid_first_message", firstFault, 400);
     const cwd = String(body["cwd"] ?? "/home/demo/new-project");
     const label = String(body["label"] ?? "") || cwd.split("/").pop() || "new";
     const made = createDemoWorkspace(cwd, label, agent);
     structureChanged();
-    return json(made);
+    if (typeof body["first_message"] !== "string") return json(made);
+    return json({ ...made, first_message: made.agent_started ? { id: queueFirstMessage(made.pane_id, body["first_message"], body["first_message_connection"]).id } : null });
   }
   if (path === "/api/tab/create") {
     const body = await bodyOf(init, input);
     const snap = snapshot();
     const workspace = snap.workspaces.find((w) => w.workspace_id === body["workspace_id"]);
     if (!workspace) return error("not_found", "no such workspace", 404);
-    const agent = (body["agent"] as { kind?: string } | null | undefined)?.kind ?? null;
+    const launch = body["agent"] as { kind?: string; args?: unknown } | null | undefined;
+    const agent = launch?.kind ?? null;
+    const firstFault = firstMessageFault(body["first_message"], agent);
+    if (firstFault !== null) return error("invalid_first_message", firstFault, 400);
+    // a session resumed from the history dialog (`codex resume <id>`, `claude --resume <id>`: the id
+    // last) is the one the new pane shows, as herdr reports a pane's session
+    const resumed = agent !== null && Array.isArray(launch?.args) && launch.args.length === 2 && typeof launch.args[1] === "string" ? launch.args[1] : null;
     const id = workspace.workspace_id;
     const siblings = snap.panes.filter((p) => p.workspace_id === id);
     const cwd = String(body["cwd"] ?? siblings[0]?.cwd ?? "/home/demo");
@@ -1153,7 +1240,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const number = Math.max(0, ...tabs.map((tab) => tab.number)) + 1;
     const tabId = `${id}:t${number}`;
     const template = snap.panes[0]!;
-    const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: null, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
+    const pane: Pane = { ...structuredClone(template), pane_id: `${id}:p${(nextWorkspace++).toString(36)}`, tab_id: tabId, terminal_id: `${id}:term${number}`, workspace_id: id, label: null, title: null, agent, agent_session: resumed === null || agent === null ? null : { agent, kind: "id", source: "demo", value: resumed }, agent_status: agent ? "working" : "unknown", cwd, foreground_cwd: cwd, focused: false, terminal_title: null, terminal_title_stripped: null, revision: 1 };
     snap.panes.push(pane);
     addAgent(pane);
     const label = String(body["label"] ?? "");
@@ -1171,7 +1258,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       setTimeout(() => { if (!replying.has(pane.pane_id)) finishDemoTurn(pane.pane_id, "idle"); }, 1500);
     }
     structureChanged();
-    return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
+    const made: WorkspaceCreated = { workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null };
+    if (typeof body["first_message"] !== "string") return json(made);
+    return json({ ...made, first_message: agent !== null ? { id: queueFirstMessage(pane.pane_id, body["first_message"], body["first_message_connection"]).id } : null });
   }
   // no key in the demo: the app falls back to the browser's own speech recognition
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
@@ -1280,6 +1369,8 @@ const SHELL_COMMANDS: Record<string, string> = {
 };
 
 class DemoSocket extends EventTarget {
+  /** this socket's id, told in its snapshot: a create request names it as its first message's typist */
+  readonly connection = `demo-connection-${nextConnection++}`;
   static readonly CONNECTING = 0; static readonly OPEN = 1; static readonly CLOSING = 2; static readonly CLOSED = 3;
   readonly url: string;
   readyState = 0;
@@ -1290,6 +1381,8 @@ class DemoSocket extends EventTarget {
   onerror: ((event: Event) => void) | null = null;
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly attached = new Set<string>();
+  /** whether this socket has the pane attached: the bridge's first message is told to, and typed through, such a socket */
+  attachedTo(paneId: string): boolean { return this.attached.has(paneId); }
   private mode: "interact" | "observe" = "interact";
   /** Accepted messages belong to this live connection, never to a reconnect's empty queue. */
   private readonly pending = new Map<string, PendingMessage[]>();
@@ -1311,7 +1404,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "agent-queue", "pending-agent-queue", "secret-input", "input-ready", "conversation-watch", "ping"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "agent-queue", "pending-agent-queue", "secret-input", "input-ready", "conversation-watch", "ping"], connection: this.connection });
     }, 20);
     this.timers.add(opening);
   }
@@ -1414,6 +1507,7 @@ class DemoSocket extends EventTarget {
         if (message.pane_id) {
           this.attached.delete(message.pane_id);
           this.holdPending(message.pane_id, "not_attached", "This pane was detached. Pending messages will not be sent automatically.");
+          this.holdAsked(message.pane_id);
           this.conversationInterests.delete(message.pane_id);
         }
         break;
@@ -1501,6 +1595,18 @@ class DemoSocket extends EventTarget {
             result(false, "invalid_pending_action"); break;
           }
           if (this.mode === "observe") { result(false, "read_only"); break; }
+          const first = firstMessages.get(message.pane_id);
+          if (first && first.id === message.pending_id && this.attached.has(message.pane_id)) {
+            // the pane's first message is every attached socket's to discard or send now
+            if (message.action === "discard") {
+              firstMessages.delete(message.pane_id);
+              publishFirstMessage(message.pane_id, [{ id: first.id, outcome: "discarded" }]);
+              result(true);
+            // read before the send, which sets the pane working: at rest it goes, otherwise nothing is sent
+            } else if (!["idle", "done"].includes(paneOf(message.pane_id)?.agent_status ?? "")) result(false, "agent_blocked");
+            else result(deliverFirstMessage(message.pane_id, this));
+            break;
+          }
           const pending = this.pending.get(message.pane_id)?.find((item) => item.id === message.pending_id);
           if (!pending) {
             const receipt = this.outcomes.get(message.pending_id);
@@ -1653,6 +1759,17 @@ class DemoSocket extends EventTarget {
     if (history && this.attached.has(paneId)) this.push({ type: "pty-data", pane_id: paneId, data: history.render() });
   }
 
+  /** The first messages this socket asked for, in `paneId` or every pane, that have not gone: held for an explicit send, as the bridge holds them when their page leaves. */
+  private holdAsked(paneId?: string): void {
+    for (const [pane, requester] of firstRequesters) {
+      const first = firstMessages.get(pane);
+      if (requester !== this.connection || (paneId !== undefined && pane !== paneId) || first?.state !== "queued") continue;
+      first.state = "held"; first.error = { ...FIRST_MESSAGE_UNATTENDED };
+      firstRequesters.delete(pane);
+      publishFirstMessage(pane);
+    }
+  }
+
   private attach(paneId: string): void {
     const pane = paneOf(paneId);
     if (!pane) {
@@ -1664,6 +1781,15 @@ class DemoSocket extends EventTarget {
     this.attached.add(paneId);
     this.publishPending(paneId);
     this.push({ type: "input-ready", pane_id: paneId });
+    // the bridge's first message for the pane, told to this attaching socket; a pane already at rest gets it typed now.
+    // On its own tick: an attach sent in the open handler is answered here before this socket's snapshot goes out,
+    // and the client takes pending messages only after the snapshot, as a real bridge sends them
+    this.later(() => {
+      const first = firstMessages.get(paneId);
+      if (!first || !this.attached.has(paneId)) return;
+      this.push({ type: "pending-messages", pane_id: paneId, messages: [structuredClone(first)] });
+      if (["idle", "done"].includes(paneOf(paneId)?.agent_status ?? "")) deliverFirstMessage(paneId);
+    }, 0);
     const key = keyOfPane.get(paneId);
     if (histories.has(paneId)) { this.renderHistory(paneId); return; }
     if (key === "shell") {
@@ -1733,6 +1859,7 @@ class DemoSocket extends EventTarget {
     if (this.readyState >= 2) return;
     this.readyState = 3;
     this.holdPending();
+    this.holdAsked();
     for (const timer of this.timers) clearTimeout(timer);
     sockets.delete(this);
     this.attached.clear();

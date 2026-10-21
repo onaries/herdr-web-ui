@@ -1,0 +1,144 @@
+/** Native Windows/PowerShell regression, in the isolated test session. Run after `bun run build`:
+ *   bun scripts/windows-terminal-browser-qa.ts
+ * CHROME_PATH selects an installed browser; otherwise uses Playwright's Chromium.
+ * Never run with HERDR_TEST_LIVE=1. */
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium } from "playwright-core";
+import { chromePath } from "./chrome-path.ts";
+
+assert.equal(process.platform, "win32", "this regression requires native Windows");
+assert.notEqual(process.env["HERDR_TEST_LIVE"], "1", "this regression requires an isolated test session");
+await import("./test-herdr.ts");
+const { createServer } = await import("../server/index.ts");
+const { workspaceCreate, workspaceClose, paneSendText, paneSendKeys, paneRead, paneScrollInfo, paneScroll } = await import("../server/herdr/client.ts");
+const root = mkdtempSync(join(tmpdir(), "herdr-windows-terminal-"));
+let workspace: string | undefined;
+let server: ReturnType<typeof createServer> | undefined;
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+async function until(done: () => Promise<boolean>, label: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (await done()) return;
+    await Bun.sleep(100);
+  }
+  throw new Error(`Timed out: ${label}`);
+}
+try {
+  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-windows-terminal" });
+  workspace = created.workspace.workspace_id;
+  const pane = created.root_pane.pane_id;
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
+  // The long native prompt places the mirror's hidden cursor outside a phone's viewport.
+  await paneSendText(pane, 'function prompt { ("P" * 100) + "> " }; 1..120 | ForEach-Object { Write-Output ("WIN-HISTORY-{0:D3}" -f $_) }');
+  await paneSendKeys(pane, ["Enter"]);
+  await until(async () => (await paneRead({ paneId: pane, source: "visible", format: "text" })).text.includes("WIN-HISTORY-120"), "PowerShell output");
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, hasTouch: true });
+  const page = await context.newPage();
+  const errors: string[] = [];
+  let scrollWrites = 0;
+  page.on("pageerror", (error) => { errors.push(error.message); console.error(error); });
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/pane/scroll") scrollWrites++;
+  });
+  await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
+  const host = page.locator(".pane-terminal");
+  const text = () => page.locator(".xterm-rows").innerText();
+  await until(async () => (await text()).includes("WIN-HISTORY-120"), "mirrored output");
+  await host.hover();
+  await page.mouse.wheel(0, -350);
+  await until(async () => ((await paneScrollInfo(pane))?.offset_from_bottom ?? 0) > 0, "wheel scrolls native history");
+  await until(async () => !(await text()).includes("WIN-HISTORY-120"), "mirror paints older history");
+  console.log("PASS native Windows PowerShell wheel scrolls history and repaints the mirror");
+
+  await paneScroll(pane, 0);
+  await until(async () => (await text()).includes("P".repeat(100)), "native prompt returns before resizing");
+  await page.setViewportSize({ width: 390, height: 500 });
+  await host.evaluate((element) => { element.scrollTop = 80; });
+  await until(async () => await host.evaluate((element) => element.scrollTop > 100), "settled short mount follows the native prompt");
+  const beforeWheelPan = await host.evaluate((element) => element.scrollTop);
+  await host.hover();
+  await page.mouse.wheel(0, -100);
+  await until(async () => await host.evaluate((element) => element.scrollTop) < beforeWheelPan - 30, "wheel pans the oversized native grid");
+  await paneSendText(pane, "Q");
+  await until(async () => (await text()).includes("> Q"), "new native output after wheel pan");
+  assert.ok(await host.evaluate((element) => element.scrollTop) < beforeWheelPan - 30, "new output does not undo local wheel panning");
+  console.log("PASS native Windows mirror preserves local wheel panning across output");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await until(async () => (await text()).includes("P".repeat(100)), "long native prompt");
+  const cdp = await context.newCDPSession(page);
+  const box = (await host.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await host.evaluate((element) => { element.scrollTop = 0; });
+  const writesBeforeTap = scrollWrites;
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  assert.equal(scrollWrites, writesBeforeTap, "an unmoved tap does not write shared native history");
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+  for (let step = 1; step <= 8; step++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + step * 12 }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await until(async () => ((await paneScrollInfo(pane))?.offset_from_bottom ?? 0) > 0, "touch scrolls native history");
+  console.log("PASS native Windows PowerShell touch scrolls history");
+  await paneScroll(pane, 0);
+  await until(async () => (await text()).includes("P".repeat(100)), "return to prompt");
+  await page.locator(".xterm-helper-textarea").focus();
+  const pan = async (left: number) => {
+    await host.evaluate((element, value) => { element.scrollLeft = value; }, left);
+    // The viewport publisher settles on the browser's frame, not an arbitrary delay.
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    return host.evaluate((element) => element.scrollLeft);
+  };
+  for (const left of [0, 70, 0]) {
+    const before = await pan(left);
+    await cdp.send("Input.insertText", { text: "x" });
+    assert.equal(await host.evaluate((element) => element.scrollLeft), before, "text insertion preserves manual horizontal pan");
+  }
+  const beforeComposition = await pan(0);
+  for (const value of ["한", "한글입력테스트"]) {
+    await cdp.send("Input.imeSetComposition", { text: value, selectionStart: value.length, selectionEnd: value.length });
+    assert.equal(await host.evaluate((element) => element.scrollLeft), beforeComposition, "IME composition preserves manual horizontal pan");
+  }
+  await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
+  await paneSendKeys(pane, ["Escape"]);
+  await paneSendText(pane, 'function prompt { ("V" * 52) + "> " }');
+  await paneSendKeys(pane, ["Enter"]);
+  await until(async () => (await text()).includes("V".repeat(52) + ">"), "visible cursor near the phone's right edge");
+  const edgePan = await pan(0);
+  const helper = page.locator(".xterm-helper-textarea");
+  const edgeAnchor = (await helper.boundingBox())!;
+  const visibleBox = (await host.boundingBox())!;
+  assert.ok(edgeAnchor.x > visibleBox.x + visibleBox.width / 2 && edgeAnchor.x < visibleBox.x + visibleBox.width,
+    "the native prompt puts a visible caret near the right edge");
+  await cdp.send("Input.imeSetComposition", { text: "한글입력테스트".repeat(8), selectionStart: 56, selectionEnd: 56 });
+  assert.equal(await host.evaluate((element) => element.scrollLeft), edgePan, "long composition at a visible edge preserves horizontal pan");
+  const composed = (await helper.boundingBox())!;
+  assert.ok(Math.abs(composed.x - edgeAnchor.x) <= 1, "a visible cursor keeps its composition anchor");
+  assert.ok(composed.x + composed.width <= visibleBox.x + visibleBox.width + 1, "long preedit stays within the visible scrollport");
+  await cdp.send("Input.imeSetComposition", { text: "", selectionStart: 0, selectionEnd: 0 });
+  const screenHeight = await page.locator(".xterm-screen").evaluate((element) => element.getBoundingClientRect().height);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x - 50, y }, { x: x + 50, y }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 75, y }, { x: x + 75, y }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await until(async () => await page.locator(".xterm-screen").evaluate((element) => element.getBoundingClientRect().height) > screenHeight,
+    "pinch changes the fixed grid's font metrics");
+  await pan(0);
+  const resizedHost = (await host.boundingBox())!;
+  const resizedHelper = (await helper.boundingBox())!;
+  assert.ok(resizedHelper.y + resizedHelper.height <= resizedHost.y + resizedHost.height + 1,
+    "the IME anchor follows changed fixed-grid font metrics");
+  assert.ok(resizedHelper.y + resizedHelper.height >= resizedHost.y + resizedHost.height - 2,
+    "a clipped bottom-row cursor anchors at the current visible edge, not the old font bounds");
+  await cdp.detach();
+  assert.deepEqual(errors, []);
+  console.log("PASS native Windows mirror text insertion and IME preserve the phone viewport");
+} finally {
+  await browser?.close();
+  server?.stop();
+  if (workspace) await workspaceClose(workspace);
+  rmSync(root, { recursive: true, force: true });
+}

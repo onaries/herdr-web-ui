@@ -54,7 +54,7 @@ export function validGeometry(cols: unknown, rows: unknown): { cols: number; row
  * The server's terminals. `stopped` is read through a getter, as `stop()` sets it later, and `end`
  * is called through one, as the connections are built after the terminals.
  */
-export function createTerminalRegistry({ options, clients, stopped, terminalAttach, holdFor, heldRetry, retryFor, relookupFor, holdPending, holdPendingPane, end }: {
+export function createTerminalRegistry({ options, clients, stopped, terminalAttach, holdFor, heldRetry, retryFor, relookupFor, holdPending, holdPendingPane, attached, inputReady, end }: {
   options: { codexHome?: string; devinDbPath?: string; opencodeDb?: string; hermesHome?: string; grokHome?: string };
   clients: Set<Client>;
   stopped: () => boolean;
@@ -65,6 +65,10 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
   relookupFor: number;
   holdPending: (owner: Client, paneId?: string) => void;
   holdPendingPane: (paneId: string, fault: { code: string; message: string }) => void;
+  /** a connection joined the pane's attachment: the pending messages queued for the pane are told to it, and may go through it */
+  attached: (client: Client, paneId: string) => void;
+  /** the pane's terminal takes input again: a pending message waiting for a typist may go now */
+  inputReady: (paneId: string) => void;
   end: (client: Client, reason: "stalled" | "revoked" | "closed") => void;
 }) {
   const attachments = new Map<string, PaneAttachment>();
@@ -141,7 +145,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
     for (const client of attachment.clients) send(client, message);
   }
 
-  const { spawnAttachment } = createSpawnAttachment({ attachments, retiringAttachments, terminalAttach, isStopped: stopped, closeAttachment, broadcast, sendOutput, reconcileOutput, holdPendingPane, holdFor, heldRetry, retryFor, relookupFor });
+  const { spawnAttachment } = createSpawnAttachment({ attachments, retiringAttachments, terminalAttach, isStopped: stopped, closeAttachment, broadcast, sendOutput, reconcileOutput, holdPendingPane, inputReady, holdFor, heldRetry, retryFor, relookupFor });
 
   function closeAttachment(paneId: string): void {
     const attachment = attachments.get(paneId);
@@ -356,6 +360,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       reconcileOutput(message.pane_id);
       if (connectionOf(client).closing) return;
       if (attachment.ready && !attachment.held) send(client, { type: "input-ready", pane_id: message.pane_id });
+      if (!alreadyAttached) attached(client, message.pane_id);
       if (attachment.kind === "mirror") return;
       if (connectionOf(client).mode === "interact" && !claim.keepSize) {
         // an operator's viewport owns the shared grid

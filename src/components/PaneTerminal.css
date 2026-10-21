@@ -298,6 +298,23 @@
   pointer-events: auto;
 }
 
+/* the hint a message's "Rewind in terminal" leaves (grok, agy): a sentence and its dismiss control,
+   so a control-bearing box like the held-input row; the sentence takes what the pane has and wraps,
+   the button stays beside it */
+.terminal-banner-rewind {
+  height: auto;
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  pointer-events: auto;
+}
+
+.terminal-banner-rewind > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* the held-draft echo inside the reconnecting pill: capped like the review text, on one line and
    cut with an ellipsis (its title holds the whole text), so a command is never broken inside a
    word as the wrapping banner around it would; the text itself in mono, as the review banner's */

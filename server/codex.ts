@@ -1104,6 +1104,11 @@ const VALUELESS_OPTIONS = new Set([
 ]);
 
 /** A pane's Codex executables (or interpreter scripts), and their pids as one key. */
+/** The pane's first Codex process (the one paneCodexHome decides by), or null when there is none. */
+export async function paneCodexProcess(paneId: string): Promise<{ pid: number; argv?: string[] } | null> {
+  return (await codexProcessesOf(paneId)).list[0] ?? null;
+}
+
 async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
   const processInfo = await paneProcessInfo(paneId);
   // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list

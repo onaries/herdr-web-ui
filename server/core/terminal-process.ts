@@ -123,7 +123,7 @@ export type PaneAttachment = PtyAttachment | MirrorAttachment;
  * The attach the server's clients share for each pane. `attachments` stays the server's: a callback
  * of an attachment that is no longer the pane's record does nothing.
  */
-export function createSpawnAttachment({ attachments, retiringAttachments, terminalAttach, isStopped, closeAttachment, broadcast, sendOutput, reconcileOutput, holdPendingPane, holdFor, heldRetry, retryFor, relookupFor }: {
+export function createSpawnAttachment({ attachments, retiringAttachments, terminalAttach, isStopped, closeAttachment, broadcast, sendOutput, reconcileOutput, holdPendingPane, inputReady, holdFor, heldRetry, retryFor, relookupFor }: {
   attachments: Map<string, PaneAttachment>;
   retiringAttachments: Map<string, Promise<void>>;
   terminalAttach: () => Promise<boolean>;
@@ -134,6 +134,8 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
   sendOutput: (client: Client, paneId: string, data: string) => void;
   reconcileOutput: (paneId: string) => void;
   holdPendingPane: (paneId: string, fault: { code: string; message: string }) => void;
+  /** the attach took and input flows: a pending message waiting for a typist may go now */
+  inputReady: (paneId: string) => void;
   holdFor: number;
   heldRetry: number;
   retryFor: number;
@@ -320,6 +322,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
         attachment.ready = true;
         attachment.recovering = false;
         broadcast(paneId, { type: "input-ready", pane_id: paneId });
+        inputReady(paneId);
         release();
       };
       const ended = (code: number | null): void => {

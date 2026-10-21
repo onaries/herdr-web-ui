@@ -5,11 +5,18 @@ import type { PanePromptResponse } from "../shared/protocol.ts";
 import type { SeenFinish } from "../shared/seen.ts";
 import { MachineManager } from "./machines.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
-import { isJsonObject, jsonResponse } from "./http.ts";
+import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { crossSiteFileRead } from "./file-view.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
-export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|plan|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|focus)|workspace\/(?:create|rename|move|close|directories|diff\/files|diff\/file)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file|favicon))$/;
+
+/**
+ * A path no route is spelled as: an empty segment (`//`, or a trailing `/`) or an encoded separator.
+ * Path checks match the canonical spelling, and the PC proxy drops empty segments before it
+ * forwards, so such a path must be no route at all rather than "some other route".
+ */
+export const nonCanonicalPath = (pathname: string): boolean => pathname.includes("//") || (pathname.length > 1 && pathname.endsWith("/")) || /%2f|%5c/i.test(pathname);
+export const MACHINE_PROXY_PATH = /^(?:session|sessions\/history|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|plan|prompt|prompt\/answer|rewind|input|keys|close|rename|image|split|zoom|swap|resize|clear|focus)|workspace\/(?:create|rename|move|close|directories|diff\/files|diff\/file)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/(?:rename|commands)|plugins\/actions|plugin\/action|fs\/(?:stat|file|favicon))$/;
 
 
 /**
@@ -40,11 +47,12 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
   if (fileRead && crossSiteFileRead(request)) return fail("cross_site", "A file is read from this app or opened in a tab, not loaded by another page", 403);
   if (!["GET", "HEAD"].includes(request.method) && request.headers.get("x-herdr-machine") !== "1") return fail("invalid_machine_request", "Use PC controls from this app", 403);
   // an empty segment is never a route: dropping it would forward `<id>//fs/file` as `fs/file`
-  if (url.pathname.includes("//")) return fail("not_found", "not found", 404);
+  if (nonCanonicalPath(url.pathname)) return fail("not_found", "not found", 404);
   const parts = url.pathname.slice("/api/machines".length).split("/").filter(Boolean);
   try {
-    if (!parts.length && request.method === "GET") return jsonResponse({ machines: manager.list() });
+    if (!parts.length && request.method === "GET") { setRequestRoute("/api/machines"); return jsonResponse({ machines: manager.list() }); }
     if (parts[0] === "events" && parts.length === 1 && request.method === "GET") {
+      setRequestRoute("/api/machines/events");
       let stop: (() => void) | undefined;
       let stopPreferences: (() => void) | undefined;
       let stopSidebar: (() => void) | undefined;
@@ -88,8 +96,9 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no" } });
     }
     if (parts[0] === "setup") {
-      if (parts.length === 1 && request.method === "POST") return jsonResponse(manager.setup(await request.json() as SetupRequest), 202);
+      if (parts.length === 1 && request.method === "POST") { setRequestRoute("/api/machines/setup"); return jsonResponse(manager.setup(await request.json() as SetupRequest), 202); }
       if (parts.length === 2) {
+        setRequestRoute("/api/machines/setup/:job_id");
         const job = manager.job(parts[1]!);
         if (!job) return fail("job_not_found", "Setup job not found", 404);
         if (request.method === "POST") {
@@ -103,6 +112,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       }
     }
     if (parts[0] === "settings" && parts.length === 1) {
+      setRequestRoute("/api/machines/settings");
       if (request.method === "GET") return jsonResponse(manager.settings());
       if (request.method !== "PATCH") return fail("method_not_allowed", "Use GET or PATCH", 405);
       const patch = await request.json();
@@ -110,15 +120,24 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       return jsonResponse(manager.updateSettings(patch));
     }
     const id = parts[0]!;
-    if (parts.length === 2 && parts[1] === "update-bridge" && request.method === "POST") return jsonResponse(manager.updateBridge(id), 202);
+    if (parts.length === 2 && parts[1] === "update-bridge" && request.method === "POST") { setRequestRoute("/api/machines/:machine_id/update-bridge"); return jsonResponse(manager.updateBridge(id), 202); }
     if (parts.length === 1 && request.method === "PATCH") {
+      setRequestRoute("/api/machines/:machine_id");
       const patch = await request.json();
       if (!isJsonObject(patch)) return fail("invalid_body", "Expected a PC update", 400);
       manager.patch(id, patch); return jsonResponse({ ok: true });
     }
-    if (parts.length === 1 && request.method === "DELETE") { manager.remove(id); return jsonResponse({ ok: true }); }
+    if (parts.length === 1 && request.method === "DELETE") { setRequestRoute("/api/machines/:machine_id"); manager.remove(id); return jsonResponse({ ok: true }); }
     const path = parts.slice(1).join("/");
+    // earlier sessions carry their first prompts, and a folder's command files name what is in it (the new-tab
+    // dialog's agent commands): never asked for a watching device with the PC's credential
+    if (readOnly && (path === "sessions/history" || path === "agent/commands")) return fail("read_only", "this device can only watch", 403);
     if (MACHINE_PROXY_PATH.test(path)) {
+      // `path` is a finite endpoint literal, never the machine id or an arbitrary suffix.
+      setRequestRoute(`/api/machines/:machine_id/${path}`);
+      // a connection that may only watch is refused here as well as at the access check, by the same rule
+      // (index.ts `mutating`): it writes nothing on another PC
+      if (readOnly && !["GET", "HEAD", "OPTIONS"].includes(request.method)) return fail("read_only", "this device can only watch", 403);
       const endpoint = manager.endpoint(id);
       if (!endpoint) return fail("machine_offline", "This PC is disconnected", 503);
       // Explicit header allowlist: cookies, browser Authorization, forwarded headers

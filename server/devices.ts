@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import type { DeviceRole, PairedDevice } from "../shared/protocol.ts";
 import type { Access } from "./access.ts";
 import { deviceCookie, isSecureRequest, noContent } from "./auth.ts";
-import { badRequest, isJsonObject, jsonResponse } from "./http.ts";
+import { badRequest, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { sameOrigin } from "./machine-security.ts";
 
 const CODE_TTL_MS = 10 * 60_000;
@@ -258,6 +258,7 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     } catch { return badRequest("invalid_json", "request body must be JSON"); }
   };
   if (pathname === "/api/devices/pair") {
+    setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     const body = await json();
     if (body instanceof Response) return body;
@@ -267,16 +268,19 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     return noContent(deviceCookie(paired.token, isSecureRequest(request)));
   }
   if (pathname === "/api/devices") {
+    setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     return jsonResponse({ devices: store.list(access.level === "full" ? access.device?.id ?? null : null) }, 200, { "cache-control": "no-store" });
   }
   if (!sameOrigin(request) || request.headers.get("x-herdr-machine") !== "1") return jsonResponse({ error: { code: "invalid_origin", message: "Manage devices from this app" } }, 403);
   if (access.level === "full" && access.role === "watch") return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
   if (pathname === "/api/devices/pair/start") {
+    setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     return jsonResponse(store.startPairing(), 200, { "cache-control": "no-store" });
   }
   const id = pathname.slice("/api/devices/".length);
+  setRequestRoute("/api/devices/:device_id");
   if (!/^[0-9a-f]{16}$/.test(id)) return badRequest("invalid_device", "no such device");
   if (request.method === "DELETE") return store.revoke(id) ? noContent() : jsonResponse({ error: { code: "not_found", message: "no such device" } }, 404);
   if (request.method === "PATCH") {

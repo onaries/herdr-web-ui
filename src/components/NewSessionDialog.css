@@ -130,11 +130,70 @@
   white-space: nowrap;
 }
 
+/* the launch's own choices, model and effort, side by side where both fit a field's width, else stacked */
+.new-session-launch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  column-gap: var(--space-3);
+}
+
+.new-session-launch .field {
+  min-width: 0;
+}
+
+.new-session-launch .input,
+.new-session-launch .select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* the first message: a few lines of the message box's own face and measure, grown by hand */
+.new-session-prompt {
+  height: auto;
+  min-height: calc(var(--control-h) * 2.5);
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--lh-base);
+  resize: vertical;
+}
+
+/* the agent's skills in the folder, under the message: pill chips that wrap, three rows at most before they scroll */
+.new-session-skills-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.new-session-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-height: calc(var(--control-h) * 3 + var(--space-2) * 2);
+  overflow-y: auto;
+  /* a focused chip's ring shows whole at the row's edge */
+  padding: var(--space-1);
+  margin: calc(var(--space-1) * -1);
+}
+
+.new-session-skill-chip {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (pointer: coarse) {
   .new-session-modal .input,
   .new-session-modal .select,
   .new-session-modal .btn {
     height: var(--touch-target);
+  }
+
+  .new-session-modal .new-session-prompt {
+    height: auto;
   }
 }
 

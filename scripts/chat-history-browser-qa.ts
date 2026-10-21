@@ -7,6 +7,7 @@ import { chromium } from "playwright-core";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
 import type {} from "./chat-history-fixture.tsx";
 import { parseAgyTranscript } from "../server/agy.ts";
+import { buildXtermSource } from "./build-xterm.ts";
 import { chromePath } from "./chrome-path.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
@@ -25,7 +26,15 @@ function nextRoute(name: string): Promise<void> {
   });
 }
 try {
-  const build = await Bun.build({ entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
+  // the app's own xterm, as Vite aliases it: the patched source, not the package's minified build
+  const xterm = buildXtermSource(join(import.meta.dir, ".."));
+  const build = await Bun.build({ entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' }, plugins: [{
+    name: "xterm-source-aliases",
+    setup(build) {
+      build.onResolve({ filter: /^@xterm\/xterm$/ }, () => ({ path: join(xterm, "browser/public/Terminal.js") }));
+      build.onResolve({ filter: /^(browser|common)\// }, ({ path }) => ({ path: join(xterm, path + ".js") }));
+    },
+  }] });
   assert.ok(build.success, String(build.logs));
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const path = new URL(request.url).pathname;

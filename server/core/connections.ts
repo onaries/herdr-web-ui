@@ -17,6 +17,8 @@ export interface SocketData {
   deviceId?: string;
   readOnly?: boolean;
   relay?: MachineRelay;
+  /** this connection's id, told to its page in the first snapshot: a create request names it as its first message's typist */
+  connectionId: string;
   /** A fresh claim per attach lifetime; deleting it invalidates queued terminal keys. */
   attached: Map<string, { keepSize: boolean }>;
   conversationInterests: Set<string>;
@@ -45,7 +47,7 @@ function stateOf(client: Client): ConnectionState {
 
 /** The data for a connection's upgrade: it starts to interact unless its access is read-only. */
 export function connectionData(fields: { relay?: MachineRelay; deviceId: string | undefined; readOnly: boolean }): SocketData {
-  const data: SocketData = { attached: new Map<string, { keepSize: boolean }>(), conversationInterests: new Set<string>(), output: new Map(), ...fields };
+  const data: SocketData = { connectionId: crypto.randomUUID(), attached: new Map<string, { keepSize: boolean }>(), conversationInterests: new Set<string>(), output: new Map(), ...fields };
   states.set(data, { closing: false, revoked: false, mode: fields.readOnly ? "observe" : "interact", roles: 0, watches: new Map<string, PaneWatch>() });
   return data;
 }
@@ -93,10 +95,11 @@ export function send(client: Client, message: ServerMessage): number {
  * What a connection may do, its observe processes, and its end. A connection's panes stay with the
  * terminal code: `detachClaimed` detaches them while the claims still count, `dropClaims` forgets them.
  */
-export function createConnections<Lease>({ clients, present, pending, devices, detachClaimed, dropClaims }: {
+export function createConnections({ clients, present, pending, devices, detachClaimed, dropClaims }: {
   clients: Set<Client>;
   present: Set<Client>;
-  pending: PendingInputs<Client, Lease>;
+  /** the pending messages' end for a connection: its own are held, whoever else the store holds messages for */
+  pending: Pick<PendingInputs<Client, unknown>, "close">;
   devices: DeviceStore;
   detachClaimed: (client: Client) => void;
   dropClaims: (client: Client) => void;

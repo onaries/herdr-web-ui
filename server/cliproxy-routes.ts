@@ -1,6 +1,6 @@
 import type { CLIProxyLogin, CLIProxyLoginStatus, CLIProxyProvider } from "../shared/protocol.ts";
 import { CLIProxyError, CLIProxyService, proxyInvalid } from "./cliproxy.ts";
-import { isJsonObject, jsonResponse } from "./http.ts";
+import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 
 type Session = { readonly provider: CLIProxyProvider; readonly expires: number };
 /** Pending OAuth sessions belong to this app, not arbitrary state values on the proxy. */
@@ -24,6 +24,7 @@ export class CLIProxyRoutes {
     const reply = (value: unknown) => jsonResponse(value, 200, { "cache-control": "no-store" });
     try {
       if (path === "/api/cliproxy") {
+        setRequestRoute(path);
         switch (request.method) {
           case "GET": return reply(await this.service.check());
           case "PUT": {
@@ -35,6 +36,7 @@ export class CLIProxyRoutes {
         }
       }
       if (path === "/api/cliproxy/login") {
+        setRequestRoute(path);
         switch (request.method) {
           case "POST": {
             const body: unknown = await request.json();
@@ -66,6 +68,7 @@ export class CLIProxyRoutes {
         }
       }
       if (path === "/api/cliproxy/callback" && request.method === "POST") {
+        setRequestRoute(path);
         const body: unknown = await request.json();
         if (!isJsonObject(body) || typeof body["state"] !== "string" || typeof body["redirect_url"] !== "string" || body["redirect_url"].length > 8000) throw proxyInvalid();
         const pending = this.session(body["state"]);

@@ -1,7 +1,7 @@
 import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
-import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
+import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane, SessionHistoryAgent } from "../shared/protocol.ts";
 import { ApiError, authenticate, createTab, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, signOut, splitPane, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
@@ -14,6 +14,10 @@ import { worktreeRepoName } from "./lib/composerStrip.ts";
 import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
+import { SessionHistory } from "./components/SessionHistory.tsx";
+import { sessionHistoryAgent, sessionHistoryListAgent } from "./lib/sessionHistory.ts";
+import { useRecentResumes } from "./lib/useRecentResumes.ts";
+import { forgetSessionHistoryProbesOfPcsAway } from "./lib/useSessionHistoryOffered.ts";
 import { passingFolder, recentDirectories } from "./lib/recent-directories.ts";
 import { usePreferencesSync } from "./lib/preferencesSync.ts";
 import { TabStrip } from "./components/TabStrip.tsx";
@@ -519,6 +523,8 @@ export function App() {
   const pendingCreate = useRef<CreateDraft | null>(initialLink?.create ?? null);
   // the dialog makes a tab in this workspace instead of a workspace, while set
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
+  // the earlier sessions of a workspace's folder (components/SessionHistory.tsx), while open
+  const [sessionHistory, setSessionHistory] = useState<{ machineId: string; workspaceId: string; agent: SessionHistoryAgent } | null>(null);
   const [connected, setConnected] = useState(false);
   /** the active terminal's socket has been connected on this page before (PaneTerminal reports it): not
    *  connected, the chip says reconnecting; before this page's first connection to the PC, connecting */
@@ -1367,7 +1373,7 @@ export function App() {
     const inFront = panes.find((pane) => pane.pane_id === selectedPaneId)
       ?? panes.find((pane) => pane.pane_id === roster.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
       ?? panes[0];
-    return { machineId, workspace, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null };
+    return { machineId, workspace, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null, agent: inFront?.agent ?? null, panes };
   };
 
   const actions = useMemo<AppActions>(
@@ -1408,6 +1414,15 @@ export function App() {
         void load();
         // what the user went to while herdr answered is theirs to keep
         if (selectionStill(asked, selectionRef.current)) selectTargetRef.current(found.machineId, created.pane_id);
+      },
+      openSessionHistory: (target) => {
+        const found = newTabTarget(target);
+        if (!found) return;
+        // a pane's own agent, or nothing; for a workspace, the agent named, else the pane in front's, else any of it
+        const agent = sessionHistoryListAgent(target, found.agent, found.panes.map((pane) => pane.agent));
+        if (agent === null) return;
+        setDrawerOpen(false);
+        setSessionHistory({ machineId: found.machineId, workspaceId: found.workspace.workspace_id, agent });
       },
       openPalette,
       agentStarted: (machineId, paneId) => lenses.startedAgent(paneStorageId(machineId, paneId), window.matchMedia?.("(pointer: coarse)").matches === true),
@@ -1504,6 +1519,20 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const closeNewSession = useCallback(() => { setNewSessionOpen(false); setNewPrefill(null); setNewFields(null); }, []);
+  const closeSessionHistory = useCallback(() => setSessionHistory(null), []);
+  // the Resumes of a moment ago, kept across the list's openings until herdr reports their panes' sessions
+  const { standing: recentResumes, remember: rememberResume } = useRecentResumes(machines);
+  // the PCs' states are owned here: a PC away loses its cached answer to whether it lists sessions,
+  // whether or not a pane or menu of it is mounted, so it is asked again once it is back
+  useEffect(() => { forgetSessionHistoryProbesOfPcsAway(machines); }, [machines]);
+  // the workspace the open session list is of, as its PC's roster has it now; the list leaves with the workspace
+  const sessionHistoryWorkspace = useMemo(() => {
+    if (sessionHistory === null) return null;
+    const roster = machines.find((m) => m.id === sessionHistory.machineId)?.snapshot;
+    const workspace = roster?.workspaces.find((candidate) => candidate.workspace_id === sessionHistory.workspaceId);
+    return roster && workspace ? { workspace, panes: roster.panes } : null;
+  }, [machines, sessionHistory]);
+  useEffect(() => { if (sessionHistory !== null && sessionHistoryWorkspace === null) setSessionHistory(null); }, [sessionHistory, sessionHistoryWorkspace]);
 
   // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
   const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
@@ -1675,7 +1704,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} presentedPaneId={presentedPaneId} paneInFront={paneInFront} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} watching={auth?.role === "watch"} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} presentedPaneId={presentedPaneId} paneInFront={paneInFront} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1802,6 +1831,10 @@ export function App() {
                         view={item ? lensOf(item) : slotView}
                         // the composer's way to the terminal: the selected pane's lens, or the pane's own remembered one
                         onOpenTerminal={item ? () => { if (active && item.pane_id === selectedPaneId) setView("terminal"); else pickView(machineId, item.pane_id, "terminal"); } : undefined}
+                        // /resume lists the pane's own agent's sessions, and only for an agent whose store is read
+                        onOpenHistory={item && sessionHistoryAgent(item.agent) !== null ? () => actions.openSessionHistory({ machineId, workspaceId: item.workspace_id, agent: item.agent, scope: "pane" }) : undefined}
+                        // the composer's new-agent button: the New tab dialog on this pane's workspace, as the tab menu opens it
+                        onOpenNewSession={item ? () => actions.openNewTab({ machineId, workspaceId: item.workspace_id }) : undefined}
                         // the other half never takes the keyboard: a press in it makes it active first
                         active={active && itemActive}
                         // the paging shortcuts reach the selected pane of the active half only
@@ -1848,13 +1881,32 @@ export function App() {
         prefill={newPrefill}
         onDraft={setNewFields}
         onClose={closeNewSession}
-        onCreated={(paneId, agentStarted) => {
+        onCreated={(paneId, agentStarted, messageWaits = false) => {
           closeNewSession();
           if (agentStarted) actions.agentStarted(newSessionMachineId, paneId);
+          // the first message waits in the chat's box: the pane opens on it, whatever lens the page would pick
+          if (messageWaits) pickView(newSessionMachineId, paneId, "chat");
           selectTarget(newSessionMachineId, paneId);
           void load();
         }}
       /></MachineContext.Provider>
+      {sessionHistory && sessionHistoryWorkspace && <MachineContext.Provider value={sessionHistory.machineId}><SessionHistory
+        workspace={sessionHistoryWorkspace.workspace}
+        panes={sessionHistoryWorkspace.panes}
+        agent={sessionHistory.agent}
+        recent={recentResumes}
+        onClose={closeSessionHistory}
+        onSelectPane={(paneId) => { closeSessionHistory(); selectTarget(sessionHistory.machineId, paneId); }}
+        onResumed={(opened, session) => {
+          closeSessionHistory();
+          if (opened.agent_started) {
+            rememberResume({ machineId: sessionHistory.machineId, workspaceId: sessionHistory.workspaceId, agent: session.agent, id: session.id, paneId: opened.pane_id });
+            actions.agentStarted(sessionHistory.machineId, opened.pane_id);
+          }
+          selectTarget(sessionHistory.machineId, opened.pane_id);
+          void load();
+        }}
+      /></MachineContext.Provider>}
       {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={closeMachineDialog} onConnected={(id) => { closeMachineDialog(); selectTarget(id, null); void load(); }} />}
       <Droplet onOpen={(machineId, paneId) => {
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing

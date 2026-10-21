@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paneCommands } from "../commands.ts";
-import { source } from "./opencode.ts";
+import { MAX_COMMAND_FILES, source } from "./opencode.ts";
 import type { AgentCommandContext } from "./index.ts";
 
 const roots: string[] = [];
@@ -74,6 +74,38 @@ describe("OpenCode's menu", () => {
     const commands = paneCommands("opencode", null, home, { environ: [`OPENCODE_CONFIG_DIR=${custom}`] });
     expect(commands.filter((row) => row.source !== "builtin").map((row) => row.name)).toEqual(["check", "custom", "customize-opencode"]);
   });
+
+  it("stops walking a command folder whose sibling links fan out, within the skill walk's bound", () => {
+    const { root, home } = fixture();
+    const custom = join(root, "custom");
+    put(join(custom, "commands", "check.md"), "---\ndescription: Check\n---\nRun checks");
+    // every level links twice to the next: 2^24 paths without a bound, so the old walk never ended
+    const levels = 24;
+    for (let level = 0; level < levels; level++) mkdirSync(join(custom, "commands", "lattice", `d${level}`), { recursive: true });
+    for (let level = 0; level < levels - 1; level++) {
+      for (const link of ["a", "b"]) symlinkSync(join(custom, "commands", "lattice", `d${level + 1}`), join(custom, "commands", "lattice", `d${level}`, link), "dir");
+    }
+    symlinkSync(join(custom, "commands", "lattice", "d0"), join(custom, "commands", "fan"), "dir");
+    const commands = paneCommands("opencode", null, home, { environ: [`OPENCODE_CONFIG_DIR=${custom}`] });
+    expect(commands.some((row) => row.name === "check")).toBe(true);
+  }, 10_000);
+
+  it("takes a bounded number of command files from links that name one file under many paths", () => {
+    const { root, home } = fixture();
+    const custom = join(root, "custom");
+    const lattice = join(custom, "commands", "lattice");
+    // 12 levels of two links each, then 32 links to one file: 2^11 * 32 = 65,536 command paths in 12 folders
+    const levels = 12;
+    for (let level = 0; level < levels; level++) mkdirSync(join(lattice, `d${level}`), { recursive: true });
+    for (let level = 0; level < levels - 1; level++) {
+      for (const link of ["a", "b"]) symlinkSync(join(lattice, `d${level + 1}`), join(lattice, `d${level}`, link), "dir");
+    }
+    const shared = join(root, "shared.md");
+    writeFileSync(shared, `---\ndescription: Shared\n---\n${"x".repeat(64 * 1024)}`);
+    for (let file = 0; file < 32; file++) symlinkSync(shared, join(lattice, `d${levels - 1}`, `c${file}.md`));
+    const commands = paneCommands("opencode", null, home, { environ: [`OPENCODE_CONFIG_DIR=${custom}`] });
+    expect(commands.filter((row) => row.name.startsWith("lattice/")).length).toBeLessThanOrEqual(MAX_COMMAND_FILES);
+  }, 20_000);
 
   it("rejects invalid metadata without falling back to directory names", () => {
     const { home, config } = fixture();

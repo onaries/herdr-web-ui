@@ -11,20 +11,32 @@ interface WheelViewport {
   /** A selecting drag owns its wheel before any application routing. */
   readonly drag: (event: WheelEvent) => boolean;
   readonly adopted: () => boolean;
+  readonly mirrored: () => boolean;
+  readonly pan?: (event: WheelEvent) => boolean;
   readonly scroll: (lines: number) => void;
+}
+
+/** A fixed grid larger than its mount pans locally before scrolling shared history. */
+export function canPanTerminalGrid(view: Pick<HTMLElement, "scrollTop" | "scrollHeight" | "clientHeight">, delta: number): boolean {
+  // DOM heights round to integers; a fractional physical edge must still release history scrolling.
+  return delta < 0 ? view.scrollTop > 1 : delta > 0 && view.scrollTop < view.scrollHeight - view.clientHeight - 1;
 }
 
 /** herdr owns history; xterm owns encoding mouse reports for applications that use them. */
 export function attachTerminalWheel(term: Terminal, state: { readonly current: TerminalWheelState }, viewport: WheelViewport): void {
   term.attachCustomWheelEventHandler((event) => {
-    if (viewport.drag(event)) return false;
-    // Observed/fixed grids pan in the browser instead of changing herdr's viewport.
-    if (viewport.adopted()) return false;
+    if (viewport.drag(event) || viewport.pan?.(event)) return false;
+    // Observers pan locally; an interactive mirror can scroll herdr through the API.
+    const mirrored = viewport.mirrored();
+    if (viewport.adopted() && !mirrored) return false;
+    // a sideways wheel or trackpad on a mirror pans its wide grid in the browser, as before
+    if (mirrored && event.deltaY === 0) return false;
     if (term.hasSelection()) term.clearSelection();
     // OmO consumes wheel reports without acting while a question captures mouse input, so the
     // wheel moves herdr's history itself, as far as the reports below would: one three-line step
     // per event whatever its delta, repeated at the chosen speed for a real wheel only.
-    if (state.current.omoQuestion && !event.ctrlKey && !event.shiftKey) {
+    // Mirrors have no mouse-reporting attach stream, so use the same history API.
+    if ((mirrored || state.current.omoQuestion) && !event.ctrlKey && !event.shiftKey) {
       event.preventDefault();
       if (event.deltaY !== 0) viewport.scroll(-Math.sign(event.deltaY) * HERDR_MOUSE_SCROLL_LINES * (event.isTrusted ? state.current.speed : 1));
       return false;

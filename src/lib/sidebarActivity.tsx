@@ -3,8 +3,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { Machine } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane } from "../../shared/protocol.ts";
 import type { SeenFinish } from "../../shared/seen.ts";
-import { liveSeqs, markSeen, newSeqMemory, shownStatus, type SeenRecord, type SeqMemory } from "./sidebarOrder.ts";
-import { cleanSeen, loadSeen, saveSeen, seenEvent, seenKey, SEEN_PREFIX, subscribeSeen } from "./seenFinishes.ts";
+import { liveSeqs, newSeqMemory, shownStatus, type SeenRecord, type SeqMemory } from "./sidebarOrder.ts";
+import { cleanSeen, loadSeen, saveSeen, seenKey, SEEN_LIMIT, subscribeSeen } from "./seenFinishes.ts";
 import { conversationFinishEvidence } from "./panePresentation.ts";
 
 export interface SidebarActivity {
@@ -17,8 +17,18 @@ export const SidebarActivityProvider = SidebarActivityContext.Provider;
 export const useSidebarActivity = (): SidebarActivity => useContext(SidebarActivityContext);
 
 interface MachineSeen { epoch: string; record: SeenRecord }
+interface SharedFinish extends SeenFinish { state: "pending" | "success" | "failed" | "answered-error" }
 const unobscured = () => true;
 const answeredError = (error: unknown) => error instanceof Error && typeof (error as { status?: unknown }).status === "number";
+
+function sameSeen(left: ReadonlyMap<string, MachineSeen>, right: ReadonlyMap<string, MachineSeen>): boolean {
+  if (left.size !== right.size) return false;
+  for (const [machine, value] of right) {
+    const before = left.get(machine);
+    if (!before || before.epoch !== value.epoch || before.record !== value.record) return false;
+  }
+  return true;
+}
 
 export function useSidebarActivityState(machines: readonly Machine[], selectedMachineId: string, presentedPaneId: string | null, paneInFront: () => boolean = unobscured,
   share?: (finish: SeenFinish) => Promise<void>): SidebarActivity {
@@ -35,73 +45,98 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
   const [seen, setSeen] = useState<ReadonlyMap<string, MachineSeen>>(() => new Map());
   const seenRef = useRef(seen); seenRef.current = seen;
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState === "visible");
-  const [storageRevision, setStorageRevision] = useState(0);
   const epochs = useRef(new Map<string, string>());
-  // each finish (and its later answer fingerprint) is told to the server once per page, again only after a failure
-  const shared = useRef(new Set<string>());
+  // One latest acknowledgement per pane; bounded independently of how many finishes arrive.
+  const shared = useRef(new Map<string, SharedFinish>());
   const shareRef = useRef(share); shareRef.current = share;
   useEffect(() => {
-    cleanSeen();
     const onVisibility = () => setPageVisible(document.visibilityState === "visible");
-    const onStorage = (event: StorageEvent) => {
-      // A lower write can race a higher one for the same key. The event carries the higher
-      // value even if storage has since changed; converge on max. Deletions never resurrect keys.
-      const incoming = event.key ? seenEvent(event.key, event.newValue) : null;
-      if (incoming) {
-        const current = seenRef.current.get(incoming.pc);
-        const stored = loadSeen(incoming.pc, incoming.epoch)[incoming.pane];
-        if (stored !== undefined && current?.epoch === incoming.epoch) saveSeen(incoming.pc, incoming.epoch, incoming.pane,
-          Math.max(incoming.id, current.record[incoming.pane] ?? 0));
-      }
-      if (event.key === null || event.key.startsWith(SEEN_PREFIX)) setStorageRevision((value) => value + 1);
-    };
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("storage", onStorage);
-    const stopReceiving = subscribeSeen(() => setStorageRevision((value) => value + 1));
+    const stopReceiving = subscribeSeen((changes) => {
+      setSeen((current) => {
+        let next: Map<string, MachineSeen> | undefined;
+        const checked = new Set<string>();
+        for (const { pc, epoch } of changes) {
+          const scope = JSON.stringify([pc, epoch]);
+          if (checked.has(scope)) continue;
+          checked.add(scope);
+          const before = (next ?? current).get(pc);
+          if (!before || before.epoch !== epoch) continue;
+          const record = loadSeen(pc, epoch);
+          if (before.record === record) continue;
+          next ??= new Map(current);
+          next.set(pc, { epoch, record });
+        }
+        return next ?? current;
+      });
+    });
     return () => {
       stopReceiving();
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("storage", onStorage);
     };
   }, []);
   useEffect(() => {
-    const next = new Map<string, MachineSeen>();
     for (const machine of machines) {
       const epoch = machine.snapshot?.finish_epoch;
       if (!epoch) continue;
       const previousEpoch = epochs.current.get(machine.id);
-      if (previousEpoch && previousEpoch !== epoch) cleanSeen([{ pc: machine.id, epoch: previousEpoch }]);
-      epochs.current.set(machine.id, epoch);
-      let record = loadSeen(machine.id, epoch);
-      const previous = seenRef.current.get(machine.id);
-      // Keep this page's views if storage is unavailable. Never rewrite a roster's marks:
-      // a cap or another epoch's cleanup must not provoke a write-back loop.
-      if (previous?.epoch === epoch) {
-        for (const [pane, id] of Object.entries(previous.record)) {
-          record = markSeen(record, pane, id);
+      if (previousEpoch && previousEpoch !== epoch) {
+        cleanSeen([{ pc: machine.id, epoch: previousEpoch }]);
+        for (const [key, finish] of shared.current) {
+          if (finish.pc === machine.id && finish.epoch === previousEpoch) shared.current.delete(key);
         }
       }
+      epochs.current.delete(machine.id);
+      epochs.current.set(machine.id, epoch);
+      while (epochs.current.size > SEEN_LIMIT) epochs.current.delete(epochs.current.keys().next().value!);
       const pane = machine.state === "connected" && machine.id === selectedMachineId && pageVisible && paneInFront()
         ? machine.snapshot?.panes.find((pane) => pane.pane_id === presentedPaneId) : undefined;
       if (pane?.agent_status === "done" && !pane.background_wait && pane.finish_id !== undefined && pane.finish_id > 0) {
         const answer = conversationFinishEvidence.answer(seenKey(machine.id, epoch, pane.pane_id), pane.finish_id);
-        record = markSeen(record, pane.pane_id, saveSeen(machine.id, epoch, pane.pane_id, pane.finish_id, answer));
+        saveSeen(machine.id, epoch, pane.pane_id, pane.finish_id, answer);
         const finish: SeenFinish = { pc: machine.id, epoch, pane: pane.pane_id, id: pane.finish_id, ...(answer === undefined ? {} : { answer }) };
-        const told = JSON.stringify([finish.pc, finish.epoch, finish.pane, finish.id, answer !== undefined]);
-        if (shareRef.current && !shared.current.has(told)) {
-          shared.current.add(told);
-          shareRef.current(finish).catch((error: unknown) => {
-            // only a send that never reached the server is tried again: one the server answered
-            // (a full disk, a token that changed) would fail the same way on every roster update
-            if (!answeredError(error)) shared.current.delete(told);
-            console.warn("Could not tell the other browsers about a read finish", error);
-          });
+        const key = JSON.stringify([finish.pc, finish.epoch, finish.pane]);
+        const previous = shared.current.get(key);
+        const sameFinish = previous?.id === finish.id
+          && (previous.answer === answer || (previous.answer !== undefined && answer === undefined));
+        const answerUpgrade = previous?.id === finish.id && previous.answer === undefined && answer !== undefined;
+        if (!previous || finish.id > previous.id || answerUpgrade || (sameFinish && previous.state === "failed")) {
+          const sender = shareRef.current;
+          if (sender) {
+            const payload: SeenFinish = sameFinish && previous?.answer !== undefined && answer === undefined
+              ? { ...finish, answer: previous.answer } : finish;
+            const sent: SharedFinish = { ...payload, state: "pending" };
+            shared.current.delete(key);
+            shared.current.set(key, sent);
+            while (shared.current.size > SEEN_LIMIT) shared.current.delete(shared.current.keys().next().value!);
+            const failed = (error: unknown) => {
+              if (shared.current.get(key) === sent) {
+                sent.state = answeredError(error) ? "answered-error" : "failed";
+              }
+              console.warn("Could not tell the other browsers about a read finish", error);
+            };
+            try {
+              void Promise.resolve(sender(payload)).then(() => {
+                if (shared.current.get(key) === sent) sent.state = "success";
+              }, failed);
+            } catch (error) { failed(error); }
+          }
+        } else if (finish.id === previous.id) {
+          // Keep frequently observed panes in the bounded latest-state window.
+          shared.current.delete(key);
+          shared.current.set(key, previous);
         }
       }
-      next.set(machine.id, { epoch, record });
     }
-    setSeen(next);
-  }, [machines, selectedMachineId, presentedPaneId, paneInFront, pageVisible, storageRevision]);
+    // Read after every acknowledgement and epoch retirement: a later machine can evict an
+    // earlier machine's oldest entry while enforcing the shared cap.
+    const next = new Map<string, MachineSeen>();
+    for (const machine of machines) {
+      const epoch = machine.snapshot?.finish_epoch;
+      if (epoch) next.set(machine.id, { epoch, record: loadSeen(machine.id, epoch) });
+    }
+    if (!sameSeen(seenRef.current, next)) setSeen(next);
+  }, [machines, selectedMachineId, presentedPaneId, paneInFront, pageVisible]);
 
   return useMemo<SidebarActivity>(() => ({
     seqs: (machineId) => seqsByMachine.get(machineId) ?? NO_SEQS,

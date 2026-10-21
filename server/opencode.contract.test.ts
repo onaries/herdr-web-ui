@@ -1,13 +1,17 @@
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createServer } from "./index.ts";
 import { forgetTranscriptState } from "./conversation.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
-import type { ConversationPart, ConversationResponse } from "../shared/protocol.ts";
+import type { CommandOutcome, ConversationPart, ConversationResponse, SlashCommand } from "../shared/protocol.ts";
+import { mergeCatalogSources } from "./catalog-sources.ts";
+import { paneContext } from "./pane-context.ts";
+import { closeOpenCodeNative, openCodeNativeState } from "./opencode-native.ts";
+import { forgetOpenCodeService, openCodeServiceOptions } from "./opencode-service.ts";
 
 // Real herdr metadata + HTTP + an OpenCode store of the test's own, handed to the server (opencodeDb).
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-opencode-contract-"));
@@ -215,4 +219,718 @@ it("keeps the terminal for a session the store does not hold", async () => {
     await reportSession(SESSION);
   }
   expect((await read()).source).toBe("opencode-transcript");
+});
+
+
+/**
+ * OpenCode v2's own service, faked in the pinned OpenAPI shapes (843a6c51): /api/info, a session,
+ * /api/command and /api/skill for a directory, and /api/event. The pane runs a stand-in that draws
+ * the recorded 2.0.32 autocomplete once `@effect` is typed and logs every byte it is sent.
+ */
+describe("OpenCode v2 native service", () => {
+  const NATIVE_SESSION = "ses_contractNative01";
+  const nativeRoot = join(root, "native");
+  const standIn = join(nativeRoot, "bin", "opencode");
+  const typedLog = join(nativeRoot, "typed.log");
+  const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  let info: Record<string, unknown> = {};
+  let fake: ReturnType<typeof Bun.serve>;
+  let nativePane: string;
+  let connected = Promise.withResolvers<void>();
+  /** runs once, inside the next session lookup, before the fake answers it */
+  let duringLookup: (() => Promise<void>) | undefined;
+  /** every chunk the stand-in reads from its terminal, reported by the stand-in itself */
+  let onTyped: ((chunk: string) => void) | undefined;
+  /** while set, session lookups get no answer (the bridge's own request timeout ends them) */
+  let withholdLookups = false;
+  /** while set, every request but /api/info gets no answer: a service that hangs */
+  let hangAll = false;
+  /** other sessions the fake service holds besides NATIVE_SESSION */
+  const extraSessions = new Set<string>();
+  const withheld = new Set<() => void>();
+  /** how /api/event answers: normally, never (held), 404 or 503 */
+  let eventMode: "ok" | "slow" | "absent" | "error" = "ok";
+  /** when the fake last answered any request of the bridge's (not the stand-in's reports) */
+  let lastRequestAt = 0;
+  const typed = (): string => existsSync(typedLog) ? readFileSync(typedLog, "latin1") : "";
+  /** each event 10 ms after the last, so the evidence names exactly which event settled a send */
+  let clock = 0;
+  const push = (type: string, data: Record<string, unknown>): number => {
+    clock = Math.max(clock + 10, Date.now());
+    const bytes = new TextEncoder().encode(`data: ${JSON.stringify({ id: `evt_${type}_${clock}`, created: clock, type, data })}\n\n`);
+    for (const stream of streams) stream.enqueue(bytes);
+    return clock;
+  };
+  const catalog = async (base: SlashCommand[]): Promise<SlashCommand[]> => {
+    const context = await paneContext(nativePane);
+    return mergeCatalogSources("opencode", context.pane, nativeRoot, base);
+  };
+  /** the composer's own catalog request, which a send is classified against (it never discovers) */
+  const browserCatalog = async (): Promise<void> => {
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/commands?pane_id=${encodeURIComponent(nativePane)}`);
+    const { commands } = await response.json() as { commands: SlashCommand[] };
+    expect(commands.find((row) => row.name === "effect")?.provenance).toEqual({ transport: "native", verified: true });
+  };
+  const scanned: SlashCommand[] = [
+    { name: "review", description: "review", source: "builtin", provenance: { transport: "static", verified: false } },
+    { name: "effect", description: "scanned", source: "skill", trigger: "@", provenance: { transport: "scan", verified: false } },
+  ];
+
+  beforeAll(async () => {
+    mkdirSync(join(nativeRoot, "bin"), { recursive: true });
+    mkdirSync(join(nativeRoot, ".opencode", "skills", "effect"), { recursive: true });
+    writeFileSync(join(nativeRoot, ".opencode", "skills", "effect", "SKILL.md"), "---\nname: effect\ndescription: Apply Effect\n---\nUse Effect.\n");
+    // the recorded 2.0.32 screens with their colours (40x24, inside the 80x24 attach): @effect selected, then accepted
+    const recorded = (name: string) => readFileSync(join(import.meta.dir, "fixtures", `opencode-autocomplete-2.0.32-ansi-narrow-${name}.ansi`), "utf8").replace(/\n/g, "\r\n");
+    writeFileSync(join(nativeRoot, "screen.txt"), recorded("first-selected"));
+    writeFileSync(join(nativeRoot, "accepted.txt"), recorded("accepted"));
+    writeFileSync(standIn, `#!${process.execPath}
+const { appendFileSync, readFileSync } = require("node:fs");
+let typed = "";
+process.stdin.setRawMode(true);
+process.stdin.on("data", (chunk) => {
+  appendFileSync(${JSON.stringify(typedLog)}, chunk);
+  fetch(readFileSync(${JSON.stringify(join(nativeRoot, "fake.url"))}, "utf8") + "/test/typed", { method: "POST", body: chunk }).catch(() => {});
+  const before = typed;
+  typed += chunk.toString("latin1");
+  if (!before.endsWith("@effect") && typed.endsWith("@effect")) process.stdout.write("\\u001b[2J\\u001b[H" + readFileSync(${JSON.stringify(join(nativeRoot, "screen.txt"))}, "utf8"));
+  if (before.endsWith("@effect") && typed.endsWith("@effect\\t")) process.stdout.write("\\u001b[2J\\u001b[H" + readFileSync(${JSON.stringify(join(nativeRoot, "accepted.txt"))}, "utf8"));
+});
+`);
+    chmodSync(standIn, 0o755);
+    fake = Bun.serve({
+      port: 0, hostname: "127.0.0.1",
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/info") return Response.json(info);
+        if (url.pathname === "/test/typed") return request.text().then((chunk) => { onTyped?.(chunk); return new Response(null, { status: 204 }); });
+        lastRequestAt = performance.now();
+        if (url.pathname === "/api/event" && eventMode === "slow") return new Promise<Response>((resolve) => withheld.add(() => resolve(new Response(null, { status: 503 }))));
+        if (url.pathname === "/api/event" && eventMode !== "ok") return new Response(null, { status: eventMode === "absent" ? 404 : 503 });
+        if (hangAll && url.pathname !== "/api/info") return new Promise<Response>((resolve) => withheld.add(() => resolve(new Response(null, { status: 503 }))));
+        const held = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+        if (url.pathname.startsWith("/api/session/") && extraSessions.has(held)) return Response.json({ data: { id: held } });
+        if (url.pathname === `/api/session/${NATIVE_SESSION}` && withholdLookups) {
+          return new Promise<Response>((resolve) => withheld.add(() => resolve(Response.json({ data: { id: NATIVE_SESSION } }))));
+        }
+        if (url.pathname === `/api/session/${NATIVE_SESSION}`) {
+          const gate = duringLookup;
+          duringLookup = undefined;
+          return (gate ? gate() : Promise.resolve()).then(() => Response.json({ data: { id: NATIVE_SESSION } }));
+        }
+        const directory = url.searchParams.get("location[directory]");
+        if (url.pathname === "/api/command") return Response.json({ location: { directory }, data: [{ name: "review", description: "review changes" }, { name: "shipit", description: "Ship the change" }] });
+        if (url.pathname === "/api/skill") return Response.json({ location: { directory }, data: [{ id: "effect", name: "effect", description: "Apply Effect", path: join(nativeRoot, ".opencode", "skills", "effect", "SKILL.md"), content: "Use Effect." }] });
+        if (url.pathname === "/api/event") {
+          let mine: ReadableStreamDefaultController<Uint8Array>;
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) { mine = controller; streams.add(controller); connected.resolve(); controller.enqueue(new TextEncoder().encode("data: {\"type\":\"server.connected\",\"data\":{}}\n\n")); },
+            cancel() { streams.delete(mine); },
+          }), { headers: { "content-type": "text/event-stream" } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    info = { version: "2.0.32", pid: process.pid, urls: [fake.url.origin], paths: { tmp: nativeRoot } };
+    writeFileSync(join(nativeRoot, "fake.url"), fake.url.origin);
+    writeFileSync(join(nativeRoot, "service.json"), JSON.stringify({ url: fake.url.origin, pid: process.pid, password: "native-secret", version: "2.0.32" }));
+    openCodeServiceOptions.stateDir = nativeRoot;
+    const created = await workspaceCreate({ cwd: nativeRoot, label: "herdr-web-ui-test-opencode-native" });
+    workspaces.push(created.workspace.workspace_id);
+    nativePane = created.root_pane.pane_id;
+    await herdrRpc("pane.send_text", { pane_id: nativePane, text: `exec ${standIn}\n` });
+    for (const deadline = Date.now() + 10_000;;) {
+      const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === nativePane);
+      if (pane?.agent === "opencode") break;
+      if (Date.now() > deadline) throw new Error("native stand-in opencode did not start");
+      await Bun.sleep(50);
+    }
+    await reportSession(NATIVE_SESSION, nativePane);
+  });
+
+  afterAll(() => {
+    closeOpenCodeNative();
+    for (const stream of streams) stream.close();
+    fake?.stop(true);
+    delete openCodeServiceOptions.stateDir;
+    forgetOpenCodeService();
+  });
+
+  it("replaces the scanned skills with the service's own rows, keeping builtins", async () => {
+    const rows = await catalog(scanned);
+    expect(rows.find((row) => row.name === "effect")).toMatchObject({ source: "skill", trigger: "@", description: "Apply Effect", provenance: { transport: "native", verified: true } });
+    expect(rows.find((row) => row.name === "shipit")).toMatchObject({ provenance: { transport: "native", verified: true } });
+    expect(rows.filter((row) => row.name === "review")).toEqual([scanned[0]!]);
+  });
+
+  it("ignores a service.json whose pid is not the process answering, and keeps the scanned rows", async () => {
+    info = { ...info, pid: process.pid + 1 };
+    forgetOpenCodeService();
+    closeOpenCodeNative();
+    try {
+      expect(await catalog(scanned)).toEqual(scanned);
+    } finally {
+      info = { ...info, pid: process.pid };
+      forgetOpenCodeService();
+    }
+  });
+
+  it("types @effect through the autocomplete once, and settles the send from the session's native events", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const frames: Record<string, unknown>[] = [];
+    const result = Promise.withResolvers<Record<string, unknown>>();
+    ws.addEventListener("message", (event) => {
+      const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
+      frames.push(frame);
+      if (frame.type === "submit-result" && frame.id === 1) result.resolve(frame);
+    });
+    await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+    try {
+      // the send opens its own event stream (the test before closed the last one); events go to it
+      connected = Promise.withResolvers<void>();
+      // no catalog request first: the cold send derives the skill from the verified service itself
+      ws.send(JSON.stringify({ type: "submit", id: 1, pane_id: nativePane, text: "@effect apply it", payload: "@effect apply it" }));
+      expect(await result.promise).toMatchObject({ ok: true });
+      for (const deadline = Date.now() + 5_000; !(existsSync(typedLog) && typed().endsWith("\r"));) {
+        if (Date.now() > deadline) throw new Error(`typed: ${existsSync(typedLog) ? JSON.stringify(typed()) : "nothing"}`);
+        await Bun.sleep(50);
+      }
+      expect(typed()).toBe("@effect\t\u001b[200~apply it\u001b[201~\r");
+      const outcomes = async () => ((await (await fetch(`http://127.0.0.1:${server.port}/api/pane/prompt?pane_id=${nativePane}`)).json()) as { outcomes?: CommandOutcome[] }).outcomes ?? [];
+      expect((await outcomes()).map((outcome) => outcome.state)).toEqual(["accepted"]);
+      await connected.promise;
+      // the real 2.0.32 sequence (no session.skill.activated for an attached skill): the message is enqueued with its
+      // skills, delivered, and an execution succeeds. Another session's turn, a message without the skill, another
+      // text, and a turn that ends before our message was delivered settle nothing.
+      const item = (text: string, skills: string[]) => ({ type: "user", payload: { text, skills: skills.map((id) => ({ id, name: id, mention: { start: 0, end: id.length + 1, text: `@${id}` }, text: "Use Effect." })) }, delivery: "steer" });
+      push("session.inbox.enqueued", { sessionID: "ses_other", inboxID: "msg_a", item: item("@effect apply it", ["effect"]) });
+      push("session.inbox.delivered", { sessionID: "ses_other", inboxID: "msg_a" });
+      push("session.execution.succeeded", { sessionID: "ses_other" });
+      push("session.inbox.enqueued", { sessionID: NATIVE_SESSION, inboxID: "msg_b", item: item("@effect apply it", []) });
+      push("session.inbox.enqueued", { sessionID: NATIVE_SESSION, inboxID: "msg_c", item: item("something else", ["effect"]) });
+      push("session.inbox.delivered", { sessionID: NATIVE_SESSION, inboxID: "msg_b" });
+      push("session.inbox.delivered", { sessionID: NATIVE_SESSION, inboxID: "msg_c" });
+      // not this send's message either: a skill set that only contains ours, and text that differs only in spacing
+      push("session.inbox.enqueued", { sessionID: NATIVE_SESSION, inboxID: "msg_e", item: item("@effect apply it", ["effect", "other"]) });
+      push("session.inbox.delivered", { sessionID: NATIVE_SESSION, inboxID: "msg_e" });
+      push("session.execution.succeeded", { sessionID: NATIVE_SESSION });
+      push("session.inbox.enqueued", { sessionID: NATIVE_SESSION, inboxID: "msg_f", item: item("@effect  apply it", ["effect"]) });
+      push("session.inbox.delivered", { sessionID: NATIVE_SESSION, inboxID: "msg_f" });
+      push("session.execution.succeeded", { sessionID: NATIVE_SESSION });
+      push("session.execution.started", { sessionID: NATIVE_SESSION });
+      push("session.inbox.enqueued", { sessionID: NATIVE_SESSION, inboxID: "msg_d", item: item("@effect apply it", ["effect"]) });
+      push("session.execution.succeeded", { sessionID: NATIVE_SESSION });
+      push("session.inbox.delivered", { sessionID: NATIVE_SESSION, inboxID: "msg_d" });
+      push("session.execution.started", { sessionID: NATIVE_SESSION });
+      const settled = push("session.execution.succeeded", { sessionID: NATIVE_SESSION });
+      for (const deadline = Date.now() + 5_000; ;) {
+        const [outcome] = await outcomes();
+        if (outcome?.state === "result-observed") {
+          expect(outcome.evidence).toEqual([{ kind: "native", at: new Date(settled).toISOString() }]);
+          break;
+        }
+        if (Date.now() > deadline) throw new Error(`outcome: ${JSON.stringify(outcome)}`);
+        await Bun.sleep(50);
+      }
+    } finally { ws.close(); }
+  });
+  it("queues @effect while the pane works, and types it through the autocomplete once when the pane is ready", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const frames: Record<string, unknown>[] = [];
+    const waiters = new Set<() => void>();
+    ws.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); for (const wake of waiters) wake(); });
+    const frame = (match: (frame: Record<string, unknown>) => boolean) => new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => { waiters.delete(check); reject(new Error("frame not received")); }, 10_000);
+      const check = () => { const found = frames.find(match); if (found) { clearTimeout(timeout); waiters.delete(check); resolve(found); } };
+      waiters.add(check);
+      check();
+    });
+    await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+    const before = typed().length;
+    try {
+      ws.send(JSON.stringify({ type: "attach", pane_id: nativePane, cols: 80, rows: 24 }));
+      await frame((message) => message.type === "pty-data" && message.pane_id === nativePane);
+      await herdrRpc("pane.report_agent", { pane_id: nativePane, source: "herdr:opencode", agent: "opencode", agent_session_id: NATIVE_SESSION, state: "working" });
+      for (const deadline = Date.now() + 5_000; (await sessionSnapshot()).panes.find((pane) => pane.pane_id === nativePane)?.agent_status !== "working";) {
+        if (Date.now() > deadline) throw new Error("the pane did not report working");
+        await Bun.sleep(50);
+      }
+      await browserCatalog();
+      ws.send(JSON.stringify({ type: "submit", id: 2, pane_id: nativePane, text: "@effect apply it", payload: "@effect apply it", delivery: "queue" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 2)).toMatchObject({ ok: true, pending: { state: "queued" } });
+      expect(typed().length).toBe(before);
+      await herdrRpc("pane.report_agent", { pane_id: nativePane, source: "herdr:opencode", agent: "opencode", agent_session_id: NATIVE_SESSION, state: "idle" });
+      const delivered = await frame((message) => message.type === "pending-messages" && Array.isArray(message.removed) && message.removed.length > 0);
+      expect(JSON.stringify(delivered.removed)).not.toContain("error");
+      expect(typed().slice(before)).toBe("@effect\t\u001b[200~apply it\u001b[201~\r");
+    } finally { ws.close(); }
+  });
+/** A socket recording every frame; `frame` resolves on the first one (already seen or next) matching. */
+  async function socket() {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const frames: Record<string, unknown>[] = [];
+    const waiters = new Set<() => void>();
+    ws.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); for (const wake of waiters) wake(); });
+    await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+    const frame = (match: (frame: Record<string, unknown>) => boolean, from = 0) => new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => { waiters.delete(check); reject(new Error("frame not received")); }, 10_000);
+      const check = () => { const found = frames.slice(from).find(match); if (found) { clearTimeout(timeout); waiters.delete(check); resolve(found); } };
+      waiters.add(check);
+      check();
+    });
+    return { ws, frames, frame };
+  }
+  const reportState = (state: string) => herdrRpc("pane.report_agent", { pane_id: nativePane, source: "herdr:opencode", agent: "opencode", agent_session_id: NATIVE_SESSION, state });
+  const untilStatus = async (status: string) => {
+    for (const deadline = Date.now() + 5_000; (await sessionSnapshot()).panes.find((pane) => pane.pane_id === nativePane)?.agent_status !== status;) {
+      if (Date.now() > deadline) throw new Error(`the pane did not report ${status}`);
+      await Bun.sleep(50);
+    }
+  };
+  /** herdr reports another OpenCode session for the pane while the bridge waits on the service */
+  const switchSessionDuringLookup = () => {
+    const switched = Promise.withResolvers<void>();
+    duringLookup = async () => { await reportSession("ses_contractReplacement", nativePane); switched.resolve(); };
+    return switched.promise;
+  };
+
+  it("types nothing when the pane's session changes while an immediate send waits on the service", async () => {
+    const { ws, frame } = await socket();
+    const before = typed().length;
+    try {
+      await browserCatalog();
+      const switched = switchSessionDuringLookup();
+      ws.send(JSON.stringify({ type: "submit", id: 3, pane_id: nativePane, text: "@effect apply it", payload: "@effect apply it" }));
+      const answer = await frame((message) => message.type === "submit-result" && message.id === 3);
+      await switched;
+      expect(answer).toMatchObject({ ok: false, code: "pending_target_changed" });
+      expect(typed().slice(before)).toBe("");
+    } finally {
+      duringLookup = undefined;
+      ws.close();
+      await reportSession(NATIVE_SESSION, nativePane);
+    }
+  });
+
+  it("types nothing when the pane's session changes while a queued send waits on the service", async () => {
+    const { ws, frames, frame } = await socket();
+    const before = typed().length;
+    try {
+      ws.send(JSON.stringify({ type: "attach", pane_id: nativePane, cols: 80, rows: 24 }));
+      await frame((message) => message.type === "pty-data" && message.pane_id === nativePane);
+      await reportState("working");
+      await untilStatus("working");
+      await browserCatalog();
+      ws.send(JSON.stringify({ type: "submit", id: 4, pane_id: nativePane, text: "@effect apply it", payload: "@effect apply it", delivery: "queue" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 4)).toMatchObject({ ok: true, pending: { state: "queued" } });
+      const switched = switchSessionDuringLookup();
+      const from = frames.length;
+      await reportState("idle");
+      await switched;
+      // the delivery ends unsent: held for review or removed, never typed
+      const ended = await frame((message) => message.type === "pending-messages"
+        && ((Array.isArray(message.removed) && message.removed.length > 0)
+          || (Array.isArray(message.messages) && (message.messages as { state: string }[]).some((item) => item.state === "held" || item.state === "uncertain"))), from);
+      expect(JSON.stringify(ended)).toContain("pending_target_changed");
+      expect(typed().slice(before)).toBe("");
+    } finally {
+      duringLookup = undefined;
+      ws.close();
+      await reportSession(NATIVE_SESSION, nativePane);
+    }
+  });
+
+  it("settles a send whose own message arrives before anything after its Enter can run", async () => {
+    const { ws, frame } = await socket();
+    let settled = 0;
+    let started = false;
+    // the barrier: once the first key reaches the terminal, no session lookup is answered, and the Enter byte
+    // itself releases the send's whole real 2.0.32 event sequence
+    onTyped = (chunk) => {
+      if (!started) { started = true; withholdLookups = true; }
+      if (!chunk.includes("\r") || settled) return;
+      const item = { type: "user", payload: { text: "@effect barrier check", skills: [{ id: "effect", name: "effect", mention: { start: 0, end: 7, text: "@effect" }, text: "Use Effect." }] }, delivery: "steer" };
+      push("session.inbox.enqueued", { sessionID: NATIVE_SESSION, inboxID: "msg_barrier", item });
+      push("session.execution.started", { sessionID: NATIVE_SESSION });
+      push("session.inbox.delivered", { sessionID: NATIVE_SESSION, inboxID: "msg_barrier" });
+      settled = push("session.execution.succeeded", { sessionID: NATIVE_SESSION });
+    };
+    try {
+      await browserCatalog();
+      ws.send(JSON.stringify({ type: "submit", id: 6, pane_id: nativePane, text: "@effect barrier check", payload: "@effect barrier check" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 6)).toMatchObject({ ok: true });
+      const outcome = async () => (((await (await fetch(`http://127.0.0.1:${server.port}/api/pane/prompt?pane_id=${nativePane}`)).json()) as { outcomes?: CommandOutcome[] }).outcomes ?? [])
+        .find((entry) => entry.text === "@effect barrier check");
+      for (const deadline = Date.now() + 5_000; ;) {
+        const current = await outcome();
+        if (current?.state === "result-observed") {
+          expect(current.evidence).toEqual([{ kind: "native", at: new Date(settled).toISOString() }]);
+          break;
+        }
+        if (Date.now() > deadline) throw new Error(`outcome: ${JSON.stringify(current)} (events pushed: ${settled !== 0})`);
+        await Bun.sleep(50);
+      }
+    } finally {
+      onTyped = undefined;
+      withholdLookups = false;
+      for (const release of withheld) release();
+      withheld.clear();
+      ws.close();
+    }
+  });
+
+  const outcomesAt = async (port: number, pane: string): Promise<CommandOutcome[]> =>
+    ((await (await fetch(`http://127.0.0.1:${port}/api/pane/prompt?pane_id=${encodeURIComponent(pane)}`)).json()) as { outcomes?: CommandOutcome[] }).outcomes ?? [];
+  const typedSince = async (before: number): Promise<string> => {
+    for (const deadline = Date.now() + 5_000; !typed().slice(before).endsWith("\r");) {
+      if (Date.now() > deadline) throw new Error(`typed: ${JSON.stringify(typed().slice(before))}`);
+      await Bun.sleep(50);
+    }
+    return typed().slice(before);
+  };
+
+  it("attaches @effect and records the send after the pane's OpenCode session changed, with no catalog request since", async () => {
+    const { ws, frame } = await socket();
+    const before = typed().length;
+    try {
+      // the composer fetched the catalog for the old session and does not refetch on a session change
+      await browserCatalog();
+      extraSessions.add("ses_contractNative02");
+      await reportSession("ses_contractNative02", nativePane);
+      ws.send(JSON.stringify({ type: "submit", id: 7, pane_id: nativePane, text: "@effect after switch", payload: "@effect after switch" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 7)).toMatchObject({ ok: true });
+      expect(await typedSince(before)).toBe("@effect\t\u001b[200~after switch\u001b[201~\r");
+      const outcome = (await outcomesAt(server.port, nativePane)).find((entry) => entry.text === "@effect after switch");
+      expect(outcome?.state).toBe("accepted");
+      expect(outcome?.note).toBeUndefined();
+    } finally {
+      ws.close();
+      await reportSession(NATIVE_SESSION, nativePane);
+    }
+  });
+
+  it("attaches @effect and records the send on a fresh server that never served a catalog", async () => {
+    const created = await workspaceCreate({ cwd: nativeRoot, label: "herdr-web-ui-test-opencode-native-fresh" });
+    workspaces.push(created.workspace.workspace_id);
+    const freshPane = created.root_pane.pane_id;
+    await herdrRpc("pane.send_text", { pane_id: freshPane, text: `exec ${standIn}\n` });
+    for (const deadline = Date.now() + 10_000; (await sessionSnapshot()).panes.find((pane) => pane.pane_id === freshPane)?.agent !== "opencode";) {
+      if (Date.now() > deadline) throw new Error("fresh stand-in opencode did not start");
+      await Bun.sleep(50);
+    }
+    extraSessions.add("ses_contractFresh01");
+    await reportSession("ses_contractFresh01", freshPane);
+    // a bridge started after the tab: nothing remembered for this pane
+    const fresh = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state-fresh") });
+    const ws = new WebSocket(`ws://127.0.0.1:${fresh.port}/ws`);
+    const result = Promise.withResolvers<Record<string, unknown>>();
+    ws.addEventListener("message", (event) => {
+      const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
+      if (frame.type === "submit-result" && frame.id === 8) result.resolve(frame);
+    });
+    await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+    const before = typed().length;
+    try {
+      ws.send(JSON.stringify({ type: "submit", id: 8, pane_id: freshPane, text: "@effect fresh start", payload: "@effect fresh start" }));
+      expect(await result.promise).toMatchObject({ ok: true });
+      expect(await typedSince(before)).toBe("@effect\t\u001b[200~fresh start\u001b[201~\r");
+      const outcome = (await outcomesAt(fresh.port, freshPane)).find((entry) => entry.text === "@effect fresh start");
+      expect(outcome?.state).toBe("accepted");
+    } finally {
+      ws.close();
+      fresh.stop();
+    }
+  });
+
+  it("types within the attach budget and records terminal-required with the note when the service hangs", async () => {
+    const { ws, frame } = await socket();
+    const before = typed().length;
+    const first = Promise.withResolvers<number>();
+    let sentAt = 0;
+    try {
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+      extraSessions.add("ses_contractHang01");
+      await reportSession("ses_contractHang01", nativePane);
+      hangAll = true;
+      onTyped = () => first.resolve(performance.now() - sentAt);
+      sentAt = performance.now();
+      ws.send(JSON.stringify({ type: "submit", id: 9, pane_id: nativePane, text: "@effect while hung", payload: "@effect while hung" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 9)).toMatchObject({ ok: true });
+      const gap = await first.promise;
+      console.log(`hung service: first key ${Math.round(gap)} ms after the send`);
+      // the 1.5 s attach budget, plus delivery on a loaded host
+      expect(gap).toBeLessThan(2_000);
+      const sent = await typedSince(before);
+      expect(sent.startsWith("@effect\t")).toBe(false);
+      expect(sent).toContain("@effect while hung");
+      const outcome = (await outcomesAt(server.port, nativePane)).find((entry) => entry.text === "@effect while hung");
+      expect(outcome?.state).toBe("terminal-required");
+      expect(outcome?.note).toContain("@effect");
+    } finally {
+      hangAll = false;
+      onTyped = undefined;
+      for (const release of withheld) release();
+      withheld.clear();
+      ws.close();
+      await reportSession(NATIVE_SESSION, nativePane);
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+    }
+  });
+
+  it("reads only its own server's OpenCode state, never the default one, for the list, a cold send and its watch", async () => {
+    // the default location (what a server without its own state would read) names a service that counts every request
+    let defaultAsked = 0;
+    const decoy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => { defaultAsked++; return Response.json({ version: "2.0.32", pid: process.pid }); } });
+    const xdg = mkdtempSync(join(tmpdir(), "herdr-web-ui-opencode-default-state-"));
+    mkdirSync(join(xdg, "opencode"));
+    writeFileSync(join(xdg, "opencode", "service.json"), JSON.stringify({ url: decoy.url.origin, pid: process.pid, password: "decoy", version: "2.0.32" }));
+    const previousXdg = process.env["XDG_STATE_HOME"];
+    process.env["XDG_STATE_HOME"] = xdg;
+    delete openCodeServiceOptions.stateDir;
+    closeOpenCodeNative();
+    forgetOpenCodeService();
+    const own = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state-own"), openCodeStateDir: nativeRoot });
+    const ws = new WebSocket(`ws://127.0.0.1:${own.port}/ws`);
+    const result = Promise.withResolvers<Record<string, unknown>>();
+    ws.addEventListener("message", (event) => {
+      const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
+      if (frame.type === "submit-result" && frame.id === 11) result.resolve(frame);
+    });
+    await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
+    const before = typed().length;
+    try {
+      extraSessions.add("ses_contractOwnState01");
+      await reportSession("ses_contractOwnState01", nativePane);
+      const listed = await (await fetch(`http://127.0.0.1:${own.port}/api/pane/commands?pane_id=${encodeURIComponent(nativePane)}`)).json() as { commands: SlashCommand[] };
+      expect(listed.commands.find((row) => row.name === "shipit")?.provenance?.transport).toBe("native");
+      // a new session after the list: the send is cold again and looks the service up itself
+      extraSessions.add("ses_contractOwnState02");
+      await reportSession("ses_contractOwnState02", nativePane);
+      ws.send(JSON.stringify({ type: "submit", id: 11, pane_id: nativePane, text: "@effect from own state", payload: "@effect from own state" }));
+      expect(await result.promise).toMatchObject({ ok: true });
+      expect(await typedSince(before)).toBe("@effect\t\u001b[200~from own state\u001b[201~\r");
+      expect((await outcomesAt(own.port, nativePane)).find((entry) => entry.text === "@effect from own state")?.state).toBe("accepted");
+      expect(defaultAsked).toBe(0);
+    } finally {
+      ws.close();
+      own.stop();
+      decoy.stop(true);
+      if (previousXdg === undefined) delete process.env["XDG_STATE_HOME"]; else process.env["XDG_STATE_HOME"] = previousXdg;
+      rmSync(xdg, { recursive: true, force: true });
+      openCodeServiceOptions.stateDir = nativeRoot;
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+      await reportSession(NATIVE_SESSION, nativePane);
+    }
+  });
+
+  it("reads a cold @ send by the v1 rule when the running v2 service says the pane's session is not its own", async () => {
+    const { ws, frame } = await socket();
+    const before = typed().length;
+    try {
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+      // a pane whose OpenCode is not this service's (an OpenCode 1.x TUI, say): the service answers 404 for its session
+      await reportSession("ses_contractNotHeld01", nativePane);
+      ws.send(JSON.stringify({ type: "submit", id: 12, pane_id: nativePane, text: "@effect not this service", payload: "@effect not this service" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 12)).toMatchObject({ ok: true });
+      const sent = await typedSince(before);
+      expect(sent.startsWith("@effect\t")).toBe(false);
+      // its '@' names a file there: no skill, so no record and no not-attached note
+      expect((await outcomesAt(server.port, nativePane)).find((entry) => entry.text === "@effect not this service")).toBeUndefined();
+    } finally {
+      ws.close();
+      await reportSession(NATIVE_SESSION, nativePane);
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+    }
+  });
+
+  it("answers the catalog and a cold @ send within budget while opencode.json is a FIFO", async () => {
+    const fifo = join(nativeRoot, "opencode.json");
+    expect(await Bun.spawn(["mkfifo", fifo]).exited).toBe(0);
+    // a writer only after 5 s: a blocking read of the FIFO would hold the whole server until then
+    const writer = Bun.spawn(["sh", "-c", `sleep 5; printf '{}' > '${fifo}'`]);
+    const { ws, frame } = await socket();
+    const before = typed().length;
+    const first = Promise.withResolvers<number>();
+    let sentAt = 0;
+    try {
+      const started = performance.now();
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/commands?pane_id=${encodeURIComponent(nativePane)}`);
+      expect(response.status).toBe(200);
+      const routeMs = performance.now() - started;
+      // a cold send to a hung service falls back to the scan, which reads opencode.json
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+      extraSessions.add("ses_contractFifo01");
+      await reportSession("ses_contractFifo01", nativePane);
+      hangAll = true;
+      onTyped = () => first.resolve(performance.now() - sentAt);
+      sentAt = performance.now();
+      ws.send(JSON.stringify({ type: "submit", id: 10, pane_id: nativePane, text: "@effect past the fifo", payload: "@effect past the fifo" }));
+      expect(await frame((message) => message.type === "submit-result" && message.id === 10)).toMatchObject({ ok: true });
+      const gap = await first.promise;
+      console.log(`fifo: catalog ${Math.round(routeMs)} ms, first key ${Math.round(gap)} ms`);
+      // under the 5 s writer, so a blocked thread still fails; above the 1.5 s provider budget, so a slow host does not
+      expect(routeMs).toBeLessThan(4_000);
+      expect(gap).toBeLessThan(2_000);
+      expect(await typedSince(before)).toContain("@effect past the fifo");
+      const outcome = (await outcomesAt(server.port, nativePane)).find((entry) => entry.text === "@effect past the fifo");
+      expect(outcome?.state).toBe("terminal-required");
+    } finally {
+      writer.kill();
+      rmSync(fifo, { force: true });
+      hangAll = false;
+      onTyped = undefined;
+      for (const release of withheld) release();
+      withheld.clear();
+      ws.close();
+      await reportSession(NATIVE_SESSION, nativePane);
+      closeOpenCodeNative();
+      forgetOpenCodeService();
+    }
+  });
+
+  it("never waits on the event stream before the first key, in all three delivery paths", async () => {
+    const { ws, frame } = await socket();
+    const gaps: Record<string, number> = {};
+    let id = 100;
+    try {
+      ws.send(JSON.stringify({ type: "attach", pane_id: nativePane, cols: 80, rows: 24 }));
+      await frame((message) => message.type === "pty-data" && message.pane_id === nativePane);
+      for (const mode of ["slow", "absent", "error"] as const) {
+        for (const path of ["immediate", "queued", "prompt"] as const) {
+          // no stream open yet: a watcher that waited for one would wait here, before the first key
+          closeOpenCodeNative();
+          forgetOpenCodeService();
+          eventMode = mode;
+          const typedFirst = Promise.withResolvers<number>();
+          onTyped = () => typedFirst.resolve(performance.now() - lastRequestAt);
+          const text = path === "prompt" ? `/review ${mode}` : `@effect ${path} ${mode}`;
+          const request = ++id;
+          if (path === "queued") {
+            await reportState("working");
+            await untilStatus("working");
+          }
+          ws.send(JSON.stringify({ type: "submit", id: request, pane_id: nativePane, text, payload: text, ...(path === "queued" ? { delivery: "queue" } : {}) }));
+          const answer = await frame((message) => message.type === "submit-result" && message.id === request);
+          expect(answer).toMatchObject({ ok: true });
+          if (path === "queued") await reportState("idle");
+          gaps[`${path}/${mode}`] = Math.round(await typedFirst.promise);
+          onTyped = undefined;
+          for (const release of withheld) release();
+          withheld.clear();
+        }
+      }
+      console.log(`first-key gaps (ms): ${JSON.stringify(gaps)}`);
+      // the old watcher waited up to 1.5 s for the stream here; the bound leaves room for a loaded host
+      expect(Object.entries(gaps).filter(([, gap]) => gap >= 1_000)).toEqual([]);
+    } finally {
+      eventMode = "ok";
+      onTyped = undefined;
+      for (const release of withheld) release();
+      withheld.clear();
+      ws.close();
+    }
+  }, 90_000);
+
+  it("closes the shared stream when its last verified pane ends or stops being OpenCode", async () => {
+    const lifecycleRoot = join(nativeRoot, "lifecycle");
+    mkdirSync(join(lifecycleRoot, "bin"), { recursive: true });
+    const sleeper = join(lifecycleRoot, "bin", "opencode");
+    writeFileSync(sleeper, "#!/bin/sh\nsleep 600\n");
+    chmodSync(sleeper, 0o755);
+    let opened = Promise.withResolvers<void>();
+    let closed = Promise.withResolvers<void>();
+    const sessions = new Set(["ses_lifecycleEnd", "ses_lifecycleAgent", "ses_lifecycleHandover"]);
+    // idleTimeout 0: a quiet event stream is closed only by the bridge, never by the fake itself
+    const second = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 0, fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/api/info") return Response.json({ version: "2.0.32", pid: process.pid, urls: [], paths: { tmp: lifecycleRoot } });
+      const session = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+      if (url.pathname.startsWith("/api/session/") && sessions.has(session)) return Response.json({ data: { id: session } });
+      const directory = url.searchParams.get("location[directory]");
+      if (url.pathname === "/api/command") return Response.json({ location: { directory }, data: [] });
+      if (url.pathname === "/api/skill") return Response.json({ location: { directory }, data: [{ id: "effect", name: "effect", path: "/builtin/effect.md", content: "x" }] });
+      if (url.pathname === "/api/event") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(new TextEncoder().encode("data: {\"type\":\"server.connected\",\"data\":{}}\n\n")); opened.resolve(); },
+          cancel() { closed.resolve(); },
+        }), { headers: { "content-type": "text/event-stream" } });
+      }
+      return new Response(null, { status: 404 });
+    } });
+    writeFileSync(join(lifecycleRoot, "service.json"), JSON.stringify({ url: second.url.origin, pid: process.pid, password: "lifecycle", version: "2.0.32" }));
+    const within = <T>(promise: Promise<T>, what: string): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not happen (native ${JSON.stringify(openCodeNativeState())})`)), 15_000); })]).finally(() => clearTimeout(timer));
+    };
+    const startPane = async (session: string): Promise<{ paneId: string; workspaceId: string }> => {
+      const created = await workspaceCreate({ cwd: lifecycleRoot, label: `herdr-web-ui-test-opencode-${session}` });
+      const paneId = created.root_pane.pane_id;
+      await herdrRpc("pane.send_text", { pane_id: paneId, text: `${sleeper}\n` });
+      for (const deadline = Date.now() + 10_000; (await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent !== "opencode";) {
+        if (Date.now() > deadline) throw new Error("stand-in opencode not detected");
+        await Bun.sleep(50);
+      }
+      await reportSession(session, paneId);
+      return { paneId, workspaceId: created.workspace.workspace_id };
+    };
+    const verify = async (paneId: string): Promise<void> => {
+      const context = await paneContext(paneId);
+      const rows = await mergeCatalogSources("opencode", context.pane, lifecycleRoot, []);
+      expect(rows.some((row) => row.name === "effect" && row.provenance?.transport === "native")).toBe(true);
+    };
+    closeOpenCodeNative();
+    forgetOpenCodeService();
+    openCodeServiceOptions.stateDir = lifecycleRoot;
+    let ending: { paneId: string; workspaceId: string } | undefined;
+    let changing: { paneId: string; workspaceId: string } | undefined;
+    try {
+      // pane end: herdr's pane.ended reaches the collector's onPaneEnded
+      ending = await startPane("ses_lifecycleEnd");
+      await verify(ending.paneId);
+      await within(opened.promise, "the stream opening for the first pane");
+      expect(openCodeNativeState()).toEqual({ stream: true, panes: [ending.paneId] });
+      await workspaceClose(ending.workspaceId);
+      ending = undefined;
+      await within(closed.promise, "the stream closing after the last verified pane ended");
+      expect(openCodeNativeState()).toEqual({ stream: false, panes: [] });
+
+      // agent change: OpenCode leaves the pane, so its status names no opencode agent any more
+      opened = Promise.withResolvers<void>();
+      closed = Promise.withResolvers<void>();
+      changing = await startPane("ses_lifecycleAgent");
+      await verify(changing.paneId);
+      await within(opened.promise, "the stream opening for the second pane");
+      await herdrRpc("pane.send_keys", { pane_id: changing.paneId, keys: ["ctrl+c"] });
+      await within(closed.promise, "the stream closing after the last verified pane stopped being OpenCode");
+      expect(openCodeNativeState()).toEqual({ stream: false, panes: [] });
+
+      // a replacement server: its collector learns the pane verified before it started, and ends it
+      opened = Promise.withResolvers<void>();
+      closed = Promise.withResolvers<void>();
+      ending = await startPane("ses_lifecycleHandover");
+      await verify(ending.paneId);
+      await within(opened.promise, "the stream opening for the handed-over pane");
+      server.stop();
+      server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), opencodeDb: database });
+      await server.statusReady;
+      expect(openCodeNativeState()).toEqual({ stream: true, panes: [ending.paneId] });
+      await workspaceClose(ending.workspaceId);
+      ending = undefined;
+      await within(closed.promise, "the stream closing after the replacement collector saw the pane close");
+      expect(openCodeNativeState()).toEqual({ stream: false, panes: [] });
+    } finally {
+      if (ending) await workspaceClose(ending.workspaceId).catch(() => {});
+      if (changing) await workspaceClose(changing.workspaceId).catch(() => {});
+      closeOpenCodeNative();
+      second.stop(true);
+      openCodeServiceOptions.stateDir = nativeRoot;
+      forgetOpenCodeService();
+    }
+  }, 60_000);
 });

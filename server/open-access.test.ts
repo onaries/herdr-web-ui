@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, setSystemTime } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -47,12 +47,16 @@ describe("a paired watch device", () => {
   let server: ReturnType<typeof createServer>;
   let base: string;
   let cookie: string;
+  let interactCookie: string;
   beforeAll(() => {
     // paired before the server starts, so its own store holds the device
     const devices = new DeviceStore(root);
     const paired = devices.pair(devices.startPairing().code, "Watch", "watch")!;
     expect(devices.match(paired.token)).not.toBeNull();
     cookie = `herdr_web_device=${encodeURIComponent(paired.token)}`;
+    // and one that may drive, for what the watcher is refused
+    const driver = devices.pair(devices.startPairing().code, "Driver", "drive")!;
+    interactCookie = `herdr_web_device=${encodeURIComponent(driver.token)}`;
     server = createServer({ port: 0, stateDir: root });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -61,6 +65,29 @@ describe("a paired watch device", () => {
   const asWatcher = (path: string, method = "GET") => fetch(`${base}${path}`, {
     method,
     headers: { cookie, origin: base, "x-herdr-machine": "1", ...(method === "POST" ? { "content-type": "application/json" } : {}) },
+  });
+
+  it("is refused an agent's commands for a folder before any read, on this PC's path and the proxy's; a driving device gets them", async () => {
+    // a folder with one Codex skill: its description is file text the terminal never showed
+    const folder = join(root, "commands-folder");
+    mkdirSync(join(folder, ".codex", "skills", "watch-sentinel"), { recursive: true });
+    writeFileSync(join(folder, ".codex", "skills", "watch-sentinel", "SKILL.md"), "---\nname: watch-sentinel\ndescription: SENTINEL-NEVER-FOR-A-WATCHER\n---\nBody.\n");
+    for (const path of ["/api/agent/commands", "/api/machines/local/agent/commands"]) {
+      const refused = await asWatcher(`${path}?agent=codex&cwd=${encodeURIComponent(folder)}`);
+      expect(refused.status).toBe(403);
+      const body = await refused.text();
+      expect(JSON.parse(body).error.code).toBe("read_only");
+      expect(body).not.toContain("SENTINEL");
+      // a folder that is not there would answer invalid_cwd after a read: the refusal comes before any
+      const unread = await asWatcher(`${path}?agent=codex&cwd=${encodeURIComponent(join(root, "never-made"))}`);
+      expect(unread.status).toBe(403);
+      expect((await unread.json() as { error: { code: string } }).error.code).toBe("read_only");
+    }
+    for (const path of ["/api/agent/commands", "/api/machines/local/agent/commands"]) {
+      const listed = await fetch(`${base}${path}?agent=codex&cwd=${encodeURIComponent(folder)}`, { headers: { cookie: interactCookie, origin: base } });
+      expect(listed.status).toBe(200);
+      expect((await listed.json() as { commands: { name: string; description: string }[] }).commands).toContainEqual(expect.objectContaining({ name: "watch-sentinel", description: "SENTINEL-NEVER-FOR-A-WATCHER" }));
+    }
   });
 
   it("keeps the filesystem, the directory listing and push/test out of reach", async () => {
@@ -103,6 +130,31 @@ describe("a paired watch device", () => {
     const cli = await fetch(`${base}/api/pane/read?pane_id=w9999:p9999&source=visible`, { method: "POST", headers: { cookie, "x-herdr-machine": "1" } });
     expect(cli.status).toBe(403);
     expect((await cli.json() as { error: { code: string } }).error.code).toBe("read_only");
+  });
+
+  it("refuses an agent's folder commands to a watcher however the path is spelled, here and through another PC", async () => {
+    const folder = encodeURIComponent(root);
+    for (const path of ["/api/agent/commands", "/api/machines/m1/agent/commands"]) {
+      const response = await fetch(`${base}${path}?agent=claude&cwd=${folder}`, { headers: { cookie, origin: base } });
+      expect(response.status, path).toBe(403);
+      expect((await response.json() as { error: { code: string } }).error.code, path).toBe("read_only");
+    }
+    // a trailing slash or an empty segment is no route at all, for anyone (nonCanonicalPath)
+    for (const path of ["/api/agent/commands/", "/api/machines/m1/agent/commands/", "/api/agent//commands", "/api/machines/m1//agent/commands", "/api/machines//m1/agent/commands", "/api/machines/m1/agent/commands///"]) {
+      const response = await fetch(`${base}${path}?agent=claude&cwd=${folder}`, { headers: { cookie, origin: base } });
+      expect(response.status, path).toBe(404);
+      expect((await response.json() as { error: { code: string } }).error.code, path).toBe("not_found");
+    }
+    // an encoded slash names no route here or on another PC: nothing is listed, to the watcher or anyone
+    for (const path of ["/api/agent%2Fcommands", "/api/agent%2fcommands/", "/api/machines/m1/agent%2Fcommands", "/api/machines/m1%2Fagent/commands"]) {
+      for (const who of [cookie, interactCookie]) {
+        const response = await fetch(`${base}${path}?agent=claude&cwd=${folder}`, { headers: { cookie: who, origin: base } });
+        expect(response.status, path).toBeGreaterThanOrEqual(400);
+        expect(await response.text(), path).not.toContain('"commands"');
+      }
+    }
+    // the device that may drive still reads them
+    expect((await fetch(`${base}/api/agent/commands?agent=claude&cwd=${folder}`, { headers: { cookie: interactCookie, origin: base } })).status).toBe(200);
   });
 
 });

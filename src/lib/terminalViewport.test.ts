@@ -1,7 +1,26 @@
 import { describe, expect, it } from "bun:test";
-import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_IDLE_MAX_MS, idleScrollPollDelay, scrollPollDelay, validScroll, visibleFindRects, type CellReader } from "./terminalViewport.ts";
+import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_IDLE_MAX_MS, idleScrollPollDelay, scrollPollDelay, validScroll, visibleFindRects, visibleTerminalInputBounds, type CellReader } from "./terminalViewport.ts";
 const scroll = { max_offset_from_bottom: 100, offset_from_bottom: 20, viewport_rows: 2 };
 const cells = (lines: string[]): CellReader => (row, col) => ({ chars: lines[row]?.[col] ?? " ", width: 1 });
+
+describe("terminal input viewport bounds", () => {
+  it("expresses the host's visible area relative to a horizontally panned xterm screen", () => {
+    expect(visibleTerminalInputBounds(
+      { left: 100, top: 100, right: 400, bottom: 300, width: 300, height: 200 },
+      { left: 50, top: 80, right: 850, bottom: 480, width: 800, height: 400 },
+    )).toEqual({ left: 50, top: 20, right: 350, bottom: 220 });
+  });
+  it("clips the visible area to the screen and keeps empty intersections ordered", () => {
+    expect(visibleTerminalInputBounds(
+      { left: -20, top: 10, right: 20, bottom: 40, width: 40, height: 30 },
+      { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
+    )).toEqual({ left: 0, top: 10, right: 20, bottom: 40 });
+    expect(visibleTerminalInputBounds(
+      { left: 140, top: 120, right: 180, bottom: 160, width: 40, height: 40 },
+      { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
+    )).toEqual({ left: 100, top: 100, right: 100, bottom: 100 });
+  });
+});
 
 describe("herdr viewport overlay", () => {
   it("maps a native wrapped range without using lost xterm wrap flags", () => {

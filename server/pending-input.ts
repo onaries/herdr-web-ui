@@ -38,6 +38,8 @@ interface TurnGate { by: string; committed: boolean; sawWorking: boolean; comple
 const ready = (status: AgentStatus | undefined) => status === "idle" || status === "done";
 export const PENDING_START_TIMEOUT_MS = 10_000;
 export const MAX_PENDING_PER_OWNER = 32;
+/** an owner whose messages are counted per pane (`perPane`): one pane's never fill the list for the others */
+export const MAX_PENDING_PER_PANE = 1;
 const MAX_PENDING_TOTAL = 256;
 const MAX_PENDING_CHARS = 20_000;
 const CLOSED_RETENTION_MS = 60_000;
@@ -62,6 +64,8 @@ export class PendingInputs<Owner, Lease> {
     private readonly now: () => number = Date.now,
     private readonly startTimeoutMs = PENDING_START_TIMEOUT_MS,
     private readonly newId: () => string = () => crypto.randomUUID(),
+    /** an owner that may hold MAX_PENDING_PER_PANE messages in each pane rather than MAX_PENDING_PER_OWNER in all */
+    private readonly perPane: (owner: Owner) => boolean = () => false,
   ) {}
 
   /** Cross-connection held copies share one outcome; never evict an in-flight send. */
@@ -110,7 +114,9 @@ export class PendingInputs<Owner, Lease> {
       return previous;
     }
     if (!text.trim() || text.length > MAX_PENDING_CHARS) throw new PendingInputError("invalid_submit_text", "A pending message must contain text and be at most 20000 characters");
-    if (this.records.size >= MAX_PENDING_TOTAL || [...this.records.values()].filter((item) => item.owner === owner).length >= MAX_PENDING_PER_OWNER) {
+    const perPane = this.perPane(owner);
+    const own = [...this.records.values()].filter((item) => item.owner === owner && (!perPane || item.paneId === paneId)).length;
+    if (this.records.size >= MAX_PENDING_TOTAL || own >= (perPane ? MAX_PENDING_PER_PANE : MAX_PENDING_PER_OWNER)) {
       throw new PendingInputError("pending_limit", "The pending-message list is full; send or discard a message first");
     }
     if ([...this.records.values()].some((item) => item.paneId === paneId && item.message.state === "uncertain")) throw new PendingInputError("pending_uncertain", "Check the terminal before sending more pending messages");
@@ -241,6 +247,20 @@ export class PendingInputs<Owner, Lease> {
       }
     }
     for (const pane of panes) this.publish(owner, pane);
+  }
+
+  /** One waiting message held for an explicit send; one on its way is left to its send's own end. */
+  holdItem(item: PendingRecord<Owner, Lease>, fault: Fault): void {
+    if (this.records.get(item.message.id) !== item || item.inFlight || item.message.state !== "queued") return;
+    item.message.state = "held"; item.message.error = fault;
+    this.publish(item.owner, item.paneId);
+  }
+
+  /** A held message's reason, told anew when what holds it changed; a message not held is left alone. */
+  rehold(item: PendingRecord<Owner, Lease>, fault: Fault): void {
+    if (this.records.get(item.message.id) !== item || item.inFlight || item.message.state !== "held" || item.message.error?.code === fault.code) return;
+    item.message.error = fault;
+    this.publish(item.owner, item.paneId);
   }
 
   holdPane(paneId: string, fault: Fault): void {

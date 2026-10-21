@@ -267,13 +267,16 @@ export function hermesEchoOf(line: string, command: string): boolean {
 /**
  * Where Hermes's bottom chrome starts, matching the recorded layout only: the status bar (` ☤ model …`,
  * its timer ticking), the rule, the `❯` input line, and the closing rule when the pane shows it, with
- * nothing but blank lines under them. -1 for any other bottom: a rule is chrome only directly above the input line.
+ * nothing but blank lines under them. Also the input line alone at the bottom, with no rule above or under it (under
+ * the status bar when that is drawn): Hermes redraws its input area that way while a terminal attaches, slowly on a
+ * loaded host (F3 r2 D1). -1 for any other bottom: a rule is chrome only directly above the input line.
  */
 export function hermesChromeStart(lines: string[]): number {
   const rule = (line: string | undefined): boolean => line !== undefined && /^─{8,}$/u.test(line);
   let at = lines.length - 1;
   while (at >= 0 && !lines[at]!.trim()) at -= 1;
   if (rule(lines[at])) at -= 1;
+  else if (/^❯(?: |$)/u.test(lines[at] ?? "") && !rule(lines[at - 1])) return lines[at - 1]?.startsWith(" ☤ ") ? at - 1 : at;
   if (!/^❯(?: |$)/u.test(lines[at] ?? "")) return -1;
   const top = at - 1;
   if (!rule(lines[top])) return -1;

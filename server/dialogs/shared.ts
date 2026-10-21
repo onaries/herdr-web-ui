@@ -67,6 +67,7 @@ type Responder =
   | "claude-confirm"
   | "claude-held"
   | "claude-goal"
+  | "claude-rewind"
   | "claude-model"
   | "claude-effort"
   | "codex-model"
@@ -90,6 +91,7 @@ type Responder =
   | "omp-submit"
   | "omp-handoff"
   | "opencode-question"
+  | "opencode-v1-question"
   | "fallback-menu"
   | "fallback-gjc-menu"
   | "fallback-keys"
@@ -121,6 +123,11 @@ export type ParsedPrompt = InteractivePrompt & {
   rejectWithEscapeIndex: number | null;
   /** each option's own steps, for a card whose options are not rows of a menu */
   optionSteps?: AnswerStep[][];
+  /**
+   * which of several same-looking dialogs the card is for, where its id leaves that out (a Claude rewind
+   * confirm step's age, which ticks): checked on the screen right before the card's key
+   */
+  occurrence?: string;
   /** the steps for a typed answer, for a card whose menu does not take one the usual way */
   customSteps?: (text: string) => AnswerStep[];
   /** the steps for a multiple choice, for a card whose menu does not toggle the usual way */
@@ -230,7 +237,7 @@ export function finishPrompt(
   input: Omit<InteractivePrompt, "id" | "agent">,
   internal: Omit<ParsedPrompt, keyof InteractivePrompt>,
   /** fields as the id reads them, where that is not as the card shows them (a fallback card's ticking working line) */
-  hashed: Partial<Pick<InteractivePrompt, "question" | "body">> & { call?: string } = {},
+  hashed: Partial<Pick<InteractivePrompt, "title" | "question" | "body">> & { call?: string } = {},
 ): ParsedPrompt {
   const id = createHash("sha256")
     .update(JSON.stringify({ agent, ...input, ...hashed }))

@@ -892,7 +892,7 @@ try {
         await workspace.click({ button: "right", position: { x: 32, y: bounds.height / 2 } });
         const menu = page.getByRole("menu", { name: "checkout-api", exact: true });
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close group", "New worktree", "Open worktree…", "Collapse"], "right-click on a repository uses its group scope");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Earlier sessions…", "Close group", "New worktree", "Open worktree…", "Collapse"], "right-click on a repository uses its group scope");
         const opened = (await menu.boundingBox())!;
         assert.ok(Math.abs(opened.x - bounds.x - 32) <= 1 && Math.abs(opened.y - bounds.y - bounds.height / 2) <= 1, "the menu opens at the pointer");
         assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection")), selected, "right-click leaves the selected pane alone");
@@ -901,7 +901,7 @@ try {
         await workspace.focus();
         await contextMenuKey(page);
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Close group", "New worktree", "Open worktree…", "Collapse"], "the context-menu key and right-click have identical items");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Earlier sessions…", "Close group", "New worktree", "Open worktree…", "Collapse"], "the context-menu key and right-click have identical items");
         await page.keyboard.press("Escape");
         const pins = () => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]") as string[]);
         // a pinned workspace leaves its place for a card at the top of its PC's list, and returns unpinned

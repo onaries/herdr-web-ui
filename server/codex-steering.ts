@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
+import { CODEX_WORKING_RE, codexFooterLine } from "./dialogs/codex.ts";
 
 export interface CodexSteeringContext { agent: string | null; working: boolean; screen: string }
 interface SteeringIO {
@@ -16,9 +17,6 @@ function lastLine<T>(lines: T[], matches: (line: T) => boolean): number {
   for (let index = lines.length - 1; index >= 0; index--) if (matches(lines[index]!)) return index;
   return -1;
 }
-/** The rows under the composer: the model and folder, context left, warnings, and (0.162) the shortcuts hint. */
-const FOOTER = /^(?:\S+\s+(?:default|minimal|none|low|medium|high|xhigh|max|ultra)\s*·|\d+% context left\b|⚠\s*\d+\s*warnings?\b|(?:←[^·]*·\s*)?\?\s*for shortcuts\b|[/\\]|[A-Za-z]:\\)/;
-
 /**
  * A native steering panel in the live composer, never a hint quoted in scrollback, whose last
  * entry is `text`: the message just submitted, not one that was already waiting. Codex wraps an
@@ -35,8 +33,8 @@ export function codexSteeringPending(screen: string, text: string): boolean {
   const composer = lastLine(lines, (line) => /^›(?:\s+Ask Codex to do anything)?$/.test(line));
   if (composer < 0) return false;
   const footer = lines.slice(composer + 1);
-  if (footer.length > 4 || footer.some((line) => !FOOTER.test(line))) return false;
-  const status = lastLine(lines.slice(0, composer), (line) => /^[•◦]\s*(?:Working|Reconnecting(?:\.{3}|…)?(?: waiting for network)?)\s*\((?:\d+[hms]\s*)+•\s*esc to interrupt\)$/.test(line));
+  if (footer.length > 4 || footer.some((line) => !codexFooterLine(line) && !/^(?:[/\\]|[A-Za-z]:\\)/.test(line))) return false;
+  const status = lastLine(lines.slice(0, composer), (line) => CODEX_WORKING_RE.test(line));
   if (status < 0) return false;
   const panel = rows.slice(status + 1, composer);
   const isEntry = (row: { text: string }) => /^↳\s*\S/.test(row.text);

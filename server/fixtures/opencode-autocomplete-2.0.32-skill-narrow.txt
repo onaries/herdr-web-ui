@@ -1,0 +1,24 @@
+
+
+
+
+
+
+
+
+
+           █▀▀█ █▀▀█ █▀▀█ █▀▀▄
+           █  █ █  █ █▀▀▀ █  █
+           ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀
+                        ▄
+           █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+           █    █  █ █  █ █▀▀▀
+ ┃ @effect Apply the Effect li  skill ┃
+ ┃ .opencode/commands/later.md        ┃
+ ┃ .opencode/commands/shipit.md       ┃
+ ┃
+ ┃ @effect
+ ┃
+ ┃ MiniMax M3.1 Flash Free
+ ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ /tmp/t27-root.IbYlLi/proj:main

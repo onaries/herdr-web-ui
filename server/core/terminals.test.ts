@@ -31,7 +31,7 @@ async function join({ readOnly = false, ready, recovering, times = 1 }: { readOn
   const registry = createTerminalRegistry({
     options: {}, clients: new Set([client]), stopped: () => false, terminalAttach: async () => true,
     holdFor: 0, heldRetry: 0, retryFor: 0, relookupFor: 0,
-    holdPending() {}, holdPendingPane() {}, end() {},
+    holdPending() {}, holdPendingPane() {}, attached() {}, inputReady() {}, end() {},
   });
   for (let attach = 0; attach < times; attach++) await registry.terminalFrames.attach(client, { type: "attach", pane_id: "p", cols: 80, rows: 24, keep_size: true });
   registry.closeAttachment("p");

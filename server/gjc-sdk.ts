@@ -418,3 +418,36 @@ export function gjcSdkTranscriptWithRunner(
 ): Promise<GjcSdkBinding | null> {
   return resolveTranscript(pids, cwd, agentDir, runner, worktreeRootResolver, purpose);
 }
+
+/** The only broker queries the bridge asks: reads, never a control or lifecycle operation. */
+export type GjcSdkReadQuery = "runtime.capabilities" | "skill.list/state";
+const READ_QUERIES: ReadonlySet<string> = new Set<GjcSdkReadQuery>(["runtime.capabilities", "skill.list/state"]);
+const QUERY_TIMEOUT_MS = 1_200;
+
+/**
+ * One read-only query of a live session through the broker, attach-only: a broker that is not
+ * already running fails the call instead of being started. Resolves the broker's response
+ * (`{ ok: true, page | result }`), or null when it answered anything else.
+ */
+export async function gjcSdkQuery(
+  agentDir: string,
+  sessionId: string,
+  query: GjcSdkReadQuery,
+  options: { runner?: GjcSdkCommandRunner } = {},
+): Promise<Record<string, unknown> | null> {
+  if (!READ_QUERIES.has(query) || !nonEmptyString(sessionId) || sessionId.startsWith("-") || !nodePath.isAbsolute(agentDir)) return null;
+  const args = ["sdk", "session", "raw", "query", sessionId, "--query", query, "--agent-dir", agentDir, "--attach-only", "--json"];
+  const stdout = await (options.runner ?? runGjcSdkCommand)("gjc", args, {
+    env: { ...process.env, GJC_SDK_BROKER_AUTOSTART: "0" },
+    encoding: "utf8",
+    timeout: QUERY_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    maxBuffer: MAX_BUFFER,
+    shell: false,
+    windowsHide: true,
+  });
+  try {
+    const response: unknown = JSON.parse(stdout);
+    return isRecord(response) && response.ok === true ? response : null;
+  } catch { return null; }
+}

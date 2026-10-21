@@ -3,6 +3,21 @@ import type { PaneFindMatch, PaneScrollInfo } from "../../shared/protocol.ts";
 export interface ViewportCell { chars: string; width: number }
 export interface FindCellRect { row: number; col: number; width: number; current: boolean }
 export type CellReader = (row: number, col: number) => ViewportCell | undefined;
+export interface TerminalInputBounds { left: number; top: number; right: number; bottom: number }
+
+interface RectBounds { left: number; top: number; right: number; bottom: number; width: number; height: number }
+
+/** The host's visible scrollport expressed in xterm-screen-local pixels. */
+export function visibleTerminalInputBounds(host: RectBounds, screen: RectBounds): TerminalInputBounds {
+  const left = Math.min(screen.width, Math.max(0, host.left - screen.left));
+  const top = Math.min(screen.height, Math.max(0, host.top - screen.top));
+  return {
+    left,
+    top,
+    right: Math.max(left, Math.min(screen.width, host.right - screen.left)),
+    bottom: Math.max(top, Math.min(screen.height, host.bottom - screen.top)),
+  };
+}
 
 export function validScroll(value: PaneScrollInfo | null | undefined): value is PaneScrollInfo {
   return value != null && [value.offset_from_bottom, value.max_offset_from_bottom, value.viewport_rows].every(Number.isSafeInteger)

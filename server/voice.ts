@@ -10,7 +10,7 @@ import {
   VOICE_DEFAULTS, VOICE_FORM, VOICE_KEYWORD_MAX_CHARS, VOICE_KEYWORDS_MAX, VOICE_MAX_AUDIO_BYTES,
   type VoiceErrorCode, type VoiceEvent, type VoiceMode, type VoiceStatus,
 } from "../shared/voice.ts";
-import { errorResponse, isJsonObject, jsonResponse } from "./http.ts";
+import { errorResponse, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 
 const ENV_KEY = "HERDR_WEB_OPENAI_API_KEY";
 const ENV_BASE_URL = "HERDR_WEB_OPENAI_BASE_URL";
@@ -370,16 +370,19 @@ function voiceError(error: unknown): Response {
 export async function handleVoiceRequest(request: Request, pathname: string, service: VoiceService): Promise<Response> {
   const noStore = { "cache-control": "no-store" };
   if (pathname === "/api/voice") {
+    setRequestRoute(pathname);
     if (request.method !== "GET") return jsonResponse({ error: { code: "method_not_allowed", message: "Use GET /api/voice" } }, 405, { allow: "GET" });
     try { return jsonResponse(service.status(), 200, noStore); } catch (error) { return voiceError(error); }
   }
   if (pathname === "/api/voice/config") {
+    setRequestRoute(pathname);
     if (request.method !== "PUT") return jsonResponse({ error: { code: "method_not_allowed", message: "Use PUT /api/voice/config" } }, 405, { allow: "PUT" });
     let body: unknown;
     try { body = await request.json(); } catch { return voiceError(invalid("Send a JSON object")); }
     try { return jsonResponse(service.update(body), 200, noStore); } catch (error) { return voiceError(error); }
   }
   if (pathname === "/api/voice/transcribe") {
+    setRequestRoute(pathname);
     if (request.method !== "POST") return jsonResponse({ error: { code: "method_not_allowed", message: "Use POST /api/voice/transcribe" } }, 405, { allow: "POST" });
     try {
       if (!service.status().configured) throw new VoiceError("voice_not_configured", 409, "Set an OpenAI API key for voice input");

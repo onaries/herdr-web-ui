@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { CommandOutcome, ConversationTurn } from "../../shared/protocol.ts";
 import { translate } from "./i18n.ts";
-import { noteCatalogChanges, outcomeChip, outcomeCommand, outcomeLabel, outcomeResultText, outcomeRows } from "./outcomeChip.ts";
+import { noteCatalogChanges, outcomeChip, outcomeCommand, outcomeLabel, outcomeNote, outcomeResultText, outcomeRows } from "./outcomeChip.ts";
 
 const en = (key: string, vars?: Record<string, string | number>): string => translate("en", key, vars);
 
@@ -20,6 +20,15 @@ function user(text: string, ts: string | null): ConversationTurn {
 function assistant(text: string, ts: string | null): ConversationTurn {
   return { role: "assistant", ts, parts: [{ kind: "text", text }] };
 }
+
+describe("outcomeNote", () => {
+  test("names the skills the agent did not attach, and nothing for any other outcome", () => {
+    const sent = outcome({ text: "@effect @review go", created_at: "2026-10-20T10:00:00Z", state: "terminal-required", unattached_skills: ["effect", "review"] });
+    expect(outcomeNote(en, sent)).toBe("Not attached, sent as plain text: @effect, @review");
+    expect(outcomeNote(en, { ...sent, unattached_skills: ["effect"] })).toBe("Not attached, sent as plain text: @effect");
+    expect(outcomeNote(en, outcome({ text: "/btw hi", created_at: "2026-10-20T10:00:00Z", state: "terminal-required" }))).toBeNull();
+  });
+});
 
 describe("outcomeChip", () => {
   test("maps every state to its own chip, with a result's latest evidence and the one action the state offers", () => {

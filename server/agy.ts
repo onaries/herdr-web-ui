@@ -145,7 +145,8 @@ export function withAgyHistory<T>(path: string, read: (projection: AgyProjection
   } finally { closeSync(fd); }
 }
 
-function userText(text: string): string {
+/** A USER_INPUT step's prompt, without the request wrapper Agy adds around it. */
+export function agyUserText(text: string): string {
   if (!text.startsWith("<USER_REQUEST>")) return text;
   const end = text.lastIndexOf("</USER_REQUEST>");
   if (end < 0) return text;
@@ -166,7 +167,7 @@ export function parseAgyTranscript(text: string, path?: string): ConversationTur
     if (value.status !== "DONE") continue;
     const content = typeof value.content === "string" ? value.content : "";
     const ts = typeof value.created_at === "string" ? value.created_at : null;
-    if (value.type === "USER_INPUT") { turns.push({ role: "user", ts, parts: [{ kind: "text", text: userText(content) }] }); continue; }
+    if (value.type === "USER_INPUT") { turns.push({ role: "user", ts, parts: [{ kind: "text", text: agyUserText(content) }] }); continue; }
     if (value.type !== "PLANNER_RESPONSE" && value.type !== "GENERIC") continue;
     const parts: ConversationPart[] = [];
     if (value.type === "GENERIC") {

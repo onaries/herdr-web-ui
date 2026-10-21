@@ -1,0 +1,10 @@
+CREATE TABLE sessions (id TEXT, working_directory TEXT, main_chain_id INTEGER, hidden INTEGER, model TEXT, created_at INTEGER, last_activity_at INTEGER, title TEXT);
+CREATE TABLE message_nodes (session_id TEXT, node_id INTEGER, parent_node_id INTEGER, chat_message TEXT, created_at INTEGER);
+INSERT INTO sessions VALUES ('fixture-0001', :cwd, 2, 0, 'fixture', 1790845200, 1790848800, 'Fixture devin title 1');
+INSERT INTO sessions VALUES ('fixture-0002', :cwd, 2, 0, 'fixture', 1790931600, 1790935200, 'Fixture devin title 2');
+INSERT INTO sessions VALUES ('fixture-0003', :cwd, 2, 1, 'fixture', 1791018000, 1791021600, 'Fixture devin hidden');
+INSERT INTO sessions VALUES ('fixture-0004', '/elsewhere', 2, 0, 'fixture', 1791104400, 1791108000, 'Fixture devin elsewhere');
+INSERT INTO message_nodes VALUES ('fixture-0001', 0, NULL, '{"role":"system","content":"(system prompt omitted)"}', 1790845200);
+INSERT INTO message_nodes VALUES ('fixture-0001', 1, 0, '{"role":"user","content":"Fixture devin prompt 1"}', 1790845201);
+INSERT INTO message_nodes VALUES ('fixture-0002', 0, NULL, '{"role":"system","content":"(system prompt omitted)"}', 1790931600);
+INSERT INTO message_nodes VALUES ('fixture-0002', 1, 0, '{"role":"user","content":"Fixture devin prompt 2"}', 1790931601);

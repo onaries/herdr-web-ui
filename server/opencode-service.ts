@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { request } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,8 @@ export interface OpenCodeServiceConfig {
   port: number;
   pid: number;
   password: string;
+  /** the version service.json names (OpenCode 2.0.32 writes it), checked against /api/info */
+  version?: string;
 }
 
 export interface OpenCodeFormFieldOption {
@@ -54,8 +56,9 @@ export function readOpenCodeService(stateDir?: string, env: Record<string, strin
     const raw = buffer.toString("utf8", 0, size);
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== "object" || parsed === null) return null;
-    const { port, pid, password, url } = parsed as Record<string, unknown>;
+    const { port, pid, password, url, version } = parsed as Record<string, unknown>;
     if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0 || typeof password !== "string" || !password) return null;
+    if (version !== undefined && (typeof version !== "string" || !version)) return null;
     try { process.kill(pid, 0); }
     catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "EPERM") return null;
@@ -76,7 +79,7 @@ export function readOpenCodeService(stateDir?: string, env: Record<string, strin
     }
 
     if (!baseUrl || resolvedPort <= 0) return null;
-    return { baseUrl, port: resolvedPort, pid, password };
+    return { baseUrl, port: resolvedPort, pid, password, ...(typeof version === "string" ? { version } : {}) };
   } catch {
     return null;
   } finally {
@@ -91,7 +94,7 @@ export function opencodeAuthHeader(password: string): string {
 export const OPENCODE_HTTP_TIMEOUT_MS = 1_500;
 
 /** node:http does not use Bun fetch's proxy environment, including on Bun 1.4.2. */
-function openCodeRequest(config: OpenCodeServiceConfig, path: string, signal?: AbortSignal, body?: string): Promise<{ status: number; body: string } | null> {
+function openCodeRequest(config: OpenCodeServiceConfig, path: string, signal?: AbortSignal, body?: string, maxBytes = 1024 * 1024): Promise<{ status: number; body: string } | null> {
   return new Promise((resolve) => {
     const req = request(new URL(path, config.baseUrl), {
       agent: false,
@@ -116,7 +119,7 @@ function openCodeRequest(config: OpenCodeServiceConfig, path: string, signal?: A
       let bytes = 0;
       response.on("data", (chunk: Buffer) => {
         bytes += chunk.length;
-        if (bytes > 1024 * 1024) {
+        if (bytes > maxBytes) {
           resolve(null);
           response.destroy();
           req.destroy();
@@ -167,6 +170,210 @@ export async function listPendingQuestionForms(
   } catch {
     return null;
   }
+}
+
+const object = (value: unknown): Record<string, unknown> | null => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+async function getJson(config: OpenCodeServiceConfig, path: string, signal?: AbortSignal, maxBytes?: number): Promise<unknown> {
+  const response = await openCodeRequest(config, path, signal, undefined, maxBytes);
+  if (!response || response.status < 200 || response.status >= 300) return undefined;
+  try { return JSON.parse(response.body) as unknown; } catch { return undefined; } // not JSON: no answer
+}
+
+/**
+ * The version of the process that answers at the service's URL, only when that process is the one
+ * service.json names: the same pid and, where the file records one, the same version. Anything else
+ * (a reused port, a stale file, a second service) is no service; nothing is ever started here.
+ */
+export async function verifyOpenCodeService(config: OpenCodeServiceConfig, signal?: AbortSignal): Promise<string | null> {
+  const info = object(await getJson(config, "/api/info", signal));
+  if (!info || info.pid !== config.pid || typeof info.version !== "string" || !info.version) return null;
+  if (config.version !== undefined && info.version !== config.version) return null;
+  return info.version;
+}
+
+export interface OpenCodeService { config: OpenCodeServiceConfig; version: string }
+
+const VERIFIED_MS = 5_000;
+let verified: { key: string; until: number; service: OpenCodeService } | null = null;
+
+/** Where callers without their own state dir look for service.json; tests point it at a fixture. */
+export const openCodeServiceOptions: { stateDir?: string } = {};
+
+/**
+ * service.json, verified against /api/info (kept 5 s). The catalog and its observers keep scan rows on
+ * Windows; the question card and its answer, which used the service there before them, pass `onWindows`
+ * (the identity check is HTTP, so it holds on Windows too).
+ */
+export async function openCodeService(stateDir?: string, signal?: AbortSignal, { onWindows = false }: { onWindows?: boolean } = {}): Promise<OpenCodeService | null> {
+  if (process.platform === "win32" && !onWindows) return null;
+  const config = serviceFile(stateDir ?? openCodeServiceOptions.stateDir ?? opencodeStateDir());
+  if (!config) return null;
+  const key = JSON.stringify(config);
+  if (verified?.key === key && verified.until > Date.now()) return verified.service;
+  const version = await verifyOpenCodeService(config, signal);
+  if (!version) return null;
+  verified = { key, until: Date.now() + VERIFIED_MS, service: { config, version } };
+  return verified.service;
+}
+
+/** service.json as last read, by path: every lookup stats it, and only a changed file is read and parsed again. */
+const files = new Map<string, { stamp: string; config: OpenCodeServiceConfig | null }>();
+
+function serviceFile(stateDir: string): OpenCodeServiceConfig | null {
+  const path = join(stateDir, "service.json");
+  let stamp: string;
+  try {
+    const stat = statSync(path);
+    stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  } catch { files.delete(path); return null; }
+  const known = files.get(path);
+  if (known?.stamp === stamp) return known.config;
+  const config = readOpenCodeService(stateDir);
+  files.delete(path);
+  files.set(path, { stamp, config });
+  if (files.size > 16) files.delete(files.keys().next().value!);
+  return config;
+}
+
+/**
+ * The OpenCode version its service file names (OpenCode 2.0.32 writes one), unverified: enough to pick
+ * the form its skills are typed in before any pane runs it, never to trust the service with.
+ */
+export function openCodeInstalledVersion(stateDir?: string): string | null {
+  return readOpenCodeService(stateDir ?? openCodeServiceOptions.stateDir)?.version ?? null;
+}
+
+export function forgetOpenCodeService(): void {
+  verified = null;
+}
+
+/** Whether the service holds this session: a TUI bound to another service (or none) answers no. */
+export async function openCodeHasSession(config: OpenCodeServiceConfig, sessionID: string, signal?: AbortSignal): Promise<boolean> {
+  const session = object(await getJson(config, `/api/session/${encodeURIComponent(sessionID)}`, signal));
+  return object(session?.data)?.id === sessionID;
+}
+
+export interface OpenCodeCommandInfo { name: string; description?: string }
+export interface OpenCodeSkillInfo { id: string; name: string; description?: string; path: string }
+
+const locationQuery = (directory: string): string => `location%5Bdirectory%5D=${encodeURIComponent(directory)}`;
+
+function listed(body: unknown, directory: string): unknown[] | null {
+  const envelope = object(body);
+  if (!envelope || !Array.isArray(envelope.data) || object(envelope.location)?.directory !== directory) return null;
+  return envelope.data;
+}
+
+/**
+ * GET /api/command and /api/skill for one directory (pinned OpenAPI at 843a6c51). A location the
+ * service has not loaded yet answers empty lists at first; the bundled skills are never absent from
+ * a loaded one, so an empty skill list is no answer rather than "no skills".
+ */
+export async function listOpenCodeCatalog(config: OpenCodeServiceConfig, directory: string, signal?: AbortSignal): Promise<{ commands: OpenCodeCommandInfo[]; skills: OpenCodeSkillInfo[] } | null> {
+  // skill rows carry their whole text
+  const [commandBody, skillBody] = await Promise.all([
+    getJson(config, `/api/command?${locationQuery(directory)}`, signal),
+    getJson(config, `/api/skill?${locationQuery(directory)}`, signal, 8 * 1024 * 1024),
+  ]);
+  const commandItems = listed(commandBody, directory);
+  const skillItems = listed(skillBody, directory);
+  if (!commandItems || !skillItems || skillItems.length === 0) return null;
+  const commands = commandItems.flatMap((item): OpenCodeCommandInfo[] => {
+    const row = object(item);
+    if (!row || typeof row.name !== "string" || !row.name || (row.description !== undefined && typeof row.description !== "string")) return [];
+    return [{ name: row.name, ...(typeof row.description === "string" ? { description: row.description } : {}) }];
+  });
+  const skills = skillItems.flatMap((item): OpenCodeSkillInfo[] => {
+    const row = object(item);
+    if (!row || typeof row.id !== "string" || !/^\S+$/u.test(row.id) || typeof row.name !== "string" || typeof row.path !== "string"
+      || (row.description !== undefined && typeof row.description !== "string")) return [];
+    return [{ id: row.id, name: row.name, path: row.path, ...(typeof row.description === "string" ? { description: row.description } : {}) }];
+  });
+  return { commands, skills };
+}
+
+export interface OpenCodeEvent {
+  type: string;
+  created?: number;
+  directory?: string;
+  data: Record<string, unknown>;
+}
+
+/** One SSE block of GET /api/event (`data: {json}` lines; `:` heartbeats), or null. */
+export function parseOpenCodeEvent(block: string): OpenCodeEvent | null {
+  const data = block.split(/\r?\n/u).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).replace(/^ /u, "")).join("\n");
+  if (!data) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(data); } catch { return null; } // a torn or foreign block is no event
+  const event = object(parsed);
+  if (!event || typeof event.type !== "string") return null;
+  const directory = object(event.location)?.directory;
+  return {
+    type: event.type, data: object(event.data) ?? {},
+    ...(typeof event.created === "number" && Number.isFinite(event.created) ? { created: event.created } : {}),
+    ...(typeof directory === "string" ? { directory } : {}),
+  };
+}
+
+/**
+ * GET /api/event, volatile by contract: events missed while it was down are gone, so `onOpen`
+ * tells the caller to re-read what it cached. Reconnects until closed; never holds the process.
+ */
+export function subscribeOpenCodeEvents(config: OpenCodeServiceConfig, handlers: { onOpen(): void; onEvent(event: OpenCodeEvent): void; onClose(): void }): { close(): void } {
+  let closed = false;
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let current: ReturnType<typeof request> | undefined;
+  const connect = (): void => {
+    if (closed) return;
+    let open = false;
+    const lost = (): void => {
+      if (current !== req) return;
+      current = undefined;
+      if (open) handlers.onClose();
+      if (closed) return;
+      timer = setTimeout(connect, Math.min(30_000, 500 * 2 ** Math.min(attempt++, 6)));
+      timer.unref?.();
+    };
+    const req = request(new URL("/api/event", config.baseUrl), {
+      agent: false, method: "GET", headers: { Authorization: opencodeAuthHeader(config.password), Accept: "text/event-stream" },
+    }, (response) => {
+      if (response.statusCode !== 200) { response.destroy(); req.destroy(); lost(); return; }
+      open = true;
+      attempt = 0;
+      handlers.onOpen();
+      let buffer = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        buffer += chunk;
+        if (buffer.length > 4 * 1024 * 1024) { req.destroy(); return; }
+        for (let end = buffer.search(/\r?\n\r?\n/u); end >= 0; end = buffer.search(/\r?\n\r?\n/u)) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end).replace(/^\r?\n\r?\n/u, "");
+          const event = parseOpenCodeEvent(block);
+          if (event) handlers.onEvent(event);
+        }
+      });
+      response.once("end", lost);
+      response.once("error", lost);
+      response.once("aborted", lost);
+    });
+    current = req;
+    req.on("socket", (socket) => socket.unref());
+    req.once("error", lost);
+    req.end();
+  };
+  connect();
+  return {
+    close() {
+      closed = true;
+      clearTimeout(timer);
+      const req = current;
+      current = undefined;
+      req?.destroy();
+    },
+  };
 }
 
 export async function replyOpenCodeForm(

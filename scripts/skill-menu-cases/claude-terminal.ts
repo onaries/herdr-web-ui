@@ -14,6 +14,7 @@ export const commands: SlashCommand[] = [
   builtin("doctor", "Check the installation", { forms: [{ match: "bare", interaction: "terminal" }] }),
   builtin("help", "Show available commands. Lists every command with its description.", { forms: [{ match: "bare", interaction: "terminal" }] }),
   builtin("model", "Choose a model", { forms: [{ match: "bare", interaction: "dialog", dialog: "model" }, { match: "other", interaction: "none" }] }),
+  builtin("resume", "Resume a conversation by ID or name", { visibility: "terminal", forms: [{ match: "bare", interaction: "terminal" }] }),
   builtin("status", "Show session status", { forms: [{ match: "bare", interaction: "terminal" }] }),
   builtin("terminal-setup", "Configure terminal integration", { forms: [{ match: "bare", interaction: "terminal" }] }),
   builtin("heapdump", "Write a heap snapshot", { visibility: "agent-hidden", forms: [{ match: "bare", interaction: "terminal" }] }),
@@ -24,7 +25,7 @@ export const chips = ["/deploy"];
 export const widths = [1280, 390, 320] as const;
 export const schemes = ["light", "dark"] as const;
 
-const TERMINAL_ROWS = ["config", "cost", "doctor", "help", "status", "terminal-setup"];
+const TERMINAL_ROWS = ["config", "cost", "doctor", "help", "resume", "status", "terminal-setup"];
 
 export const expect = async ({ page, width, scheme, box, menu, scenario, clear, rowNames, menuFits, rowsBrief, submits }: CaseRun): Promise<void> => {
   const tag = `${scheme}-${width}`;
@@ -149,5 +150,42 @@ export const expect = async ({ page, width, scheme, box, menu, scenario, clear, 
     assert.deepEqual(await submits(), ["/config", "/heapdump"]);
     assert.equal(await actions.count(), 0);
     await capture();
+  });
+
+  await scenario(`the /resume notice's three ways on and its dismiss fit the composer's column at ${tag}`, `resume-${tag}.png`, async (capture) => {
+    await clear();
+    await box.fill("/resume");
+    await send.click();
+    await actions.waitFor();
+    await menu.waitFor({ state: "detached" });
+    await actions.getByRole("button", { name: "Earlier sessions…", exact: true }).waitFor();
+    // the widest notice: three ways on and the X. Every one of them stands whole inside the
+    // composer's column (the card's, ComposerNotices.css), none over another, and the page keeps
+    // its width, whatever the window's
+    const geometry = await actions.evaluate((node) => {
+      const column = node.getBoundingClientRect();
+      const composer = document.querySelector<HTMLElement>(".composer")!.getBoundingClientRect();
+      const inside = (rect: DOMRect, box: DOMRect): boolean => rect.left >= box.left - 0.5 && rect.right <= box.right + 0.5 && rect.top >= box.top - 0.5 && rect.bottom <= box.bottom + 0.5;
+      const controls = [...node.querySelectorAll<HTMLElement>("button")].map((button) => ({ name: button.getAttribute("aria-label") ?? button.textContent ?? "", rect: button.getBoundingClientRect() }));
+      const rects = controls.map(({ rect }) => rect);
+      return {
+        names: controls.map(({ name }) => name),
+        column: { left: column.left, right: column.right, top: column.top, bottom: column.bottom },
+        controls: controls.map(({ name, rect }) => ({ name, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })),
+        outside: controls.filter(({ rect }) => !inside(rect, column) || !inside(rect, composer)).map(({ name }) => name),
+        overlapping: rects.some((a, index) => rects.slice(index + 1).some((b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5)),
+        overflowing: document.documentElement.scrollWidth > innerWidth,
+      };
+    });
+    assert.deepEqual(geometry.names, ["Earlier sessions…", "Open Terminal", "Run in Terminal", "Dismiss notice"]);
+    assert.deepEqual(geometry.outside, [], `every way on and the dismiss lie inside the composer's column: ${JSON.stringify(geometry)}`);
+    assert.ok(!geometry.overlapping, `no control lies over another: ${JSON.stringify(geometry)}`);
+    assert.ok(!geometry.overflowing, "the page does not scroll sideways");
+    await capture();
+    // the dismiss is reached as it is seen: a tap on it puts the row away, and nothing was sent
+    await actions.getByRole("button", { name: "Dismiss notice", exact: true }).click();
+    await actions.waitFor({ state: "detached" });
+    assert.equal(await box.inputValue(), "/resume", "the draft stays as typed");
+    assert.deepEqual(await submits(), ["/config", "/heapdump"], "nothing was sent");
   });
 };

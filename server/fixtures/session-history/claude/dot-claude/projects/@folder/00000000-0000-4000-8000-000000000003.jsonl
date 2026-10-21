@@ -1,0 +1,4 @@
+{"type":"user","isMeta":true,"cwd":"/elsewhere","sessionId":"00000000-0000-4000-8000-000000000003","timestamp":"2026-10-03T09:00:00.000Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+{"type":"user","cwd":"/elsewhere","sessionId":"00000000-0000-4000-8000-000000000003","timestamp":"2026-10-03T09:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Fixture claude prompt elsewhere"}]}}
+{"type":"assistant","sessionId":"00000000-0000-4000-8000-000000000003","timestamp":"2026-10-03T09:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Fixture answer."}]}}
+{"type":"summary","summary":"Fixture claude title 3"}

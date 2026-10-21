@@ -20,6 +20,7 @@ export class MachineSession {
   private readonly store: PendingMessageStore;
   private readonly identity = nextSession++;
   private currentScope: string | null = null;
+  private currentConnection: string | null = null;
   private currentEpoch = 0;
   private role: RoleAck | null = null;
   private readonly handlers = new Set<Handler>();
@@ -35,6 +36,7 @@ export class MachineSession {
     this.offMessage = this.socket.on((message) => {
       if (this.closed) return;
       if (message.type === "snapshot" && this.currentScope === null) this.currentScope = `${this.identity}:${this.currentEpoch}`;
+      if (message.type === "snapshot" && message.connection !== undefined) this.currentConnection = message.connection;
       if (message.type === "role-ack") this.role = message;
       let sent = false;
       if (message.type === "pending-messages" && this.currentScope !== null) {
@@ -54,11 +56,14 @@ export class MachineSession {
   }
 
   get scope(): string | null { return this.currentScope; }
+  /** the PC's id for this open connection (its first snapshot), for a create request's `first_message_connection`; null while closed or from an older bridge */
+  get connection(): string | null { return this.currentConnection; }
   get epoch(): number { return this.currentEpoch; }
 
   private disconnected(): void {
     if (this.currentScope !== null) this.store.suspendScope(this.currentScope);
     this.currentScope = null;
+    this.currentConnection = null;
     this.currentEpoch++;
     this.role = null;
   }
@@ -108,6 +113,9 @@ export class MachineSessionRegistry {
     if (!session) { session = this.makeSession(machineId); this.sessions.set(machineId, session); }
     return session;
   }
+
+  /** the PC's open session, if one exists: nothing is made or connected for asking */
+  peek(machineId: string): MachineSession | undefined { return this.sessions.get(machineId); }
 
   retainMachines(machineIds: ReadonlySet<string>): void {
     for (const [machineId, session] of this.sessions) {

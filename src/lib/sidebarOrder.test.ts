@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import machines from "../../site/demo/fixtures/machines.json";
-import { activityOrder, isSeenDone, liveSeqs, markSeen, newSeqMemory, shownStatus, stateSeqs } from "./sidebarOrder.ts";
+import { activityOrder, isSeenDone, liveSeqs, newSeqMemory, shownStatus, stateSeqs } from "./sidebarOrder.ts";
 import { DEFAULT_SETTINGS, sanitizeSettings } from "./settings.ts";
 
 const template = machines.machines[0]!.snapshot!;
@@ -106,13 +106,6 @@ describe("opened finish identity", () => {
     expect(shownStatus({ ...pane("a", "done", 2), background_wait: true }, { a: 2 })).toBe("waiting");
     expect(shownStatus({ ...pane("a", "blocked", 2), background_wait: true }, { a: 2 })).toBe("blocked");
     expect(shownStatus(pane("a", "done", 2), { a: 2 })).toBe("idle");
-  });
-
-  it("keeps the maximum without changing a record that already has it", () => {
-    const record = { a: 3 };
-    expect(markSeen(record, "a", 2)).toBe(record);
-    expect(markSeen(record, "a", 3)).toBe(record);
-    expect(markSeen(record, "a", 4)).toEqual({ a: 4 });
   });
 });
 

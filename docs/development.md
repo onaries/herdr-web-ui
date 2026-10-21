@@ -27,7 +27,33 @@ reset the throttle. Only a visible failure episode emits a recovery. Abnormal br
 coalesced separately for local and relayed connections; normal closes and server shutdown are quiet.
 The close reason, input, credentials, peer names, socket paths and raw exception messages are never
 included. A remote machine's opaque UUID may appear, not its name or SSH address. These records are
-not a per-request HTTP access log and do not add timestamps to older console messages.
+separate from the request-completion log and do not add timestamps to older console messages.
+
+Every request reaching the server's fetch boundary gets a new server UUID in `X-Request-Id`.
+Same-origin API calls also send a fresh client UUID unless the caller supplies one. Client IDs
+are accepted only as 1-64 ASCII letters, digits, dots, underscores or hyphens; repeated client
+IDs never replace server uniqueness. Unexpected-error handles use the same server ID.
+
+The server keeps `http-requests.jsonl` in its resolved state directory, rotating before a write
+would exceed 1 MiB and retaining only `http-requests.jsonl.1`: at most two 1 MiB files. The
+directory is created with mode 0700 when missing; an existing directory keeps the operator's
+permissions. Regular log files use mode 0600 on platforms with POSIX permissions; the writer
+refuses symlinked log paths where no-follow opens are supported.
+Each line is at most 1024 bytes and contains only `request_id`, optional `client_request_id`,
+normalized `method`, fixed `route` template, `status` and monotonic `latency_ms`. Unknown
+methods become `OTHER`; static and unmatched routes are fixed categories, and dynamic
+identifiers become placeholders. Matched dispatch branches assign the templates; the writer
+never reconstructs them from URLs. Startup and access refusals use fixed categories too.
+No URL queries, bodies, credentials, labels, file or socket
+paths, or exception text enter this file. Storage failures never change HTTP responses.
+The per-server writer has no pending queue and closes at shutdown.
+
+A completion means response creation, not completion of body delivery: an SSE or file stream
+is recorded without reading or waiting for it. A successful local or relayed WebSocket upgrade
+is one 101 completion; its handshake carries the same response headers, and the fetch handler
+still returns `undefined`. Ordinary responses carry the server ID too. The default
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` fill absent headers only,
+preserving each route's CSP, framing, MIME, caching and compression headers.
 
 ## Checks
 
@@ -127,6 +153,7 @@ bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px a
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/omo-plan-browser-regression.ts # OmO todo progress and plan panel on isolated native fixtures
 bun scripts/pane-input-focus-demo-regression.ts # the input focus shortcut against fictional panes
+bun scripts/mirror-scroll-demo-regression.ts # fixed mirror wheel/touch, native history, no guessed program input, observe guards
 bun scripts/shortcut-exact-modifiers-demo-regression.ts # recording exact-modifier chords: confirm, refusals, dispatch
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
 bun scripts/math-browser-qa.ts  # chat math: KaTeX loads with the first expression

@@ -4,7 +4,7 @@
  * curated chats and one Codex approval. Nothing here comes from a real machine. It imports no server
  * code, so the browser bundle can take it.
  */
-import type { ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
+import type { ConversationTurn, InteractivePrompt, SessionHistoryAgent, SessionHistoryRow, SlashCommand } from "../../shared/protocol.ts";
 
 export interface DemoSpec {
   key: string;
@@ -33,6 +33,47 @@ export const SPECS: DemoSpec[] = [
 ];
 
 export const t = (min: number, sec = 0) => `2026-09-25T09:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.000Z`;
+
+/** The flags each agent resumes a session by, as server/session-history.ts cites them. */
+const RESUME_FLAGS: Record<SessionHistoryAgent, string[]> = {
+  claude: ["--resume"], codex: ["resume"], pi: ["--session"], omp: ["--resume"], gjc: ["--resume"], cmd: ["--session"],
+  omo: ["--session-id"], opencode: ["--session"], hermes: ["--resume"], grok: ["--resume"], agy: ["--conversation"], devin: ["--resume"],
+};
+export const SESSION_HISTORY_AGENTS = Object.keys(RESUME_FLAGS) as SessionHistoryAgent[];
+
+/** Two earlier, fictional sessions of an agent in a demo folder, newest first. */
+export function sessionHistoryRows(agent: SessionHistoryAgent): SessionHistoryRow[] {
+  const row = (id: string, title: string, firstMessage: string, started: number, updated: number): SessionHistoryRow =>
+    ({ id, title, firstMessage, startedAt: t(started), updatedAt: t(updated), resume: { argv: [agent, ...RESUME_FLAGS[agent], id] } });
+  return [
+    row(`demo-${agent}-0002`, "Retry budget for the payment client", "Cap the payment client's retries at three and log each one.", 4, 9),
+    row(`demo-${agent}-0001`, "Flaky export test", "Why does the export test fail one run in ten?", 0, 3),
+  ];
+}
+/**
+ * The skills an agent would offer in a demo folder before any pane runs it (GET /api/agent/commands):
+ * Codex types its skills as `$name`, the others as `/name`; a project skill and one of the user's own
+ * for each, so the new workspace and tab dialogs show both. Agents not listed here offer none.
+ */
+export function agentSkillRows(agent: string): SlashCommand[] {
+  const skill = (name: string, description: string, origin: "user" | "project"): SlashCommand => ({
+    name, description, source: "skill", origin, ...(agent === "codex" ? { trigger: "$" as const } : {}),
+    forms: [{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "unknown" }],
+    visibility: "offered", provenance: { transport: "scan", verified: false }, id: `/home/demo/${origin === "project" ? "checkout-api/.agents" : ".agents"}/skills/${name}/SKILL.md`,
+  });
+  switch (agent) {
+    case "codex":
+      return [skill("review-pr", "Review the branch against main and list the findings", "project"), skill("release-notes", "Draft release notes from the merged pull requests", "user"), skill("flaky-tests", "Find and fix a flaky test by its history", "user")];
+    case "claude":
+      return [skill("review-pr", "Review the branch against main and list the findings", "project"), skill("changelog", "Write the changelog fragment for a change", "user")];
+    case "omp":
+    case "pi":
+      return [skill("plan-config", "Plan a config file's keys before writing it", "project")];
+    default:
+      return [];
+  }
+}
+
 const tool = (name: string, summary: string, input: unknown, output: string): ConversationTurn["parts"][number] => ({ kind: "tool", name, summary, input: typeof input === "string" ? input : JSON.stringify(input, null, 2), output });
 
 export const CHATS: Record<string, { turns: ConversationTurn[]; metadata: { model: string; reasoning_effort: string } }> = {

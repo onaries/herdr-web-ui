@@ -12,6 +12,9 @@
 }
 
 .composer-notice {
+  position: relative;
+  /* the floor is the content's, so the X (below) fits it under the hairline a second row carries */
+  box-sizing: content-box;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -21,6 +24,12 @@
   color: var(--text-dim);
   font-size: var(--fs-xs);
   line-height: var(--lh-base);
+}
+
+/* The dismiss keeps the row's top trailing corner (below), so a row that has one keeps that
+   corner clear on every line: no text and no way on runs under it */
+.composer-notice:has(.composer-notice-dismiss) {
+  padding-right: calc(var(--control-h) + var(--space-1));
 }
 
 .composer-notice + .composer-notice {
@@ -60,11 +69,17 @@
   white-space: nowrap;
 }
 
+/* The ways on, at the row's trailing end. A row too narrow for the text and all of them (a phone,
+   a narrow split) puts them on a line of their own under the text, and one too narrow even for
+   that wraps them, trailing-aligned, instead of running them off the column; nothing is cut */
 .composer-notice-actions {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
   margin-left: auto;
 }
 
@@ -101,9 +116,14 @@
   cursor: default;
 }
 
+/* The X stands in the row's top trailing corner whatever wraps under it, as a banner's close
+   does: on one line, where it always stood; on a phone, beside the first line of the text, over
+   the ways on, never the last button of their row. It is last in the Tab order, after the ways on */
 .composer-notice-dismiss {
+  position: absolute;
+  top: 0;
+  right: 0;
   display: inline-grid;
-  flex: none;
   place-items: center;
   width: var(--control-h);
   height: var(--control-h);
@@ -141,6 +161,12 @@
 @media (pointer: coarse) {
   .composer-notice-action {
     min-height: var(--touch-target);
+  }
+
+  /* the row is at least as tall as its X, which no longer sits in its flow */
+  .composer-notice:has(.composer-notice-dismiss) {
+    min-height: var(--touch-target);
+    padding-right: calc(var(--touch-target) + var(--space-1));
   }
 
   .composer-notice-dismiss {

@@ -51,3 +51,6 @@ contract test checks that the API carries activity without the instruction body.
 uses both native parsers to check folded work, status updates, provenance, pane
 reset and a 390px Korean/light layout in Chrome. Screenshots go to the ignored
 `evidence/skill-activity/` directory; it touches no live herdr panes.
+
+How a skill or command typed in Chat is listed, sent and followed to a result is described in
+[Agent commands in Chat](agent-commands.md).

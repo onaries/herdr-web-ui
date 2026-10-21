@@ -3011,6 +3011,22 @@ describe("pi's dialogs", () => {
     expect(answerKeys(prompt, { option_index: 2 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }]);
   });
 
+  // As OmO 5.1.40 drew its init-deep advisor: pi's widget, Escape named `esc`, a timeout ticking in the title
+  test("reads OmO's select, which names Escape esc and counts down in its title", () => {
+    const omo = (seconds: number, title = "Init-deep") => piScreen(` ${title} (${seconds}s)\n\n → Run now\n   Skip this time\n   Never in this project\n   Never anywhere\n ↑↓ navigate  enter select  esc/ctrl+c cancel`);
+    const prompt = parseInteractivePrompt("pi", omo(9))!;
+    expect(prompt.fallback).toBeUndefined();
+    expect(prompt.question).toBe("Init-deep (9s)");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Run now", "Skip this time", "Never in this project", "Never anywhere"]);
+    expect(answerKeys(prompt, { option_index: 2 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }]);
+    // a tick of the countdown is the same card, so an answer tapped after it still lands
+    expect(parseInteractivePrompt("pi", omo(8))!.id).toBe(prompt.id);
+    // only the count is left out: another title is another question
+    expect(parseInteractivePrompt("pi", omo(9, "Reindex"))!.id).not.toBe(prompt.id);
+    const input = parseInteractivePrompt("pi", piScreen(" Branch name?\n\n>\n enter submit  esc/ctrl+c cancel"))!;
+    expect(input.custom_option_index).toBe(0);
+  });
+
   test("reads a confirm as an approval, and declines it by pressing No", () => {
     const prompt = parseInteractivePrompt("pi", piScreen(" Clear session?\n All messages will be lost.\n\n → Yes\n   No\n" + MENU_HINT))!;
     expect(prompt.kind).toBe("approval");

@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { flushSync } from "react-dom";
 import { FolderOpen, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
-import type { AgentKind } from "../../shared/protocol.ts";
+import type { AgentKind, SlashCommand } from "../../shared/protocol.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
@@ -12,7 +13,13 @@ import { RecentFolderChips } from "./RecentFolderChips.tsx";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
-import { launchAgent } from "../lib/agentLaunchMode.ts";
+import { launchCapabilities, modelSuggestions } from "../lib/agentLaunchMode.ts";
+import { MAX_COMPOSER_CHARS } from "../lib/compose.ts";
+import { createRequest, firstMessageOutcome, newSessionLaunch, startNewSession } from "../lib/newSession.ts";
+import { useMachineSessions } from "../lib/machineSessionContext.tsx";
+import { composerDrafts } from "../lib/composerDraft.ts";
+import { paneStorageId } from "../../shared/machines.ts";
+import { inFlightGuard } from "../lib/sessionHistory.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
@@ -33,8 +40,12 @@ export interface NewSessionDialogProps {
   /** set, the dialog makes a tab in that workspace instead of a workspace */
   tab?: NewTabTarget | null;
   onClose: () => void;
-  /** `agentStarted`: the pane runs the agent asked for, so it opens in an agent's lens */
-  onCreated: (paneId: string, agentStarted: boolean) => void;
+  /**
+   * `agentStarted`: the pane runs the agent asked for, so it opens in an agent's lens; `messageWaits`: the
+   * bridge queued the first message for the agent's first ready turn, or its text was kept in the chat's
+   * message box when it was not queued, so the pane opens in the chat lens, where it shows
+   */
+  onCreated: (paneId: string, agentStarted: boolean, messageWaits?: boolean) => void;
   /** fields a link fills for this opening (`?new=`, lib/deepLink.ts); an agent herdr does not offer is left out */
   prefill?: DialogFields | null;
   /** what the fields say, a moment after they change, for the address */
@@ -52,6 +63,8 @@ export interface DialogFields {
 
 /** how long the fields rest before the address follows them: Safari refuses a burst of history writes */
 const DRAFT_MS = 400;
+/** how long the agent and folder rest before their skills are asked for: a path is typed one key at a time */
+const SKILLS_MS = 300;
 /** recent folders offered: one row a phone swipes sideways; a wider screen fits what one row holds and lists the rest under "+N" */
 const RECENT_FOLDERS_SHOWN = 8;
 
@@ -60,23 +73,53 @@ function directoryBasename(value: string): string {
   return trimmed.split("/").pop() || value;
 }
 
+/** The skills among an agent's commands, as chips the first message takes: `$name`, `@name` or `/name`. */
+function skillRows(commands: readonly SlashCommand[]): SlashCommand[] {
+  return commands.filter((command) => command.source === "skill" && command.visibility !== "terminal");
+}
+
+const skillToken = (skill: SlashCommand): string => `${skill.trigger ?? "/"}${skill.name}`;
+
+/** `token` at `at` in `text`, a space on each side where it meets a word; the caret lands after it. */
+export function insertToken(text: string, at: number, token: string): { text: string; caret: number } {
+  const before = text.slice(0, at);
+  const after = text.slice(at);
+  const lead = before !== "" && !/\s$/.test(before) ? " " : "";
+  const trail = after === "" || !/^\s/.test(after) ? " " : "";
+  const head = `${before}${lead}${token}${trail}`;
+  return { text: `${head}${after}`.slice(0, MAX_COMPOSER_CHARS), caret: Math.min(head.length, MAX_COMPOSER_CHARS) };
+}
+
 export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [] }: NewSessionDialogProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
-  const { createTab, createWorkspace, fetchAgentKinds } = useMachineApi();
+  const { createTab, createWorkspace, fetchAgentKinds, fetchAgentCommands } = useMachineApi();
+  const machineSessions = useMachineSessions();
   const [agents, setAgents] = useState<AgentKind[]>([]);
   const [agentKind, setAgentKind] = useState(rememberedAgent);
   const [cwd, setCwd] = useState(defaultCwd ?? "");
   const [name, setName] = useState("");
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [prompt, setPrompt] = useState("");
+  /** the picked agent's skills in the folder, once listed; null while none were asked for or the answer is on its way */
+  const [skills, setSkills] = useState<{ rows: SlashCommand[]; note: string | null } | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<UserError | null>(null);
   const [createdPaneId, setCreatedPaneId] = useState<string | null>(null);
+  /** the made pane runs the agent asked for: Open shows it in the agent's lens */
+  const [createdStarted, setCreatedStarted] = useState(false);
+  /** the first message was not queued and waits in the made pane's chat box: Open shows the chat */
+  const [createdKept, setCreatedKept] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [recentFolders, setRecentFolders] = useState(() => recentDirectories.read(machineId));
   // folders kept before worktrees and temporary folders were left out are left out here too
   const shownFolders = recentFolders.filter((path) => !passingFolder(path, worktrees)).slice(0, RECENT_FOLDERS_SHOWN);
   const firstFieldRef = useRef<HTMLButtonElement>(null);
+  const promptField = useRef<HTMLTextAreaElement>(null);
+  // one Start at a time, whatever the fields' disabled state has rendered yet: a double tap sends one create
+  const guard = useRef(inFlightGuard());
   // a path longer than its field is shown from its end, where the folder's name is, whenever it is
   // set for the user (the last folder, a pick from Browse or a recent chip) and when the field is
   // left; typing keeps the caret in view by itself
@@ -101,9 +144,15 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     const filled = prefillRef.current;
     setCwd(filled?.cwd ?? defaultCwdRef.current ?? "");
     setName(filled?.name ?? "");
+    setModel("");
+    setEffort("");
+    setPrompt("");
+    setSkills(null);
     setError(null);
     setPending(false);
     setCreatedPaneId(null);
+    setCreatedStarted(false);
+    setCreatedKept(false);
     setBrowsing(false);
     setRecentFolders(recentDirectories.read(machineId));
     const remembered = rememberedAgent();
@@ -131,6 +180,31 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     return () => window.clearTimeout(timer);
   }, [open, onDraft, cwd, name, agentKind]);
 
+  // the skills the picked agent would offer in the folder, before any process exists (GET /api/agent/commands)
+  const skillFolder = tab ? tab.cwd : cwd.trim() || null;
+  useEffect(() => {
+    if (!open || agentKind === "") return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void fetchAgentCommands(agentKind, skillFolder)
+        .then((commands) => {
+          if (!cancelled) setSkills({ rows: skillRows(commands), note: null });
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          // a folder not there yet lists nothing; a PC whose bridge is from before the route cannot list
+          const note = reason instanceof ApiError && reason.code === "invalid_cwd" ? t("Skills are listed once the directory exists.")
+            : reason instanceof ApiError && reason.status === 404 ? t("This PC's bridge does not list skills yet.")
+              : userErrorMessage(reason).message;
+          setSkills({ rows: [], note });
+        });
+    }, SKILLS_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, agentKind, skillFolder]);
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -146,35 +220,91 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   if (!open) return null;
 
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
+  const agentLabel = selectedAgent?.label ?? agentKind;
   const pendingLabel = selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
   const fieldsDisabled = pending || createdPaneId !== null;
+  const can = launchCapabilities(agentKind);
+  const launched = newSessionLaunch({ agent: agentKind, model, effort, prompt }, settings);
+  const fault = "fault" in launched ? launched.fault : null;
+  const launch = "fault" in launched ? null : launched;
+  const suggestions = modelSuggestions(agentKind);
+  // what the picker's rows say each launch takes: only the agents whose command line takes a model and a level
+  const pickerHints = Object.fromEntries(agents.flatMap((agent) => {
+    const takes = launchCapabilities(agent.kind);
+    return takes.model && takes.efforts.length > 0 ? [[agent.kind, t("model, effort")]] : [];
+  }));
+
+  const pickAgent = (kind: string): void => {
+    setAgentKind(kind);
+    setSkills(null);
+    // a choice the next agent's launch does not take goes back to the agent's own; a model names one agent's models
+    const next = launchCapabilities(kind);
+    if (!next.model || kind !== agentKind) setModel("");
+    if (!next.efforts.includes(effort)) setEffort("");
+  };
+
+  const insertSkill = (skill: SlashCommand): void => {
+    const field = promptField.current;
+    const at = field !== null && document.activeElement === field ? field.selectionEnd : prompt.length;
+    const next = insertToken(prompt, at, skillToken(skill));
+    // committed now and the caret placed in the same task, as the composer's completions are: a
+    // placement deferred to the next frame would land behind a key typed right after the tap
+    flushSync(() => setPrompt(next.text));
+    const box = promptField.current;
+    if (box === null) return;
+    box.focus();
+    box.setSelectionRange(next.caret, next.caret);
+  };
 
   const startWorkspace = async (directory: string): Promise<void> => {
-    if (pending) return;
-    if (createdPaneId !== null) { onCreated(createdPaneId, false); return; }
+    if (pending || guard.current.busy()) return;
+    if (createdPaneId !== null) { onCreated(createdPaneId, createdStarted, createdKept); return; }
+    // a combination the launch does not take: Start is disabled for it, and an Enter in a field sends nothing
+    if (launch === null) return;
     setPending(true);
     setError(null);
-    try {
+    // a tab keeps the workspace's folder, which the dialog shows and does not ask for. The first message of an
+    // agent whose command line does not take it rides on this request: the bridge queues it for the agent's first
+    // ready turn and types it through this page's connection, so this page never types it itself
+    const request = createRequest({ tab, directory, name }, launch, machineSessions?.peek(machineId)?.connection ?? null);
+    const started = startNewSession(guard.current, request, async (body) => {
       rememberAgent(agentKind);
-      const agent = launchAgent(agentKind, settings);
-      // a tab keeps the workspace's folder, which the dialog shows and does not ask for
-      const result = tab
-        ? await createTab({ workspace_id: tab.workspaceId, cwd: tab.cwd, label: name.trim() || null, agent })
-        : await createWorkspace({ cwd: directory.trim() || null, label: name.trim() || null, agent });
+      return tab ? await createTab({ ...body, workspace_id: tab.workspaceId }) : await createWorkspace(body);
+    });
+    if (started === null) { setPending(false); return; }
+    try {
+      const result = await started;
       if (agentKind && !result.agent_started && result.error?.message) {
         setPending(false);
         // the workspace exists: say so plainly, keep the PC's own words beneath, and Open it rather than make another
-        setError({ message: t("The workspace opened, but {agent} did not start. Check that it is installed on the PC, then open it again.", { agent: selectedAgent?.label ?? agentKind }), detail: result.error.message });
+        setError({ message: t("The workspace opened, but {agent} did not start. Check that it is installed on the PC, then open it again.", { agent: agentLabel }), detail: result.error.message });
         setCreatedPaneId(result.pane_id);
         return;
       }
       if (!tab && (!agentKind || result.agent_started)) {
         setRecentFolders(recentDirectories.remember(machineId, [directory.trim()], true));
       }
+      const outcome = firstMessageOutcome(request, result);
+      if (outcome.kind === "not_queued") {
+        // the agent runs without its first message: the text waits in the new tab's message box, and the dialog says so
+        composerDrafts.set(`herdr-web-ui:composer-draft:${paneStorageId(machineId, result.pane_id)}`, request.first_message!);
+        setPending(false);
+        setError({
+          message: outcome.error
+            ? t("{agent} started, but its first message was not queued. It is in the new tab's message box: open the tab and send it.", { agent: agentLabel })
+            : t("{agent} started, but this PC's bridge does not take a first message yet. It is in the new tab's message box: open the tab and send it.", { agent: agentLabel }),
+          detail: outcome.error?.message ?? null,
+        });
+        setCreatedPaneId(result.pane_id);
+        setCreatedStarted(true);
+        setCreatedKept(true);
+        return;
+      }
+      const messageWaits = outcome.kind === "queued";
       // the dialog closes on this: left pending, its next opening would start a frame with the
       // fields disabled and Escape ignored, until the open effect's reset has rendered
       setPending(false);
-      onCreated(result.pane_id, agentKind !== "" && result.agent_started !== false);
+      onCreated(result.pane_id, agentKind !== "" && result.agent_started !== false, messageWaits);
     } catch (reason: unknown) {
       setPending(false);
       if (reason instanceof ApiError && reason.code === "invalid_cwd") setError({ message: t("Directory not found"), detail: null });
@@ -185,6 +315,10 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   const closeFromScrim = (event: MouseEvent<HTMLDivElement>): void => {
     if (!pending && event.target === event.currentTarget) onClose();
   };
+
+  const promptHint = launch?.prompt?.via === "positional" || (prompt.trim() === "" && can.positionalPrompt)
+    ? t("Sent to {agent} as it starts.", { agent: agentLabel })
+    : t("Queued for {agent}'s first turn: sent once it is ready, shown as a pending message until then.", { agent: agentLabel });
 
   return (
     <div className="modal-scrim new-session-scrim" onMouseDown={closeFromScrim}>
@@ -198,7 +332,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         <div className="modal-body">
           <div className="field">
             <span className="field-label" id="new-session-agent">{t("Agent")}</span>
-            <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" onChange={setAgentKind} />
+            <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" hints={pickerHints} onChange={pickAgent} />
           </div>
           {tab ? (
             <div className="field">
@@ -244,12 +378,81 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             />
             <span className="field-hint">{t(tab ? "Tab name (optional)" : "Optional workspace label")}</span>
           </label>
+          {/* the launch's own choices, only where the agent's command line takes them (lib/agentLaunchMode.ts) */}
+          {(can.model || can.efforts.length > 0) && <div className="new-session-launch">
+            {can.model && <div className="field">
+              <label className="field-label" htmlFor="new-session-model">{t("Model")}</label>
+              <input
+                id="new-session-model"
+                className="input"
+                value={model}
+                list={suggestions.length > 0 ? "new-session-models" : undefined}
+                disabled={fieldsDisabled}
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder={t("Agent default")}
+                aria-invalid={fault === "model" || undefined}
+                aria-describedby="new-session-model-hint"
+                onChange={(event) => setModel(event.target.value)}
+              />
+              {suggestions.length > 0 && <datalist id="new-session-models">{suggestions.map((alias) => <option key={alias} value={alias} />)}</datalist>}
+              <span id="new-session-model-hint" className={`field-hint${fault === "model" ? " new-session-error" : ""}`} role={fault === "model" ? "alert" : undefined}>
+                {fault === "model" ? t("One model name, without spaces.") : t("Empty: the agent's own model.")}
+              </span>
+            </div>}
+            {can.efforts.length > 0 && <div className="field">
+              <label className="field-label" htmlFor="new-session-effort">{t("Effort")}</label>
+              <select id="new-session-effort" className="select" value={effort} disabled={fieldsDisabled} aria-describedby="new-session-effort-hint" onChange={(event) => setEffort(event.target.value)}>
+                <option value="">{t("Agent default")}</option>
+                {can.efforts.map((level) => <option key={level} value={level}>{level}</option>)}
+              </select>
+              <span id="new-session-effort-hint" className="field-hint">{t("Levels depend on the model.")}</span>
+            </div>}
+          </div>}
+          {agentKind !== "" && <div className="field">
+            <label className="field-label" htmlFor="new-session-prompt">{t("First message")}</label>
+            <textarea
+              ref={promptField}
+              id="new-session-prompt"
+              className="input new-session-prompt"
+              value={prompt}
+              rows={3}
+              maxLength={MAX_COMPOSER_CHARS}
+              disabled={fieldsDisabled}
+              placeholder={t("Optional")}
+              aria-describedby="new-session-prompt-hint"
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+            <span id="new-session-prompt-hint" className="field-hint">{promptHint}</span>
+            {/* the agent's skills in the folder, before it runs: a tap puts the skill's token in the message */}
+            {skills !== null && (skills.rows.length > 0 || skills.note !== null) && <div className="new-session-skills-field">
+              <span className="field-label" id="new-session-skills">{t("Skills")}</span>
+              {skills.rows.length > 0 && <div className="new-session-skills" role="group" aria-labelledby="new-session-skills">
+                {skills.rows.map((skill) => (
+                  <button
+                    type="button"
+                    key={skillToken(skill)}
+                    className="btn new-session-skill-chip"
+                    disabled={fieldsDisabled}
+                    title={skill.description}
+                    aria-label={t("Add {skill} to the message", { skill: skillToken(skill) })}
+                    onClick={() => insertSkill(skill)}
+                  >
+                    {skillToken(skill)}
+                  </button>
+                ))}
+              </div>}
+              {skills.note !== null && <span className="field-hint">{skills.note}</span>}
+            </div>}
+            {skills !== null && skills.rows.length === 0 && skills.note === null && <span className="field-hint">{t("No skills for {agent} in this folder.", { agent: agentLabel })}</span>}
+          </div>}
           {pending && <p className="new-session-note" role="status">{pendingLabel}</p>}
           {error && <p className="field-hint new-session-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
+          <button type="submit" className="btn btn-primary" disabled={pending || fault !== null}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
         </footer>
       </form>
     </div>

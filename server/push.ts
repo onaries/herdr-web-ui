@@ -48,7 +48,7 @@ import {
   shouldNotifyStatus,
   statusNotificationBody,
 } from "../shared/notify-policy.ts";
-import { badRequest, jsonResponse } from "./http.ts";
+import { badRequest, jsonResponse, setRequestRoute } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
@@ -509,6 +509,7 @@ function subscriptionGone(): Response {
 }
 
 export async function handlePushRequest(request: Request, pathname: string, push: PushService, deviceId: string | null | undefined): Promise<Response | null> {
+  if (pathname === "/api/push" || pathname === "/api/push/subscribe" || pathname === "/api/push/test") setRequestRoute(pathname);
   const route = `${request.method} ${pathname}`;
   if (route === "GET /api/push") return jsonResponse({ public_key: push.publicKey() });
   if (route !== "POST /api/push/subscribe" && route !== "DELETE /api/push/subscribe" && route !== "POST /api/push/test") {

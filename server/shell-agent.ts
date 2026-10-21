@@ -60,10 +60,11 @@ const processInfo = (paneId: string) => herdrRpc<ProcessInfo>("pane.process_info
 
 /**
  * Types the agent's absolute path and args into the pane's shell and resolves once
- * `kind` is its foreground process. The path is the one `/api/agents` discovered,
- * so the offer and the start agree whatever the pane shell's PATH says.
+ * `kind` is its foreground process, with that process's pid; null on Windows, where it is
+ * found among the shell's descendants and not in front. The path is the one `/api/agents`
+ * discovered, so the offer and the start agree whatever the pane shell's PATH says.
  */
-export async function startShellAgent(kind: string, paneId: string, args: string[] = [], options: { command?: string; timeoutMs?: number } = {}): Promise<void> {
+export async function startShellAgent(kind: string, paneId: string, args: string[] = [], options: { command?: string; timeoutMs?: number } = {}): Promise<number | null> {
   const isProcess = SHELL_AGENTS[kind];
   if (!isProcess) throw new Error(`${kind} is not a shell-started agent`);
   const windows = process.platform === "win32";
@@ -85,10 +86,11 @@ export async function startShellAgent(kind: string, paneId: string, args: string
   const deadline = Date.now() + (options.timeoutMs ?? 60_000);
   while (Date.now() < deadline) {
     const info = await processInfo(paneId);
-    if (info?.process_info?.foreground_processes?.some((entry) => kind === "omo" ? omoProcessIdentity(entry, "", process.env["HOME"] ?? "") !== null : isProcess(entry.argv ?? []))) return;
+    const started = info?.process_info?.foreground_processes?.find((entry) => kind === "omo" ? omoProcessIdentity(entry, "", process.env["HOME"] ?? "") !== null : isProcess(entry.argv ?? []));
+    if (started) return started.pid;
     const shellPid = info?.process_info?.shell_pid;
     // the table query never outlasts what is left of the start's own time
-    if (windows && typeof shellPid === "number" && descendantArgv(await windowsProcessTable(Math.max(500, Math.min(10_000, deadline - Date.now()))), shellPid).some(isProcess)) return;
+    if (windows && typeof shellPid === "number" && descendantArgv(await windowsProcessTable(Math.max(500, Math.min(10_000, deadline - Date.now()))), shellPid).some(isProcess)) return null;
     await Bun.sleep(250);
   }
   throw new Error(`${kind} did not start in the pane`);

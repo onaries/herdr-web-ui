@@ -1,15 +1,23 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readlinkSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Socket } from "node:net";
 
 import {
+  forgetOpenCodeService,
+  listOpenCodeCatalog,
   listPendingQuestionForms,
+  openCodeHasSession,
+  openCodeService,
   opencodeAuthHeader,
   opencodeStateDir,
+  parseOpenCodeEvent,
   readOpenCodeService,
   replyOpenCodeForm,
+  subscribeOpenCodeEvents,
+  verifyOpenCodeService,
+  type OpenCodeEvent,
   type OpenCodeServiceConfig,
 } from "./opencode-service.ts";
 
@@ -193,6 +201,212 @@ describe("opencode-service", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("reads the version service.json records", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "opencode-service-test-"));
+    try {
+      writeFileSync(join(tmp, "service.json"), JSON.stringify({ url: "http://127.0.0.1:49374", pid: process.pid, password: "secret", version: "2.0.32" }));
+      expect(readOpenCodeService(tmp)?.version).toBe("2.0.32");
+      writeFileSync(join(tmp, "service.json"), JSON.stringify({ url: "http://127.0.0.1:49374", pid: process.pid, password: "secret", version: 2 }));
+      expect(readOpenCodeService(tmp)).toBeNull();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies the process at the URL by the pid and version service.json names", async () => {
+    let info: Record<string, unknown> = { version: "2.0.32", pid: process.pid, urls: [], paths: { tmp: "/tmp" } };
+    await withService((request) => {
+      expect(new URL(request.url).pathname).toBe("/api/info");
+      expect(atob((request.headers.get("authorization") ?? "").slice(6))).toBe("opencode:test-pass");
+      return Response.json(info);
+    }, async (config) => {
+      expect(await verifyOpenCodeService(config)).toBe("2.0.32");
+      expect(await verifyOpenCodeService({ ...config, version: "2.0.32" })).toBe("2.0.32");
+      expect(await verifyOpenCodeService({ ...config, version: "2.0.31" })).toBeNull();
+      info = { ...info, pid: process.pid + 1 };
+      expect(await verifyOpenCodeService(config)).toBeNull();
+    });
+  });
+
+  it("ignores a service.json whose pid is not the process answering at its URL", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "opencode-service-test-"));
+    const service = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ version: "2.0.32", pid: 1, urls: [], paths: { tmp: "/tmp" } }) });
+    try {
+      forgetOpenCodeService();
+      writeFileSync(join(tmp, "service.json"), JSON.stringify({ url: service.url.origin, pid: process.pid, password: "fixture", version: "2.0.32" }));
+      expect(await openCodeService(tmp)).toBeNull();
+    } finally {
+      service.stop(true);
+      forgetOpenCodeService();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("knows a session only when the service holds it", async () => {
+    await withService((request) => {
+      const id = decodeURIComponent(new URL(request.url).pathname.split("/").at(-1)!);
+      return id === "ses_held" ? Response.json({ data: { id } }) : Response.json({ _tag: "SessionNotFoundError" }, { status: 404 });
+    }, async (config) => {
+      expect(await openCodeHasSession(config, "ses_held")).toBe(true);
+      expect(await openCodeHasSession(config, "ses_other")).toBe(false);
+    });
+  });
+
+  it("lists commands and skills for the pane's directory in the pinned shapes", async () => {
+    const seen: string[] = [];
+    let skills: unknown[] = [
+      { id: "effect", name: "effect", description: "Apply Effect", path: "/home/u/.config/opencode/skills/effect/SKILL.md", content: "x" },
+      { id: "bad id", name: "x", path: "/p", content: "" },
+    ];
+    await withService((request) => {
+      const url = new URL(request.url);
+      seen.push(`${url.pathname}?${url.searchParams.get("location[directory]")}`);
+      const directory = url.searchParams.get("location[directory]");
+      const data = url.pathname === "/api/command" ? [{ name: "review", description: "review changes" }, { name: "shipit" }, { description: "no name" }] : skills;
+      return Response.json({ location: { directory }, data });
+    }, async (config) => {
+      expect(await listOpenCodeCatalog(config, "/work/proj")).toEqual({
+        commands: [{ name: "review", description: "review changes" }, { name: "shipit" }],
+        skills: [{ id: "effect", name: "effect", description: "Apply Effect", path: "/home/u/.config/opencode/skills/effect/SKILL.md" }],
+      });
+      expect(seen.sort()).toEqual(["/api/command?/work/proj", "/api/skill?/work/proj"]);
+      // a location still loading answers no skills at all, not even the bundled ones
+      skills = [];
+      expect(await listOpenCodeCatalog(config, "/work/proj")).toBeNull();
+    });
+    await withService(() => Response.json({ location: { directory: "/elsewhere" }, data: [] }), async (config) => {
+      expect(await listOpenCodeCatalog(config, "/work/proj")).toBeNull();
+    });
+  });
+
+  it("parses event blocks and ignores heartbeats and torn data", () => {
+    expect(parseOpenCodeEvent(": heartbeat")).toBeNull();
+    expect(parseOpenCodeEvent("data: {\"type\":")).toBeNull();
+    expect(parseOpenCodeEvent(`data: ${JSON.stringify({ id: "evt_1", created: 5, type: "skill.updated", location: { directory: "/p" }, data: {} })}`))
+      .toEqual({ type: "skill.updated", created: 5, directory: "/p", data: {} });
+    expect(parseOpenCodeEvent(`data: ${JSON.stringify({ type: "session.skill.activated", created: 7, data: { sessionID: "ses_1", id: "effect" } })}`))
+      .toEqual({ type: "session.skill.activated", created: 7, data: { sessionID: "ses_1", id: "effect" } });
+  });
+
+  it("streams events, and reconnects after the stream ends so the caller re-reads", async () => {
+    const opened = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const received = Promise.withResolvers<OpenCodeEvent>();
+    const closed = Promise.withResolvers<void>();
+    let connections = 0;
+    const service = Bun.serve({
+      port: 0, hostname: "127.0.0.1",
+      fetch: () => {
+        const first = connections++ === 0;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode("data: {\"type\":\"server.connected\",\"data\":{}}\n\n: heartbeat\n\n"));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "command.updated", created: 1, location: { directory: "/p" }, data: {} })}\n\n`));
+            if (first) controller.close();
+          },
+        }), { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const events: string[] = [];
+    let opens = 0;
+    const subscription = subscribeOpenCodeEvents({ baseUrl: service.url.origin, port: service.port ?? 0, pid: process.pid, password: "fixture" }, {
+      onOpen: () => opened[opens++]?.resolve(),
+      onEvent: (event) => { events.push(event.type); if (event.type === "command.updated") received.resolve(event); },
+      onClose: () => closed.resolve(),
+    });
+    try {
+      await opened[0]!.promise;
+      expect((await received.promise).directory).toBe("/p");
+      await closed.promise;
+      await opened[1]!.promise;
+      expect(events.slice(0, 2)).toEqual(["server.connected", "command.updated"]);
+    } finally {
+      subscription.close();
+      service.stop(true);
+    }
+  }, 5_000);
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("reads service.json again only when its stat changes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "opencode-service-stat-"));
+    const file = join(root, "service.json");
+    await withService((request) => new URL(request.url).pathname === "/api/info" ? Response.json({ version: "2.0.32", pid: process.pid }) : new Response(null, { status: 404 }), async (config) => {
+      writeFileSync(file, JSON.stringify({ url: config.baseUrl, pid: process.pid, password: "stat-pass" }));
+      try {
+        forgetOpenCodeService();
+        expect((await openCodeService(root))?.version).toBe("2.0.32");
+        // unreadable now, with the same size and mtime (chmod changes neither): a lookup that read it again would find no service
+        const { mtime } = statSync(file);
+        chmodSync(file, 0o000);
+        forgetOpenCodeService();
+        expect((await openCodeService(root))?.version).toBe("2.0.32");
+        // a changed file is read again
+        utimesSync(file, mtime, new Date(mtime.getTime() + 2_000));
+        forgetOpenCodeService();
+        expect(await openCodeService(root)).toBeNull();
+      } finally {
+        chmodSync(file, 0o600);
+        forgetOpenCodeService();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("verifies service.json on Windows only for a caller that asks for it", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const root = mkdtempSync(join(tmpdir(), "opencode-windows-"));
+    await withService((request) => new URL(request.url).pathname === "/api/info" ? Response.json({ version: "2.0.32", pid: process.pid }) : new Response(null, { status: 404 }), async (config) => {
+      writeFileSync(join(root, "service.json"), JSON.stringify({ url: config.baseUrl, pid: process.pid, password: "windows-pass" }));
+      Object.defineProperty(process, "platform", { value: "win32" });
+      try {
+        forgetOpenCodeService();
+        // the catalog and its observers keep scan rows on Windows
+        expect(await openCodeService(root)).toBeNull();
+        forgetOpenCodeService();
+        // the question card and its answer: the same HTTP identity check, on Windows too
+        expect((await openCodeService(root, undefined, { onWindows: true }))?.version).toBe("2.0.32");
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+        forgetOpenCodeService();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("reconnects after dropping a stream that outgrows its buffer", async () => {
+    const opened = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const closed = Promise.withResolvers<void>();
+    let connections = 0;
+    const service = Bun.serve({
+      port: 0, hostname: "127.0.0.1", idleTimeout: 0,
+      fetch: () => {
+        const first = connections++ === 0;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode("data: {\"type\":\"server.connected\",\"data\":{}}\n\n"));
+            // one event that never ends, past the 4 MiB buffer; the stream itself stays open
+            if (first) controller.enqueue(encoder.encode(`data: ${"x".repeat(5 * 1024 * 1024)}`));
+          },
+        }), { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    let opens = 0;
+    const subscription = subscribeOpenCodeEvents({ baseUrl: service.url.origin, port: service.port ?? 0, pid: process.pid, password: "fixture" }, {
+      onOpen: () => opened[opens++]?.resolve(),
+      onEvent: () => {},
+      onClose: () => closed.resolve(),
+    });
+    try {
+      await opened[0]!.promise;
+      await closed.promise;
+      await opened[1]!.promise;
+      expect(connections).toBe(2);
+    } finally {
+      subscription.close();
+      service.stop(true);
+    }
+  }, 5_000);
 
   it("formats Basic auth header correctly", () => {
     expect(atob(opencodeAuthHeader("secret-pass").slice(6))).toBe("opencode:secret-pass");

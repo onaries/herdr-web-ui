@@ -36,6 +36,27 @@ function setup(machineId = "local", sharedStore?: PendingMessageStore) {
 function start(session: MachineSession, socket: FakeSocket): void { session.connect(); socket.receive(snapshot); }
 
 describe("PC connection ownership", () => {
+  it("knows the PC's id for the open connection from its snapshot, and none once it drops", () => {
+    const { session, socket } = setup();
+    expect(session.connection).toBeNull();
+    session.connect();
+    socket.receive({ ...snapshot, connection: "c1" } as ServerMessage);
+    expect(session.connection).toBe("c1");
+    socket.disconnect();
+    expect(session.connection).toBeNull();
+    // an older bridge names none
+    session.connect();
+    socket.receive(snapshot);
+    expect(session.connection).toBeNull();
+  });
+  it("lends its sessions to a peek without making one", () => {
+    const made: string[] = [];
+    const registry = new MachineSessionRegistry((machineId) => { made.push(machineId); return setup(machineId).session; });
+    expect(registry.peek("local")).toBeUndefined();
+    const session = registry.get("local");
+    expect(registry.peek("local")).toBe(session);
+    expect(made).toEqual(["local"]);
+  });
   it("creates no network connection until explicitly connected and replays only the current role", () => {
     const { session, socket } = setup();
     expect(socket.connects).toBe(0);

@@ -32,6 +32,33 @@ export function processStartedAt(pid: number): number | null {
   }
 }
 
+/** Whether `pid` names a running process: signal 0 checks without sending anything, and a refusal means it runs. */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * processStartUpperBound without holding the event loop: on macOS `ps` runs as a child that is awaited.
+ * Where no start time is known (Windows), null.
+ */
+export async function processStartUpperBoundAsync(pid: number): Promise<number | null> {
+  if (process.platform === "linux") return processStartUpperBound(pid);
+  if (process.platform !== "darwin") return null;
+  try {
+    const ps = Bun.spawn(["/bin/ps", "-o", "etime=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
+    const [text, code] = await Promise.all([new Response(ps.stdout).text(), ps.exited]);
+    const elapsed = code === 0 ? parseElapsed(text) : null;
+    return elapsed === null ? null : Date.now() - elapsed * 1000 + 1000;
+  } catch {
+    return null;
+  }
+}
+
 /** An upper bound for comparing a new thread's timestamp, without btime's whole-second loss. */
 export function processStartUpperBound(pid: number): number | null {
   if (process.platform !== "linux") {

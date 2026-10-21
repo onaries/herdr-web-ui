@@ -14,6 +14,18 @@ export const CODEX_CONTINUE_HINT_RE = /press\s+enter\s+to\s+continue/i;
 // prompt: collapsed ("? 2 questions · 8s" / "alt+↑ to answer") or open on one question
 export const CODEX_QUEUE_HEADER_RE = /^(?:•\s*)?Queued follow-up inputs$/;
 
+/** Codex appends background-terminal counts to its working row, clipped in narrow panes. */
+export const CODEX_WORKING_RE = /^[•◦].*\((?:\d+[hms]\s*)+•\s*esc to interrupt\)(?:$|\s*·\s*\d+ background\b)/;
+
+/** The warning on the right can clip the shortcuts hint on the left without an ellipsis. */
+export function codexFooterLine(line: string): boolean {
+  if (/^(?:\S+\s+(?:default|minimal|none|low|medium|high|xhigh|max|ultra)\s*·|\d+% context left\b|⚠\s*\d+\s*warnings?\b|(?:←[^·]*·\s*)?\?\s*for shortcuts\b)/i.test(line)) return true;
+  const [hint, warning] = line.split(/\s{2,}(?=⚠)/);
+  return hint !== undefined && hint.length >= 6 && warning !== undefined
+    && /^⚠\s*\d+\s*warnings?\s*·\s*f2 to view$/.test(warning)
+    && ["? for shortcuts", "← for agents · ? for shortcuts"].some((full) => full.startsWith(hint));
+}
+
 const CODEX_QUEUE_POSITION_RE = /^(\d+) of (\d+)$/;
 
 // Codex's `/model` lists, by the footer of the row under the cursor (its keymap's own words): a

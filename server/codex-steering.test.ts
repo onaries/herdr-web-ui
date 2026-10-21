@@ -39,6 +39,15 @@ describe("Codex's live steering buffer", () => {
     expect(codexSteeringPending(live("  ↳ send this now\n"), "send this now")).toBe(true);
   });
 
+  it("recognizes a clipped shortcuts hint beside background terminals", () => {
+    const screen = live("  ↳ send this now\n")
+      .replace("esc to interrupt)", "esc to interrupt) · 1 background termin…")
+      .replace(/for shortcuts +⚠/, "for shor  ⚠");
+    expect(codexSteeringPending(screen, "send this now")).toBe(true);
+    expect(codexSteeringPending(screen, "another message")).toBe(false);
+    expect(codexSteeringPending(screen + "Select model\n", "send this now")).toBe(false);
+  });
+
   it("matches the submitted message however Codex wrapped or cut it", () => {
     expect(codexSteeringPending(live("  ↳ older entry\n  ↳ second message that wraps around\n    the narrow pane\n"), "second message that wraps around the narrow pane")).toBe(true);
     expect(codexSteeringPending(live("  ↳ line one\n    line two\n"), "line one\nline two")).toBe(true);

@@ -1,8 +1,16 @@
 diff --git a/src/browser/Terminal.ts b/src/browser/Terminal.ts
-index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a4044475512088d40 100644
+index 0e945aa..1e101cd 100644
 --- a/src/browser/Terminal.ts
 +++ b/src/browser/Terminal.ts
-@@ -339,7 +339,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -120,6 +120,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+ 
+   public viewport: IViewport | undefined;
+   private _compositionHelper: ICompositionHelper | undefined;
++  private _textAreaViewportBounds: { left: number; top: number; right: number; bottom: number } | undefined;
+   private _accessibilityManager: MutableDisposable<AccessibilityManager> = this.register(new MutableDisposable());
+ 
+   private readonly _onCursorMove = this.register(new EventEmitter<void>());
+@@ -339,7 +340,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
        }
        copyHandler(event, this._selectionService!);
      }));
@@ -14,7 +22,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
      this.register(addDisposableDomListener(this.textarea!, 'paste', pasteHandlerWrapper));
      this.register(addDisposableDomListener(this.element!, 'paste', pasteHandlerWrapper));
  
-@@ -381,6 +384,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -381,6 +385,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
      this.register(addDisposableDomListener(this.textarea!, 'compositionstart', () => this._compositionHelper!.compositionstart()));
      this.register(addDisposableDomListener(this.textarea!, 'compositionupdate', (e: CompositionEvent) => this._compositionHelper!.compositionupdate(e)));
      this.register(addDisposableDomListener(this.textarea!, 'compositionend', () => this._compositionHelper!.compositionend()));
@@ -22,7 +30,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
      this.register(addDisposableDomListener(this.textarea!, 'input', (ev: InputEvent) => this._inputEvent(ev), true));
      this.register(this.onRender(() => this._compositionHelper!.updateCompositionElements()));
    }
-@@ -465,7 +469,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -465,7 +470,10 @@ export class Terminal extends CoreTerminal implements ITerminal {
      this._instantiationService.setService(ICoreBrowserService, this._coreBrowserService);
  
      this.register(addDisposableDomListener(this.textarea, 'focus', (ev: FocusEvent) => this._handleTextAreaFocus(ev)));
@@ -34,7 +42,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
      this._helperContainer.appendChild(this.textarea);
  
      this._charSizeService = this._instantiationService.createInstance(CharSizeService, this._document, this._helperContainer);
-@@ -485,6 +492,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -485,6 +493,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
      this._compositionView = this._document.createElement('div');
      this._compositionView.classList.add('composition-view');
      this._compositionHelper = this._instantiationService.createInstance(CompositionHelper, this.textarea, this._compositionView);
@@ -42,10 +50,31 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
      this._helperContainer.appendChild(this._compositionView);
  
      this._mouseService = this._instantiationService.createInstance(MouseService);
-@@ -887,7 +895,14 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -502,6 +511,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+     if (!this._renderService.hasRenderer()) {
+       this._renderService.setRenderer(this._createRenderer());
+     }
++    this._compositionHelper.setInputViewport(this._textAreaViewportBounds);
+ 
+     this.viewport = this._instantiationService.createInstance(Viewport, this._viewportElement, this._viewportScrollArea);
+     this.viewport.onRequestScrollLines(e => this.scrollLines(e.amount, e.suppressScrollEvent, ScrollSource.VIEWPORT)),
+@@ -511,6 +521,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+     this.register(this.onCursorMove(() => {
+       this._renderService!.handleCursorMove();
+       this._syncTextArea();
++      this._compositionHelper!.updateTextareaPosition();
+     }));
+     this.register(this.onResize(() => this._renderService!.handleResize(this.cols, this.rows)));
+     this.register(this.onBlur(() => this._renderService!.handleBlur()));
+@@ -887,7 +898,19 @@ export class Terminal extends CoreTerminal implements ITerminal {
      }
    }
  
++  public setTextAreaViewportBounds(bounds: { left: number; top: number; right: number; bottom: number } | undefined): void {
++    this._textAreaViewportBounds = bounds;
++    this._compositionHelper?.setInputViewport(bounds);
++  }
++
 +  /** Input from the embedder (an on-screen key bar's Esc, arrows, Tab, ^C) follows the syllable being typed. */
 +  public override input(data: string, wasUserInput: boolean = true): void {
 +    this._compositionHelper?.finishReplacement();
@@ -57,7 +86,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
      paste(data, this.textarea!, this.coreService, this.optionsService);
    }
  
-@@ -1006,9 +1021,16 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1006,9 +1029,16 @@ export class Terminal extends CoreTerminal implements ITerminal {
        return false;
      }
  
@@ -74,7 +103,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
      if (!shouldIgnoreComposition && !this._compositionHelper!.keydown(event)) {
        if (this.options.scrollOnUserInput && this.buffer.ybase !== this.buffer.ydisp) {
          this.scrollToBottom();
-@@ -1063,7 +1085,13 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1063,7 +1093,13 @@ export class Terminal extends CoreTerminal implements ITerminal {
      // If ctrl+c or enter is being sent, clear out the textarea. This is done so that screen readers
      // will announce deleted characters. This will not work 100% of the time but it should cover
      // most scenarios.
@@ -89,7 +118,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
        this.textarea!.value = '';
      }
  
-@@ -1170,10 +1198,11 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1170,10 +1206,11 @@ export class Terminal extends CoreTerminal implements ITerminal {
     * @param ev The input event to be handled.
     */
    protected _inputEvent(ev: InputEvent): boolean {
@@ -102,7 +131,7 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
        if (this._keyPressHandled) {
          return false;
        }
-@@ -1251,6 +1280,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
+@@ -1251,6 +1288,7 @@ export class Terminal extends CoreTerminal implements ITerminal {
     * using DECSTR (soft reset, CSI ! p) or RIS instead (hard reset, ESC c).
     */
    public reset(): void {
@@ -111,10 +140,10 @@ index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a40444755
       * Since _setup handles a full terminal creation, we have to carry forward
       * a few things that should not reset.
 diff --git a/src/browser/Types.d.ts b/src/browser/Types.d.ts
-index 9ebc55d96f328720dcb87cc31147c6d5a76ebebe..8ad922b9f033f878da81e81d33725c6613d92c3a 100644
+index 9ebc55d..208ea82 100644
 --- a/src/browser/Types.d.ts
 +++ b/src/browser/Types.d.ts
-@@ -36,6 +36,12 @@ export type CustomWheelEventHandler = (event: WheelEvent) => boolean;
+@@ -36,6 +36,14 @@ export type CustomWheelEventHandler = (event: WheelEvent) => boolean;
  export type LineData = CharData[];
  
  export interface ICompositionHelper {
@@ -124,11 +153,13 @@ index 9ebc55d96f328720dcb87cc31147c6d5a76ebebe..8ad922b9f033f878da81e81d33725c66
 +  takeCommitInsert(ev: InputEvent): boolean;
 +  finishReplacement(): void;
 +  passHangulKey(ev: KeyboardEvent): boolean;
++  setInputViewport(bounds: { left: number; top: number; right: number; bottom: number } | undefined): void;
++  updateTextareaPosition(): void;
    readonly isComposing: boolean;
    compositionstart(): void;
    compositionupdate(ev: CompositionEvent): void;
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b8d14002c 100644
+index 7542969..feb7264 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -6,6 +6,11 @@
@@ -143,7 +174,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
  
  interface IPosition {
    start: number;
-@@ -30,11 +35,16 @@ export class CompositionHelper {
+@@ -30,11 +35,17 @@ export class CompositionHelper {
     */
    private _compositionPosition: IPosition;
  
@@ -162,10 +193,11 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
 +  private _editAwaitingKey = false;
 +  /** Text whose insertion ended a replacement after its keydown was held back (keydown 229). */
 +  private _commitInsert: string | undefined;
++  private _inputViewportBounds: { left: number; top: number; right: number; bottom: number } | undefined;
  
    /**
     * Data already sent due to keydown event.
-@@ -50,17 +60,108 @@ export class CompositionHelper {
+@@ -50,17 +61,147 @@ export class CompositionHelper {
      @IRenderService private readonly _renderService: IRenderService
    ) {
      this._isComposing = false;
@@ -188,6 +220,45 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
 +    this._textarea.value = '';
 +    this._compositionView.textContent = '';
 +    this._compositionView.classList.remove('active');
++  }
++
++  public setInputViewport(bounds: { left: number; top: number; right: number; bottom: number } | undefined): void {
++    this._inputViewportBounds = bounds;
++    this.updateTextareaPosition();
++    this.updateCompositionElements(true);
++  }
++
++  public updateTextareaPosition(): void {
++    if (this._isComposing || !this._bufferService.buffer.isCursorInViewport) return;
++    const cursor = this._cursorPosition();
++    const cell = this._renderService.dimensions.css.cell;
++    const buffer = this._bufferService.buffer;
++    const width = cell.width * (buffer.lines.get(buffer.ybase + buffer.y)?.getWidth(Math.min(buffer.x, this._bufferService.cols - 1)) ?? 1);
++    const bounds = this._inputViewportBounds;
++    this._textarea.style.left = cursor.left + 'px';
++    this._textarea.style.top = cursor.top + 'px';
++    this._textarea.style.width = Math.max(1, bounds ? Math.min(width, bounds.right - cursor.left) : width) + 'px';
++    this._textarea.style.height = cell.height + 'px';
++    this._textarea.style.lineHeight = cell.height + 'px';
++  }
++
++  private _cursorPosition(): { left: number; top: number; offscreen: boolean } {
++    const cell = this._renderService.dimensions.css.cell;
++    const cursorX = Math.min(this._bufferService.buffer.x, this._bufferService.cols - 1);
++    const cursorLeft = cursorX * cell.width;
++    const cursorTop = this._bufferService.buffer.y * cell.height;
++    const bounds = this._inputViewportBounds;
++    if (!bounds || bounds.right <= bounds.left || bounds.bottom <= bounds.top) {
++      return { left: cursorLeft, top: cursorTop, offscreen: false };
++    }
++    const offscreen = cursorLeft < bounds.left || cursorLeft + cell.width > bounds.right
++      || cursorTop < bounds.top || cursorTop + cell.height > bounds.bottom;
++    if (!offscreen) return { left: cursorLeft, top: cursorTop, offscreen: false };
++    return {
++      left: Math.min(Math.max(cursorLeft, bounds.left), Math.max(bounds.left, bounds.right - cell.width)),
++      top: Math.min(Math.max(cursorTop, bounds.top), Math.max(bounds.top, bounds.bottom - cell.height)),
++      offscreen: true
++    };
 +  }
 +
 +  /** Safari #432: beforeinput supplies the pre-edit range; keydown 229 arrives AFTER input. */
@@ -276,7 +347,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
      this._compositionView.textContent = '';
      this._dataAlreadySent = '';
      this._compositionView.classList.add('active');
-@@ -71,9 +172,12 @@ export class CompositionHelper {
+@@ -71,9 +212,12 @@ export class CompositionHelper {
     * @param ev The event.
     */
    public compositionupdate(ev: Pick<CompositionEvent, 'data'>): void {
@@ -289,7 +360,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
        this._compositionPosition.end = this._textarea.value.length;
      }, 0);
    }
-@@ -83,6 +187,7 @@ export class CompositionHelper {
+@@ -83,6 +227,7 @@ export class CompositionHelper {
     * the handler.
     */
    public compositionend(): void {
@@ -297,7 +368,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
      this._finalizeComposition(true);
    }
  
-@@ -92,7 +197,24 @@ export class CompositionHelper {
+@@ -92,7 +237,24 @@ export class CompositionHelper {
     * @returns Whether the Terminal should continue processing the keydown event.
     */
    public keydown(ev: KeyboardEvent): boolean {
@@ -323,7 +394,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
        if (ev.keyCode === 229) {
          // Continue composing if the keyCode is the "composition character"
          return false;
-@@ -125,56 +247,45 @@ export class CompositionHelper {
+@@ -125,56 +287,45 @@ export class CompositionHelper {
     *   the command is executed.
     */
    private _finalizeComposition(waitForPropagation: boolean): void {
@@ -407,7 +478,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
    /**
     * Apply any changes made to the textarea after the current event chain is allowed to complete.
     * This should be called when not currently composing but a keydown event with the "composition
-@@ -183,7 +294,9 @@ export class CompositionHelper {
+@@ -183,7 +334,9 @@ export class CompositionHelper {
     */
    private _handleAnyTextareaChanges(): void {
      const oldValue = this._textarea.value;
@@ -417,8 +488,71 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b
        // Ignore if a composition has started since the timeout
        if (!this._isComposing) {
          const newValue = this._textarea.value;
+@@ -216,25 +369,38 @@ export class CompositionHelper {
+     }
+ 
+     if (this._bufferService.buffer.isCursorInViewport) {
+-      const cursorX = Math.min(this._bufferService.buffer.x, this._bufferService.cols - 1);
+-
++      const cursor = this._cursorPosition();
++      const bounds = this._inputViewportBounds;
+       const cellHeight = this._renderService.dimensions.css.cell.height;
+-      const cursorTop = this._bufferService.buffer.y * this._renderService.dimensions.css.cell.height;
+-      const cursorLeft = cursorX * this._renderService.dimensions.css.cell.width;
++      let compositionLeft = cursor.left;
+ 
+-      this._compositionView.style.left = cursorLeft + 'px';
+-      this._compositionView.style.top = cursorTop + 'px';
++      this._compositionView.style.left = compositionLeft + 'px';
++      this._compositionView.style.top = cursor.top + 'px';
+       this._compositionView.style.height = cellHeight + 'px';
+       this._compositionView.style.lineHeight = cellHeight + 'px';
+       this._compositionView.style.fontFamily = this._optionsService.rawOptions.fontFamily;
+       this._compositionView.style.fontSize = this._optionsService.rawOptions.fontSize + 'px';
++      this._compositionView.style.maxWidth = '';
++      this._compositionView.style.overflow = '';
+       // Sync the textarea to the exact position of the composition view so the IME knows where the
+       // text is.
+       const compositionViewBounds = this._compositionView.getBoundingClientRect();
+-      this._textarea.style.left = cursorLeft + 'px';
+-      this._textarea.style.top = cursorTop + 'px';
++      let compositionWidth = Math.max(compositionViewBounds.width, 1);
++      if (bounds && bounds.right > bounds.left && bounds.bottom > bounds.top) {
++        if (cursor.offscreen) {
++          compositionWidth = Math.max(1, Math.min(compositionWidth, bounds.right - bounds.left));
++          compositionLeft = Math.max(bounds.left, Math.min(cursor.left, bounds.right - compositionWidth));
++        } else {
++          compositionWidth = Math.max(1, Math.min(compositionWidth, bounds.right - compositionLeft));
++        }
++        this._compositionView.style.left = compositionLeft + 'px';
++        this._compositionView.style.maxWidth = compositionWidth + 'px';
++        this._compositionView.style.overflow = 'hidden';
++      }
++      this._textarea.style.left = compositionLeft + 'px';
++      this._textarea.style.top = cursor.top + 'px';
+       // Ensure the text area is at least 1x1, otherwise certain IMEs may break
+-      this._textarea.style.width = Math.max(compositionViewBounds.width, 1) + 'px';
++      this._textarea.style.width = compositionWidth + 'px';
+       this._textarea.style.height = Math.max(compositionViewBounds.height, 1) + 'px';
+       this._textarea.style.lineHeight = compositionViewBounds.height + 'px';
+     }
+diff --git a/src/browser/public/Terminal.ts b/src/browser/public/Terminal.ts
+index a634922..83de138 100644
+--- a/src/browser/public/Terminal.ts
++++ b/src/browser/public/Terminal.ts
+@@ -138,6 +138,10 @@ export class Terminal extends Disposable implements ITerminalApi {
+   public focus(): void {
+     this._core.focus();
+   }
++  public setTextAreaViewportBounds(bounds: { left: number; top: number; right: number; bottom: number } | undefined): void {
++    this._core.setTextAreaViewportBounds(bounds);
++  }
++
+   public input(data: string, wasUserInput: boolean = true): void {
+     this._core.input(data, wasUserInput);
+   }
 diff --git a/src/browser/services/CoreBrowserService.ts b/src/browser/services/CoreBrowserService.ts
-index 575b62b63c647356378a55919a3c9c18eb8da11e..27e0b787b0000550f9806c0ecc3a95e65ff017d4 100644
+index 575b62b..27e0b78 100644
 --- a/src/browser/services/CoreBrowserService.ts
 +++ b/src/browser/services/CoreBrowserService.ts
 @@ -13,7 +13,7 @@ export class CoreBrowserService extends Disposable implements ICoreBrowserServic
@@ -430,3 +564,22 @@ index 575b62b63c647356378a55919a3c9c18eb8da11e..27e0b787b0000550f9806c0ecc3a95e6
  
    private readonly _onDprChange = this.register(new EventEmitter<number>());
    public readonly onDprChange = this._onDprChange.event;
+diff --git a/typings/xterm.d.ts b/typings/xterm.d.ts
+index 3300828..7b81ab0 100644
+--- a/typings/xterm.d.ts
++++ b/typings/xterm.d.ts
+@@ -1905,4 +1905,14 @@ declare module '@xterm/xterm' {
+      */
+     readonly wraparoundMode: boolean;
+   }
++  export interface ITextAreaViewportBounds {
++    left: number;
++    top: number;
++    right: number;
++    bottom: number;
++  }
++
++  export interface Terminal {
++    setTextAreaViewportBounds(bounds: ITextAreaViewportBounds | undefined): void;
++  }
+ }

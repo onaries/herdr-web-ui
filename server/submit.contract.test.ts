@@ -230,15 +230,23 @@ describe("WebSocket submit", () => {
       if (failure !== "finished-after-paste") expect(text).not.toHaveBeenCalled();
       expect(keys).not.toHaveBeenCalled();
     } finally {
-      text.mockRestore(); keys.mockRestore(); read.mockRestore(); scroll.mockRestore(); socket.close();
-      if (target === codexWorking) await herdrRpc("pane.report_agent", { pane_id: target.pane, source: "manual", agent: "codex", state: "working" });
+      text.mockRestore(); keys.mockRestore(); read.mockRestore(); scroll.mockRestore();
+      if (failure === "idle" || failure === "finished-after-paste") {
+        const mark = socket.seen.length;
+        const restored = socket.waitFor((frame) => socket.seen.indexOf(frame) >= mark && frame.type === "pane-status" && frame.pane_id === target.pane && frame.agent_status === "working");
+        await herdrRpc("pane.report_agent", { pane_id: target.pane, source: "manual", agent: "codex", state: "working" });
+        await restored;
+      }
+      socket.close();
     }
   });
 
   for (const extended of [false, true]) it(`Codex native queue delivers paste then Tab once (${extended ? "CSI-u" : "legacy"})`, async () => {
     const socket = await Socket.connect();
     const target = extended ? codexExtended : codexWorking;
-    const { read, scroll } = mockClaudeInput(target.pane, codexWorkingScreen);
+    const { read, scroll } = mockClaudeInput(target.pane, codexWorkingScreen
+      .replace("esc to interrupt)", "esc to interrupt) · 1 background termin…")
+      + "  ← for agents · ? for shor  ⚠ 3 warnings · f2 to view\n");
     const key = extended ? "\u001b[9u" : "\t";
     const prompt = spyOn(herdr, "agentPrompt");
     try {

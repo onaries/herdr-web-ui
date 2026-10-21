@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { describe, expect, it, beforeAll, afterAll, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import { ConversationMonitor } from "./conversation-monitor.ts";
 import { createServer } from "./index.ts";
 import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, LanExposure, PortalStatus, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
+import { SUPPORTED_AGENT_KINDS } from "../shared/supported-agents.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import { PortalService } from "./portal.ts";
 import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type InstalledNotes, type UpdateNotes } from "../shared/update.ts";
@@ -15,14 +16,15 @@ import { Telemetry } from "./telemetry.ts";
 import { NOTICE_VERSION, telemetryHarnesses, type TelemetryActive, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "../src/lib/settings.ts";
 import { HerdrSocket } from "../src/lib/ws.ts";
-import { herdrRpc, paneRead, ping, sessionSnapshot, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
+import { HerdrError, herdrRpc, paneRead, ping, sessionSnapshot, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { descriptorPath, type BridgeDescriptor } from "./bridge.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
 import { forgetTranscriptState } from "./conversation.ts";
-import type { RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
+import type { RepoDiffFileList, RepoDiffFilePatch, SessionHistoryResponse } from "../shared/protocol.ts";
+import { PendingInputError, PendingInputs } from "./pending-input.ts";
 
 /**
  * Contract test for herdr-web-ui's HTTP + WS surface.
@@ -949,6 +951,23 @@ describe("agent rename", () => {
     }
   });
 
+  it("answers the new-tab dialog's agent commands to another PC's registered bridge token", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-agent-commands-bridge-"));
+    const bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "test-browser-token", machines: false, registerBridge: true, stateDir: state, tailscaleOwner: null });
+    const registered = JSON.parse(readFileSync(descriptorPath(), "utf8")) as BridgeDescriptor;
+    const endpoint = `http://127.0.0.1:${bridge.port}`;
+    const manager = { endpoint: (id: string) => id === "commands-remote" ? { url: endpoint, token: registered.token } : null, trackTerminal: () => () => {} } as unknown as MachineManager;
+    try {
+      expect((await fetch(`${endpoint}/api/agent/commands?agent=claude`)).status).toBe(401);
+      const res = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/commands-remote/agent/commands?agent=claude", { headers: { origin: "http://127.0.0.1" } }), manager);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(((await res.json()) as { commands: unknown[] }).commands)).toBeTrue();
+    } finally {
+      bridge.stop();
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
+
   it("validates the body before asking herdr", async () => {
     for (const [body, code] of [
       [{}, "missing_pane_id"],
@@ -1110,16 +1129,58 @@ describe("tab creation", () => {
     } finally { await workspaceClose(owned.workspace_id); }
   }, 20_000);
 
-  it("returns the created tab when a shell agent is unavailable", async () => {
+  it("refuses a first message without an agent, an empty, oversized or control-laden one, before anything is made", async () => {
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-tab-first-message" });
+    try {
+      const before = (await sessionSnapshot()).tabs.length;
+      for (const [body, reason] of [
+        [{ workspace_id: owned.workspace.workspace_id, agent: null, first_message: "a shell takes no message" }, "no agent"],
+        [{ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" }, first_message: "   " }, "blank"],
+        [{ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" }, first_message: "x".repeat(20_001) }, "too long"],
+        [{ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" }, first_message: "run \u001b[2J this" }, "control characters"],
+        [{ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" }, first_message: 42 }, "not a string"],
+      ] as const) {
+        const res = await post(body);
+        expect(res.status, reason).toBe(400);
+        expect(((await res.json()) as ApiError).error.code, reason).toBe("invalid_first_message");
+      }
+      expect((await sessionSnapshot()).tabs.length).toBe(before);
+    } finally {
+      await workspaceClose(owned.workspace.workspace_id);
+    }
+  });
+
+  it("refuses launch arguments the dialog never sends, before anything is made: a tab or line break, a model of two words, an effort the agent does not name", async () => {
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-tab-launch-args" });
+    try {
+      const before = (await sessionSnapshot()).tabs.length;
+      for (const [agent, reason] of [
+        [{ kind: "codex", args: ["--", "run\tthis"] }, "a tab in Codex's prompt"],
+        [{ kind: "codex", args: ["--", "first\nsecond"] }, "a line break in Codex's prompt"],
+        [{ kind: "claude", args: ["--model", "two words"] }, "a model of two words"],
+        [{ kind: "claude", args: ["--effort", "ultra"] }, "an effort Claude Code does not name"],
+        [{ kind: "codex", args: ["-c", "model_reasoning_effort=ultracode"] }, "an effort Codex does not name"],
+      ] as const) {
+        const res = await post({ workspace_id: owned.workspace.workspace_id, agent });
+        expect(res.status, reason).toBe(400);
+        expect(((await res.json()) as ApiError).error.code, reason).toBe("invalid_agent");
+      }
+      expect((await sessionSnapshot()).tabs.length).toBe(before);
+    } finally {
+      await workspaceClose(owned.workspace.workspace_id);
+    }
+  });
+
+  it("returns the created tab when a shell agent is unavailable, and queues no first message for an agent that did not start", async () => {
     const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-tab-shell" });
     const bin = mkdtempSync(join(tmpdir(), "herdr-web-ui-tab-empty-path-"));
     const path = process.env["PATH"];
     try {
       process.env["PATH"] = bin;
-      const res = await post({ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" } });
+      const res = await post({ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" }, first_message: "Plan the config file" });
       const failed = await res.json() as WorkspaceCreated;
       expect(res.status).toBe(200);
-      expect(failed).toMatchObject({ workspace_id: owned.workspace.workspace_id, agent_started: false, error: { code: "agent_start_failed" } });
+      expect(failed).toMatchObject({ workspace_id: owned.workspace.workspace_id, agent_started: false, error: { code: "agent_start_failed" }, first_message: null });
       expect(failed.error?.message).toContain("gjc is not on this server's PATH");
       expect(failed.pane_id).not.toBe(owned.root_pane.pane_id);
     } finally {
@@ -1128,6 +1189,32 @@ describe("tab creation", () => {
       rmSync(bin, { recursive: true, force: true });
     }
   });
+
+  it("says when the agent started but its first message could not be queued, apart from an agent that did not start", async () => {
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-tab-first-not-queued" });
+    const made: string[] = [];
+    // the queue's own refusals, past the route's checks: its text rule, and a full list
+    const text = spyOn(PendingInputs.prototype, "enqueue").mockImplementation(() => { throw new HerdrError("invalid_submit_text", "refused by the queue"); });
+    try {
+      const res = await post({ workspace_id: owned.workspace.workspace_id, agent: { kind: "muse" }, first_message: "Plan the config file" });
+      expect(res.status).toBe(200);
+      const tab = await res.json() as WorkspaceCreated;
+      expect(tab).toMatchObject({ agent_started: true, first_message: { error: { code: "invalid_submit_text", message: "refused by the queue" } } });
+      expect(tab.error).toBeUndefined();
+    } finally { text.mockRestore(); }
+    const enqueue = spyOn(PendingInputs.prototype, "enqueue").mockImplementation(() => { throw new PendingInputError("pending_limit", "the list is full"); });
+    try {
+      const res = await fetch(`${base()}/api/workspace/create`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: tmpdir(), label: "herdr-web-ui-test-ws-first-not-queued", agent: { kind: "muse" }, first_message: "Plan the config file" }) });
+      expect(res.status).toBe(200);
+      const created = await res.json() as WorkspaceCreated;
+      made.push(created.workspace_id);
+      expect(created).toMatchObject({ agent_started: true, first_message: { error: { code: "pending_limit", message: "the list is full" } } });
+    } finally {
+      enqueue.mockRestore();
+      await workspaceClose(owned.workspace.workspace_id);
+      for (const id of made) await workspaceClose(id);
+    }
+  }, 30_000);
 });
 
 describe("workspace and discovery endpoints", () => {
@@ -1148,6 +1235,9 @@ describe("workspace and discovery endpoints", () => {
     const { agents } = (await res.json()) as { agents: AgentKind[] };
     expect(agents.some((agent) => agent.kind === "claude")).toBeTrue();
     expect(agents.some((agent) => agent.kind === "omp")).toBeTrue();
+    // omo and gjc are listed only where this server finds them on PATH, so only listed kinds are checked
+    expect(agents.filter((agent) => SUPPORTED_AGENT_KINDS.has(agent.kind) && agent.kind !== "pi" && agent.label === agent.kind).map((agent) => agent.kind)).toEqual([]);
+    expect(agents.find((agent) => agent.kind === "hermes")?.label).toBe("Hermes");
     expect(agents.map((agent) => agent.label)).toEqual([...agents.map((agent) => agent.label)].sort((a, b) => a.localeCompare(b)));
   });
 
@@ -1211,6 +1301,42 @@ describe("workspace and discovery endpoints", () => {
       expect(crossSite.status).toBe(403);
       expect(existsSync(join(root, "from-elsewhere"))).toBeFalse();
       expect(existsSync(join(tmpdir(), "escape"))).toBeFalse();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lists an agent's commands for a folder before any pane runs it, locally and through the PC proxy, and refuses what it must", async () => {
+    // GET /api/agent/commands?agent=&cwd=: paneCommands without a pane (the new workspace and tab
+    // dialogs' skill list). A fixture folder with one Codex project skill; the folder is its own
+    // repository boundary, so the scan climbs no further.
+    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-agent-commands-"));
+    try {
+      mkdirSync(join(root, ".git"));
+      mkdirSync(join(root, ".codex", "skills", "contract-skill"), { recursive: true });
+      writeFileSync(join(root, ".codex", "skills", "contract-skill", "SKILL.md"), "---\nname: contract-skill\ndescription: A fixture skill.\n---\nBody.\n");
+      const query = `?agent=codex&cwd=${encodeURIComponent(root)}`;
+      const listed = await fetch(`${base()}/api/agent/commands${query}`);
+      expect(listed.status).toBe(200);
+      const { commands } = (await listed.json()) as { commands: { name: string; source: string; trigger?: string; origin?: string; provenance?: { verified: boolean } }[] };
+      expect(commands).toContainEqual(expect.objectContaining({ name: "contract-skill", source: "skill", trigger: "$", origin: "project" }));
+      expect(commands.some((command) => command.source === "builtin")).toBeTrue();
+      // no process runs the agent: no row is verified against a version
+      expect(commands.every((command) => command.provenance?.verified === false)).toBeTrue();
+      // the same answer for this PC through the proxy path the remote PCs use
+      const proxied = await fetch(`${base()}/api/machines/local/agent/commands${query}`);
+      expect(proxied.status).toBe(200);
+      expect(await proxied.json()).toEqual({ commands });
+      const refusals: Array<[string, RequestInit | undefined, string]> = [
+        ["", undefined, "missing_agent"],
+        [`?agent=codex&cwd=${encodeURIComponent(join(root, "missing"))}`, undefined, "invalid_cwd"],
+        ["?agent=codex", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, "method_not_allowed"],
+      ];
+      for (const [refusedQuery, init, code] of refusals) {
+        const refused = await fetch(`${base()}/api/agent/commands${refusedQuery}`, init);
+        expect(refused.status).toBe(400);
+        expect(((await refused.json()) as ApiError).error.code).toBe(code);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -3568,4 +3694,62 @@ describe("repository diff of a pane's folder", () => {
     expect(posted.status).toBe(400);
     expect(((await posted.json()) as ApiError).error.code).toBe("method_not_allowed");
   });
+});
+
+describe("GET /api/sessions/history", () => {
+  it("lists a workspace folder's Codex sessions from the server's store, newest first, and none a link puts outside it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-session-history-contract-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const cwd = realpathSync(project);
+    const codexHome = join(root, "codex");
+    const rollout = (day: string, id: string, prompt: string) => {
+      const dir = join(codexHome, "sessions", "2026", "10", day);
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `rollout-2026-10-${day}T09-00-00-${id}.jsonl`);
+      writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload: { id, timestamp: `2026-10-${day}T09:00:00.000Z`, cwd, source: "cli" } })}\n${JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: prompt } })}\n`);
+      return path;
+    };
+    const older = "00000000-0000-4000-8000-000000000001";
+    const newer = "00000000-0000-4000-8000-000000000002";
+    utimesSync(rollout("01", older, "older prompt"), 1_790_000_000, 1_790_000_000);
+    utimesSync(rollout("02", newer, "newer prompt"), 1_790_000_100, 1_790_000_100);
+    const escaped = "00000000-0000-4000-8000-000000000009";
+    const outside = join(root, `rollout-2026-10-03T09-00-00-${escaped}.jsonl`);
+    writeFileSync(outside, `${JSON.stringify({ type: "session_meta", payload: { id: escaped, cwd, source: "cli" } })}\n`);
+    if (process.platform !== "win32") symlinkSync(outside, join(codexHome, "sessions", "2026", "10", "02", basename(outside)));
+    const created = await workspaceCreate({ cwd, label: "herdr-web-ui-test-session-history" });
+    const appState = mkdtempSync(join(tmpdir(), "herdr-web-ui-session-history-state-"));
+    const app = createServer({ port: 0, stateDir: appState, codexHome });
+    try {
+      const res = await fetch(`http://localhost:${app.port}/api/sessions/history?workspace_id=${encodeURIComponent(created.workspace.workspace_id)}&agent=codex`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as SessionHistoryResponse;
+      expect(body.cwd).toBe(cwd);
+      expect(body.sessions.map((row) => [row.id, row.firstMessage, row.resume?.argv])).toEqual([
+        [newer, "newer prompt", ["codex", "resume", newer]],
+        [older, "older prompt", ["codex", "resume", older]],
+      ]);
+      const unknown = await fetch(`http://localhost:${app.port}/api/sessions/history?workspace_id=${encodeURIComponent(created.workspace.workspace_id)}&agent=bash`);
+      expect(unknown.status).toBe(400);
+      // another PC asks with the bridge token this server registered, not a browser's: the proxy's way in
+      const bridgeState = mkdtempSync(join(tmpdir(), "herdr-web-ui-session-history-bridge-"));
+      const bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "test-browser-token", machines: false, registerBridge: true, stateDir: bridgeState, codexHome, tailscaleOwner: null });
+      try {
+        const registered = JSON.parse(readFileSync(descriptorPath(), "utf8")) as BridgeDescriptor;
+        const manager = { endpoint: (id: string) => id === "history-remote" ? { url: `http://127.0.0.1:${bridge.port}`, token: registered.token } : null, trackTerminal: () => () => {} } as unknown as MachineManager;
+        const remote = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/history-remote/sessions/history?workspace_id=${encodeURIComponent(created.workspace.workspace_id)}&agent=codex`), manager);
+        expect(remote.status).toBe(200);
+        expect(((await remote.json()) as SessionHistoryResponse).sessions.map((row) => row.id)).toEqual([newer, older]);
+      } finally {
+        bridge.stop();
+        rmSync(bridgeState, { recursive: true, force: true });
+      }
+    } finally {
+      app.stop();
+      await workspaceClose(created.workspace.workspace_id);
+      rmSync(appState, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

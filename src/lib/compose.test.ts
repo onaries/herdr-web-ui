@@ -166,6 +166,10 @@ describe("composerMessage and submitNote", () => {
     expect(submitRefusal("agent_blocked", "x", "ㅔ")).toBe(submitNote("agent_blocked", "x"));
   });
 
+  it("names Codex when a native queue transfer cannot verify the terminal input", () => {
+    expect(submitNote("input_draft", "x", "codex")).toBe("Not sent: Codex's terminal input is not known to be empty. Check or clear it there, then send this message.");
+  });
+
   it("offers to send anyway only when the server showed the box and named no draft", () => {
     expect(submitRefusal("input_draft", "x", undefined, "! ls")).toEqual({ note: "Not sent: Claude Code's input box in the terminal may not be empty. It shows “! ls”.", anyway: true });
     // a box the server could not read whole is shown nothing to send over: the plain note

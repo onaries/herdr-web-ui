@@ -7,8 +7,18 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { HerdrError } from "./herdr/client.ts";
+
+/** The outer HTTP boundary also correlates errors caught inside route handlers. */
+export const requestIdContext = new AsyncLocalStorage<{ readonly id: string; route: string }>();
+
+/** Call only from a matched dispatch branch, with a fixed template or a finite matched literal. */
+export function setRequestRoute(route: string): void {
+  const context = requestIdContext.getStore();
+  if (context !== undefined) context.route = route;
+}
 
 export function isJsonObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -35,7 +45,7 @@ export function errorResponse(error: unknown): Response {
   // throws; the client is told none of it but a handle to quote in a bug report, and the
   // real exception is logged here beside that handle. Short enough to say out loud, long
   // enough that nobody reads another's.
-  const id = randomBytes(6).toString("hex");
+  const id = requestIdContext.getStore()?.id ?? randomBytes(6).toString("hex");
   console.error(`internal_error ${id}: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
   return jsonResponse({ error: { code: "internal_error", message: `internal error (${id})` } }, 500);
 }

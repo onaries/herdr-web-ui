@@ -32,6 +32,8 @@ export interface AgentPickerProps {
   value: string;
   disabled?: boolean;
   labelledBy: string;
+  /** a word beside an agent's row on what its launch takes (NewSessionDialog: model, effort); rows without one say nothing */
+  hints?: Readonly<Record<string, string>>;
   onChange: (kind: string) => void;
 }
 
@@ -43,7 +45,7 @@ function OptionMark({ kind }: { kind: string }) {
  * A select whose rows carry each agent's mark: a native <option> cannot hold an icon.
  * The marks are the inline SVGs the sidebar already renders, so the list costs nothing extra.
  */
-export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(function AgentPicker({ agents, value, disabled, labelledBy, onChange }, ref) {
+export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(function AgentPicker({ agents, value, disabled, labelledBy, hints = {}, onChange }, ref) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -170,6 +172,7 @@ export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(funct
               className="menu-item"
               role="option"
               aria-selected={index === selectedIndex}
+              aria-label={option.kind !== "" && hints[option.kind] !== undefined ? `${option.label}: ${hints[option.kind]}` : undefined}
               data-active={index === active || undefined}
               onPointerEnter={() => setActive(index)}
               onMouseDown={(event) => event.preventDefault()}
@@ -177,6 +180,7 @@ export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(funct
             >
               <OptionMark kind={option.kind} />
               <span className="menu-item-main">{option.label}</span>
+              {option.kind !== "" && hints[option.kind] !== undefined && <span className="menu-item-hint">{hints[option.kind]}</span>}
             </div>
           ))}
         </div>

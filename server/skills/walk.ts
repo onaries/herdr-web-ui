@@ -62,6 +62,18 @@ function openRegular(path: string): number {
   return fd;
 }
 
+/** A config file read whole, only when it is a regular file of at most `maxBytes`; throws otherwise (a FIFO is never waited on). */
+export function readConfigText(path: string, maxBytes = 1024 * 1024): string {
+  const fd = openRegular(path);
+  try {
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let length = 0;
+    for (let count = 1; count > 0 && length < buffer.length; length += count) count = readSync(fd, buffer, length, buffer.length - length, null);
+    if (length > maxBytes) throw new Error(`config file over ${maxBytes} bytes: ${path}`);
+    return buffer.subarray(0, length).toString("utf8");
+  } finally { closeSync(fd); }
+}
+
 /** The first MAX_SKILL_BYTES of a regular file; throws when `path` is no regular file. */
 export function readSkillText(path: string): string {
   const fd = openRegular(path);

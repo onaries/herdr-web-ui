@@ -1,9 +1,24 @@
 import { describe, expect, it } from "bun:test";
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { TEST_SESSION, testSocketPath } from "./test-herdr.ts";
+import { agentStandIns, TEST_SESSION, testSocketPath } from "./test-herdr.ts";
 
 const socket = (root: string): string => join(root, "herdr", "sessions", TEST_SESSION, "herdr.sock");
+
+describe("agentStandIns", () => {
+  it.skipIf(process.platform === "win32")("answers for a stand-in agent kind on PATH as a missing command does", () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-stand-ins-"));
+    try {
+      const dir = agentStandIns(join(root, "bin"));
+      const muse = Bun.which("muse", { PATH: dir });
+      expect(muse).toBe(join(dir, "muse"));
+      expect(Bun.spawnSync([muse!, "--version"]).exitCode).toBe(127);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("testSocketPath", () => {
   it("follows XDG_CONFIG_HOME first, on Windows too", () => {

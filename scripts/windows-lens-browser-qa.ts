@@ -51,6 +51,21 @@ const scrollOf = (page: Page) => page.evaluate(() => {
   const host = document.querySelector(".pane-terminal")!;
   return { left: host.scrollLeft, top: host.scrollTop, width: host.scrollWidth - host.clientWidth, height: host.scrollHeight - host.clientHeight, adopted: host.hasAttribute("data-adopted-grid") };
 });
+const caretHelpers = (page: Page) => page.evaluate(() => {
+  const host = document.querySelector<HTMLElement>(".pane-terminal");
+  const textarea = host?.querySelector<HTMLElement>(".xterm-helper-textarea");
+  const composition = host?.querySelector<HTMLElement>(".composition-view");
+  if (!host || !textarea || !composition) return null;
+  const hostRect = host.getBoundingClientRect();
+  const hostLeft = hostRect.left + host.clientLeft;
+  const hostTop = hostRect.top + host.clientTop;
+  const visible = (element: HTMLElement): boolean => {
+    const rect = element.getBoundingClientRect();
+    return rect.left >= hostLeft - 1 && rect.right <= hostLeft + host.clientWidth + 1
+      && rect.top >= hostTop - 1 && rect.bottom <= hostTop + host.clientHeight + 1;
+  };
+  return { active: composition.classList.contains("active"), textareaVisible: visible(textarea), compositionVisible: visible(composition) };
+});
 /** One finger dragged across the terminal, as real touch events (CDP), from the middle of the mount. */
 async function drag(page: Page, dx: number, dy: number): Promise<void> {
   const box = (await page.locator(".pane-terminal").boundingBox())!;
@@ -82,6 +97,11 @@ try {
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  let inputReady = false;
+  page.on("websocket", (socket) => socket.on("framereceived", ({ payload }) => {
+    const frame = JSON.parse(String(payload)) as { type: string; pane_id?: string; ready?: boolean };
+    if (frame.type === "input-ready" && frame.pane_id === paneId) inputReady = frame.ready !== false;
+  }));
   page.setDefaultTimeout(10_000);
   await page.goto(`${origin}/?pane=${encodeURIComponent(paneId)}`);
   const terminal = page.getByRole("button", { name: /^Terminal/ });
@@ -89,6 +109,7 @@ try {
   assert.equal(await terminal.getAttribute("aria-pressed"), "true", "a shell pane opens in the terminal lens");
   assert.equal(await terminal.locator(".pill-soon").count(), 0, "no soon pill: the lens works");
   assert.equal(await page.locator(".terminal-banner-soon").count(), 0);
+  await until(async () => inputReady && (await screen(page)).trim().length > 0, "the native prompt and input lane are ready");
   // typed in the page, run by the pane's shell, read back from herdr's screen
   await page.locator(".xterm-helper-textarea").focus();
   await page.keyboard.type("echo mirror-ok-$((40+2))");
@@ -97,7 +118,12 @@ try {
   // colour survives: herdr's read keeps the escape sequences
   await page.keyboard.type("printf '\\033[31mred-cell\\033[0m\\n'");
   await page.keyboard.press("Enter");
-  await until(async () => await page.locator(".xterm-rows span[class*='xterm-fg-1']", { hasText: "red-cell" }).count() > 0, "a red cell is painted red");
+  // herdr may expand palette colours to RGB; test the painted colour, not xterm's palette class.
+  await until(async () => await page.locator(".xterm-rows span", { hasText: /^red-cell$/ }).evaluateAll((spans) =>
+    spans.some((span) => {
+      const [red, green, blue] = getComputedStyle(span).color.match(/\d+/g)?.map(Number) ?? [];
+      return red !== undefined && green !== undefined && blue !== undefined && red > green * 1.5 && red > blue * 1.5;
+    })), "a red cell is painted red");
   if (evidence) await page.screenshot({ path: join(evidence, "windows-mirror-desktop.png") });
   console.log("PASS the terminal lens of a PC without attach shows the pane's screen, typed input included");
 
@@ -130,12 +156,31 @@ try {
   if (evidence) await small.screenshot({ path: join(evidence, "windows-mirror-phone-panned-right.png") });
   const right = await scrollOf(small);
   assert.equal(Math.abs(right.left - right.width) <= 1, true, "panned to the grid's right edge");
+  const input = await small.context().newCDPSession(small);
+  await small.locator(".xterm-helper-textarea").evaluate((textarea: HTMLTextAreaElement) => textarea.focus({ preventScroll: true }));
+  await input.send("Input.insertText", { text: "-pan-one" });
+  await until(async () => (await screen(small)).includes("tail-marker-pan-one"), "the first offscreen-cursor insertion reaches the mirrored screen");
+  assert.equal((await scrollOf(small)).left, right.left, "typing with the cursor offscreen does not undo the manual pan");
+  await input.send("Input.insertText", { text: "-pan-two" });
+  await until(async () => (await screen(small)).includes("tail-marker-pan-one-pan-two"), "repeated offscreen-cursor input reaches the mirrored screen");
+  assert.equal((await scrollOf(small)).left, right.left, "repeated input keeps the same manual pan");
   await dragUntil(small, 300, 300, async () => { const at = await scrollOf(small); return at.left === 0 && at.top === 0; }, "a drag back reaches the first row and column");
   if (evidence) await small.screenshot({ path: join(evidence, "windows-mirror-phone-panned-top.png") });
   if (right.height > 0) assert.equal(shown(await inset(small, "tail-marker")), false, "at the top the last row is below the mount");
   await dragUntil(small, 0, -300, async () => shown(await inset(small, "tail-marker")), "a drag up brings the last row back");
   assert.equal(await small.evaluate(() => document.documentElement.scrollWidth <= innerWidth && scrollY === 0), true, "the page itself never scrolls");
   console.log("PASS on a phone a drag pans a mirrored grid to its last column and its last row");
+  await dragUntil(small, -300, 0, async () => shown(await inset(small, "right-edge")), "a second manual pan still reaches the last column after repeated input");
+  const imePan = await scrollOf(small);
+  assert.equal(shown(await inset(small, "tail-marker")), false, "the cursor is offscreen again for the IME check");
+  await small.locator(".xterm-helper-textarea").evaluate((textarea: HTMLTextAreaElement) => textarea.focus({ preventScroll: true }));
+  await input.send("Input.imeSetComposition", { text: "ime", selectionStart: 3, selectionEnd: 3 });
+  await until(async () => (await caretHelpers(small))?.active === true, "the offscreen-cursor IME composition is active");
+  const imeHelpers = await caretHelpers(small);
+  assert.ok(imeHelpers?.textareaVisible, "the IME textarea stays inside the visible host");
+  assert.ok(imeHelpers?.compositionVisible, "the IME composition anchor stays inside the visible host");
+  assert.equal((await scrollOf(small)).left, imePan.left, "IME composition does not undo the manual pan");
+  await input.detach();
   await phone.close();
 
   // a small desktop window: the wheel pans, and a scrollbar is there

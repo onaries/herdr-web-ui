@@ -87,7 +87,7 @@ const forms: Record<string, CommandForm[]> = {
   effort: [{ match: "bare", interaction: "dialog", dialog: "claude-effort" }, { match: "other", interaction: "none" }],
   goal: [{ match: "bare", interaction: "dialog", dialog: "claude-goal" }, { match: { sub: "clear" }, interaction: "none" }, { match: "other", interaction: "none" }],
   btw: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }],
-  rewind: [{ match: "bare", interaction: "unknown" }],
+  rewind: [{ match: "bare", interaction: "dialog", dialog: "claude-rewind" }],
   "code-review": reviewForms,
   review: reviewForms,
 };

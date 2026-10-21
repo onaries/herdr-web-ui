@@ -1,5 +1,5 @@
 import type { DialogReader } from "./registry.ts";
-import { pickerPlan } from "./interaction-plan.ts";
+import { type InteractionPlan, pickerPlan } from "./interaction-plan.ts";
 import { type InteractivePromptAnswer } from "../../shared/protocol.ts";
 import { ANSI_RE, KEY, NUMBERED_OPTION_RE, type ParsedPrompt, SELECTED_RE, SOLID_RULE_RE, cleanLine, findLastIndex, finishPrompt, isDivider, joinWrapped, keySteps, listNames, listRows, menuRows, navigationKeys, nearestQuestion, normalizeText, parseNumberedRows, screenWidth, sequentialRows, sliderKeys, wrapped } from "./shared.ts";
 
@@ -455,6 +455,212 @@ function goalCard(title: string, question: string, status: string | null): Parse
   }, { body: null });
 }
 
+/**
+ * Claude Code's `/rewind`, as 2.1.304 draws it under the session's rule (recorded at 40 and 120
+ * columns). First a list of the session's messages, a window of them with `↑ 1 more` and
+ * `↓ 1 more` for the rest, the cursor on `(current)` under the last one:
+ *
+ *   ▔▔▔▔▔▔▔▔
+ *      Rewind
+ *
+ *      Restore the code and/or conversation to the point before…
+ *
+ *        ↑ 1 more
+ *        banana
+ *        ⚠ No code restore
+ *
+ *      ❯ (current)
+ *
+ *      Enter to continue · Esc to cancel
+ *
+ * A message a narrow pane cannot hold ends in `…`. Enter on one opens its confirm step, which quotes
+ * the whole message (wrapped at the pane's edge) over its age:
+ *
+ *      Confirm you want to restore the conversation to the point before you sent this message:
+ *
+ *      │ apple
+ *      │ (3h ago)
+ *
+ *      The conversation will be forked.
+ *      The code will be unchanged.
+ *
+ *      ❯ 1. Restore conversation
+ *        2. Summarize from here
+ *        3. Summarize up to here
+ *        4. Never mind
+ *
+ * "Never mind" goes back to the list. Only these choices were recorded: a message with code to
+ * restore offers others, and gets no card (the terminal shows it).
+ */
+const CLAUDE_REWIND_HINT_RE = /^Enter to continue · Esc to cancel$/;
+
+const CLAUDE_REWIND_LIST_RE = /^Restore the code and\/or conversation to the point before…$/;
+
+// 2.1.305 asks "Confirm you want to restore to the point before…", without "the conversation"
+const CLAUDE_REWIND_CONFIRM_RE = /^Confirm you want to restore (?:the conversation )?to the point before you sent this message:$/;
+
+export const CLAUDE_REWIND_CHOICES = ["Restore conversation", "Summarize from here", "Summarize up to here", "Never mind"] as const;
+export const CLAUDE_REWIND_NEVER_MIND = CLAUDE_REWIND_CHOICES[3];
+
+const CLAUDE_REWIND_MORE_RE = /^([↑↓]) (\d+) more$/;
+
+const CLAUDE_REWIND_AGE_RE = /^\(.+ ago\)$/;
+
+/** The rewind panel the screen ends in: its blocks of lines from its `Rewind` title down, and all that is drawn under its rule; null when there is none. */
+function claudeRewindPanelAt(screen: string): { blocks: string[][]; below: string } | null {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
+  // the session's rule, or the end of it where a tip takes its start (" tmux detected · scroll… ▔", recorded at 40 columns)
+  const rule = findLastIndex(lines, (line) => cleanLine(line).startsWith("▔") || cleanLine(line).endsWith("▔"));
+  if (rule < 0) return null;
+  const below = lines.slice(rule + 1);
+  const blocks: string[][] = [[]];
+  for (const line of below) {
+    if (line.trim() === "") { if (blocks.at(-1)!.length > 0) blocks.push([]); } else blocks.at(-1)!.push(line);
+  }
+  if (blocks.at(-1)!.length === 0) blocks.pop();
+  return blocks.length >= 3 && blocks[0]!.length === 1 && cleanLine(blocks[0]![0]!) === "Rewind" ? { blocks: blocks.slice(1), below: below.join("\n") } : null;
+}
+
+/** The rewind panel's blocks of lines (blank lines part them, the raw lines kept), from its `Rewind` title down; null when the screen does not end in one. */
+function claudeRewindPanel(screen: string): string[][] | null {
+  return claudeRewindPanelAt(screen)?.blocks ?? null;
+}
+
+/** What is drawn under the rule of the rewind panel the screen ends in (the panel, and anything under it); null when it ends in none. */
+export function claudeRewindPanelBelow(screen: string): string | null {
+  return claudeRewindPanelAt(screen)?.below ?? null;
+}
+
+/** A send refused while Claude Code's rewind dialog is on screen (any of its states). */
+export const CLAUDE_REWIND_OPEN_MESSAGE = "Claude Code's rewind dialog is open; finish or close it in the terminal (Esc), then send";
+
+/**
+ * Whether the screen ends in Claude Code's rewind panel, read or not: its list, a confirm step, or a
+ * confirm step's add-context field (the Summarize rows, which take typed text and Enter).
+ */
+export function claudeRewindOnScreen(screen: string): boolean {
+  return claudeRewindPanel(screen) !== null;
+}
+
+/** A row of the rewind list: its first line, the cursor's mark taken off, and the lines under it. */
+export interface ClaudeRewindRow { label: string; detail: string | null; cursor: boolean }
+
+/** What the rewind list shows: its rows in order, the cursor's among them, and how many lie above and below the window. */
+export interface ClaudeRewindList { rows: ClaudeRewindRow[]; cursor: number; above: number; below: number }
+
+export function parseClaudeRewindList(screen: string): ClaudeRewindList | null {
+  const blocks = claudeRewindPanel(screen);
+  if (blocks === null) return null;
+  const hint = blocks.at(-1)!;
+  if (hint.length !== 1 || !CLAUDE_REWIND_HINT_RE.test(cleanLine(hint[0]!))) return null;
+  if (!CLAUDE_REWIND_LIST_RE.test(normalizeText(blocks[0]!.map(cleanLine).join(" ")))) return null;
+  const rows: ClaudeRewindRow[] = [];
+  let above = 0;
+  let below = 0;
+  for (const block of blocks.slice(1, -1)) {
+    let lines = block.map(cleanLine);
+    const more = CLAUDE_REWIND_MORE_RE.exec(lines[0]!);
+    if (more !== null) {
+      if (more[1] === "↑") { if (rows.length > 0 || above > 0) return null; above = Number(more[2]); } else { if (lines.length > 1 || below > 0) return null; below = Number(more[2]); }
+      lines = lines.slice(1);
+      if (lines.length === 0) continue;
+    }
+    if (below > 0) return null;
+    const cursor = SELECTED_RE.test(lines[0]!);
+    const label = lines[0]!.replace(SELECTED_RE, "").trim();
+    if (!label || lines.slice(1).some((line) => SELECTED_RE.test(line) || CLAUDE_REWIND_MORE_RE.test(line))) return null;
+    rows.push({ label, detail: lines.length > 1 ? lines.slice(1).join(" ") : null, cursor });
+  }
+  const cursor = rows.findIndex((row) => row.cursor);
+  if (rows.length === 0 || rows.filter((row) => row.cursor).length !== 1) return null;
+  // the session as it is now is the list's last row, there only when the window reaches the end
+  if (rows.slice(0, -1).some((row) => row.label === "(current)") || (below === 0 && rows.at(-1)!.label !== "(current)")) return null;
+  return { rows, cursor, above, below };
+}
+
+/** What the rewind confirm step shows: the message it quotes (its wrapped lines joined), its notes, and its choices. */
+export interface ClaudeRewindConfirm { question: string; message: string; notes: string[]; selected: number; age: string }
+
+export function parseClaudeRewindConfirm(screen: string): ClaudeRewindConfirm | null {
+  const blocks = claudeRewindPanel(screen);
+  if (blocks === null || blocks.length !== 4) return null;
+  const [asked, quoted, notes, rows] = blocks as [string[], string[], string[], string[]];
+  const question = normalizeText(asked.map(cleanLine).join(" "));
+  if (!CLAUDE_REWIND_CONFIRM_RE.test(question)) return null;
+  if (!quoted.every((line) => /^\s*│ /.test(line))) return null;
+  const quote = quoted.map(cleanLine);
+  if (quote.length < 2 || !CLAUDE_REWIND_AGE_RE.test(quote.at(-1)!)) return null;
+  const numbered = parseNumberedRows(rows, 0, rows.length);
+  if (numbered.length !== rows.length || !sequentialRows(numbered) || numbered.filter((row) => row.selected).length !== 1) return null;
+  if (numbered.map((row) => row.label).join("\n") !== CLAUDE_REWIND_CHOICES.join("\n")) return null;
+  return { question, message: normalizeText(quote.slice(0, -1).join(" ")), notes: notes.map(cleanLine), selected: numbered.findIndex((row) => row.selected), age: quote.at(-1)! };
+}
+
+function parseClaudeRewind(screen: string): ParsedPrompt | null {
+  const confirm = parseClaudeRewindConfirm(screen);
+  if (confirm !== null) {
+    // only what one key commits from where the cursor is: a Summarize row is an add-context field (recorded),
+    // so no choice moves over the rows. Restore conversation where the cursor is on it (Enter), and Never mind
+    // as Esc, which goes back to the list from any row (recorded); the terminal holds the Summarize choices
+    const restore = confirm.selected === 0;
+    return finishPrompt("claude", {
+      kind: "menu", title: "Rewind", question: confirm.question, body: [confirm.message, "", ...confirm.notes].join("\n"),
+      options: [...(restore ? [CLAUDE_REWIND_CHOICES[0]] : []), CLAUDE_REWIND_NEVER_MIND].map((label) => ({ label, description: null })), multi_select: false, custom_option_index: null,
+    }, {
+      // the terminal's rows, for the row identity the answer checks before its key
+      responder: "claude-rewind", menuLabels: [...CLAUDE_REWIND_CHOICES], selectedIndex: confirm.selected,
+      checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+      optionSteps: [...(restore ? [keySteps([KEY.enter])] : []), keySteps([KEY.escape])],
+      // repeated messages quote the same words: the age under the quote tells the copies apart
+      occurrence: confirm.age,
+    }, {
+      // and the card's id with it, so an answer for one copy is refused on another copy's step, through the
+      // answer route's own id check (the id then changes as the age ticks: an answer racing that is refused too)
+      body: [confirm.message, confirm.age, "", ...confirm.notes].join("\n"),
+    });
+  }
+  const list = parseClaudeRewindList(screen);
+  if (list === null) return null;
+  // the messages are the card's options; `(current)` is where the cursor starts, no point to rewind to
+  const messages = list.rows.filter((row) => row.label !== "(current)");
+  if (messages.length === 0) return null;
+  const hidden = list.above + list.below;
+  return finishPrompt("claude", {
+    kind: "menu", title: "Rewind", question: "Restore the code and/or conversation to the point before…",
+    body: hidden > 0 ? `${hidden} more ${hidden === 1 ? "message is" : "messages are"} listed in the terminal.` : null,
+    options: messages.map((row) => ({ label: row.label, description: row.detail })), multi_select: false, custom_option_index: null,
+  }, {
+    responder: "claude-rewind", menuLabels: list.rows.map((row) => row.label), selectedIndex: list.cursor,
+    checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+    optionSteps: messages.map((_, index) => keySteps([...navigationKeys(index - list.cursor), KEY.enter])),
+  });
+}
+
+/**
+ * The confirm step's answer: each choice is one key with no move (parseClaudeRewind), so the commit is
+ * the chosen choice's own key, sent once the screen still shows the same message's step with the cursor
+ * on the same row.
+ */
+function rewindConfirmPlan(parsed: ParsedPrompt): InteractionPlan {
+  const steps = parsed.optionSteps ?? [];
+  // the same message's step, the same copy of it (its age: another copy of the same words may have been
+  // opened since the card was made), with the cursor on the same row
+  const row = (shown: ParsedPrompt): string => `${shown.body?.split("\n")[0] ?? ""}\0${shown.occurrence ?? ""}\0${shown.menuLabels[shown.selectedIndex] ?? ""}`;
+  let chosen = -1;
+  const plan: InteractionPlan = {
+    identity: parsed.id,
+    cursor: parsed.selectedIndex,
+    moves: (answer) => { chosen = answer; return []; },
+    matches: (screen) => {
+      const shown = parseClaudeRewind(screen);
+      return shown !== null && CLAUDE_REWIND_CONFIRM_RE.test(shown.question) && row(shown) === row(parsed);
+    },
+    get commit() { return steps[chosen]?.at(-1) ?? { pick: true }; },
+    get terminalFallback() { return plan.commit.pick === true; },
+  };
+  return plan;
+}
+
 /** Characters no one sees: format controls (zero-width spaces and joiners, bidi marks, tags), combining marks, Hangul fillers. */
 export const INVISIBLE_CHAR_RE = /[\p{Cf}\p{Mn}\p{Me}\u115F\u1160\u3164\uFFA0]/u;
 
@@ -765,6 +971,19 @@ export const readers: readonly DialogReader[] = [
     parse: (screen) => {
       const parsed = parseClaudeGoal(screen);
       return parsed?.responder === "claude-goal" ? parsed : null;
+    },
+  },
+  {
+    id: "claude-rewind", agents: ["claude"], priority: 6,
+    // a window on the session's messages: looked at again after each move, and before the Enter
+    reread: "before-commit", list: "letter-window",
+    // every confirm step reads "Restore conversation": the message it quotes is part of the row, so an
+    // answer made for one message gets no Enter on another's
+    interaction: (parsed) => CLAUDE_REWIND_CONFIRM_RE.test(parsed.question) ? rewindConfirmPlan(parsed)
+      : pickerPlan(parsed, parseClaudeRewind, parsed.optionSteps ?? [], (shown, cursor) => shown.menuLabels[cursor]),
+    parse: (screen) => {
+      const parsed = parseClaudeRewind(screen);
+      return parsed?.responder === "claude-rewind" ? parsed : null;
     },
   },
   {

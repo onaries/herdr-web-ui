@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import * as fs from "node:fs";
@@ -15,7 +15,7 @@ import * as herdr from "./herdr/client.ts";
 import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
-import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
+import { claudeCutQuoteUnambiguousAt, claudeRestoredOwnedAt, claudeRewindOf, configureClaudeRewinds, observeClaudeIdentity, releaseClaudeRestored, ConversationUnavailable, devinSessionForPane, rewindClaudeTranscriptAt, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 
 it("labels only Claude's explicit end_turn text as final-answer evidence", () => {
   const entry = (stop_reason: string | null) => JSON.stringify({ type: "assistant", message: { role: "assistant", stop_reason, content: [{ type: "text", text: "Answer" }] } });
@@ -89,7 +89,7 @@ describe("pane process roots", () => {
       const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
       const environ = spyOn(omo, "processEnviron").mockReturnValue(["AGENT_HOME=/fixture"]);
       try {
-        expect(await paneProcessRoots("process-fixture", agent)).toEqual({
+        expect(await paneProcessRoots("process-fixture", agent)).toMatchObject({
           omo: null, environ: ["AGENT_HOME=/fixture"], pid: 102, cwd: "/agent",
         });
         expect(rpc).toHaveBeenCalledTimes(1);
@@ -114,7 +114,26 @@ describe("pane process roots", () => {
     const environ = spyOn(omo, "processEnviron").mockReturnValue(null);
     try {
       expect((await paneProcessRoots("runtime-fixture", "codex")).pid).toBe(102);
-      expect(await paneProcessRoots("runtime-fixture", "claude")).toEqual({ omo: null, environ: null, pid: null, cwd: null });
+      expect(await paneProcessRoots("runtime-fixture", "claude")).toMatchObject({ omo: null, environ: null, pid: null, cwd: null });
+    } finally {
+      environ.mockRestore();
+      identity.mockRestore();
+      rpc.mockRestore();
+    }
+  });
+
+  it("reads an npm Codex's roots from its native child, not the node launcher listed before it", async () => {
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({
+      process_info: { foreground_processes: [
+        { pid: 201, argv: ["node", "/tools/bin/codex"], cwd: "/launcher" },
+        { pid: 202, argv: ["/tools/vendor/x86_64-unknown-linux-musl/bin/codex"], cwd: "/native" },
+      ] },
+    });
+    const identity = spyOn(omo, "omoProcessIdentity").mockReturnValue(null);
+    const environ = spyOn(omo, "processEnviron").mockReturnValue(["CODEX_HOME=/fixture"]);
+    try {
+      expect(await paneProcessRoots("launcher-fixture", "codex")).toMatchObject({ pid: 202, cwd: "/native", environ: ["CODEX_HOME=/fixture"] });
+      expect(environ).toHaveBeenCalledWith(202);
     } finally {
       environ.mockRestore();
       identity.mockRestore();
@@ -722,6 +741,278 @@ describe("parseClaudeTranscript", () => {
     }
   });
 
+  describe("a rewound Claude conversation", () => {
+    // Claude Code 2.1.304, recorded: apple and banana answered, /rewind to before apple, Restore
+    // conversation, then "cherry" sent. Claude keeps the old turns in the file; the new prompt hangs
+    // from apple's parent (null), so it opens the branch the session now follows. The attachments
+    // keep their chain fields and type only; the request bookkeeping records are left out.
+    const recorded = readFileSync(new URL("./fixtures/claude-rewind-2.1.304-fork.jsonl", import.meta.url), "utf8");
+    const roots: string[] = [];
+    afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); forgetTranscriptState(); });
+    const file = (): string => {
+      const root = mkdtempSync(join(tmpdir(), "herdr-rewind-"));
+      roots.push(root);
+      return join(root, "session.jsonl");
+    };
+    const prompts = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "user").flatMap((turn) => turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []));
+    const lines = recorded.split("\n").filter(Boolean);
+
+    it("hides the turns a restore left behind once the next prompt forks", () => {
+      const path = file();
+      writeFileSync(path, recorded);
+      expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(["cherry"]);
+    });
+
+    it("follows the fork on the live page, and a cold read agrees", () => {
+      const path = file();
+      const fork = lines.findIndex((line) => line.includes('"content":"cherry"'));
+      writeFileSync(path, `${lines.slice(0, fork).join("\n")}\n`);
+      expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(["apple", "banana"]);
+      appendFileSync(path, `${lines.slice(fork).join("\n")}\n`);
+      const warm = transcriptPage("claude-transcript", path);
+      expect(prompts(warm.turns)).toEqual(["cherry"]);
+      forgetTranscriptState();
+      expect(transcriptPage("claude-transcript", path).turns).toEqual(warm.turns);
+    });
+
+    it("keeps the turns before a message rewound to in the middle", () => {
+      // the same records, rewound to before banana instead: the next prompt hangs from apple's answer
+      const path = file();
+      const entries = lines.map((line) => JSON.parse(line) as { type?: string; uuid?: string; parentUuid?: string | null; message?: { content?: unknown } });
+      const appleAnswer = entries.find((entry) => entry.type === "assistant")!.uuid!;
+      const shifted = entries.map((entry) => entry.message?.content === "cherry" ? { ...entry, parentUuid: appleAnswer } : entry);
+      writeFileSync(path, `${shifted.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+      expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(["apple", "cherry"]);
+    });
+
+    it("a slash command's echo off the chain hides nothing when the conversation goes on from elsewhere", () => {
+      // the echo hangs from q1, past q1's answer, but the next prompt continues from that answer: the
+      // answer stays on Claude's active chain, so nothing between q1 and the echo is off the branch
+      const path = file();
+      const base = { isSidechain: false, userType: "external", cwd: "/p", sessionId: "s", version: "2.1.304", gitBranch: "", timestamp: "2026-10-20T10:00:00.000Z" };
+      const answer = (uuid: string, parentUuid: string, text: string) => ({ ...base, parentUuid, type: "assistant", message: { role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn" }, uuid });
+      writeFileSync(path, [
+        { ...base, parentUuid: null, type: "user", message: { role: "user", content: "q1" }, uuid: "q1" },
+        answer("a1", "q1", "Alpha answered."),
+        { ...base, parentUuid: "q1", type: "system", subtype: "local_command", content: "<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>", level: "info", uuid: "echo" },
+        { ...base, parentUuid: "echo", type: "system", subtype: "local_command", content: "<local-command-stdout>Context Usage</local-command-stdout>", level: "info", uuid: "stdout" },
+        { ...base, parentUuid: "a1", type: "user", message: { role: "user", content: "q2" }, uuid: "q2" },
+        answer("a2", "q2", "Beta answered."),
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      const turns = transcriptPage("claude-transcript", path).turns;
+      const answers = turns.filter((turn) => turn.role === "assistant").flatMap((turn) => turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []));
+      expect(prompts(turns)).toEqual(["q1", "q2"]);
+      expect(answers).toEqual(["Alpha answered.", "Beta answered."]);
+    });
+
+    it("a record off the chain that opens no turn hides nothing", () => {
+      const path = file();
+      writeFileSync(path, recorded);
+      const first = transcriptPage("claude-transcript", path);
+      appendFileSync(path, `${JSON.stringify({ parentUuid: null, isSidechain: false, type: "system", subtype: "informational", content: "x", uuid: "not-on-the-chain" })}\n`);
+      expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(prompts(first.turns));
+    });
+
+    describe("right after Restore conversation, before Claude writes anything", () => {
+      afterEach(() => configureClaudeRewinds(null));
+      const fork = lines.findIndex((line) => line.includes('"content":"cherry"'));
+      const before = `${lines.slice(0, fork).join("\n")}\n`;
+      // the pane's one Claude process, as the transcript's resolution finds it (paneTranscript)
+      const seen = (path: string, pid: number | null) => observeClaudeIdentity(path, pid);
+      const rewound = (path: string, text: string, later = 0) => { seen(path, 4242); return rewindClaudeTranscriptAt(path, text, later, { pid: 4242, paneId: "p1" }); };
+
+      it("ends the chat before the message rewound to, at once, and a new history begins", () => {
+        const path = file();
+        writeFileSync(path, before);
+        const shown = transcriptPage("claude-transcript", path);
+        expect(prompts(shown.turns)).toEqual(["apple", "banana"]);
+        expect(rewound(path, "apple")).toBe("apple");
+        const after = transcriptPage("claude-transcript", path);
+        expect(after.turns).toEqual([]);
+        expect(after.history_id).not.toBe(shown.history_id);
+        // the message back in Claude's box is the chat's own, for this pane and process
+        expect(claudeRestoredOwnedAt(path, "p1")).toBe("apple");
+        expect(claudeRestoredOwnedAt(path, "p2")).toBeNull();
+      });
+
+      it("keeps what came before a message in the middle", () => {
+        const path = file();
+        writeFileSync(path, before);
+        expect(rewound(path, "banana")).toBe("banana");
+        const turns = transcriptPage("claude-transcript", path).turns;
+        expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+        expect(prompts(turns)).toEqual(["apple"]);
+      });
+
+      it("gives way to Claude's own fork once the next prompt is written, and is dropped", () => {
+        const path = file();
+        writeFileSync(path, before);
+        rewound(path, "apple");
+        appendFileSync(path, `${lines.slice(fork).join("\n")}\n`);
+        expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(["cherry"]);
+        expect(claudeRewindOf(path)).toBeNull();
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+      });
+
+      it("gives way to a fork a slash command opens, so a later prompt whose turn ended in an API error stays shown", () => {
+        // recorded on 2.1.304: Restore to banana, then /context from the chat (its echo hangs from apple's
+        // answer: the fork), then cherry, refused with an API error
+        const path = file();
+        writeFileSync(path, before);
+        rewound(path, "banana");
+        const appleAnswer = (lines.map((line) => JSON.parse(line) as { type?: string; uuid?: string }).find((entry) => entry.type === "assistant"))!.uuid!;
+        const base = { isSidechain: false, userType: "external", cwd: "/p", sessionId: "s", version: "2.1.304", gitBranch: "", timestamp: "2026-10-20T10:00:00.000Z" };
+        appendFileSync(path, [
+          { ...base, parentUuid: appleAnswer, type: "system", subtype: "local_command", content: "<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>", level: "info", uuid: "echo" },
+          { ...base, parentUuid: "echo", type: "system", subtype: "local_command", content: "<local-command-stdout>Context Usage</local-command-stdout>", level: "info", uuid: "stdout" },
+          { ...base, parentUuid: "stdout", type: "user", isMeta: true, message: { role: "user", content: "## Context Usage" }, uuid: "meta" },
+          { ...base, parentUuid: "meta", type: "user", message: { role: "user", content: "cherry" }, uuid: "cherry" },
+          { ...base, parentUuid: "cherry", type: "assistant", isApiErrorMessage: true, message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text: "Invalid API key · Fix external API key" }], stop_reason: "stop_sequence" }, uuid: "refused" },
+          { ...base, parentUuid: "refused", type: "system", subtype: "turn_duration", durationMs: 10, uuid: "duration" },
+        ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+        const turns = transcriptPage("claude-transcript", path).turns;
+        expect(prompts(turns)).toContain("cherry");
+        expect(prompts(turns)).not.toContain("banana");
+        expect(prompts(turns)[0]).toBe("apple");
+        expect(claudeRewindOf(path)).toBeNull();
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+        // a cold read agrees
+        forgetTranscriptState();
+        expect(transcriptPage("claude-transcript", path).turns).toEqual(turns);
+      });
+
+      it("AV32-A2-2: another Claude process on the pane revokes both the hidden branch and the box ownership", () => {
+        const path = file();
+        writeFileSync(path, before);
+        rewound(path, "apple");
+        seen(path, 4343);
+        expect(claudeRewindOf(path)).toBeNull();
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+        forgetTranscriptState();
+        expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(["apple", "banana"]);
+        // and the old process coming back does not bring them back
+        seen(path, 4242);
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+      });
+
+      it("AV32-A2-1: a restart keeps the hidden branch and the box ownership, for the same process", () => {
+        const path = file();
+        writeFileSync(path, before);
+        const state = join(mkdtempSync(join(tmpdir(), "herdr-rewind-state-")), "claude-rewinds.json");
+        roots.push(join(state, ".."));
+        configureClaudeRewinds(state);
+        rewound(path, "apple");
+        // the server starts again: nothing known of the pane's process until its transcript is resolved
+        configureClaudeRewinds(state);
+        forgetTranscriptState();
+        expect(claudeRewindOf(path)).toMatchObject({ pid: 4242, paneId: "p1", restored: "apple" });
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+        seen(path, 4242);
+        expect(claudeRestoredOwnedAt(path, "p1")).toBe("apple");
+        expect(transcriptPage("claude-transcript", path).turns).toEqual([]);
+      });
+
+      it("AV32-A2-3: without one Claude process to tie it to, nothing is hidden and no box is owned", () => {
+        const path = file();
+        writeFileSync(path, before);
+        rewound(path, "apple");
+        seen(path, null);
+        forgetTranscriptState();
+        expect(prompts(transcriptPage("claude-transcript", path).turns)).toEqual(["apple", "banana"]);
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+        // kept, not dropped: the same process seen alone again holds it
+        expect(claudeRewindOf(path)).not.toBeNull();
+        seen(path, 4242);
+        expect(transcriptPage("claude-transcript", path).turns).toEqual([]);
+      });
+
+      it("keeps nothing without one Claude process, or for a message the transcript does not hold", () => {
+        const path = file();
+        writeFileSync(path, before);
+        seen(path, null);
+        expect(rewindClaudeTranscriptAt(path, "apple", 0, { pid: null, paneId: "p1" })).toBeNull();
+        seen(path, 4242);
+        expect(rewindClaudeTranscriptAt(path, "durian", 0, { pid: 4242, paneId: "p1" })).toBeNull();
+        expect(claudeRewindOf(path)).toBeNull();
+      });
+
+      it("keeps a restore of a repeated message only when told which copy, never the newest by default", () => {
+        const path = file();
+        const entries = before.split("\n").filter(Boolean).map((line) => JSON.parse(line) as { type?: string; uuid?: string; parentUuid?: string | null; message?: { content?: unknown } });
+        const last = entries.at(-1)!;
+        const again = { ...entries.find((entry) => entry.message?.content === "apple")!, uuid: "apple-again", parentUuid: last.uuid };
+        writeFileSync(path, `${before}${JSON.stringify(again)}\n`);
+        seen(path, 4242);
+        // a dialog the chat did not open: which apple was picked is not known
+        expect(rewindClaudeTranscriptAt(path, "apple", null, { pid: 4242, paneId: "p1" })).toBeNull();
+        expect(claudeRewindOf(path)).toBeNull();
+        // the one copy of banana is known
+        expect(rewindClaudeTranscriptAt(path, "banana", null, { pid: 4242, paneId: "p1" })).toBe("banana");
+      });
+
+      it("forgets kept rewinds whose transcript is gone when the state is read back", () => {
+        const path = file();
+        writeFileSync(path, before);
+        const state = join(mkdtempSync(join(tmpdir(), "herdr-rewind-state-")), "claude-rewinds.json");
+        roots.push(join(state, ".."));
+        configureClaudeRewinds(state);
+        rewound(path, "apple");
+        const gone = join(path, "..", "gone.jsonl");
+        const saved = JSON.parse(readFileSync(state, "utf8")) as Record<string, unknown>;
+        writeFileSync(state, JSON.stringify({ ...saved, [gone]: saved[path] }));
+        configureClaudeRewinds(state);
+        expect(claudeRewindOf(gone)).toBeNull();
+        expect(claudeRewindOf(path)).not.toBeNull();
+        expect(Object.keys(JSON.parse(readFileSync(state, "utf8")) as object)).toEqual([path]);
+      });
+
+      it("keeps at most 256 rewinds, letting the oldest go", () => {
+        const paths = Array.from({ length: 257 }, () => { const path = file(); writeFileSync(path, before); return path; });
+        for (const path of paths) expect(rewound(path, "apple")).toBe("apple");
+        expect(claudeRewindOf(paths[0]!)).toBeNull();
+        expect(claudeRewindOf(paths[1]!)).not.toBeNull();
+        expect(claudeRewindOf(paths.at(-1)!)).not.toBeNull();
+      });
+
+      it("tells whether a quote Claude Code cut stands for one message only", () => {
+        const path = file();
+        const long = `zeta ${"words to wrap across several lines ".repeat(20)}ALPHA`;
+        const quote = long.slice(0, 500);
+        const entries = before.split("\n").filter(Boolean).map((line) => JSON.parse(line) as { type?: string; uuid?: string; parentUuid?: string | null; message?: { content?: unknown } });
+        const prompt = (uuid: string, content: string) => ({ ...entries.find((entry) => entry.message?.content === "apple")!, uuid, parentUuid: entries.at(-1)!.uuid, message: { role: "user", content } });
+        writeFileSync(path, `${before}${JSON.stringify(prompt("long-1", long))}\n${JSON.stringify(prompt("long-2", long))}\n`);
+        // copies with the same words are the walk's to count
+        expect(claudeCutQuoteUnambiguousAt(path, long, quote)).toBe(true);
+        appendFileSync(path, `${JSON.stringify(prompt("other", long.replace("ALPHA", "BRAVO")))}\n`);
+        expect(claudeCutQuoteUnambiguousAt(path, long, quote)).toBe(false);
+      });
+
+      it("a send from the chat after the restore gives the box back", () => {
+        const path = file();
+        writeFileSync(path, before);
+        rewound(path, "apple");
+        releaseClaudeRestored("p1");
+        expect(claudeRestoredOwnedAt(path, "p1")).toBeNull();
+        expect(claudeRewindOf(path)).not.toBeNull();
+      });
+    });
+
+    it("a send cancelled before any reply and sent again moves no history", () => {
+      // Esc before any reply, then the re-send from the same parent: the cancelled prompt holds no
+      // answer, so the cancelled-prompt rule hides it and the history id stays (paging is kept)
+      const path = file();
+      const base = { isSidechain: false, userType: "external", cwd: "/p", sessionId: "s", version: "2.1.304", gitBranch: "" };
+      const user = (uuid: string, parentUuid: string | null, content: string) => JSON.stringify({ parentUuid, ...base, type: "user", message: { role: "user", content }, uuid, timestamp: "2026-10-20T10:00:00.000Z" });
+      const answer = (uuid: string, parentUuid: string, text: string) => JSON.stringify({ parentUuid, ...base, type: "assistant", message: { role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn" }, uuid, timestamp: "2026-10-20T10:00:01.000Z" });
+      writeFileSync(path, [user("u1", null, "first"), answer("a1", "u1", "one"), user("u2", "a1", "cancelled"), JSON.stringify({ type: "last-prompt" })].join("\n") + "\n");
+      const shown = transcriptPage("claude-transcript", path);
+      appendFileSync(path, [user("u3", "a1", "re-sent"), answer("a3", "u3", "two")].join("\n") + "\n");
+      const after = transcriptPage("claude-transcript", path);
+      expect(after.history_id).toBe(shown.history_id);
+      expect(prompts(after.turns)).toEqual(["first", "re-sent"]);
+    });
+  });
+
   describe("subagent notifications", () => {
     const roots: string[] = [];
     afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); forgetTranscriptState(); });
@@ -1054,6 +1345,41 @@ describe("gjc sessions", () => {
       JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:01.000Z", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Authentication Failed" } }),
     ].join("\n");
     expect(parseOmpTranscript(text).at(-1)?.parts).toEqual([{ kind: "text", text: "Error: 401 Authentication Failed" }]);
+  });
+
+  it("hides agent-attributed IRC deliveries without hiding quoted user text or adding a page boundary", () => {
+    const irc = (customType: string, content: string, details: Record<string, string>) => JSON.stringify({
+      type: "custom_message", customType, display: true, content, details, attribution: "agent", timestamp: "2026-10-01T00:00:01.000Z",
+    });
+    const quoted = "I saw these messages in the transcript:\n[IRC `0-WindowsPaths` → you]\nMy bash is restricted...\n[IRC you → `0-WindowsPaths` (auto)]";
+    const text = [
+      JSON.stringify({ type: "message", timestamp: "2026-10-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: quoted }] } }),
+      irc("irc:incoming", "[IRC `0-WindowsPaths` → you]\n\nMy bash is restricted...", { observationId: "incoming-1", from: "0-WindowsPaths", message: "My bash is restricted..." }),
+      irc("irc:autoreply", "[IRC you → `0-WindowsPaths` (auto)]\n\nI will handle it.", { observationId: "reply-1", to: "0-WindowsPaths", reply: "I will handle it." }),
+      irc("irc:relay", "[IRC `you` → `0-WindowsPaths`]\n\nI will handle it.", { observationId: "relay-1", from: "you", to: "0-WindowsPaths", body: "I will handle it.", kind: "reply" }),
+      JSON.stringify({ type: "message", timestamp: "2026-10-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "I will handle it." }] } }),
+    ].join("\n");
+    const home = mkdtempSync(join(tmpdir(), "herdr-gjc-irc-")); roots.push(home);
+    const path = join(home, "session.jsonl");
+    writeFileSync(path, `${text}\n`);
+    try {
+      expect(transcriptPage("gjc-transcript", path).turns).toEqual([
+        { role: "user", ts: "2026-10-01T00:00:00.000Z", parts: [{ kind: "text", text: quoted }] },
+        { role: "assistant", ts: "2026-10-01T00:00:02.000Z", end_ts: "2026-10-01T00:00:02.000Z", parts: [{ kind: "text", text: "I will handle it." }] },
+      ]);
+    } finally { forgetTranscriptState(); }
+  });
+
+  it("keeps user-attributed IRC records and ordinary notices whose text quotes IRC", () => {
+    const content = "[IRC `0-WindowsPaths` → you]\n\nA quoted example, not an internal delivery.";
+    const text = [
+      { type: "custom_message", customType: "irc:incoming", attribution: "user", display: true, content },
+      { type: "custom_message", customType: "async-result", attribution: "agent", display: true, content },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    expect(parseOmpTranscript(text).map((turn) => turn.parts)).toEqual([
+      [{ kind: "notice", text: content, source: "irc:incoming" }],
+      [{ kind: "notice", text: content, source: "async-result" }],
+    ]);
   });
 
   it("ends a turn at a background result gjc delivers, so the answer before it stays the answer", () => {
@@ -1778,7 +2104,8 @@ describe("Agy native ledger through shared paging", () => {
     expect(turns[2]!.role).toBe("user");
   });
   it("keeps paging and refs stable on append, then rejects them on a DB-only idle rewind", () => {
-    for (let i = 0; i < 80; i++) { add(i * 2, "USER_INPUT", `prompt ${i}`); add(i * 2 + 1, "GENERIC", "x".repeat(5000)); }
+    // one commit: 160 separate ones each wait for the disk, seconds under load
+    db.transaction(() => { for (let i = 0; i < 80; i++) { add(i * 2, "USER_INPUT", `prompt ${i}`); add(i * 2 + 1, "GENERIC", "x".repeat(5000)); } })();
     const first = page();
     expect(first.cursor).not.toBeNull();
     const older = transcriptPage("agy-transcript", path, { before: first.cursor! });

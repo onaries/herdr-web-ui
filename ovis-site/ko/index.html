@@ -2,78 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ovis: 코딩 에이전트를 주머니 속에</title>
-<meta name="description" content="Ovis는 herdr용 휴대폰 앱입니다. 컴퓨터에서 돌아가는 Claude Code와 Codex 에이전트를 채팅이나 실제 터미널로 보고 답할 수 있습니다.">
-<link rel="canonical" href="https://ovis.sh/ko/">
-<link rel="alternate" hreflang="en" href="https://ovis.sh/">
-<link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/">
-<link rel="alternate" hreflang="x-default" href="https://ovis.sh/">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://ovis.sh/ko/">
-<meta property="og:title" content="Ovis: 코딩 에이전트를 주머니 속에">
-<meta property="og:description" content="Ovis는 herdr용 휴대폰 앱입니다. 컴퓨터에서 돌아가는 Claude Code와 Codex 에이전트를 채팅이나 실제 터미널로 보고 답할 수 있습니다.">
-<meta property="og:image" content="https://ovis.sh/assets/icon-512.png">
-<meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#131a2b" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="/assets/icon-32.png" sizes="32x32">
-<link rel="apple-touch-icon" href="/assets/icon-180.png">
-<link rel="stylesheet" href="/style.css">
+<title>Ovis</title>
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://ovis.sh/">
+<meta http-equiv="refresh" content="0; url=/?lang=ko">
+<script>location.replace('/?lang=ko');</script>
 </head>
-<body>
-<header class="wrap top">
-<a class="brand" href="/ko/"><picture><source srcset="/assets/logo-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/logo-light.png" alt="Ovis" width="113" height="40"></picture></a>
-<nav><a href="/ko/privacy/">개인정보</a><a href="/ko/support/">지원</a><a href="/" hreflang="en" lang="en">English</a></nav>
-</header>
-<main>
-<section class="wrap hero">
-<div>
-<h1>코딩 에이전트를<br><em>주머니 속에.</em></h1>
-<p class="lead">Ovis는 <a href="https://herdr.dev">herdr</a>용 휴대폰 앱입니다. 내 컴퓨터에서 돌아가는 Claude Code와 Codex 에이전트를, 어디서든 채팅이나 실제 터미널로 보고 답할 수 있습니다.</p>
-<div class="stores">
-<span class="store" aria-disabled="true"><small>곧 출시</small><strong>App Store</strong></span>
-<span class="store" aria-disabled="true"><small>곧 출시</small><strong>Google Play</strong></span>
-</div>
-</div>
-<div class="shot">
-<img class="phone" src="/assets/chat-ko.webp" alt="Claude Code 에이전트와의 대화를 채팅으로 보여 주는 Ovis 화면" width="390" height="844">
-<img class="sheep" src="/assets/sheep-480.png" alt="" width="480" height="480">
-</div>
-</section>
-<section class="block"><div class="wrap">
-<h2>사용 방법</h2>
-<p class="sub">Ovis는 내 컴퓨터가 띄운 herdr web UI를 엽니다. 중간에 거치는 서버가 없습니다.</p>
-<ol class="steps">
-<li><h3>PC에서 herdr web UI 실행</h3><p>무료 오픈소스입니다. Linux와 macOS는 명령어 하나로 모두 설치됩니다. Windows와 다른 설치 방법은 <a href="https://herdrweb.dev/">herdrweb.dev</a>에 있습니다.</p><pre><code>curl -fsSL https://herdrweb.dev/install.sh | sh</code></pre></li>
-<li><h3>휴대폰 연결</h3><p>PC에서 <strong>설정 → 폰 및 기기</strong>를 열고 Ovis로 QR 코드를 찍거나, 보이는 주소를 입력합니다.</p></li>
-<li><h3>어디서든 답하기</h3><p>승인 요청과 질문이 누르기만 하면 되는 카드로 옵니다. 에이전트의 터미널도 한 번 누르면 열리고, Esc·Tab·Ctrl 키 막대가 있습니다.</p></li>
-</ol>
-</div></section>
-<section class="block"><div class="wrap">
-<h2>둘러보기</h2>
-<p class="sub">브라우저에서 쓰던 그 앱을 휴대폰에 맞게 만들었습니다.</p>
-<div class="gallery">
-<figure><img src="/assets/approve-ko.webp" alt="push 허락을 묻는 Codex 에이전트, 누르기만 하면 답합니다" width="390" height="844" loading="lazy"><figcaption>승인 요청과 질문은 누르면 되는 카드로</figcaption></figure>
-<figure><img src="/assets/agents-ko.webp" alt="PC의 워크스페이스와 에이전트 목록" width="390" height="844" loading="lazy"><figcaption>PC의 모든 워크스페이스와 에이전트</figcaption></figure>
-</div>
-</div></section>
-<section class="block"><div class="wrap">
-<h2>코드는 내 PC에만 있습니다</h2>
-<div class="points">
-<div><h3>계정 없음</h3><p>가입할 것이 없습니다. 휴대폰을 PC와 한 번 연결하면 끝입니다.</p></div>
-<div><h3>PC와 바로 연결</h3><p>앱은 내가 추가한 PC하고만, Tailscale이나 집 Wi-Fi 같은 내 네트워크로 통신합니다. 중간에 Ovis 서버가 없습니다.</p></div>
-<div><h3>추적 없음</h3><p>광고도, 분석 도구도, 추적도 없습니다. 무엇을 저장하는지는 <a href="/ko/privacy/">개인정보처리방침</a>에 그대로 적었습니다.</p></div>
-</div>
-</div></section>
-<section class="block"><div class="wrap">
-<h2>자주 묻는 질문</h2>
-<details><summary>herdr가 뭔가요?</summary><p><a href="https://herdr.dev">herdr</a>는 코딩 에이전트용 터미널 멀티플렉서입니다. Claude Code, Codex 같은 에이전트를 여러 칸에 나란히 띄워 돌립니다. <a href="https://herdrweb.dev/">herdr web UI</a>는 그 칸들을 브라우저로, Ovis는 휴대폰으로 가져옵니다.</p></details>
-<details><summary>Tailscale이 꼭 필요한가요?</summary><p>아니요. 다만 가장 쉬운 방법입니다. 휴대폰에서 PC로 갈 길만 있으면 됩니다. Tailscale, VPN, 같은 Wi-Fi, 직접 둔 HTTPS 프록시 모두 됩니다. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#on-your-phone">휴대폰 설정 안내</a>(영어)에 방법별로 나와 있습니다.</p></details>
-<details><summary>무료인가요?</summary><p>네. Ovis와 herdr web UI 모두 무료이고, herdr web UI는 MIT 라이선스 오픈소스입니다.</p></details>
-<details><summary>PC 없이 먼저 써 볼 수 있나요?</summary><p>네. 연결 화면에 가상의 에이전트와 터미널로 된 데모가 있습니다. 휴대폰 밖으로 아무것도 나가지 않습니다.</p></details>
-<details><summary>어떤 휴대폰에서 되나요?</summary><p>iPhone과 Android 모두 됩니다. 두 앱 모두 테스트 중이고, 곧 App Store와 Google Play에 나옵니다.</p></details>
-</div></section>
-</main>
-<footer><div class="wrap"><span>Ovis는 devswha가 만든 herdr web UI용 휴대폰 앱입니다.</span><a href="/ko/privacy/">개인정보처리방침</a><a href="/ko/support/">지원</a><a href="https://github.com/devswha/herdr-web-ui">GitHub 소스</a><a href="https://herdrweb.dev/">herdrweb.dev</a></div></footer>
-</body>
+<body><p><a href="/?lang=ko">Ovis 한국어 페이지로 이동</a></p></body>
 </html>

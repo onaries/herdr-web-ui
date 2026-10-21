@@ -1,0 +1,29 @@
+
+  ┃
+  ┃  # Noted.
+  ┃
+
+  ┃                                  █
+  ┃                                  █
+  ┃                                  █
+                                     █
+     ▣  Build · q                    █
+                                     █
+                                     █
+                                     █
+                                     █
+                                     █
+                                     █
+
+  ┃
+  ┃  Which color do you prefer?
+  ┃
+  ┃  1. Red
+  ┃     Warm and bold
+  ┃  2. Blue
+  ┃     Calm and cool
+  ┃  3. Type your own answer
+  ┃
+  ┃  ↑↓       enter       esc
+  ┃  select   submit      dismiss
+  ┃

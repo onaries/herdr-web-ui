@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import * as nodeFs from "node:fs";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { paneCommands } from "../commands.ts";
 import { adminSkillsRoot, source } from "./codex.ts";
+import { MAX_WALK_FOLDERS } from "./walk.ts";
 import type { CommandForm } from "../../shared/protocol.ts";
 
 // Copied from codex-rs/tui/src/slash_command.rs at rust-v0.163.0 (commit 83086188ae0614bd882818ff1aa23f3194962012):
@@ -327,4 +329,23 @@ describe("Codex skill identity", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ source: "skill", trigger: "$", id: realpathSync(join(home, ".codex", "skills", "aliased", "SKILL.md")) });
   });
+});
+
+it("resolves at most a walk's folder budget in a folder whose skill links fan out, as GET /api/agent/commands lets any folder be named", () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-skill-fanout-"));
+  const folder = join(root, "proj");
+  mkdirSync(join(folder, ".git"), { recursive: true });
+  // twelve folders, each with five links to the next: no link closes a cycle, yet the paths through them multiply
+  const base = join(folder, ".agents", "skills");
+  const levels = Array.from({ length: 12 }, (_, depth) => join(base, `level${depth}`));
+  for (const level of levels) mkdirSync(level, { recursive: true });
+  for (let depth = 0; depth + 1 < levels.length; depth++) for (let link = 0; link < 5; link++) symlinkSync(levels[depth + 1]!, join(levels[depth]!, `link${link}`));
+  const resolved = spyOn(nodeFs, "realpathSync");
+  try {
+    paneCommands("codex", folder, join(root, "home"));
+    expect(resolved.mock.calls.length).toBeLessThanOrEqual(MAX_WALK_FOLDERS + 16);
+  } finally {
+    resolved.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

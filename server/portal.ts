@@ -21,7 +21,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PortalStatus } from "../shared/protocol.ts";
-import { errorResponse, isJsonObject, jsonResponse } from "./http.ts";
+import { errorResponse, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { chunksOf } from "./remote-bundle.ts";
 import { updateRequestAllowed } from "./update-api.ts";
 import { windowsArgv, windowsProcessTable } from "./windows-processes.ts";
@@ -599,6 +599,7 @@ export async function handlePortalRequest(request: Request, pathname: string, po
   const reply = (body: unknown, code = 200) => jsonResponse(body, code, { "cache-control": "no-store" });
   const fail = (code: string, message: string, http: number) => reply({ error: { code, message } }, http);
   if (pathname === "/api/portal" && request.method === "GET") {
+    setRequestRoute(pathname);
     // a server started without the service (tests, an embedding) offers nothing
     return reply(portal ? await portal.status(context) : NO_PORTAL);
   }
@@ -606,6 +607,7 @@ export async function handlePortalRequest(request: Request, pathname: string, po
   if (request.method !== "POST" || (action !== "start" && action !== "stop")) {
     return fail("method_not_allowed", "Use GET /api/portal, or POST /api/portal/start or /stop", 405);
   }
+  setRequestRoute(action === "start" ? "/api/portal/start" : "/api/portal/stop");
   if (!updateRequestAllowed(request)) return fail("invalid_portal_request", "Use the Portal controls from this app.", 403);
   if (!portal) return fail("portal_unsupported", "This server offers no Portal.", 409);
   if (action === "stop") {

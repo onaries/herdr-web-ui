@@ -17,3 +17,18 @@ it("requires the live bottom composer and distinguishes a placeholder from the s
   expect(codexQueueInputEmpty("• Working (2s • esc to interrupt)\n›\n")).toBe(false);
   expect(codexQueueInputEmpty(screen("›") + "Update available\n")).toBe(false);
 });
+
+it("recognizes a clipped shortcuts footer and background-terminal status without accepting a draft", () => {
+  for (const suffix of ["", " · 1 background terminal", " · 1 background termin…"]) {
+    const live = screen("› Ask Codex to do anything")
+      .replace("esc to interrupt)", `esc to interrupt)${suffix}`)
+      .replace("? for shortcuts", "← for agents · ? for shor  ⚠ 3 warnings · f2 to view");
+    const colors = live.replace("Ask Codex to do anything", "\x1b[2mAsk Codex to do anything\x1b[0m");
+    expect(codexQueueInputEmpty(live, colors)).toBe(true);
+    expect(codexQueueInputEmpty(live.replace("› Ask Codex to do anything", "›"))).toBe(true);
+    expect(codexQueueInputEmpty(live, live)).toBe(false);
+    expect(codexQueueInputEmpty(live.replace("Ask Codex to do anything", "unsent draft"), colors)).toBe(false);
+    expect(codexQueueInputEmpty(live + "Select model\n", colors)).toBe(false);
+    expect(codexQueueInputEmpty(live.replace("? for shor", "? for sharing"), colors)).toBe(false);
+  }
+});
