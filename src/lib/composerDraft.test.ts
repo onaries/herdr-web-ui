@@ -97,7 +97,7 @@ it("refuses a second tab's send while the first is still on its way", () => {
 });
 it("honours another tab's send as a lease, not forever", () => {
   const { data, store } = fixture();
-  data.set("herdr-web-ui:composer-sending:a", JSON.stringify({ sent: "x", at: Date.now() - SEND_LEASE_MS - 1 }));
+  data.set("ovis:composer-sending:a", JSON.stringify({ sent: "x", at: Date.now() - SEND_LEASE_MS - 1 }));
   store.read("a");
   store.refresh("a");
   expect(store.read("a").sending).toBe(false);
@@ -105,7 +105,7 @@ it("honours another tab's send as a lease, not forever", () => {
 });
 it("ignores a hand-edited sending record instead of blocking the pane", () => {
   const { data, store } = fixture();
-  data.set("herdr-web-ui:composer-sending:a", "not json");
+  data.set("ovis:composer-sending:a", "not json");
   store.read("a");
   store.refresh("a");
   expect(store.begin("a")).toBe(true);
@@ -120,10 +120,10 @@ it("still reconciles another tab's text when no send is in flight", () => {
 });
 
 it("names the draft another tab's edit or send concerns, and nothing else", () => {
-  const key = "herdr-web-ui:composer-draft:local:w1:p1";
+  const key = "ovis:composer-draft:local:w1:p1";
   expect(storageEventDraft(key)).toBe(key);
-  expect(storageEventDraft(`herdr-web-ui:composer-sending:${key}`)).toBe(key);
-  expect(storageEventDraft("herdr-web-ui:settings")).toBeNull();
+  expect(storageEventDraft(`ovis:composer-sending:${key}`)).toBe(key);
+  expect(storageEventDraft("ovis:settings")).toBeNull();
   expect(storageEventDraft(null)).toBeNull();
 });
 
@@ -133,7 +133,7 @@ it("lets a tab send again once another tab's abandoned lease runs out, and tells
   const wakeUps: Array<{ run: () => void; ms: number }> = [];
   const closed = new ComposerDraftStore(() => storage);
   const other = new ComposerDraftStore(() => storage, (run, ms) => { wakeUps.push({ run, ms }); return 0; });
-  const key = "herdr-web-ui:composer-draft:local:w1:p1";
+  const key = "ovis:composer-draft:local:w1:p1";
   const start = Date.now();
   try {
     setSystemTime(start);

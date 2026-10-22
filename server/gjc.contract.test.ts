@@ -90,7 +90,7 @@ function heldPaths(pid: number): string[] {
 }
 
 async function pane(paths: string[], screen = "", cwd = home): Promise<string> {
-  const created = await workspaceCreate({ cwd: home, label: "herdr-web-ui-test-gjc-binding" });
+  const created = await workspaceCreate({ cwd: home, label: "ovis-test-gjc-binding" });
   workspaces.push(created.workspace.workspace_id);
   const id = created.root_pane.pane_id;
   const args = paths.map(shellQuote).join(" ");
@@ -488,7 +488,7 @@ it("SDK GJC resolution respects the process foreground cwd", async () => withSdk
 
 it("starts the gjc this server found on its PATH, by absolute path, and waits until it runs in the pane", async () => withSdkFixture(async () => {
   const shell = async () => {
-    const created = await workspaceCreate({ cwd: home, label: "herdr-web-ui-test-gjc-start" });
+    const created = await workspaceCreate({ cwd: home, label: "ovis-test-gjc-start" });
     workspaces.push(created.workspace.workspace_id);
     return created.root_pane.pane_id;
   };

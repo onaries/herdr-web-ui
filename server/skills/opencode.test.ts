@@ -215,7 +215,7 @@ describe("OpenCode v1 catalog", () => {
   it("offers the six former exclusions as terminal-bound and marks pickers terminal, undo and redo none", () => {
     expect([...(source.terminalBound ?? [])].sort()).toEqual(["agents", "connect", "editor", "sessions", "skills", "themes"]);
     for (const name of source.terminalBound ?? []) expect(source.builtins).toContain(name);
-    for (const name of ["models", "variants", "mcps", "agents", "connect", "sessions", "themes", "skills", "editor"]) {
+    for (const name of ["models", "variants", "mcps", "agents", "connect", "sessions", "themes", "skills", "editor", "status", "debug", "help", "diff"]) {
       expect(source.forms?.[name]).toEqual([{ match: "bare", interaction: "terminal" }]);
     }
     for (const name of ["undo", "redo"]) expect(source.forms?.[name]).toEqual([{ match: "bare", interaction: "none" }]);

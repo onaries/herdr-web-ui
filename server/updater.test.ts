@@ -90,8 +90,8 @@ async function managedFixture(supervisor?: string, slowHealth = false) {
     try {
       return Bun.spawn([process.execPath, "--eval",
         `import {runManaged} from ${JSON.stringify(join(import.meta.dir, "managed.ts"))}; await runManaged(${JSON.stringify(root)});`], {
-        env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_WEB_STATE_DIR: stateDir,
-          HERDR_WEB_TOKEN: "test-managed-token", HERDR_WEB_AUTO_UPDATE: "0", SUPERVISOR_MARKER: join(directory, "marker") },
+        env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", OVIS_STATE_DIR: stateDir,
+          OVIS_TOKEN: "test-managed-token", OVIS_AUTO_UPDATE: "0", SUPERVISOR_MARKER: join(directory, "marker") },
         stdout: output, stderr: output,
       });
     } finally {
@@ -110,7 +110,10 @@ async function managedFixture(supervisor?: string, slowHealth = false) {
     }
   };
   const request = async (command: string) => {
-    const response = await fetch(`${origin}/api/updates/${command}`, { method: "POST", headers });
+    // an install names the release on offer, as the app's controls do
+    const offered = command === "install" ? (await readStatus())?.latest_revision : undefined;
+    const response = await fetch(`${origin}/api/updates/${command}`, offered === undefined ? { method: "POST", headers }
+      : { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ expected_revision: offered }) });
     expect(response.status).toBe(202);
   };
   const health = async () => (await (await fetch(`${origin}/api/health`)).json()) as { web_ui: { revision: string; boot_id: string } };
@@ -127,7 +130,7 @@ const releaseSupervisor = (broken = false) => broken ? "process.exit(3);\n" : `
   import { appendFileSync } from "node:fs";
   appendFileSync(process.env.SUPERVISOR_MARKER, "release\\n");
   const { runSupervisor } = await import(${JSON.stringify(join(import.meta.dir, "supervisor.ts"))});
-  await runSupervisor(process.env.HERDR_WEB_SOURCE_ROOT);
+  await runSupervisor(process.env.OVIS_SOURCE_ROOT);
 `;
 const liveHerdr = existsSync(process.env["HERDR_SOCKET"] || HERDR_SOCKET_PATH);
 
@@ -491,16 +494,19 @@ describe("managed source updates with real Git repositories and builds", () => {
     managed.stop();
   });
 
-  it("marks the bridge's update commands as the user's own, not the timer's", async () => {
+  it("marks the bridge's update commands as the user's own, and hands an install its revision", async () => {
     // The supervisor's IPC is the only road a browser's Check or Update travels to the updater,
     // and runSupervisor builds that updater itself, in its own process: a stand-in child swaps a
     // recording updater in and reports what the IPC handler handed it. Without the flag, a
     // manual Check would wait a failed unshallow fetch's backoff out with the 5-minute timer
-    // (#1252).
+    // (#1252). Without the revision, the install's own check would install whatever release it
+    // finds, not the one the person was shown; and an older bridge's install, which names none,
+    // must not reach the updater at all.
     const root = mkdtempSync(join(directory, "supervisor-root-"));
     const stateDir = mkdtempSync(join(directory, "supervisor-state-"));
     const record = join(directory, "supervisor-record.json");
     const script = join(directory, "supervisor-stand-in.ts");
+    const offered = "a".repeat(40);
     writeFileSync(script, `
       import { mock } from "bun:test";
       import { writeFileSync } from "node:fs";
@@ -508,14 +514,18 @@ describe("managed source updates with real Git repositories and builds", () => {
       const updater = ${JSON.stringify(join(import.meta.dir, "updater.ts"))};
       const root = ${JSON.stringify(root)};
       const record = ${JSON.stringify(record)};
-      const calls: Array<[string, boolean | undefined]> = [];
+      const calls: Array<[string, boolean | null, string | null]> = [];
+      const sent: unknown[] = [];
       let recorded: () => void = () => {};
-      const onRequest = new Promise<void>((resolve) => { recorded = resolve; });
+      const onInstall = new Promise<void>((resolve) => { recorded = resolve; });
       const { Updater } = await import(updater);
       class Recording extends Updater {
         override async initialize() { return { directory: root, revision: "0".repeat(40), source_revision: "0".repeat(40) }; }
         override start() { /* this stand-in has no 5-minute timer to run */ }
-        override async request(command: string, byUser?: boolean) { calls.push([command, byUser]); recorded(); }
+        override async request(command: string, byUser?: boolean, expectedRevision?: string) {
+          calls.push([command, byUser ?? null, expectedRevision ?? null]);
+          if (command === "install") recorded();
+        }
       }
       mock.module(updater, () => ({ Updater: Recording }));
       // the bridge without a bridge: the supervisor's health check is answered, its IPC captured
@@ -523,28 +533,38 @@ describe("managed source updates with real Git repositories and builds", () => {
       let bootId = "";
       const realSpawn = Bun.spawn, realFetch = globalThis.fetch;
       Bun.spawn = ((_argv: string[], options: { env: Record<string, string>; ipc: (message: unknown) => void }) => {
-        bootId = options.env["HERDR_WEB_BOOT_ID"]!;
+        bootId = options.env["OVIS_BOOT_ID"]!;
         ipc = options.ipc;
-        return { exitCode: null, kill() {}, exited: Promise.resolve(0), send() {} };
+        return { exitCode: null, kill() {}, exited: Promise.resolve(0), send(message: unknown) { sent.push(message); } };
       }) as unknown as typeof Bun.spawn;
       globalThis.fetch = (async () => ({ ok: true, json: async () => ({ web_ui: { boot_id: bootId } }) })) as unknown as typeof fetch;
       const { runSupervisor } = await import(supervisor);
       await runSupervisor(root);
       ipc({ type: "update-command", command: "check" });
-      await Promise.race([onRequest, Bun.sleep(5_000)]); // fixed wait: nothing else ever arrives
-      writeFileSync(record, JSON.stringify(calls));
+      // an older bridge's Update names no revision: it is refused, not run as an install
+      ipc({ type: "update-command", command: "install" });
+      ipc({ type: "update-install-revision", expected_revision: ${JSON.stringify(offered)} });
+      // the handler runs the requests in the order they came, so once an install is recorded every
+      // message before it has been handled too
+      await Promise.race([onInstall, Bun.sleep(5_000)]); // fixed wait: nothing else ever arrives
+      writeFileSync(record, JSON.stringify({ calls, sent }));
       Bun.spawn = realSpawn;
       globalThis.fetch = realFetch;
       process.exit(0);
     `);
     const child = Bun.spawn([process.execPath, script], { env: { ...process.env, PORT: "59999", HOST: "127.0.0.1",
-      HERDR_WEB_STATE_DIR: stateDir, HERDR_WEB_AUTO_UPDATE: "0" }, stdout: "pipe", stderr: "pipe" });
+      OVIS_STATE_DIR: stateDir, OVIS_AUTO_UPDATE: "0" }, stdout: "pipe", stderr: "pipe" });
     const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
     const timer = setTimeout(() => child.kill("SIGKILL"), 15_000); // a wedged stand-in must not hang the run
     try {
       expect(await child.exited).toBe(0);
-      const told = existsSync(record) ? readFileSync(record, "utf8") : `no record was written; the stand-in printed:\n${(await output).join("\n")}`;
-      expect(told).toBe('[["check",true]]');
+      if (!existsSync(record)) throw new Error(`no record was written; the stand-in printed:\n${(await output).join("\n")}`);
+      const told = JSON.parse(readFileSync(record, "utf8")) as { calls: unknown[]; sent: Array<{ type?: string; status?: { revision_bound_install?: unknown } }> };
+      expect(told.calls).toEqual([["check", true, null], ["install", true, offered]]);
+      // and it tells the bridge it installs only the revision named, so the bridge offers installs
+      const statuses = told.sent.filter((message) => message.type === "update-status");
+      expect(statuses.length).toBeGreaterThan(0);
+      expect(statuses.every((message) => message.status?.revision_bound_install === true)).toBe(true);
     } finally {
       clearTimeout(timer);
     }
@@ -803,6 +823,53 @@ describe("managed source updates with real Git repositories and builds", () => {
     expect(updater.status.current_revision).toBe(target);
   });
 
+  it("pins accepted revision after discover", async () => {
+    const target = await release("accepted", "v0.2.0");
+    await updater.request("check");
+    expect(updater.status.latest_revision).toBe(target);
+    await updater.request("install", true, target);
+    expect(updater.status).toMatchObject({ phase: "idle", error: null, error_code: null, current_revision: target });
+    expect(await git(updater.release!.directory, "rev-parse", "HEAD")).toBe(target);
+  });
+
+  it("never stages a moved offer", async () => {
+    const offered = await release("offered", "v0.2.0");
+    let activations = 0;
+    // the check an install starts with waits at its tag fetch until the test lets it go
+    const reached = Promise.withResolvers<void>(), go = Promise.withResolvers<void>();
+    class PausedDiscover extends Updater {
+      protected async git(...args: string[]): Promise<string> {
+        if (args[0] === "fetch" && args.at(-1) === "+refs/tags/v*:refs/tags/v*") { reached.resolve(); await go.promise; }
+        return super.git(...args);
+      }
+    }
+    const published: Array<typeof updater.status> = [];
+    const paused = new PausedDiscover({ root, stateDir: join(directory, "paused-state"), autoUpdate: false,
+      publish(status) { published.push(status); }, activate: async (_next, persist) => { activations++; persist(); } });
+    await paused.initialize();
+    const installing = paused.request("install", true, offered);
+    await reached.promise;
+    // a release published between the person's yes and the install's check
+    const newer = await release("newer", "v0.3.0");
+    go.resolve();
+    await installing;
+    expect(paused.status).toMatchObject({ phase: "error", error_code: "update_offer_changed", latest_revision: newer, latest_version: "0.3.0", available: true });
+    // the new offer stays to be read; nothing was staged, built or activated
+    expect(paused.notes.revision).toBe(newer);
+    expect(published.some((status) => status.phase === "building" || status.step)).toBe(false);
+    expect(activations).toBe(0);
+    expect(paused.status.current_revision).toBe(await git(root, "rev-parse", "HEAD"));
+    expect(readdirSync(join(directory, "paused-state")).filter((name) => name.startsWith("release-") || name === "failed.json")).toEqual([]);
+    // and nothing tries again by itself: the error stands until someone asks
+    const after = published.length;
+    await Promise.resolve();
+    expect(published.length).toBe(after);
+    // the next check clears it, and the new offer is installed only by its own name
+    await paused.request("check", true);
+    expect(paused.status).toMatchObject({ phase: "idle", error: null, error_code: null, latest_revision: newer });
+    paused.stop();
+  });
+
   it("cancels an update command with a deadline", async () => {
     const start = Date.now();
     await expect(runCommand(root, [process.execPath, "--eval", "setInterval(() => {}, 1000)"], undefined, 100)).rejects.toThrow("timed out");
@@ -833,6 +900,8 @@ describe("managed source updates with real Git repositories and builds", () => {
     let processHandle = launch();
     try {
       await until(async () => (await readStatus())?.managed === true);
+      // this supervisor says over IPC that it installs only the revision it is sent
+      expect((await readStatus())?.revision_bound_install).toBe(true);
       const target = await release("managed second", "v0.2.0");
       await request("check");
       await until(async () => (await readStatus())?.available === true);

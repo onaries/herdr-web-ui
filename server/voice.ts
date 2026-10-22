@@ -12,8 +12,8 @@ import {
 } from "../shared/voice.ts";
 import { errorResponse, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 
-const ENV_KEY = "HERDR_WEB_OPENAI_API_KEY";
-const ENV_BASE_URL = "HERDR_WEB_OPENAI_BASE_URL";
+const ENV_KEY = "OVIS_OPENAI_API_KEY";
+const ENV_BASE_URL = "OVIS_OPENAI_BASE_URL";
 const FIELDS = ["api_key", "base_url", "transcribe_model", "polish_model"] as const;
 type Field = typeof FIELDS[number];
 type VoiceFile = Partial<Record<Field, string>>;

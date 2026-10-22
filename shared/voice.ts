@@ -1,7 +1,7 @@
 /**
  * Voice input: the browser records a short clip, the connection server sends it to the
  * user's own OpenAI key (BYOK) and streams the text back. The key lives only on the server
- * (stateDir/voice.json, mode 0600, or HERDR_WEB_OPENAI_API_KEY); no route ever returns it.
+ * (stateDir/voice.json, mode 0600, or OVIS_OPENAI_API_KEY); no route ever returns it.
  */
 
 export type VoiceMode = "chat" | "terminal";
@@ -44,7 +44,7 @@ export type VoiceEvent =
 
 export type VoiceErrorCode =
   | "voice_not_configured" // 409: no key on the server
-  | "key_from_env" // 409: PUT tried to change the key or base_url while HERDR_WEB_OPENAI_API_KEY sets the key
+  | "key_from_env" // 409: PUT tried to change the key or base_url while OVIS_OPENAI_API_KEY sets the key
   | "audio_too_large" // 413
   | "invalid_audio" // 400: no audio part, empty, or not audio/*
   | "invalid_request" // 400: bad mode / keywords / config body

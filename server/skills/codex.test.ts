@@ -163,7 +163,10 @@ describe("Codex skill discovery", () => {
   it("offers the nine former exclusions and the other TUI-only screens as terminal-bound builtins", () => {
     const former = ["resume", "permissions", "agents", "hooks", "mcp", "plugins", "skills", "voice", "theme"];
     const screens = ["config", "setup-default-sandbox"];
-    expect([...(source.terminalBound ?? [])].sort()).toEqual([...former, ...screens].sort());
+    // a picker, view, confirmation or prompt whatever follows the name, or a composer Chat no longer drives
+    const held = ["keymap", "experimental", "approve", "memories", "import", "new", "archive", "delete", "fork", "worktree", "side", "btw",
+      "copy", "tui", "mention", "daemon", "warnings", "cd", "usage", "title", "statusline", "pets", "feedback", "subagents", "vim", "logout"];
+    expect([...(source.terminalBound ?? [])].sort()).toEqual([...former, ...screens, ...held].sort());
     for (const name of source.terminalBound ?? []) expect(source.builtins).toContain(name);
     expect(source.builtins).not.toContain("help");
   });
@@ -175,6 +178,9 @@ describe("Codex skill discovery", () => {
       pwd: [{ match: "bare", interaction: "terminal" }], ps: [{ match: "bare", interaction: "terminal" }],
       mcp: [{ match: "bare", interaction: "terminal" }],
       init: [{ match: "bare", interaction: "none" }], compact: [{ match: "bare", interaction: "none" }],
+      rename: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+      export: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+      goal: [{ match: "bare", interaction: "unknown" }, { match: { sub: "edit" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
     });
   });
 

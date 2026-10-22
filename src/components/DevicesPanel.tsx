@@ -133,7 +133,7 @@ export function DevicesPanel({ pairUrl, auth, onPaired }: DevicesPanelProps) {
     <div className="devices-panel">
       {auth?.via !== undefined && <p className={auth.via === "open" ? "settings-hint devices-open" : "settings-description"}>{t(VIA[auth.via])}</p>}
       {auth?.via === "open" && <>
-        <p className="settings-hint">{t("Pairing a device turns on the app's own sign-in, on top of any proxy sign-in: other browsers then need pairing or the access token. If your proxy already signs people in, set HERDR_WEB_TOKEN and have the proxy send it instead.")}</p>
+        <p className="settings-hint">{t("Pairing a device turns on the app's own sign-in, on top of any proxy sign-in: other browsers then need pairing or the access token. If your proxy already signs people in, set OVIS_TOKEN and have the proxy send it instead.")}</p>
         <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()} disabled={pairingSelf}>{t("Pair this device now")}</button></div>
       </>}
       <details className="settings-details">

@@ -133,12 +133,12 @@ export function contentSecurityPolicy(origin?: string): string {
 }
 
 /**
- * HERDR_WEB_CSP=report-only measures the policy above without enforcing it: the browser
+ * OVIS_CSP=report-only measures the policy above without enforcing it: the browser
  *   logs what the policy would have blocked and the app keeps working. `report-only` is the
  *   measurement mode; anything else enforces.
  */
 function cspHeader(origin?: string): Record<string, string> {
-  const mode = process.env["HERDR_WEB_CSP"];
+  const mode = process.env["OVIS_CSP"];
   const policy = contentSecurityPolicy(origin);
   return mode === "report-only"
     ? { "content-security-policy-report-only": policy }
@@ -146,13 +146,13 @@ function cspHeader(origin?: string): Record<string, string> {
 }
 
 /**
- * HERDR_WEB_APP_NAME names the installed app. Each PC is its own origin, so two PCs installed
+ * OVIS_APP_NAME names the installed app. Each PC is its own origin, so two PCs installed
  * on one phone are two apps, and both would be called "Ovis" (#476). Unset or blank, every
- * file is served as built. Read on every request, like HERDR_WEB_CSP; the manifest and the
+ * file is served as built. Read on every request, like OVIS_CSP; the manifest and the
  * shell revalidate on every load, so an installed app learns a new name without a reinstall.
  */
 export function appName(): string | null {
-  const name = process.env["HERDR_WEB_APP_NAME"]?.trim();
+  const name = process.env["OVIS_APP_NAME"]?.trim();
   return name ? name : null;
 }
 
@@ -171,7 +171,7 @@ export function relateManifest(text: string, origin: string): string {
   return JSON.stringify({ ...JSON.parse(text), related_applications: [{ platform: "webapp", id: `${origin}/` }] }, null, 2);
 }
 
-/** What /manifest.webmanifest answers: renamed under HERDR_WEB_APP_NAME, then related to its origin. */
+/** What /manifest.webmanifest answers: renamed under OVIS_APP_NAME, then related to its origin. */
 export function manifestBody(text: string, origin: string): string {
   const name = appName();
   return relateManifest(name ? renameManifest(text, name) : text, origin);
@@ -196,7 +196,7 @@ export function renameShell(html: string, name: string): string {
   return html.replace(APPLE_TITLE, (_, start: string, end: string) => `${start}${content}${end}`);
 }
 
-/** The file as built, or the manifest and the shell under HERDR_WEB_APP_NAME. */
+/** The file as built, or the manifest and the shell under OVIS_APP_NAME. */
 async function body(file: BunFile, kind: "manifest" | "shell" | null, origin?: string): Promise<BunFile | string> {
   if (kind === "manifest" && origin !== undefined) return manifestBody(await file.text(), origin);
   const name = appName();

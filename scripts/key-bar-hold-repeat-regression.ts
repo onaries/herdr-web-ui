@@ -106,8 +106,8 @@ try {
       const context = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await context.addInitScript(({ pane, items }) => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct", keyBarItems: items }));
-          localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "direct", keyBarItems: items }));
+          localStorage.setItem(`ovis:view:${pane}`, "terminal");
         }, { pane: panes.api, items: keyBarItems });
         const page = await context.newPage();
         const errors: string[] = [];
@@ -249,8 +249,8 @@ try {
       });
       try {
         await iphone.addInitScript(({ pane }) => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
-          localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+          localStorage.setItem(`ovis:view:${pane}`, "terminal");
         }, { pane: panes.api });
         const page = await iphone.newPage();
         const errors: string[] = [];

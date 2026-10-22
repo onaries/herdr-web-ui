@@ -207,17 +207,6 @@
   padding: var(--space-2) var(--space-3) 0;
 }
 
-/* a rewind handed to the agent's own picker: what to do there, beside the way to it */
-.chat-rewind-note {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--text-dim);
-  font-size: var(--fs-xs);
-}
-
 .chat-copy {
   width: var(--chip-h);
   height: var(--chip-h);
@@ -1698,6 +1687,33 @@
 }
 
 .chat-outcome-action:hover { background: var(--bg-hover); }
+
+.chat-turn.chat-terminal-command {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.chat-terminal-command > svg {
+  width: var(--fs-md);
+  height: var(--fs-md);
+  flex: none;
+}
+
+.chat-terminal-command > code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-size: inherit;
+}
 
 /* a changed screen after the send: a passing view folded under the chip, never a result */
 .chat-outcome-preview {

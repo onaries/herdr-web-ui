@@ -210,9 +210,13 @@ test("describes Devin's terminal-bound and picker forms in the scanner source", 
   for (const name of terminal) {
     expect(source.forms?.[name]).toEqual([{ match: "bare", interaction: "terminal" }]);
   }
-  for (const name of ["model", "fusion", "org", "billing"]) {
+  for (const name of ["model", "fusion", "org", "billing", "shortcuts", "btw", "handoff", "logout"]) {
     expect(source.forms?.[name]).toEqual([{ match: "bare", interaction: "terminal" }]);
   }
+  // a picker or form bare, an action given a value; an untrusted directory asks first
+  for (const name of ["mode", "revert", "bug"]) expect(source.forms?.[name]?.[0]).toEqual({ match: "bare", interaction: "terminal" });
+  expect(source.forms?.mode?.[1]).toEqual({ match: "other", interaction: "none" });
+  expect(source.forms?.["add-dir"]).toEqual([{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }]);
   expect(source.pin).toBe("3000.11.92");
 });
 

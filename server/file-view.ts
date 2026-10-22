@@ -326,7 +326,7 @@ function pageFile(ref: string, folder: string): string | null {
 
 /**
  * The folders besides a page's own that a video it plays may lie in (a network share where
- * recordings are kept), from HERDR_WEB_MEDIA_ROOTS: absolute paths joined by the path delimiter.
+ * recordings are kept), from OVIS_MEDIA_ROOTS: absolute paths joined by the path delimiter.
  * None by default: a page that came with its own symlinks (an unpacked archive, a cloned
  * repository) could otherwise name any of this PC's videos, and whether one plays would tell it
  * that the file exists; in a folder named here, any page may learn that. Read on every render, so
@@ -334,7 +334,7 @@ function pageFile(ref: string, folder: string): string | null {
  */
 function mediaRoots(): string[] {
   const roots: string[] = [];
-  for (const entry of (process.env["HERDR_WEB_MEDIA_ROOTS"] ?? "").split(delimiter)) {
+  for (const entry of (process.env["OVIS_MEDIA_ROOTS"] ?? "").split(delimiter)) {
     const path = entry.trim();
     if (!path || !isAbsolute(path)) continue;
     try { roots.push(realpathSync(path)); } catch { /* a share that is not mounted holds nothing to play */ }

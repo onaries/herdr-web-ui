@@ -50,7 +50,7 @@ export async function checkFolderFilter(page: Page, dialog: Locator, createReque
   // a typed path that does not open shows home in its place, and Directory keeps what was typed:
   // Start must refuse the typo, not start in home. Closing Browse is a new event, so React has run
   // the listing's effects by the time the value is read.
-  const typo = "~/herdr-web-ui-no-such-folder";
+  const typo = "~/ovis-no-such-folder";
   const picked = await directory.inputValue();
   await directory.fill(typo);
   await dialog.getByRole("button", { name: "Browse", exact: true }).click();

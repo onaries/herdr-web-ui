@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
-import type { SlashCommand } from "../../shared/protocol.ts";
+import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
 import type { AgentCommandSource } from "./index.ts";
 import { customCommands, environValue, parseJsonc, plainObject, readFrontmatter, walkSkills } from "./walk.ts";
 
@@ -51,10 +51,21 @@ const terminalBound = [
   "status", "context", "session-stats", "help", "usage", "workspaces", "recap", "steps",
   "model", "models", "fusion", "org", "billing", "login", "login-status", "resume",
   "config", "hooks", "mcp", "theme",
+  // checked on 3000.11.92 (2026-10-22): the shortcut picker, /btw's side chat with its own input, the handoff pickers,
+  // and logout, which signs out and leaves
+  "shortcuts", "btw", "handoff", "logout",
 ] as const;
-const forms = Object.fromEntries(terminalBound.map((name) => [
-  name, [{ match: "bare" as const, interaction: "terminal" as const }],
-]));
+const forms: Record<string, CommandForm[]> = {
+  ...Object.fromEntries(terminalBound.map((name) => [
+    name, [{ match: "bare" as const, interaction: "terminal" as const }],
+  ])),
+  // bare opens the "Select mode:" picker, the "Revert to step:" picker or the bug form; given a value they act
+  mode: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  revert: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }],
+  bug: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }],
+  // bare lists the directories; a directory Devin has not trusted yet asks "Do you trust the authors…?"
+  "add-dir": [{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }],
+};
 
 function importSettings(value: unknown): Map<string, boolean> {
   // Devin expects a structured object; arrays and other invalid values behave as no overrides.

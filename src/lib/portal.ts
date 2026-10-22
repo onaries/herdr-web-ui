@@ -4,7 +4,7 @@ import { fetchPortal, requestPortal } from "./api.ts";
 import { usePageVisible } from "./visibility.ts";
 
 /** the address comes or goes with these, so they are followed closely */
-const SETTLING: ReadonlySet<PortalStatus["phase"]> = new Set(["starting", "stopping"]);
+const SETTLING: ReadonlySet<PortalStatus["phase"]> = new Set(["starting", "recovering", "stopping"]);
 
 /**
  * Portal's public address, which the server opens with the `portal` on its PC (server/portal.ts).

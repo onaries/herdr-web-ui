@@ -2534,6 +2534,36 @@ Step 4: Credential source
     }
   });
 
+  test("reads GJC Nerd Font question cursors without exposing transcript summaries as choices", () => {
+    const dialog = `──────────────
+
+Use read-only checks.
+
+Which approach?
+
+──────────────
+│ Inspect now (Recommended) │
+│  Clarify scope first       │
+│  Other (type your own)     │
+──────────────
+
+ ↑/↓ select  enter  esc  PgUp/PgDn/Ctrl+u/d: question · Wheel: transcript
+
+──────────────
+`;
+    const screen = `Earlier question summary\n├─  Inspect now\n└─  Clarify scope first\n\nWorking…\n${dialog}`;
+    const prompt = parseFallbackPrompt("gjc", screen);
+    expect(labels(prompt)).toEqual(["Inspect now (Recommended)", "Clarify scope first", "Other (type your own)", "Esc"]);
+    expect(prompt.question).toBe("Which approach?");
+    expect(prompt.body).toBe("Use read-only checks.");
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+    const moved = parseFallbackPrompt("gjc", screen.replace("│ Inspect", "│  Inspect").replace("│  Clarify", "│ Clarify"));
+    expect(moved.id).toBe(prompt.id);
+    expect(answerKeys(moved, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["enter"] }]);
+    expect(labels(parseFallbackPrompt("claude", screen))).toEqual(["↑", "↓", "Enter", "Esc"]);
+    expect(labels(parseFallbackPrompt("gjc", screen.replace("│ Inspect", "│  Inspect")))).toEqual(["↑", "↓", "Enter", "Esc"]);
+  });
+
   test("does not infer GJC choices without the exact footer, a selected row, or the GJC agent", () => {
     const footer = "[↑↓ to navigate, Enter to select, Esc to cancel]";
     const generic = ["↑", "↓", "Enter", "Esc"];

@@ -12,12 +12,14 @@
  * it, Tab stays inside, arrows move along the rows, and focus returns to what opened it. The design follows the resume pickers of Codex CLI (`/resume`)
  * and Claude Code (`claude --resume`): one session per row, newest first, the first prompt as its
  * text and the time it was last touched beside it, Enter resuming; here in the worktree dialog's
- * row anatomy, with the agent as a field above the rows.
+ * row anatomy, with the agent above the rows in the New workspace dialog's picker (each agent with
+ * its mark, no Shell entry), whose open list takes its own Escape.
  */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import "./SessionHistory.css";
+import { AgentPicker } from "./AgentPicker.tsx";
 import type { AgentKind, HerdrPane, SessionHistoryAgent, SessionHistoryResponse, SessionHistoryRow, TabCreated, WorkspaceInfo } from "../../shared/protocol.ts";
 import { ApiError, routeMissing } from "../lib/api.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
@@ -59,22 +61,28 @@ export function SessionHistory({ workspace, panes, agent: firstAgent, recent = N
   const guard = useRef(inFlightGuard());
   const surface = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLUListElement>(null);
-  const select = useRef<HTMLSelectElement>(null);
+  const picker = useRef<HTMLButtonElement>(null);
   useSheetSwipe(surface, pending ? null : onClose);
   usePhoneSheetBack(() => { if (pending) return false; onClose(); });
   const opener = useRef<HTMLElement | null>(null);
+  const placed = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // the dialog holds the focus from its first paint: an Escape pressed at once closes it rather
+    // than going to the message box it was opened from
+    picker.current?.focus({ preventScroll: true });
+    placed.current = picker.current;
     return () => { if (opener.current?.isConnected) opener.current.focus({ preventScroll: true }); };
   }, []);
   // the first row's button takes the focus once the rows are in; until then the agent field. Focus
   // the user moved meanwhile (Tab to Cancel, the field opened) stays where they put it
-  const placed = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const active = document.activeElement;
       if (surface.current?.contains(active) && active !== placed.current) return;
-      const target = list.current?.querySelector<HTMLElement>("button:not(:disabled)") ?? select.current;
+      // an open agent list keeps the focus: its keys and Escape still belong to the list
+      if (picker.current?.getAttribute("aria-expanded") === "true") return;
+      const target = list.current?.querySelector<HTMLElement>("button:not(:disabled)") ?? picker.current;
       target?.focus();
       placed.current = target ?? null;
     });
@@ -85,6 +93,8 @@ export function SessionHistory({ workspace, panes, agent: firstAgent, recent = N
       if (event.key !== "Escape") return;
       const active = document.activeElement;
       if (active && active !== document.body && !surface.current?.contains(active)) return;
+      // the agent picker's open list takes this Escape: it closes the list, not the dialog
+      if (active?.getAttribute("aria-expanded") === "true") return;
       event.stopPropagation();
       event.preventDefault();
       if (!pending) onClose();
@@ -133,7 +143,7 @@ export function SessionHistory({ workspace, panes, agent: firstAgent, recent = N
   };
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== "Tab" || !surface.current) return;
-    const stops = [...surface.current.querySelectorAll<HTMLElement>("select:not(:disabled), button:not(:disabled)")];
+    const stops = [...surface.current.querySelectorAll<HTMLElement>("button:not(:disabled)")];
     if (stops.length === 0) return;
     const index = stops.indexOf(document.activeElement as HTMLElement);
     const next = event.shiftKey ? (index <= 0 ? stops.length - 1 : index - 1) : (index < 0 || index === stops.length - 1 ? 0 : index + 1);
@@ -162,13 +172,11 @@ export function SessionHistory({ workspace, panes, agent: firstAgent, recent = N
           </button>
         </header>
         <div className="modal-body">
-          <label className="field session-agent">
-            <span className="field-label">{t("Agent")}</span>
-            <select ref={select} className="select" value={agent} disabled={pending !== null} onChange={(event) => setAgent(event.target.value as SessionHistoryAgent)}>
-              {options.map((option) => <option key={option.kind} value={option.kind}>{option.label}</option>)}
-            </select>
+          <div className="field session-agent">
+            <span className="field-label" id={`${id}-agent`}>{t("Agent")}</span>
+            <AgentPicker ref={picker} agents={options} value={agent} shell={false} disabled={pending !== null} labelledBy={`${id}-agent`} onChange={(kind) => setAgent(kind as SessionHistoryAgent)} />
             {answer && <span className="field-hint session-folder">{t("Sessions started in {folder}", { folder: "\u0000" }).split("\u0000").map((part, index) => index === 0 ? <span key="before">{part}</span> : <span key="after"><code>{answer.cwd}</code>{part}</span>)}</span>}
-          </label>
+          </div>
           {rows === null && !error ? (
             <p className="field-hint" role="status">{t("Reading sessions…")}</p>
           ) : rows && rows.length === 0 ? (

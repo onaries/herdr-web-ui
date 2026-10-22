@@ -325,7 +325,7 @@ async function open(options: Open): Promise<{ context: BrowserContext; page: Pag
   const page = await context.newPage();
   page.on("pageerror", (error) => console.warn(`  page error: ${error.message}`));
   const settings = { theme: options.theme ?? "dark", language: options.language ?? "en", ...(options.terminalFont ? { terminalFontSize: options.terminalFont } : {}) };
-  await page.addInitScript((value) => { try { localStorage.setItem("herdr-web-ui:settings", value); } catch { /* no storage */ } }, JSON.stringify(settings));
+  await page.addInitScript((value) => { try { localStorage.setItem("ovis:settings", value); } catch { /* no storage */ } }, JSON.stringify(settings));
   // the hook goes in whenever a take may arm it; it holds nothing until armed
   await page.addInitScript(filmHold, options.hold ?? []);
   if (options.mods?.todo || options.mods?.real || options.mods?.worked || options.mods?.stream || options.mods?.story) {

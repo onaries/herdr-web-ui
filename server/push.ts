@@ -1,9 +1,9 @@
 /**
- * Web Push: pane alerts that reach a device even when herdr-web-ui is closed there.
+ * Web Push: pane alerts that reach a device even when Ovis is closed there.
  *
  * The browser hands us a subscription (an endpoint on its vendor's push service plus
  * the keys to encrypt for it); we POST encrypted payloads there, signed with our VAPID
- * key. Both halves persist in the state dir (default ~/.config/herdr-web-ui):
+ * key. Both halves persist in the state dir (default ~/.config/ovis):
  * - vapid.json: every subscription is bound to this key pair. Regenerating it silently
  *   orphans every subscribed device, so a malformed file is an error, never a rotation.
  * - push-subscriptions.json: survives restarts, so a reboot does not unsubscribe phones.
@@ -50,11 +50,12 @@ import {
 } from "../shared/notify-policy.ts";
 import { badRequest, jsonResponse, setRequestRoute } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
+import { writePrivateState } from "./private-state.ts";
 
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
 const PUSH_TIMEOUT_MS = 10_000;
-const DEFAULT_SUBJECT = "https://github.com/devswha/herdr-web-ui";
+const DEFAULT_SUBJECT = "https://github.com/devswha/ovis";
 /** How many retired endpoints are remembered; the oldest is forgotten first. */
 const RETIRED_LIMIT = 1000;
 /** How long a retired endpoint is remembered: a browser that kept it this long has long since moved on. */
@@ -136,7 +137,10 @@ function readJson(path: string): unknown {
   }
 }
 
-/** Owner-only, and written whole: a crash mid-write must not leave half a key file. */
+/**
+ * Owner-only, and written whole, but not flushed: only for push-retired.json, which is telemetry.
+ * The key pair and the subscriptions go through writePrivateState (private-state.ts).
+ */
 function writeJsonPrivate(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
@@ -184,7 +188,7 @@ export function endedMessage(paneId: string, title: string): PushPayload {
 export function createPushService(options: PushServiceOptions): PushService {
   const vapidPath = join(options.stateDir, "vapid.json");
   const subscriptionsPath = join(options.stateDir, "push-subscriptions.json");
-  const subject = options.subject ?? process.env["HERDR_WEB_PUSH_SUBJECT"] ?? DEFAULT_SUBJECT;
+  const subject = options.subject ?? process.env["OVIS_PUSH_SUBJECT"] ?? DEFAULT_SUBJECT;
 
   let vapid: { publicKey: string; privateKey: string } | null = null;
   let subscriptions: Map<string, PushSubscriptionRecord> | null = null;
@@ -203,8 +207,10 @@ export function createPushService(options: PushServiceOptions): PushService {
     if (vapid) return vapid;
     const stored = readJson(vapidPath) as { publicKey?: unknown; privateKey?: unknown } | undefined;
     if (stored === undefined) {
-      vapid = webpush.generateVAPIDKeys();
-      writeJsonPrivate(vapidPath, vapid);
+      // cached only once on disk: a key no restart would find must never sign a subscription
+      const created = webpush.generateVAPIDKeys();
+      writePrivateState(vapidPath, created);
+      vapid = created;
     } else if (typeof stored.publicKey === "string" && typeof stored.privateKey === "string") {
       vapid = { publicKey: stored.publicKey, privateKey: stored.privateKey };
     } else {
@@ -249,8 +255,15 @@ export function createPushService(options: PushServiceOptions): PushService {
     return retiredEndpoints;
   }
 
-  function persist(): void {
-    writeJsonPrivate(subscriptionsPath, [...store().values()]);
+  /** Writes `next` and only then makes it the subscriptions in use, so a failed write changes nothing. */
+  function persist(next: Map<string, PushSubscriptionRecord>): void {
+    writePrivateState(subscriptionsPath, [...next.values()]);
+    subscriptions = next;
+  }
+
+  function without(remove: (endpoint: string, subscription: PushSubscriptionRecord) => boolean): Map<string, PushSubscriptionRecord> | null {
+    const next = new Map([...store()].filter(([endpoint, subscription]) => !remove(endpoint, subscription)));
+    return next.size === store().size ? null : next;
   }
 
   async function deliver(subscription: PushSubscriptionRecord, message: PushPayload, urgency: "normal" | "high"): Promise<PushDelivery> {
@@ -289,7 +302,8 @@ export function createPushService(options: PushServiceOptions): PushService {
       retired.set(hash, (options.now ?? Date.now)());
       if (retired.size > RETIRED_LIMIT) retired.delete(retired.keys().next().value!);
       writeJsonPrivate(retiredPath, [...retired].map(([key, at]) => ({ hash: key, at })));
-      if (store().delete(subscription.endpoint)) persist();
+      const next = without((endpoint) => endpoint === subscription.endpoint);
+      if (next) persist(next);
     } else {
       console.error(`web push to ${new URL(subscription.endpoint).host} failed: ${status ?? "no response"}`);
     }
@@ -377,20 +391,19 @@ export function createPushService(options: PushServiceOptions): PushService {
 
     subscribe(subscription, alerts, deviceId) {
       const kept = alerts ?? store().get(subscription.endpoint)?.alerts;
-      store().set(subscription.endpoint, { ...subscription, ...(kept === undefined ? {} : { alerts: kept }),
+      const next = new Map(store());
+      next.set(subscription.endpoint, { ...subscription, ...(kept === undefined ? {} : { alerts: kept }),
         ...(deviceId === undefined ? {} : { device_id: deviceId }) });
-      persist();
+      persist(next);
     },
 
     revokeDevice(id) {
-      for (const [endpoint, subscription] of store()) {
-        if (subscription.device_id === id || subscription.device_id === undefined) store().delete(endpoint);
-      }
-      persist();
+      persist(without((_, subscription) => subscription.device_id === id || subscription.device_id === undefined) ?? new Map(store()));
     },
 
     unsubscribe(endpoint) {
-      if (store().delete(endpoint)) persist();
+      const next = without((key) => key === endpoint);
+      if (next) persist(next);
     },
 
     retired: (endpoint) => retiredStore().has(endpointHash(endpoint)),

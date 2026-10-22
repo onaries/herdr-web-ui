@@ -139,6 +139,8 @@ export function renderModule(css: string, blocks = parseThemeBlocks(css), amber 
       `    roles: [${roles.map((role) => JSON.stringify(role)).join(", ")}],`,
       `    terminal: { background: ${color("term-bg")}, foreground: ${color("term-fg")}, cursor: ${color("term-cursor")}, selectionBackground: ${color("term-selection")}${ansi} },`,
       `    bgPanel: ${color("bg-panel")},`,
+      // the page's own surface, which the boot script paints before the stylesheet arrives (src/theme-bootstrap.ts)
+      `    bg: ${color("bg")},`,
       "  },",
     ].join("\n");
   });

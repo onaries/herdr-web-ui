@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("./ci-runner-route.sh", import.meta.url));
 const labels = '["self-hosted","linux","x64","herdr-ci"]';
-const repo = "devswha/herdr-web-ui";
+const repo = "devswha/ovis";
 
 function route(env: Record<string, string>) {
   const result = spawnSync("bash", [script], {

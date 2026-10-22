@@ -13,14 +13,14 @@ import type { ApiError, PaneLayoutSnapshot, PaneResized, PaneSplit, PaneSwapped,
  * snapshot (the layout rects), never from the route's own answer.
  */
 let server: { port: number; stop: () => void };
-const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-layout-contract-"));
+const stateDir = mkdtempSync(join(tmpdir(), "ovis-layout-contract-"));
 let workspaceId: string;
 /** the workspace's root pane: the left column throughout, until the swap */
 let root: string;
 
 beforeAll(async () => {
   server = createServer({ port: 0, stateDir });
-  const created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-layout" });
+  const created = await workspaceCreate({ cwd: tmpdir(), label: "ovis-test-layout" });
   workspaceId = created.workspace.workspace_id;
   root = created.root_pane.pane_id;
 });
@@ -112,7 +112,7 @@ describe("pane layout routes: validation", () => {
   });
 
   it("refuses a cross-origin change on every route", async () => {
-    const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-layout-origin-"));
+    const state = mkdtempSync(join(tmpdir(), "ovis-layout-origin-"));
     const instance = createServer({ port: 0, stateDir: state, token: "", tailscaleOwner: null, machines: false });
     try {
       for (const route of ROUTES) {
@@ -271,7 +271,7 @@ describe("pane layout routes: herdr's layout changes", () => {
 
   it("clears the pane's screen and the pane stays", async () => {
     // a marker the root's shell prints: on the screen before the clear, gone after it
-    const marker = `herdr-web-ui-clear-${Date.now().toString(36)}`;
+    const marker = `ovis-clear-${Date.now().toString(36)}`;
     const untilScreen = async (check: (text: string) => boolean, label: string): Promise<void> => {
       const deadline = Date.now() + 10_000;
       for (;;) {

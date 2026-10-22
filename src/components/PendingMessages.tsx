@@ -13,6 +13,8 @@ interface Props {
   /** the pane's agent, which names the input a refusal is about */
   agent?: string | null;
   blocked: boolean;
+  /** a terminal command's peek has the pane: the rows stay, taking no input */
+  inert?: boolean;
   unsaved: boolean;
   isBusy: (id: string) => boolean;
   onSendNow: (id: string) => Promise<void>;
@@ -34,7 +36,7 @@ export function pendingStatus(message: Pick<PendingMessageView, "state" | "error
 }
 
 /** Pending text is separate from the transcript; Send now acts on its ID, never on its text. */
-export function PendingMessages({ messages, active = true, connected, agent, blocked, unsaved, isBusy, onSendNow, onAgentQueue, onDiscard }: Props) {
+export function PendingMessages({ messages, active = true, connected, agent, blocked, inert = false, unsaved, isBusy, onSendNow, onAgentQueue, onDiscard }: Props) {
   const t = useT();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -47,7 +49,7 @@ export function PendingMessages({ messages, active = true, connected, agent, blo
       ?? stack.querySelector<HTMLTextAreaElement>(".composer-text");
     next?.focus({ preventScroll: true });
   };
-  return <ol ref={rootRef} className="pending-messages" aria-label={t("Queued messages")}>
+  return <ol ref={rootRef} className="pending-messages" aria-label={t("Queued messages")} inert={inert || undefined}>
     {unsaved && <li className="pending-message-note" role="status">{t("Queue could not be saved. Keep this tab open or copy the messages before reloading.")}</li>}
     {messages.map((message) => {
       const busy = isBusy(message.id) || message.state === "sending";
@@ -81,7 +83,8 @@ export function PendingMessages({ messages, active = true, connected, agent, blo
               void onDiscard(message.id).finally(() => restoreFocus(keyboard, target, stack, owner));
             }}><X aria-hidden="true" /></button>
         </div>
-        {message.error && !uncertain && <p className="pending-message-note" role="status">{(message.error.code === "input_draft" || message.error.code === "held_input" || message.error.code === "not_transmitted" || message.error.code === "rewind_dialog_open" || message.error.code === "first_message_unattended") ? submitNote(message.error.code, message.error.message, agent) : t("Not sent: {message}", { message: message.error.message })}</p>}
+        {message.error && !uncertain && <p className="pending-message-note" role="status">{message.error.code === "still_open" ? message.error.message
+          : (message.error.code === "input_draft" || message.error.code === "held_input" || message.error.code === "not_transmitted" || message.error.code === "rewind_dialog_open" || message.error.code === "first_message_unattended") ? submitNote(message.error.code, message.error.message, agent) : t("Not sent: {message}", { message: message.error.message })}</p>}
       </li>;
     })}
   </ol>;

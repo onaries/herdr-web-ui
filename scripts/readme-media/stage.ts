@@ -4,7 +4,7 @@
  * their agent worktrees and the release shell tab, and curated chats served in place of real
  * transcripts. The real hostname never reaches the page.
  */
-process.env["HERDR_TEST_SESSION"] = "herdr-web-ui-demo";
+process.env["HERDR_TEST_SESSION"] = "ovis-demo";
 await import("../test-herdr.ts");
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -78,7 +78,7 @@ async function openRecording(browser: Browser, contexts: BrowserContext[], origi
   const context = await browser.newContext({ locale: "en-US", ...options });
   contexts.push(context);
   await context.addInitScript((stored) => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify(stored));
+    localStorage.setItem("ovis:settings", JSON.stringify(stored));
     // every frame this page's socket sends and receives, to wait on the server's answers
     const frames: { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string; cols?: number; rows?: number }[] = [];
     (window as unknown as { frames_: typeof frames }).frames_ = frames;
@@ -133,10 +133,10 @@ const attached = (page: Page, nth = 1) => page.waitForFunction((count) => (windo
  * The size is the one the pane's own shell reports (`stty size`), not what either browser thinks.
  */
 export async function checkChatKeepsTerminalSize(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-chat-size-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-chat-size-"));
   const cwd = join(root, "pane");
   mkdirSync(cwd);
-  const created = await workspaceCreate({ cwd, label: "herdr-web-ui-test-chat-size" });
+  const created = await workspaceCreate({ cwd, label: "ovis-test-chat-size" });
   const paneId = created.root_pane.pane_id;
   const contexts: BrowserContext[] = [];
   try {
@@ -249,7 +249,7 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
  * and picks the agent pane (chat lens there) from the sidebar.
  */
 export async function checkPaneSwitchKeepsTerminalSize(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-chat-switch-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-chat-switch-"));
   const contexts: BrowserContext[] = [];
   const workspaces: string[] = [];
   try {
@@ -257,7 +257,7 @@ export async function checkPaneSwitchKeepsTerminalSize(browser: Browser, origin:
     for (const name of ["agent", "shell"]) {
       const cwd = join(root, name);
       mkdirSync(cwd);
-      const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-chat-switch-${name}` });
+      const created = await workspaceCreate({ cwd, label: `ovis-test-chat-switch-${name}` });
       workspaces.push(created.workspace.workspace_id);
       panes.push(created.root_pane.pane_id);
     }
@@ -308,20 +308,20 @@ function attachRunning(terminalId: string): boolean {
  */
 export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, origin: string): Promise<void> {
   await checkInactiveAttachLifecycle(browser, origin);
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-background-size-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-background-size-"));
   const contexts: BrowserContext[] = [];
   const workspaces: string[] = [];
   try {
     const cwd = join(root, "pane");
     mkdirSync(cwd);
-    const created = await workspaceCreate({ cwd, label: "herdr-web-ui-test-background-size" });
+    const created = await workspaceCreate({ cwd, label: "ovis-test-background-size" });
     workspaces.push(created.workspace.workspace_id);
     const paneId = created.root_pane.pane_id;
     const terminalId = created.root_pane.terminal_id;
     // the pane the app moves on to once the first one closes: herdr's focused one
     const nextCwd = join(root, "next");
     mkdirSync(nextCwd);
-    const next = await herdrRpc<WorkspaceCreateResult>("workspace.create", { cwd: nextCwd, label: "herdr-web-ui-test-background-size-next", focus: true });
+    const next = await herdrRpc<WorkspaceCreateResult>("workspace.create", { cwd: nextCwd, label: "ovis-test-background-size-next", focus: true });
     workspaces.push(next.workspace.workspace_id);
     const nextPane = next.root_pane.pane_id;
     const size = shellSize(paneId);
@@ -380,7 +380,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
 
     // a font the user chose loads after every attach and refits the grid: one no device has falls
     // back to the built-in fonts, so the grid keeps its size
-    const desktop = await open({ viewport: { width: 1280, height: 800 } }, { terminalFontFamily: "herdr-web-ui-test-no-such-font" });
+    const desktop = await open({ viewport: { width: 1280, height: 800 } }, { terminalFontFamily: "ovis-test-no-such-font" });
     await attached(desktop);
     const desktopSize = await size();
     const phone = await open({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -487,7 +487,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
 
 /** Drive the real component and assert the attach/resize frames, not the paused notice alone. */
 export async function checkInactiveAttachLifecycle(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-inactive-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-inactive-"));
   const contexts: BrowserContext[] = [];
   const workspaces: string[] = [];
   const failures: string[] = [];
@@ -499,7 +499,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
     for (const name of ["first", "next", "held"]) {
       const cwd = join(root, name);
       mkdirSync(cwd);
-      const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-inactive-${name}` });
+      const created = await workspaceCreate({ cwd, label: `ovis-test-inactive-${name}` });
       panes.push(created.root_pane.pane_id);
       terminals.set(created.root_pane.pane_id, created.root_pane.terminal_id);
       tabs.set(created.root_pane.pane_id, created.root_pane.tab_id);
@@ -646,7 +646,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           const ready = Promise.withResolvers<void>();
           const deadline = setTimeout(() => ready.reject(new Error("holder produced no attach stream")), 15_000);
           holder = new PtySession({
-            command: process.env.HERDR_WEB_HERDR_BIN ?? "herdr", args: ["terminal", "attach", heldTerminal],
+            command: process.env.OVIS_HERDR_BIN ?? "herdr", args: ["terminal", "attach", heldTerminal],
             cols: 80, rows: 24, env: { HERDR_SOCKET_PATH: herdrSocketPath() },
             onData: () => ready.resolve(), onExit: () => ready.reject(new Error("holder ended before the test")),
           });
@@ -984,7 +984,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
       // An intercepted iframe document has no network address space until Chrome grants it.
       await context.grantPermissions(["local-network-access"], { origin });
       await context.addInitScript(() => {
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal" }));
+        localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal" }));
         Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
       });
       const page = await context.newPage();
@@ -1028,7 +1028,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
 // This file is also the focused manual-QA entry point; imports from ui-regression do not run it.
 if (import.meta.main) {
   await import("./test-herdr.ts");
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-chat-size-run-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-chat-size-run-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
   let browser: Browser | undefined;
   try {
@@ -1054,13 +1054,13 @@ if (import.meta.main) {
  * (a phone used beside a PC left in front): a click or a key in its terminal takes the pane back.
  */
 export async function checkFocusedWindowReclaimsTerminalSize(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-reclaim-size-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-reclaim-size-"));
   const contexts: BrowserContext[] = [];
   let workspace: string | null = null;
   try {
     const cwd = join(root, "pane");
     mkdirSync(cwd);
-    const created = await workspaceCreate({ cwd, label: "herdr-web-ui-test-reclaim-size" });
+    const created = await workspaceCreate({ cwd, label: "ovis-test-reclaim-size" });
     workspace = created.workspace.workspace_id;
     const paneId = created.root_pane.pane_id;
     // the pty is resized under the shell throughout: its answers go to files, not the screen

@@ -23,14 +23,14 @@ async function until(check: () => Promise<boolean>, message: string): Promise<vo
   }
 }
 try {
-  const made = await workspaceCreate({ cwd: state, label: "herdr-web-ui-test-viewport" });
+  const made = await workspaceCreate({ cwd: state, label: "ovis-test-viewport" });
   workspace = made.workspace.workspace_id;
   const paneId = made.root_pane.pane_id;
   const ready = herdrRpc("pane.wait_for_output", { pane_id: paneId, source: "visible", match: { type: "substring", value: "viewport_ready" }, timeout_ms: 10000 }, undefined, 12000);
   await herdrRpc("pane.send_input", { pane_id: paneId, text: "for n in $(seq 1 180); do printf 'history %03d: record\\n' $n; if [ $n = 12 ] || [ $n = 90 ] || [ $n = 170 ]; then printf 'mark_%s tail mark_%s\\n' needle needle; fi; done; printf 'wide_%s%s%sZ\\n' '界' 'e' '́'; printf 'viewport_%s\\n' ready; exec cat", keys: ["enter"] });
   await ready;
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   const errors: string[] = [];

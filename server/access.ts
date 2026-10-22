@@ -12,14 +12,14 @@
  * on a PC whose Tailscale login is known: there, a request with no login header is a tagged
  * node (tailscale serve states no person for it), and a tailnet can hold many of those. The
  * exception is an install whose operator declared `tailscale serve` the only way in
- * (HERDR_WEB_TAILSCALE_SERVE_ONLY) on a tailnet Tailscale says holds no tagged node and no second
+ * (OVIS_TAILSCALE_SERVE_ONLY) on a tailnet Tailscale says holds no tagged node and no second
  * login: no stranger exists there to be mistaken for, so a serve-proxied request with no login is
  * the owner, and the owner's own phone opens the address without a code. On that path, and only
  * there, the request's Host must name this PC's own Tailscale name or address: `tailscale serve`
  * passes the client's Host through, and under the declaration no other ingress exists to forge it
  * through, while a rebinding page can only ever present its own origin.
  * A PC whose own node is tagged has no login to compare with: its proxied requests pair, the
- * owner's included, unless HERDR_WEB_TAILSCALE_OWNER names the login to let in.
+ * owner's included, unless OVIS_TAILSCALE_OWNER names the login to let in.
  *
  * A proxy on this PC connects from loopback like a local client does, so it is known only by
  * what it sends: a forwarding header, or a Host that is not a name for this machine. A proxy
@@ -57,7 +57,7 @@ export interface AccessInput {
   dnsName: string | null;
   /** this PC's IPv4 address on the tailnet from `tailscale status` */
   tailnetIp: string | null;
-  /** the operator declared `tailscale serve` as this install's only ingress (HERDR_WEB_TAILSCALE_SERVE_ONLY) */
+  /** the operator declared `tailscale serve` as this install's only ingress (OVIS_TAILSCALE_SERVE_ONLY) */
   serveOnly: boolean;
   tokenConfigured: boolean;
   /** a device cookie was confirmed by DeviceStore.match: the gate is closed to strangers */

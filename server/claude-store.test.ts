@@ -8,6 +8,24 @@ import type { ProcessRow } from "./windows-processes.ts";
 const NATIVE = process.platform === "linux" || process.platform === "darwin";
 const SESSION = "0b8e6f0e-8d3f-4c1a-9a53-6c2b7a1d9e42";
 
+describe("isClaudeProcess", () => {
+  it("knows the native build, whose process is titled Claude", () => {
+    expect(isClaudeProcess({ name: "2.1.302", argv0: "Claude", argv: ["Claude"] })).toBe(true);
+    expect(isClaudeProcess({ name: "Claude Helper", argv: ["/Applications/Claude.app/Contents/MacOS/Claude Helper"] })).toBe(false);
+    // one field alone is not that shape
+    expect(isClaudeProcess({ name: "2.1.302", argv0: "Claude", argv: ["Other"] })).toBe(false);
+    expect(isClaudeProcess({ name: "2.1.302", argv0: "Other", argv: ["Claude"] })).toBe(false);
+    // the native build as herdr reports it run from its lowercase `claude` launcher: the executable match
+    expect(isClaudeProcess({ name: "2.1.306", argv0: "claude", argv: ["claude"] })).toBe(true);
+  });
+
+  it("knows the native build typed as Claude on a case-insensitive Mac disk", () => {
+    // recorded on macOS 27 (case-insensitive APFS): `Claude` finds the ~/.local/bin/claude link, so
+    // herdr's name is the versioned binary behind it and argv0/argv[0] keep the typed `Claude`
+    expect(isClaudeProcess({ name: "2.1.999", argv0: "Claude", argv: ["Claude", "42"] })).toBe(true);
+  });
+});
+
 describe("claudeProcessSession", () => {
   const roots: string[] = [];
   afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

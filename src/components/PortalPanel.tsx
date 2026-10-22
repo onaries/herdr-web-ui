@@ -22,8 +22,9 @@ export function PortalPanel({ readOnly = false }: { readOnly?: boolean }) {
   const [typed, setTyped] = useState<string | null>(null);
   if (!status?.supported) return null;
   const relay = typed ?? status.relay ?? "";
-  const on = status.phase === "starting" || status.phase === "running" || status.phase === "stopping" || status.phase === "error";
-  const progress = status.phase === "starting" ? t("Starting…") : status.phase === "stopping" ? t("Stopping…") : null;
+  const on = status.phase !== "idle";
+  // a Portal that ended on its own is started again once by the server; Stop still ends it
+  const progress = status.phase === "starting" ? t("Starting…") : status.phase === "recovering" ? t("Recovering…") : status.phase === "stopping" ? t("Stopping…") : null;
   let control;
   if (on) {
     control = (
@@ -32,7 +33,7 @@ export function PortalPanel({ readOnly = false }: { readOnly?: boolean }) {
       </SettingsRow>
     );
   } else if (status.blocked !== null) {
-    control = <p className="settings-item settings-hint">{status.blocked === "token_required" ? t("Set HERDR_WEB_TOKEN on this PC and restart the app to start Portal.") : t("Portal is a second way in: unset HERDR_WEB_TAILSCALE_SERVE_ONLY on this PC and restart the app first.")}</p>;
+    control = <p className="settings-item settings-hint">{status.blocked === "token_required" ? t("Set OVIS_TOKEN on this PC and restart the app to start Portal.") : t("Portal is a second way in: unset OVIS_TAILSCALE_SERVE_ONLY on this PC and restart the app first.")}</p>;
   } else if (!status.usable) {
     control = (
       <div className="settings-item">
@@ -61,7 +62,7 @@ export function PortalPanel({ readOnly = false }: { readOnly?: boolean }) {
         </div>
       )}
       {control}
-      {progress !== null && <p className="settings-item settings-hint" role="status">{progress}</p>}
+      {progress !== null && <p className="settings-item settings-hint portal-progress" role="status">{progress}</p>}
       {error !== null && <p className="settings-item settings-hint portal-error" role="alert">{error}</p>}
       {/* the server's account of the last failure, then Portal's own words */}
       {status.phase === "error" && status.error !== null && (

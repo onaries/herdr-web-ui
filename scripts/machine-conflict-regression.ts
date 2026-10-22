@@ -52,7 +52,7 @@ const shots = resolve("evidence/machine-conflict"); mkdirSync(shots, { recursive
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
-  await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+  await page.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
   await page.goto(server.url.href);
   const notice = page.locator(".machine-action");
   await notice.getByText("Bridge connection conflict", { exact: true }).waitFor({ timeout: 10_000 });
@@ -78,7 +78,7 @@ try {
   // Removing the PC this tab has selected opens this PC without a word: the header note is for
   // a link or a selection of a PC removed elsewhere, not for the user's own Remove PC
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.evaluate(([key, id]) => { for (const storage of [sessionStorage, localStorage]) storage.setItem(key!, JSON.stringify({ machine_id: id, pane_id: null })); }, ["herdr-web-ui:selection", pc.id]);
+  await page.evaluate(([key, id]) => { for (const storage of [sessionStorage, localStorage]) storage.setItem(key!, JSON.stringify({ machine_id: id, pane_id: null })); }, ["ovis:selection", pc.id]);
   await page.reload();
   const group = page.locator(`section.machine-group.is-current[aria-label="PC ${pc.name}"]`);
   await group.waitFor({ timeout: 10_000 });

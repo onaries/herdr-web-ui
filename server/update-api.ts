@@ -1,6 +1,6 @@
-import { noInstalledNotes, noUpdateNotes, readInstalledNotes, readUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
+import { noInstalledNotes, noUpdateNotes, readInstalledNotes, readUpdateNotes, REVISION, unmanagedUpdateStatus, type InstalledNotes, type UpdateNotes, type UpdateRequest, type UpdateStatus } from "../shared/update.ts";
 import { join } from "node:path";
-import { jsonResponse, setRequestRoute } from "./http.ts";
+import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 
 export interface UpdateService {
   status(): UpdateStatus;
@@ -8,7 +8,7 @@ export interface UpdateService {
   notes(): UpdateNotes;
   /** what the last update brought, from the supervisor that runs it */
   installed(): InstalledNotes;
-  request(command: UpdateCommand): void;
+  request(request: UpdateRequest): void;
   /** The commit the client build in the served `dist/` was made from (see `servedRevision`); absent when unmanaged. */
   servedRevision?(): Promise<string | null>;
 }
@@ -35,28 +35,41 @@ export function servedRevision(directory: string, since = Date.now()): () => Pro
   };
 }
 
+/** The bridge's line to the supervisor that runs it: the process's IPC channel, or a test's stand-in. */
+export interface SupervisorChannel {
+  send(message: unknown): void;
+  onMessage(listener: (message: unknown) => void): void;
+}
+
 /** Only the managed entrypoint connects IPC; importing createServer in tests does not. */
-export function connectUpdater(): UpdateService {
+export function connectUpdater(channel?: SupervisorChannel): UpdateService {
   let status = unmanagedUpdateStatus();
   let notes = noUpdateNotes();
   let installed = noInstalledNotes();
-  const managed = Boolean(process.send) && process.env["HERDR_WEB_MANAGED"] === "1";
-  if (managed) {
-    process.on("message", (message: unknown) => {
+  const managed = Boolean(process.send) && process.env["OVIS_MANAGED"] === "1";
+  const supervisor = channel ?? (managed ? { send: (message: unknown) => process.send?.(message), onMessage: (listener: (message: unknown) => void) => process.on("message", listener) } : null);
+  if (supervisor) {
+    supervisor.onMessage((message: unknown) => {
       const value = message as { type?: string; status?: UpdateStatus; notes?: unknown; installed?: unknown };
       if (value?.type !== "update-status" || !value.status) return;
-      status = value.status;
+      // installs are offered only where the supervisor says itself that it installs the exact
+      // revision asked for: an older one would install whatever its own check finds
+      const { revision_bound_install: bound, ...told } = value.status;
+      status = bound === true ? { ...told, revision_bound_install: true } : told;
       // a supervisor older than the notes sends none: the one being replaced, or a fallback
       notes = readUpdateNotes(value.notes);
       installed = readInstalledNotes(value.installed);
     });
-    process.send?.({ type: "update-status-request" });
+    supervisor.send({ type: "update-status-request" });
   }
   return {
     status: () => status,
     notes: () => notes,
     installed: () => installed,
-    request: (command) => process.send?.({ type: "update-command", command }),
+    // an install goes as a message an older supervisor does not know, never as its unbound `install`
+    request: (request) => supervisor?.send(request.command === "install"
+      ? { type: "update-install-revision", expected_revision: request.expected_revision }
+      : { type: "update-command", command: "check" }),
     // the supervisor starts the bridge in the directory it serves: the release's, or the source checkout
     ...(managed ? { servedRevision: servedRevision(process.cwd()) } : {}),
   };
@@ -86,6 +99,31 @@ async function withServed(status: UpdateStatus, service?: UpdateService): Promis
   return { ...status, served_revision: served !== null && served !== status.current_revision ? served : null };
 }
 
+/** An install's body is one revision: more than this is not one. */
+const INSTALL_BODY_LIMIT = 1024;
+
+/** The revision an install asks for, from a JSON body of at most INSTALL_BODY_LIMIT bytes; null when it names none. */
+async function expectedRevision(request: Request): Promise<string | null> {
+  if (!request.body) return null;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > INSTALL_BODY_LIMIT) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  try {
+    const body: unknown = JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
+    const revision = isJsonObject(body) ? body["expected_revision"] : null;
+    return typeof revision === "string" && REVISION.test(revision) ? revision : null;
+  } catch { return null; }
+}
+
+const running = (status: UpdateStatus) => ["checking", "building", "restarting"].includes(status.phase);
+
 export function handleUpdateRequest(request: Request, pathname: string, service?: UpdateService): Response | Promise<Response> {
   const status = service?.status() ?? unmanagedUpdateStatus();
   const reply = (body: unknown, code = 200) => {
@@ -103,10 +141,21 @@ export function handleUpdateRequest(request: Request, pathname: string, service?
   setRequestRoute(pathname);
   if (!updateRequestAllowed(request)) return fail("invalid_update_request", "Use the update controls from this app.", 403);
   if (!service || !status.managed) return fail("updates_unmanaged", status.blocked_reason ?? "Updates unavailable", 409);
-  if (["checking", "building", "restarting"].includes(status.phase)) return fail("update_busy", "An update operation is already running.", 409);
-  if (pathname.endsWith("/install") && (status.blocked_reason || !status.available)) {
-    return fail("update_unavailable", status.blocked_reason ?? "No update is available. Check again first.", 409);
+  const busy = () => fail("update_busy", "An update operation is already running.", 409);
+  if (pathname.endsWith("/check")) {
+    if (running(status)) return busy();
+    service.request({ command: "check" });
+    return reply({ accepted: true }, 202);
   }
-  service.request(pathname.endsWith("/check") ? "check" : "install");
-  return reply({ accepted: true }, 202);
+  // an install is consent to one release: the one the person was shown, named by its commit
+  return expectedRevision(request).then((expected) => {
+    if (expected === null) return fail("invalid_update_install", "Name the expected_revision of the update on offer.", 400);
+    const now = service.status();
+    if (running(now)) return busy();
+    if (now.revision_bound_install !== true) return fail("update_restart_required", "Restart the app before installing an update from here.", 409);
+    if (now.blocked_reason || !now.available) return fail("update_unavailable", now.blocked_reason ?? "No update is available. Check again first.", 409);
+    if (now.latest_revision !== expected) return fail("update_offer_changed", "A different update is on offer now. Review it, then update again.", 409);
+    service.request({ command: "install", expected_revision: expected });
+    return reply({ accepted: true }, 202);
+  });
 }

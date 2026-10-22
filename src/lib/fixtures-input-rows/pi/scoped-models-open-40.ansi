@@ -1,0 +1,38 @@
+
+
+[0m[38;2;255;255;0m────────────────────────────────────────[0m
+ [0m[1m[38;2;255;255;0mUpdate Available[0m                       
+ [0m[38;2;128;128;128mNew version 1.4.0 is available. Run [0m[38;2;138;190;183mpi [0m
+ [0m[38;2;138;190;183mupdate[0m                                 
+ [0m[38;2;128;128;128mChangelog: [0m[38;2;138;190;183mhttps://pi.dev/changelog[0m    
+[0m[38;2;255;255;0m────────────────────────────────────────[0m
+
+[0m[38;2;95;135;255m────────────────────────────────────────[0m
+
+[0m[1m[38;2;138;190;183mModel Configuration[0m                     
+[0m[38;2;128;128;128mSession-only. Ctrl+S to save to         [0m
+[0m[38;2;128;128;128msettings.[0m                               
+
+> [0m[7m [0m                                     
+
+[0m[38;2;138;190;183m→ ✓ claude-fable-5[0m[38;2;128;128;128m [anthropic][0m          
+  [0m[38;2;138;190;183m✓ [0mclaude-fable-5-1[0m[38;2;128;128;128m [anthropic][0m        
+  [0m[38;2;138;190;183m✓ [0mclaude-haiku-4-5[0m[38;2;128;128;128m [anthropic][0m        
+  [0m[38;2;138;190;183m✓ [0mclaude-haiku-4-5-20251001[0m[38;2;128;128;128m           [0m
+[0m[38;2;128;128;128m[anthropic][0m                             
+  [0m[38;2;138;190;183m✓ [0mclaude-opus-4-5[0m[38;2;128;128;128m [anthropic][0m         
+  [0m[38;2;138;190;183m✓ [0mclaude-opus-4-5-20251101[0m[38;2;128;128;128m [anthropic][0m
+  [0m[38;2;138;190;183m✓ [0mclaude-opus-4-6[0m[38;2;128;128;128m [anthropic][0m         
+  [0m[38;2;138;190;183m✓ [0mclaude-opus-4-7[0m[38;2;128;128;128m [anthropic][0m         
+[0m[38;2;128;128;128m  (1/17)[0m                                
+
+[0m[38;2;128;128;128m  Model Name: Claude Fable 5[0m            
+
+[0m[38;2;181;189;104m  Model catalogs refreshed.[0m             
+[0m[38;2;102;102;102m  Enter toggle · Ctrl+A all · Ctrl+X    [0m
+[0m[38;2;102;102;102mclear · Ctrl+P provider ·               [0m
+[0m[38;2;102;102;102mAlt+Up/Alt+Down reorder · Ctrl+S save · [0m
+[0m[38;2;102;102;102mall enabled[0m                             
+[0m[38;2;95;135;255m────────────────────────────────────────[0m
+[0m[38;2;102;102;102m/tmp/claude-1000/pr2-rec/pi/proj (main)[0m
+[0m[38;2;102;102;102m0.0%/1.0M (auto)  claude-opus-4-8 • medi[0m

@@ -68,7 +68,7 @@ function transcriptAnswer(): Response {
 }
 
 beforeEach(() => {
-  stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-voice-"));
+  stateDir = mkdtempSync(join(tmpdir(), "ovis-voice-"));
   requests = [];
   handler = () => new Response("unexpected", { status: 500 });
 });
@@ -88,7 +88,7 @@ describe("voice config", () => {
   });
 
   it("takes the env key and refuses to change it", async () => {
-    const voice = service({ HERDR_WEB_OPENAI_API_KEY: KEY });
+    const voice = service({ OVIS_OPENAI_API_KEY: KEY });
     const status = await (await call(voice, "/api/voice")).json() as VoiceStatus;
     expect(status).toMatchObject({ configured: true, source: "env" });
     for (const api_key of ["sk-other", null]) {
@@ -100,7 +100,7 @@ describe("voice config", () => {
 
   it("never sends a key to a base_url it was not saved with", async () => {
     writeFileSync(join(stateDir, "voice.json"), JSON.stringify({ base_url: "http://attacker.invalid/v1" }));
-    const fromEnv = service({ HERDR_WEB_OPENAI_API_KEY: KEY });
+    const fromEnv = service({ OVIS_OPENAI_API_KEY: KEY });
     expect((await (await call(fromEnv, "/api/voice")).json() as VoiceStatus).base_url).toBe("https://api.openai.com/v1");
     const moved = await put(fromEnv, { base_url: "http://attacker.invalid/v1" });
     expect(moved.status).toBe(409);
@@ -157,7 +157,7 @@ describe("voice transcribe", () => {
   });
 
   it("refuses an oversize clip", async () => {
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm({ audio: new Blob([new Uint8Array(VOICE_MAX_AUDIO_BYTES + 1)], { type: "audio/webm" }) }));
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm({ audio: new Blob([new Uint8Array(VOICE_MAX_AUDIO_BYTES + 1)], { type: "audio/webm" }) }));
     expect(response.status).toBe(413);
     expect(await response.json()).toMatchObject({ error: { code: "audio_too_large" } });
   });
@@ -176,14 +176,14 @@ describe("voice transcribe", () => {
     const request = new Request("http://127.0.0.1/api/voice/transcribe", {
       method: "POST", body, headers: { "content-type": "multipart/form-data; boundary=x" }, duplex: "half",
     } as RequestInit);
-    const response = await handleVoiceRequest(request, "/api/voice/transcribe", service({ HERDR_WEB_OPENAI_API_KEY: KEY }));
+    const response = await handleVoiceRequest(request, "/api/voice/transcribe", service({ OVIS_OPENAI_API_KEY: KEY }));
     expect(response.status).toBe(413);
     expect(await response.json()).toMatchObject({ error: { code: "audio_too_large" } });
     expect(pulled).toBeLessThan(VOICE_MAX_AUDIO_BYTES + 4 * chunk.byteLength);
   });
 
   it("refuses a missing audio part", async () => {
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm({ audio: null }));
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm({ audio: null }));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: "invalid_audio" } });
   });
@@ -191,7 +191,7 @@ describe("voice transcribe", () => {
   it("asks for the speaker's language and English, Korean when the client names none", async () => {
     const asked: string[][] = [];
     handler = async (_url, init) => { asked.push((init.body as FormData).getAll("languages[]") as string[]); return transcriptAnswer(); };
-    const voice = service({ HERDR_WEB_OPENAI_API_KEY: KEY });
+    const voice = service({ OVIS_OPENAI_API_KEY: KEY });
     for (const language of ["ja", "zh", "en", undefined]) await events(await transcribe(voice, clipForm({ language })));
     expect(asked).toEqual([["ja", "en"], ["zh", "en"], ["en"], ["ko", "en"]]);
     const bad = await transcribe(voice, clipForm({ language: "japanese" }));
@@ -200,7 +200,7 @@ describe("voice transcribe", () => {
   });
 
   it("refuses a bad mode", async () => {
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm({ mode: "shell" }));
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm({ mode: "shell" }));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: "invalid_request" } });
   });
@@ -208,7 +208,7 @@ describe("voice transcribe", () => {
   it("streams deltas and the done text from a split SSE answer", async () => {
     handler = transcriptAnswer;
     const keywords = JSON.stringify([" git ", "git", "", "server/voice.ts", "x".repeat(81)]);
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm({ keywords, mode: "terminal" }));
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm({ keywords, mode: "terminal" }));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("application/x-ndjson");
     expect(await events(response)).toEqual([
@@ -238,7 +238,7 @@ describe("voice transcribe", () => {
       expect(body.messages.at(-1)!.content).toBe(DELTAS.join(""));
       return Response.json({ choices: [{ message: { content: "안녕하세요. `git status` 실행해 줘." } }] });
     };
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm({ polish: "1" }));
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm({ polish: "1" }));
     expect((await events(response)).slice(-2)).toEqual([
       { type: "done", text: DELTAS.join("") },
       { type: "polished", text: "안녕하세요. `git status` 실행해 줘." },
@@ -253,7 +253,7 @@ describe("voice transcribe", () => {
       body = JSON.parse(String(init.body)) as Record<string, unknown>;
       return Response.json({ choices: [{ message: { content: "tidy" } }] });
     };
-    const voice = service({ HERDR_WEB_OPENAI_API_KEY: KEY });
+    const voice = service({ OVIS_OPENAI_API_KEY: KEY });
     voice.update({ polish_model: "gpt-4.1-mini" });
     await events(await transcribe(voice, clipForm({ polish: "1" })));
     expect(body).toMatchObject({ model: "gpt-4.1-mini", temperature: 0 });
@@ -264,7 +264,7 @@ describe("voice transcribe", () => {
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     try {
       handler = (url) => url.endsWith("/audio/transcriptions") ? transcriptAnswer() : Response.json({ error: { message: `bad key ${KEY}` } }, { status: 500 });
-      const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm({ polish: "1" }));
+      const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm({ polish: "1" }));
       const lines = await events(response);
       expect(lines.at(-1)).toEqual({ type: "done", text: DELTAS.join("") });
       expect(lines.some((event) => event.type === "polished" || event.type === "error")).toBe(false);
@@ -277,7 +277,7 @@ describe("voice transcribe", () => {
 
   it("reports a refused key as provider_auth without echoing it", async () => {
     handler = () => Response.json({ error: { message: `Incorrect API key provided: ${KEY}` } }, { status: 401 });
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm());
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm());
     expect(response.status).toBe(502);
     const body = await response.text();
     expect(JSON.parse(body)).toMatchObject({ error: { code: "provider_auth" } });
@@ -286,7 +286,7 @@ describe("voice transcribe", () => {
 
   it("emits one error line when the provider fails mid-stream", async () => {
     handler = () => sse([{ type: "transcript.text.delta", delta: "안녕" }, { type: "error", error: { message: "server_error" } }], []);
-    const response = await transcribe(service({ HERDR_WEB_OPENAI_API_KEY: KEY }), clipForm());
+    const response = await transcribe(service({ OVIS_OPENAI_API_KEY: KEY }), clipForm());
     expect(await events(response)).toEqual([
       { type: "delta", text: "안녕" },
       { type: "error", code: "provider_error", message: "server_error" },

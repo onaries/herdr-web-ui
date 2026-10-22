@@ -127,12 +127,34 @@ const BUILTINS: Readonly<Record<string, string>> = {
   "exit": "Exit the CLI (use --delete to also remove session history)",
 };
 const CORE_NAMES = new Set([...Object.keys(BUILTINS), "start", "topic", "pause", "approve", "deny", "agents", "tasks", "sethome", "set-home", "resume", "sessions", "config", "model", "skin", "skills", "plugins", "commands", "restart", "platform"]);
-const TERMINAL_BOUND = ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin"] as const;
+// The second line waits for a key at 354724fb: the reload-mcp and update confirmations (cli_info_mixin.py:908-923,
+// cli_commands_mixin.py:2387-2407), undo's confirmation (cli_loops_mixin.py:220-242), prompt and compose open $EDITOR
+// (cli_commands_mixin.py:2088-2131), palette its overlay, tasks (an alias of agents) and the journey views their TUI
+// overlays, and the plan and billing commands their pickers whenever the account may change them (cli_billing_mixin.py).
+// login shows its device code only on the screen, and debug uploads its report publicly as soon as it is typed.
+const TERMINAL_BOUND = ["model", "resume", "sessions", "config", "agents", "plugins", "skills", "skin",
+  "reload-mcp", "reload_mcp", "update", "undo", "prompt", "compose", "palette", "tasks", "journey", "learning", "memory-graph",
+  "subscription", "upgrade", "topup", "login", "debug"] as const;
+// new, reset and clear confirm first unless told now, --yes or -y (approvals.destructive_slash_confirm,
+// cli_loops_mixin.py:93-100, 191-202); curator's destructive subcommands ask on a stdin the CLI does not read
+const CONFIRMED: CommandForm[] = [
+  { match: "bare", interaction: "terminal" },
+  ...["now", "--yes", "-y"].map((sub): CommandForm => ({ match: { sub }, interaction: "none" })),
+  { match: "other", interaction: "terminal" },
+];
 // printed inline by the classic CLI and read by the result readers in server/dialogs/hermes.ts
-const RESULT_FORMS: Record<string, CommandForm[]> = Object.fromEntries(
-  [["help", "help"], ["status", "status"], ["version", "version"], ["v", "version"], ["profile", "profile"], ["reload-skills", "reload-skills"], ["reload_skills", "reload-skills"]]
-    .map(([name, reader]) => [name, [{ match: "bare", interaction: "dialog", dialog: `hermes-${reader}` }]]),
-);
+const RESULT_FORMS: Record<string, CommandForm[]> = {
+  ...Object.fromEntries(
+    [["help", "help"], ["status", "status"], ["version", "version"], ["v", "version"], ["profile", "profile"], ["reload-skills", "reload-skills"], ["reload_skills", "reload-skills"]]
+      .map(([name, reader]) => [name, [{ match: "bare", interaction: "dialog", dialog: `hermes-${reader}` }]]),
+  ),
+  new: CONFIRMED, reset: CONFIRMED, clear: CONFIRMED,
+  curator: [
+    { match: "bare", interaction: "unknown" },
+    ...["adopt", "prune", "purge", "rollback"].map((sub): CommandForm => ({ match: { sub }, interaction: "terminal" })),
+    { match: "other", interaction: "unknown" },
+  ],
+};
 const SKIP_DIRS = new Set([".git", ".github", ".hub", ".archive", ".curator_backups", ".locks", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox"]);
 const SUPPORT_DIRS = new Set(["references", "templates", "assets", "scripts"]);
 

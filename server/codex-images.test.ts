@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexImageParts, codexTranscriptImage } from "./codex-images.ts";
+import { codexImageParts, codexTranscriptImage, imageType } from "./codex-images.ts";
 import { parseCodexTranscript } from "./codex.ts";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH1sAAAAASUVORK5CYII=", "base64");
@@ -63,6 +63,30 @@ it("strips Codex's native image envelope but keeps user-typed lookalikes", () =>
   }));
   expect(controlTurns[0]?.parts.filter((part) => part.kind === "text").map((part) => part.text))
     .toEqual(['I typed <image name=x> and </image> literally.']); // control
+});
+
+it("names a raster by its signature and refuses short or truncated prefixes", () => {
+  const bytes = (...parts: (string | number[])[]) => Buffer.concat(parts.map((part) => typeof part === "string" ? Buffer.from(part, "latin1") : Buffer.from(part)));
+  const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
+  expect(imageType(png)).toBe("image/png");
+  expect(imageType(bytes(pngSignature))).toBe("image/png");
+  expect(imageType(bytes(pngSignature.slice(0, 7)))).toBeNull();
+  expect(imageType(bytes([255, 216, 255]))).toBe("image/jpeg");
+  expect(imageType(bytes([255, 216]))).toBeNull();
+  expect(imageType(bytes("GIF87a"))).toBe("image/gif");
+  expect(imageType(bytes("GIF89a", [1, 0]))).toBe("image/gif");
+  expect(imageType(bytes("GIF88a"))).toBeNull();
+  expect(imageType(bytes("GIF89"))).toBeNull();
+  expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WEBP"))).toBe("image/webp");
+  expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WEB"))).toBeNull();
+  expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WAVE"))).toBeNull();
+  // each letter with its high bit set: an ASCII decode would read these as the signatures
+  expect(imageType(bytes([0xc7, 0xc9, 0xc6, 0x38, 0x37, 0xe1]))).toBeNull();
+  expect(imageType(bytes([0xc7, 0xc9, 0xc6, 0x38, 0x39, 0xe1]))).toBeNull();
+  expect(imageType(bytes([0xd2, 0xc9, 0xc6, 0xc6, 4, 0, 0, 0, 0xd7, 0xc5, 0xc2, 0xd0]))).toBeNull();
+  expect(imageType(bytes("RIFF", [4, 0, 0, 0], [0xd7, 0xc5, 0xc2, 0xd0]))).toBeNull();
+  expect(imageType(bytes("not an image"))).toBeNull();
+  expect(imageType(Buffer.alloc(0))).toBeNull();
 });
 
 it("does not turn remote URLs, unsupported data, or assistant/tool content into images", () => {

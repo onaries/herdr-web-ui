@@ -57,7 +57,7 @@ async function notice(page: Page): Promise<Found> {
 async function read(browser: Browser, hostname: string): Promise<Found> {
   const stateDir = mkdtempSync(join(tmpdir(), `herdr-lan-${hostname === "0.0.0.0" ? "exposed" : "loopback"}-`));
   // no token and nothing paired in both cases: the only difference is where it is reachable.
-  // The token is pinned empty so a HERDR_WEB_TOKEN in the runner's environment cannot gate it.
+  // The token is pinned empty so a OVIS_TOKEN in the runner's environment cannot gate it.
   const server = createServer({ port: 0, hostname, stateDir, token: "" });
   try {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });

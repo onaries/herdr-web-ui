@@ -1,5 +1,5 @@
 /** The sidebar's width when the user has dragged its edge: per device, like the PC folds. */
-const KEY = "herdr-web-ui:sidebar-width";
+const KEY = "ovis:sidebar-width";
 
 export const SIDEBAR_MIN_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 520;

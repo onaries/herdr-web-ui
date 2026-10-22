@@ -43,7 +43,8 @@ for (const readOnly of [false, true]) for (const ready of [false, true]) {
   it(`preserves input readiness ${ready} after replay for an ${readOnly ? "observer" : "owner"} joining a shared attach`, async () => {
     const frames = await join({ readOnly, ready });
     expect(frames.filter((frame) => frame.type === "pty-data")).toEqual([
-      { type: "pty-data", pane_id: "p", data: "retained screen" },
+      // the joiner's replay, marked as the screen from before, byte for byte
+      { type: "pty-data", pane_id: "p", data: "retained screen", replay: true },
     ]);
     // An input-ready receipt is the existing attach-complete barrier for queued input,
     // not an output-presentation notification. No early negative receipt may satisfy it.

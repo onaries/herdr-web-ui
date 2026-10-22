@@ -27,7 +27,7 @@ async function until(done: () => Promise<boolean>, label: string): Promise<void>
   throw new Error(`Timed out: ${label}`);
 }
 try {
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-windows-terminal" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-windows-terminal" });
   workspace = created.workspace.workspace_id;
   const pane = created.root_pane.pane_id;
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });

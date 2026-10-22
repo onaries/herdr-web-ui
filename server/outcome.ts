@@ -391,11 +391,6 @@ export class CommandReservations {
     sent.resultEchoLimit = Object.fromEntries(Object.keys(sent.resultEchoes ?? {}).map((id) => [id, null]));
   }
 
-  /** Sends a rewind took away: they reserve and claim nothing more. */
-  forget(ids: ReadonlySet<string>): void {
-    this.sends = this.sends.filter((sent) => !ids.has(sent.id));
-  }
-
   close(text: string, at: number): void {
     for (const sent of this.sends) {
       sent.closedAt ??= at;

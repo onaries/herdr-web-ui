@@ -40,7 +40,7 @@ function standIn(says: string, code = 0, options: { handoffCode?: number; sleep?
     // a warning on stderr is not part of the answer
     `  "status --json") echo "warning: herdr integrations need updating" >&2; cat '${statusFile}' 2>/dev/null || exit 1 ;;`,
     '  "update --handoff")',
-    `    { echo "env=\${HERDR_ENV-unset} pane=\${HERDR_PANE_ID-unset} socket=\${HERDR_SOCKET_PATH-unset} web=\${HERDR_WEB_STATE_DIR-unset}"; if [ -t 0 ]; then echo stdin=tty; else echo stdin=closed; fi; } > '${seen}'`,
+    `    { echo "env=\${HERDR_ENV-unset} pane=\${HERDR_PANE_ID-unset} socket=\${HERDR_SOCKET_PATH-unset} web=\${OVIS_STATE_DIR-unset}"; if [ -t 0 ]; then echo stdin=tty; else echo stdin=closed; fi; } > '${seen}'`,
     // a herdr whose status stops answering once its update has begun
     options.statusGoesAfterUpdate ? `    rm -f '${statusFile}'` : "    :",
     options.ignoreTerm ? "    trap '' TERM" : "    :",

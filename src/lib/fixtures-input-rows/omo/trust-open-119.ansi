@@ -1,0 +1,35 @@
+omo (omo-ai 5.1.40)
+omo: sibling credentials detected; run `omo setup` to review them
+
+[0m[1m[38;2;167;152;215mOptimized system prompt applied: claude-opus-5-5[0m
+
+ [0m[38;2;126;136;142mTip: Trigger "visual QA" to capture browser or xterm evidence and review web or terminal interfaces.                  [0m
+ [0m[38;2;126;136;142m↳ Want the full story on any tip? Ask about it — the give-me-tips skill has the tour.[0m                                 
+
+[0m[38;2;205;154;34m[Skills][0m                                                                                                               
+[0m[38;2;126;136;142m  computer-use, dori-mode, find-skills, herdr, reverse-engineer-anything[0m                                               
+
+
+ [0m[38;2;126;136;142mNo dag runs in this session.[0m                                                                                          
+
+ [0m[38;2;205;154;34mWarning: Usage: /btw <question>[0m                                                                                       
+
+ [0m[38;2;126;136;142mShare cancelled; nothing was uploaded[0m                                                                                 
+
+[0m[38;2;95;168;204m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+ [0m[1m[38;2;167;152;215mProject trust[0m                                                                                                         
+ [0m[38;2;157;165;169m/tmp/claude-1000/pr2-rec/omo/proj[0m                                                                                     
+
+ [0m[38;2;157;165;169mSaved decision: none[0m                                                                                                  
+ [0m[38;2;157;165;169mCurrent session: trusted[0m                                                                                              
+
+ [0m[38;2;167;152;215m→ [0m  [0m[38;2;167;152;215mTrust[0m                                                                                                             
+     [0m[38;2;222;224;225mTrust parent folder (/tmp/claude-1000/pr2-rec/omo)[0m                                                                
+     [0m[38;2;222;224;225mDo not trust[0m                                                                                                      
+
+ [0m[38;2;126;136;142m↑↓[0m[38;2;157;165;169m navigate[0m  [0m[38;2;126;136;142menter[0m[38;2;157;165;169m save[0m  [0m[38;2;126;136;142mesc/ctrl+c[0m[38;2;157;165;169m cancel[0m                                                                            
+
+[0m[38;2;95;168;204m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;167;152;215m/tmp/claude-1000/pr2-rec/omo/proj[0m[38;2;118;129;134m • [0m[38;2;205;154;34mmain[0m[38;2;118;129;134m • [0m[38;2;157;165;169m0/1M (0.0%) (auto)[0m   [0m[38;2;157;165;169m(anthropic) [0m[38;2;167;152;215mclaude-opus-5-5[0m[38;2;118;129;134m • [0m[38;2;157;165;169meffort medium[0m[38;2;126;136;142m (shift+tab)[0m
+(😺 OmO Native by Q Kim)

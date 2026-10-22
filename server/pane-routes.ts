@@ -17,7 +17,6 @@ import { GjcSdkLookupError } from "./gjc-sdk.ts";
 import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
 import { paneContext, resolveAgent, versionSourceOf } from "./pane-context.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
-import { handleRewindRequest } from "./rewind.ts";
 import { CLAUDE_REWIND_OPEN_MESSAGE } from "./dialogs/claude.ts";
 import { claudeRewindOpen } from "./prompt.ts";
 import { expandedDirectory } from "./workspace-routes.ts";
@@ -30,12 +29,11 @@ const isPaneDirection = (value: unknown): value is PaneDirection => value === "l
 /** pane.read's own enums; a read outside them is refused here rather than sent to herdr as a guess (the generated types are open-ended) */
 const READ_SOURCES = new Set<ReadSource>(["detection", "recent", "recent_unwrapped", "visible"]);
 const READ_FORMATS = new Set<ReadFormat>(["ansi", "text"]);
+/** pane.read's `lines` is a uint32 */
+const UINT32_MAX = 4294967295;
 
 /** The answer for a pane route, or null when the path is not one. */
-export async function handlePaneRequest(request: Request, url: URL, pathname: string, options: PaneStores,
-  /** the pane's input order (core/input.ts): a rewind's keys wait behind a message in flight */
-  serialize: <T>(paneId: string, task: () => Promise<T>) => Promise<T> = (_paneId, task) => task()): Promise<Response | null> {
-  if (pathname === "/api/pane/rewind") { setRequestRoute(pathname); return handleRewindRequest(request, serialize); }
+export async function handlePaneRequest(request: Request, url: URL, pathname: string, options: PaneStores): Promise<Response | null> {
 
   if (pathname === "/api/pane/rename") {
     setRequestRoute(pathname);
@@ -128,10 +126,13 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
     const paneId = url.searchParams.get("pane_id");
     if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
     const linesRaw = url.searchParams.get("lines");
-    const lines = linesRaw === null ? undefined : Number(linesRaw);
-    if (lines !== undefined && !Number.isFinite(lines)) {
-      return badRequest("invalid_lines", "lines must be a number");
+    // herdr's pane.read takes a uint32: anything else is refused here instead of reaching the RPC.
+    // The raw text is checked, not Number()'s answer: Number() reads "" as 0 and rounds a spelling
+    // such as 0.99999999999999999 to 1, so only plain decimal digits are taken as a count
+    if (linesRaw !== null && (!/^[0-9]+$/.test(linesRaw) || Number(linesRaw) > UINT32_MAX)) {
+      return badRequest("invalid_lines", "lines must be an integer from 0 to 4294967295 in decimal digits");
     }
+    const lines = linesRaw === null ? undefined : Number(linesRaw);
     // herdr knows these enums and has its own answer for a wrong one, but a read this
     // route never meant to make is refused here rather than sent on as a guess
     const source = url.searchParams.get("source") ?? "visible";

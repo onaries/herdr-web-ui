@@ -32,7 +32,7 @@ let workspace: string | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-agy-activity", focus: false });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-agy-activity", focus: false });
   workspace = created.workspace.workspace_id;
   const pane = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: pane, text: `${executable} 600 3<${lock}\n` });
@@ -47,7 +47,7 @@ try {
   page.setDefaultTimeout(12_000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.addInitScript(id => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), pane);
+  await page.addInitScript(id => localStorage.setItem(`ovis:view:${id}`, "chat"), pane);
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
   const log = page.locator(`.pane-frame[data-layout-pane="${pane}"]`).getByRole("log");
   const activity = log.locator(".chat-activity");

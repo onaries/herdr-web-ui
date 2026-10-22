@@ -1,4 +1,126 @@
 {
+  "0.4.13": {
+    "en": {
+      "new": [
+        "herdr web ui is now called Ovis. It installs and updates as before.",
+        "Commands the chat cannot show, like /config or /usage, open the terminal over the chat.",
+        "Reopen an agent's earlier sessions from a workspace's menu or by typing /resume.",
+        "From a message, rewind Claude Code, Grok or Antigravity in the terminal; the chat follows.",
+        "New workspace and New tab start an agent with its model, effort, skills and first message.",
+        "A command sent from the chat says what became of it: accepted, waiting, done or ran.",
+        "Command Code agents show their conversation in the chat.",
+        "Agent rows show what herdr plugins report, such as the Quota plugin's usage left."
+      ],
+      "improved": [
+        "Close a command's screen and Claude Code and many other agents bring the chat back.",
+        "More answers as cards: omp's /model and /handoff, Claude Code's /goal, OpenCode questions.",
+        "The chat lists the commands and skills OpenCode and Codex report for each pane.",
+        "A finished agent you read in one browser reads as seen in your other browsers too.",
+        "Long Claude Code and omp tasks update faster in the chat.",
+        "Settings says when a change could not be saved, and lets you try again."
+      ],
+      "fixed": [
+        "Opening the app no longer flashes the default theme before yours.",
+        "Pages load lighter: one project icon request per folder instead of about 33.",
+        "Mouse wheel and swipes scroll terminal history on Windows and other mirrored panes.",
+        "In macOS Safari, Backspace no longer skips a press after a Korean syllable.",
+        "Two Codex panes in one folder each show their own chat again.",
+        "One missed health check no longer shows herdr as offline.",
+        "A first message to a new workspace or tab no longer waits forever if its agent quits.",
+        "GJC, OmO, omp, Hermes and OpenCode show their questions and results more reliably."
+      ]
+    },
+    "ko": {
+      "new": [
+        "herdr web ui의 이름이 Ovis로 바뀌었습니다. 설치와 업데이트는 그대로입니다.",
+        "/config나 /usage처럼 채팅이 보여 줄 수 없는 명령은 채팅 위에 터미널로 열립니다.",
+        "워크스페이스 메뉴나 /resume으로 에이전트의 이전 세션을 다시 열 수 있습니다.",
+        "메시지에서 Claude Code, Grok, Antigravity를 터미널로 되감으면 채팅도 따라갑니다.",
+        "새 워크스페이스와 새 탭에서 모델, effort, 스킬, 첫 메시지를 정해 에이전트를 시작합니다.",
+        "채팅에서 보낸 명령이 어떻게 됐는지 보여 줍니다: 받음, 대기, 완료, 터미널 실행.",
+        "Command Code 에이전트의 대화가 채팅에 보입니다.",
+        "에이전트 줄에 Quota 플러그인의 남은 사용량처럼 herdr 플러그인이 알린 정보가 보입니다."
+      ],
+      "improved": [
+        "명령 화면을 닫으면 Claude Code와 여러 에이전트가 알아서 채팅으로 돌아옵니다.",
+        "omp /model과 /handoff, Claude Code /goal, OpenCode 질문도 카드로 답합니다.",
+        "채팅이 OpenCode와 Codex가 패널마다 알려 주는 명령과 스킬을 보여 줍니다.",
+        "한 브라우저에서 읽은 완료 표시는 다른 브라우저에서도 읽음으로 보입니다.",
+        "긴 Claude Code와 omp 작업이 채팅에 더 빨리 반영됩니다.",
+        "설정을 저장하지 못하면 그렇다고 알려 주고 다시 시도할 수 있습니다."
+      ],
+      "fixed": [
+        "앱을 열 때 저장한 테마보다 기본 테마가 먼저 깜빡이지 않습니다.",
+        "페이지가 가벼워졌습니다: 프로젝트 아이콘 요청이 폴더당 약 33번에서 1번으로 줄었습니다.",
+        "Windows와 다른 미러 패널에서 마우스 휠과 스와이프로 터미널 기록을 스크롤합니다.",
+        "macOS Safari에서 한글 음절 뒤 백스페이스가 한 번 씹히지 않습니다.",
+        "같은 폴더의 Codex 패널 두 개가 다시 각자의 채팅을 보여 줍니다.",
+        "상태 확인 한 번 실패로 herdr가 오프라인으로 보이지 않습니다.",
+        "새 워크스페이스나 탭의 첫 메시지가 에이전트가 끝나도 하염없이 기다리지 않습니다.",
+        "GJC, OmO, omp, Hermes, OpenCode의 질문과 결과가 더 안정적으로 보입니다."
+      ]
+    },
+    "ja": {
+      "new": [
+        "herdr web ui の名前が Ovis になりました。インストールと更新はこれまでどおりです。",
+        "/config や /usage などチャットで表示できないコマンドは、チャットの上にターミナルで開きます。",
+        "ワークスペースのメニューや /resume で、エージェントの以前のセッションを開き直せます。",
+        "メッセージから Claude Code、Grok、Antigravity をターミナルで巻き戻すと、チャットも追従します。",
+        "新しいワークスペースとタブで、モデル、effort、スキル、最初のメッセージを決めて起動できます。",
+        "チャットから送ったコマンドの結果を表示します：受付、待機、完了、ターミナルで実行。",
+        "Command Code エージェントの会話がチャットに表示されます。",
+        "エージェントの行に、Quota プラグインの残り使用量など herdr プラグインの情報が出ます。"
+      ],
+      "improved": [
+        "コマンドの画面を閉じると、Claude Code と多くのエージェントが自動でチャットに戻ります。",
+        "omp の /model と /handoff、Claude Code の /goal、OpenCode の質問もカードで答えられます。",
+        "OpenCode と Codex がペインごとに報告するコマンドとスキルをチャットに表示します。",
+        "あるブラウザで読んだ完了は、ほかのブラウザでも既読になります。",
+        "長い Claude Code と omp のタスクがチャットに早く反映されます。",
+        "設定を保存できなかったときはそう伝え、やり直せます。"
+      ],
+      "fixed": [
+        "アプリを開くとき、保存したテーマの前に既定のテーマが一瞬表示されなくなりました。",
+        "ページが軽くなりました：プロジェクトアイコンの要求はフォルダーごとに約33回から1回に。",
+        "Windows などのミラーペインで、ホイールとスワイプでターミナル履歴をスクロールできます。",
+        "macOS Safari で、韓国語の音節のあとの Backspace が1回抜けなくなりました。",
+        "同じフォルダーの Codex ペイン2つが、またそれぞれのチャットを表示します。",
+        "ヘルスチェックが1回失敗しただけでは herdr がオフライン表示になりません。",
+        "新しいワークスペースやタブの最初のメッセージが、エージェント終了後に待ち続けなくなりました。",
+        "GJC、OmO、omp、Hermes、OpenCode の質問と結果がより確実に表示されます。"
+      ]
+    },
+    "zh": {
+      "new": [
+        "herdr web ui 现在叫 Ovis。安装和更新方式不变。",
+        "聊天无法显示的命令（如 /config、/usage）会在聊天上方以终端打开。",
+        "可从工作区菜单或输入 /resume 重新打开代理以前的会话。",
+        "可从消息在终端中回退 Claude Code、Grok、Antigravity，聊天会随之更新。",
+        "新建工作区和新标签页可指定模型、effort、技能和第一条消息来启动代理。",
+        "从聊天发送的命令会显示结果：已接收、等待中、已完成或已在终端运行。",
+        "Command Code 代理的对话会显示在聊天中。",
+        "代理行会显示 herdr 插件报告的信息，例如 Quota 插件的剩余用量。"
+      ],
+      "improved": [
+        "关闭命令的界面后，Claude Code 和许多代理会自动回到聊天。",
+        "omp 的 /model 和 /handoff、Claude Code 的 /goal、OpenCode 的问题也能用卡片回答。",
+        "聊天会列出 OpenCode 和 Codex 为每个窗格报告的命令和技能。",
+        "在一个浏览器中看过的完成状态，在其他浏览器中也显示为已读。",
+        "较长的 Claude Code 和 omp 任务在聊天中更新更快。",
+        "设置无法保存时会提示，并可以重试。"
+      ],
+      "fixed": [
+        "打开应用时不再先闪现默认主题。",
+        "页面更轻：项目图标请求从每个文件夹约 33 次减少到 1 次。",
+        "在 Windows 等镜像窗格中，滚轮和滑动可以滚动终端历史。",
+        "在 macOS Safari 中，删除韩文音节后的退格键不再漏按一次。",
+        "同一文件夹中的两个 Codex 窗格再次各自显示自己的聊天。",
+        "一次健康检查失败不再让 herdr 显示为离线。",
+        "新工作区或标签页的第一条消息在代理退出后不再一直等待。",
+        "GJC、OmO、omp、Hermes 和 OpenCode 的问题与结果显示更可靠。"
+      ]
+    }
+  },
   "0.4.12": {
     "en": {
       "new": [

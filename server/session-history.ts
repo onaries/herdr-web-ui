@@ -29,7 +29,7 @@ import { agyUserText } from "./agy.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 import { cmdSlug } from "./cmd.ts";
 import { grokSessionGroups } from "./grok-store.ts";
-import { directoryKey, storedCwds, withoutVerbatimPrefix } from "./codex.ts";
+import { directoryKey, interactiveCodexRollout, storedCwds, withoutVerbatimPrefix } from "./codex.ts";
 import { opencodeDatabasePath } from "./opencode.ts";
 
 /** At most this much of any one file is read. */
@@ -519,31 +519,22 @@ function claudeSessions(cwds: readonly string[], home: string, env: Record<strin
  * Codex: `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<uuid>.jsonl`, a `session_meta` first line.
  * ------------------------------------------------------------------------------------------- */
 
-/** A JSON string field from a line too long to parse whole: the session_meta can outgrow the read. */
-function fieldOf(line: string, name: string): string | null {
-  const match = new RegExp(`"${name}":("(?:[^"\\\\]|\\\\.)*")`).exec(line);
-  if (!match) return null;
-  try { return str(JSON.parse(match[1]!)); } catch { return null; }
-}
-
 function codexRow(scan: Scan, file: Found, cwds: readonly string[]): Row | null {
-  // the first line is the header even when the read cut it
   const { lines, cut } = scan.head(file);
-  const first = lines[0] ?? "";
+  // a header the read cut is not listed: a child marker past the read could not be checked
+  if (cut && lines.length < 2) return null;
   const records = cut ? lines.slice(1, -1) : lines.slice(1);
-  let header: Json | null = null;
+  let header: Json;
   try {
-    const parsed = record(JSON.parse(first));
-    if (parsed.type !== "session_meta") return null;
+    const parsed = record(JSON.parse(lines[0]!));
+    // interactive threads only, by the rule codex.ts reads them with
+    if (parsed.type !== "session_meta" || !interactiveCodexRollout(parsed.payload, basename(file.real))) return null;
     header = record(parsed.payload);
-  } catch { /* a header longer than the read */ }
-  const id = header ? str(header.id) : fieldOf(first, "id");
-  const sessionCwd = header ? str(header.cwd) : fieldOf(first, "cwd");
-  const startedAt = iso(header ? header.timestamp : fieldOf(first, "timestamp"));
-  const source = header ? header.source : fieldOf(first, "source");
+  } catch { return null; }
+  const id = str(header.id);
+  const sessionCwd = str(header.cwd);
+  const startedAt = iso(header.timestamp);
   if (id === null || sessionCwd === null || !cwdMatches(scan.budget, sessionCwd, cwds)) return null;
-  // interactive threads only, as codex.ts reads them: a subagent's (an object) or an exec run's is not one
-  if (source !== undefined && source !== null && source !== "cli" && source !== "vscode") return null;
   let firstMessage: string | null = null;
   for (const line of records) {
     try {

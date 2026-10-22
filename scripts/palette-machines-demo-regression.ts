@@ -113,10 +113,10 @@ try {
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
       try {
         await context.addInitScript((paneId) => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-          localStorage.setItem("herdr-web-ui:recent-directories:local", JSON.stringify(["/fixture/project"]));
-          for (const id of ["local", "remote", "offline"]) localStorage.setItem(`herdr-web-ui:pc-collapsed:${id}`, "1");
-          localStorage.setItem("herdr-web-ui:recent-panes:remote", JSON.stringify([paneId]));
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+          localStorage.setItem("ovis:recent-directories:local", JSON.stringify(["/fixture/project"]));
+          for (const id of ["local", "remote", "offline"]) localStorage.setItem(`ovis:pc-collapsed:${id}`, "1");
+          localStorage.setItem("ovis:recent-panes:remote", JSON.stringify([paneId]));
         }, panes.api);
         const page = await context.newPage(); const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -182,7 +182,7 @@ try {
         assert.equal(await selectedTab.getAttribute("data-tab-id"), localTabId, "the remote PC deliberately has the same tab ID");
         assert.deepEqual(await page.evaluate(() => (window as any).paletteMachineCalls.closes), [], "a PC switch neither preserves nor submits the previous PC's close confirmation");
         console.log("PASS switching PCs through the palette dismisses an old close confirmation even when tab IDs match");
-        await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").machine_id === "remote");
+        await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "{}").machine_id === "remote");
         const calls = await page.evaluate(() => (window as any).paletteMachineCalls);
         // a pick is the browser's alone: herdr's focus on either PC stays where it is
         assert.deepEqual(calls.focus.filter((call: { machine: string }) => call.machine === "remote"), [], "selection leaves the remote PC's herdr focus alone");

@@ -19,6 +19,36 @@ import { attachableIdentity, isRealNode, sidecarAvailable } from "./pty/sidecar.
 import { CompletionTracker } from "./completion.ts";
 import type { PushService } from "./push.ts";
 import { recentSshOutput } from "./ssh.ts";
+import { RemoteResponseInvalid, RemoteResponseTooLarge } from "./remote-json.ts";
+
+const MiB = 1024 * 1024;
+/**
+ * `value` as JSON of exactly `total` bytes (whitespace after its first byte), served lazily so a
+ * reader that stops early leaves most of it unsent; `cancelled` settles when the reader gives up.
+ */
+function padded(value: unknown, total: number): { stream: ReadableStream<Uint8Array>; cancelled: Promise<void> } {
+  const json = JSON.stringify(value);
+  const space = new Uint8Array(64 * 1024).fill(0x20);
+  const cancelled = Promise.withResolvers<void>();
+  let left = total - json.length;
+  let opened = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (!opened) { opened = true; controller.enqueue(new TextEncoder().encode(json.slice(0, 1))); return; }
+      if (left > 0) { const size = Math.min(left, space.length); left -= size; controller.enqueue(space.slice(0, size)); return; }
+      controller.enqueue(new TextEncoder().encode(json.slice(1)));
+      controller.close();
+    },
+    cancel() { cancelled.resolve(); },
+  });
+  return { stream, cancelled: cancelled.promise };
+}
+/** `event`, or a failure once it has not come within a few seconds */
+async function within(event: Promise<void>, what = "the remote answer was not cancelled"): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { await Promise.race([event, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(what)), 5000); })]); }
+  finally { clearTimeout(timer); }
+}
 
 describe("machine settings recovery", () => {
   it("logs damaged settings but stays quiet for valid or missing settings", () => {
@@ -101,6 +131,122 @@ describe("machine boundaries", () => {
       }
     } finally { endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
   });
+  it("redacts watched prompt after bounded read", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-watched-prompt-cap-"));
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });
+    const answer = {
+      prompt: { id: "prompt-1", agent: "claude", kind: "plan", title: "Plan", question: "Proceed?", body: "fixture-plan-text", options: [], multi_select: false, custom_option_index: null, plan_file: "/home/u/.claude/plans/fixture-plan.md" },
+      outcomes: [{ id: "send-1", pane_id: "pane-1", text: "/context", state: "accepted", evidence: [], preview: "fixture-preview", result_text: "fixture-result", created_at: "2026-10-20T00:00:00Z", updated_at: "2026-10-20T00:00:00Z" }],
+    } as PanePromptResponse;
+    let serve = () => new Response("{}");
+    const bridge = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => serve() });
+    const url = `http://127.0.0.1:${bridge.port}`;
+    const endpoint = spyOn(manager, "endpoint").mockReturnValue({ url, token: "fixture-token" });
+    let tracked = 0;
+    const track = spyOn(manager, "trackTerminal").mockImplementation(() => { tracked++; return () => { tracked--; }; });
+    const logged: string[] = [];
+    const error = spyOn(console, "error").mockImplementation((...args: unknown[]) => { logged.push(args.join(" ")); });
+    const watch = () => handleMachineRequest(new Request("http://localhost/api/machines/fixture/pane/prompt?pane_id=pane-1"), manager, undefined, undefined, true);
+    try {
+      // exactly at its 1 MiB the answer is still parsed, and loses the plan file and the previews
+      serve = () => new Response(padded(answer, MiB).stream);
+      const kept = await watch();
+      expect(kept.status).toBe(200);
+      const card = await kept.json() as PanePromptResponse;
+      expect(card.prompt).toMatchObject({ question: "Proceed?", body: null });
+      expect(card.prompt).not.toHaveProperty("plan_file");
+      expect(card.outcomes?.[0]).not.toHaveProperty("preview");
+      expect(card.outcomes?.[0]).not.toHaveProperty("result_text");
+      // one byte past it, and the answer is refused rather than passed on unredacted
+      const over = padded(answer, MiB + 32 * MiB);
+      serve = () => new Response(over.stream);
+      const refused = await watch();
+      expect(refused.status).toBe(502);
+      const tooLarge = await refused.text();
+      expect(JSON.parse(tooLarge).error.code).toBe("remote_response_too_large");
+      await within(over.cancelled);
+      // an answer that is not JSON cannot be redacted, so none of it is passed on
+      serve = () => new Response(`{"prompt":{"plan_file":"fixture-plan-secret","body":"fixture-plan-text"`);
+      const malformed = await watch();
+      expect(malformed.status).toBe(502);
+      const invalid = await malformed.text();
+      expect(JSON.parse(invalid).error.code).toBe("remote_response_invalid");
+      for (const text of [tooLarge, invalid, logged.join("\n")]) {
+        expect(text).not.toContain("fixture-plan");
+        expect(text).not.toContain("fixture-token");
+        expect(text).not.toContain(url);
+      }
+      expect(tracked).toBe(0);
+    } finally { error.mockRestore(); track.mockRestore(); endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("caps a buffered proxy answer and recovers on the next one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-proxy-cap-"));
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });
+    let hits = 0;
+    let serve = () => Response.json({ ok: true });
+    const bridge = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => { hits++; return serve(); } });
+    const endpoint = spyOn(manager, "endpoint").mockReturnValue({ url: `http://127.0.0.1:${bridge.port}`, token: "fixture-token" });
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const ask = () => handleMachineRequest(new Request("http://localhost/api/machines/fixture/session"), manager);
+    try {
+      const over = padded({ snapshot: { secret: "fixture-session-secret" } }, 64 * MiB + 32 * MiB);
+      serve = () => new Response(over.stream, { headers: { "content-type": "application/json" } });
+      const refused = await ask();
+      expect(refused.status).toBe(502);
+      const text = await refused.text();
+      expect(JSON.parse(text).error.code).toBe("remote_response_too_large");
+      expect(text).not.toContain("fixture-session-secret");
+      await within(over.cancelled);
+      serve = () => Response.json({ ok: true });
+      const next = await ask();
+      expect(next.status).toBe(200);
+      expect(await next.json()).toEqual({ ok: true });
+      // a PC that is not connected is refused before anything is asked of it
+      endpoint.mockReturnValue(undefined);
+      const before = hits;
+      expect((await ask()).status).toBe(503);
+      expect(hits).toBe(before);
+    } finally { error.mockRestore(); endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("keeps file streaming and 304 bodyless", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-proxy-stream-"));
+    const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });
+    const rest = Promise.withResolvers<void>();
+    const ranges: (string | null)[] = [];
+    const bridge = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/fs/file") {
+        ranges.push(request.headers.get("range"));
+        return new Response(new ReadableStream({ async start(controller) {
+          controller.enqueue(new TextEncoder().encode("first"));
+          await rest.promise;
+          controller.enqueue(new TextEncoder().encode("-rest"));
+          controller.close();
+        } }), { status: 206, headers: { "content-type": "video/mp4", "content-range": "bytes 0-9/100", "accept-ranges": "bytes", "set-cookie": "fixture=1" } });
+      }
+      if (request.headers.get("if-none-match") === '"v1"') return new Response(null, { status: 304, headers: { etag: '"v1"' } });
+      return Response.json({ messages: [] }, { headers: { etag: '"v1"' } });
+    } });
+    const endpoint = spyOn(manager, "endpoint").mockReturnValue({ url: `http://127.0.0.1:${bridge.port}`, token: "fixture-token" });
+    try {
+      const file = await handleMachineRequest(new Request("http://localhost/api/machines/fixture/fs/file?path=/v.mp4", { headers: { range: "bytes=0-9" } }), manager);
+      expect(file.status).toBe(206);
+      expect(ranges).toEqual(["bytes=0-9"]);
+      expect(file.headers.get("content-range")).toBe("bytes 0-9/100");
+      expect(file.headers.get("set-cookie")).toBeNull();
+      // the first bytes arrive while the PC still holds the rest: nothing is buffered here
+      const reader = file.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("first");
+      rest.resolve();
+      let tail = "";
+      for (;;) { const { done, value } = await reader.read(); if (done) break; tail += new TextDecoder().decode(value); }
+      expect(tail).toBe("-rest");
+      const unchanged = await handleMachineRequest(new Request("http://localhost/api/machines/fixture/pane/conversation?pane_id=p1", { headers: { "if-none-match": '"v1"' } }), manager);
+      expect(unchanged.status).toBe(304);
+      expect(unchanged.headers.get("etag")).toBe('"v1"');
+      expect(await unchanged.text()).toBe("");
+    } finally { rest.resolve(); endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it("refuses a watching connection's writes to another PC before anything reaches that PC", async () => {
     const dir = mkdtempSync(join(tmpdir(), "herdr-watch-proxy-"));
     const manager = new MachineManager(dir, {} as PushService, new CompletionTracker(null), async () => { throw new Error("fixture offline"); });
@@ -111,7 +257,7 @@ describe("machine boundaries", () => {
       method, headers: { origin: "http://localhost", "x-herdr-machine": "1", "content-type": "application/json" }, ...(method === "GET" ? {} : { body: "{}" }),
     }), manager, undefined, undefined, readOnly);
     try {
-      for (const [method, path] of [["POST", "pane/rewind"], ["POST", "tab/create"]] as const) {
+      for (const [method, path] of [["POST", "pane/input"], ["POST", "tab/create"]] as const) {
         const refused = await ask(method, path, true);
         expect(refused.status, path).toBe(403);
         expect((await refused.json() as { error: { code: string } }).error.code, path).toBe("read_only");
@@ -119,11 +265,11 @@ describe("machine boundaries", () => {
       expect(hits).toEqual([]);
       // the block is the access check's own rule (index.ts `mutating`): what it lets a watcher send goes through
       expect((await ask("GET", "pane/read?pane_id=p", true)).status).toBe(200);
-      expect((await ask("OPTIONS", "pane/rewind", true)).status).not.toBe(403);
-      expect(hits).toEqual(["GET /api/pane/read", "OPTIONS /api/pane/rewind"]);
+      expect((await ask("OPTIONS", "pane/input", true)).status).not.toBe(403);
+      expect(hits).toEqual(["GET /api/pane/read", "OPTIONS /api/pane/input"]);
       // a connection that may drive goes through
-      expect((await ask("POST", "pane/rewind", false)).status).toBe(200);
-      expect(hits).toEqual(["GET /api/pane/read", "OPTIONS /api/pane/rewind", "POST /api/pane/rewind"]);
+      expect((await ask("POST", "pane/input", false)).status).toBe(200);
+      expect(hits).toEqual(["GET /api/pane/read", "OPTIONS /api/pane/input", "POST /api/pane/input"]);
     } finally { endpoint.mockRestore(); bridge.stop(true); manager.stop(); rmSync(dir, { recursive: true, force: true }); }
   });
   it("refuses a watching connection another PC's folder commands before anything reaches that PC", async () => {
@@ -175,8 +321,8 @@ describe("machine boundaries", () => {
     for (const path of ["pane/focus/extra", "pane/move", "layout/apply", "layout/ratio/extra", "layout/../auth", "agent/commands/extra", "agent/start"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
     // the commands an agent offers in a folder before any pane runs it (the new workspace and tab dialogs)
     for (const path of ["agent/rename", "agent/commands"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
-    for (const path of ["auth", "push", "updates/install", "machines/setup", "bridge", "../auth", "pane/../../auth", "pane/prompt/answer/extra", "tab/move/extra", "tab/close/extra"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
-    for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/rewind", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
+    for (const path of ["auth", "push", "updates/install", "machines/setup", "bridge", "../auth", "pane/../../auth", "pane/prompt/answer/extra", "pane/rewind", "tab/move/extra", "tab/close/extra"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(false);
+    for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/input", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
     for (const path of ["session", "agents", "integrations", "pane/files", "pane/find", "pane/image", "pane/prompt/answer", "pane/split", "pane/zoom", "pane/swap", "pane/resize", "pane/clear", "workspace/create", "tab/create", "tab/rename", "tab/close"]) expect(MACHINE_PROXY_PATH.test(path)).toBe(true);
   });
 });
@@ -746,6 +892,36 @@ describe("bridge verification failures", () => {
     const message = await told(answering(500, old));
     expect(message).toContain("herdr is not running");
     expect(message).not.toContain("/home/u");
+  });
+
+  /** a bridge that answers /api/bridge with `value` as JSON of `total` bytes */
+  function sized(status: number, value: unknown, total: number): { port: number; cancelled: Promise<void> } {
+    let cancelled: Promise<void> = new Promise(() => {});
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => { const body = padded(value, total); cancelled = body.cancelled; return new Response(body.stream, { status }); } });
+    stops.push(() => server.stop(true));
+    return { port: server.port!, get cancelled() { return cancelled; } };
+  }
+
+  it("bounds bridge errors without echoing secrets", async () => {
+    const secret = { error: { code: "connect_failed", message: "fixture-secret-token http://127.0.0.1:1/private" } };
+    // within its 8 KiB the known code is still read
+    expect(await told(sized(500, secret, 8 * 1024).port)).toContain("herdr is not answering");
+    const over = sized(500, secret, 8 * 1024 + 32 * MiB);
+    const message = await told(over.port);
+    expect(message).toBe(GENERIC(500));
+    await within(over.cancelled);
+  });
+
+  it("caps the bridge identity without naming any of it", async () => {
+    const socket = "/home/u/.config/herdr/herdr.sock";
+    const identity = { pid: process.pid, managed_remote: true, bridge_protocol: BRIDGE_PROTOCOL, bundle_version: REMOTE_BUNDLE_VERSION, socket_path: socket, socket_id: "1:2", herdr: { protocol: 22 } };
+    expect(await told(sized(200, identity, 64 * 1024).port, socket)).toBe("verified");
+    const over = sized(200, identity, 64 * 1024 + 32 * MiB);
+    expect(await told(over.port, socket)).toBe(new RemoteResponseTooLarge().message);
+    await within(over.cancelled);
+    const malformed = await told(answering(200, `{"token":"fixture-secret-token","socket_path":"${socket}"`), socket);
+    expect(malformed).toBe(new RemoteResponseInvalid().message);
+    expect(malformed).not.toContain("fixture-secret");
   });
 
   it("keeps the status-only message for any other answer, without repeating its text", async () => {

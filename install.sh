@@ -1,33 +1,51 @@
 #!/bin/sh
 # Ovis in one line, from a PC that may have none of it yet:
 #
-#   curl -fsSL https://herdrweb.dev/install.sh | sh
+#   curl -fsSL https://ovis.sh/install.sh | sh
 #
 # 1. Installs what is missing, for this user only and without sudo: herdr (its own installer, into
 #    ~/.local/bin), Bun (its own installer, into ~/.bun) and Node 22 (the official build, checked
-#    against its published SHA-256, into ~/.local/share/herdr-web-ui/node).
+#    against its published SHA-256, into ~/.local/share/ovis/node).
 # 2. Installs Ovis as a herdr plugin, so it starts with herdr and Settings → Updates keeps it
 #    current, and starts it now when herdr is running.
 # 3. When Tailscale runs on this PC, serves the app to your tailnet (`tailscale serve`, on the first
-#    free HTTPS port, or only the one HERDR_WEB_TAILSCALE_HTTPS_PORT names) and prints the address
+#    free HTTPS port, or only the one OVIS_TAILSCALE_HTTPS_PORT names) and prints the address
 #    a phone opens as a QR code (scripts/plugin.ts phone).
 # 4. On a first install, mentions a GitHub star once. When the gh CLI is signed in and has not
 #    starred the repository, it asks at the terminal, for 20 seconds, and stars only on "y"; it
 #    never stars by itself.
 #
 # Run it again at any time: what is already there is kept, and step 3 is repeated.
-#   HERDR_WEB_UI_REF=<branch or tag>   install that ref instead of the latest release
-#   HERDR_WEB_TAILSCALE_HTTPS_PORT=<port>   serve the app on that HTTPS port only, keeping 443 free
+#   OVIS_REF=<branch or tag>   install that ref instead of the latest release
+#   OVIS_TAILSCALE_HTTPS_PORT=<port>   serve the app on that HTTPS port only, keeping 443 free
 set -eu
 
-REPO="devswha/herdr-web-ui"
-PLUGIN="devswha.herdr-web-ui"
+REPO="devswha/ovis"
+PLUGIN="devswha.ovis"
+# the id before the rename: an install under it moves to PLUGIN, keeping its config
+LEGACY_PLUGIN="devswha.herdr-web-ui"
 BIN_DIR="$HOME/.local/bin"
-NODE_DIR="$HOME/.local/share/herdr-web-ui/node"
+NODE_DIR="$HOME/.local/share/ovis/node"
 # Official digests from nodejs.org/dist/v22.23.2/SHASUMS256.txt, as scripts/build-remote-bundle.ts pins them
 NODE_VERSION="v22.23.2"
 
 say() { printf '%s\n' "Ovis: $*"; }
+
+# shellcheck disable=SC2016 # JavaScript, not shell
+plugin_root() { herdr plugin list --json | bun -e 'const d = JSON.parse(await Bun.stdin.text()); console.log(d.result.plugins.find((p) => p.plugin_id === process.argv[1])?.plugin_root ?? "")' "$1"; }
+
+# herdr keeps a plugin's config by its id: the old id's env files (the token among them) go to
+# the new id's dir unless it has its own, with their owner-only mode
+adopt_legacy_config() {
+  old=$(herdr plugin config-dir "$LEGACY_PLUGIN" 2>/dev/null </dev/null) || return 0
+  new=$(herdr plugin config-dir "$PLUGIN" 2>/dev/null </dev/null) || return 0
+  [ ! -e "$new/env" ] && [ ! -e "$new/.env" ] || return 0
+  for name in env .env; do
+    [ -e "$old/$name" ] || continue
+    mkdir -p "$new"
+    cp -p "$old/$name" "$new/$name"
+  done
+}
 # a clickable address in a terminal (OSC 8); $terminal is set once, since $(link …) runs in a pipe
 # shellcheck disable=SC1003 # the backslashes end OSC 8 escapes (ESC \\), no quote is escaped
 link() { if [ "$terminal" = 1 ]; then printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$1"; else printf '%s' "$1"; fi; }
@@ -130,7 +148,7 @@ open_app() {
   loopback=0
   case "$host" in 127.0.0.1 | localhost) loopback=1 ;; esac
   opener=""
-  if [ -z "${CI:-}" ] && [ -z "${HERDR_WEB_NO_OPEN:-}" ] && [ -z "${SSH_CONNECTION:-}" ] && [ -z "${SSH_TTY:-}" ] && [ "$loopback" = 1 ]; then
+  if [ -z "${CI:-}" ] && [ -z "${OVIS_NO_OPEN:-${HERDR_WEB_NO_OPEN:-}}" ] && [ -z "${SSH_CONNECTION:-}" ] && [ -z "${SSH_TTY:-}" ] && [ "$loopback" = 1 ]; then
     if [ "$os" = darwin ]; then
       ! command -v open >/dev/null 2>&1 || opener=open
     elif [ -n "${BROWSER:-}" ] && command -v "$BROWSER" >/dev/null 2>&1; then
@@ -178,7 +196,12 @@ install_node() {
 # in the app's state dir and runs it from there (server/updater.ts, current.json). The directory of the
 # code that runs now, so the phone step is the running version's, not the first install's.
 running_code() {
-  state="${HERDR_WEB_STATE_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-web-ui}"
+  state="${OVIS_STATE_DIR:-${HERDR_WEB_STATE_DIR:-}}"
+  if [ -z "$state" ]; then
+    state="${XDG_CONFIG_HOME:-$HOME/.config}/ovis"
+    # an install whose server has not run since the rename still has its state under the old name
+    [ -d "$state" ] || state="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-web-ui"
+  fi
   head=$(git -C "$1" rev-parse HEAD 2>/dev/null || true)
   # shellcheck disable=SC2016 # JavaScript, not shell
   bun -e '
@@ -255,11 +278,22 @@ main() {
   node_major=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
   [ "${node_major:-0}" -ge 18 ] || install_node
 
+  legacy_root=""
+  if herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
+    legacy_root=$(plugin_root "$LEGACY_PLUGIN")
+    say "moving the installed plugin to its Ovis id; its settings and token come along"
+    # stopped first: removed with its server up, the old checkout would keep serving, and the new
+    # id's start would find the port answering and leave it
+    if [ -n "$legacy_root" ] && ! bun "$legacy_root/scripts/plugin.ts" stop </dev/null >/dev/null 2>&1; then
+      fail "could not stop the server of the old id, so nothing was moved. Stop it (herdr plugin action invoke $LEGACY_PLUGIN.stop, or restart herdr), then run this again."
+    fi
+  fi
+
   if herdr plugin list 2>/dev/null | grep -q "$PLUGIN "; then
     say "already installed as a herdr plugin; Settings → Updates keeps it current"
   else
     need git
-    ref=${HERDR_WEB_UI_REF:-$(latest_release)}
+    ref=${OVIS_REF:-${HERDR_WEB_UI_REF:-$(latest_release)}}
     [ -n "$ref" ] || fail "could not look up the latest release on github.com. Check the connection and run this again."
     say "installing the herdr plugin at $ref (herdr clones and builds it: about a minute)"
     # herdr previews the whole manifest first; on success its last word is enough, on failure all of it
@@ -275,8 +309,13 @@ main() {
     fi
   fi
 
-  root=$(herdr plugin list --json | bun -e 'const d = JSON.parse(await Bun.stdin.text()); console.log(d.result.plugins.find((p) => p.plugin_id === "'"$PLUGIN"'")?.plugin_root ?? "")')
+  root=$(plugin_root "$PLUGIN")
   [ -n "$root" ] || fail "herdr does not list the plugin after installing it; see: herdr plugin list"
+
+  if herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
+    adopt_legacy_config
+    herdr plugin uninstall "$LEGACY_PLUGIN" </dev/null >/dev/null || fail "could not remove the plugin's old id; run: herdr plugin uninstall $LEGACY_PLUGIN"
+  fi
 
   if herdr status server --json 2>/dev/null | grep -q '"running":true'; then
     # the action only queues the start (its output goes to herdr's plugin log), so wait for it here

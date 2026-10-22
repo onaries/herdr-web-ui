@@ -11,7 +11,7 @@ const CLICK = "\x1b[<0;5;3M\x1b[<0;5;3m";
 
 /** Hold one keys RPC so the next chord or text waits across attachment transitions. */
 async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "refresh", input = false, text = "queued text") {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-keys-lifecycle-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-keys-lifecycle-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
   const sockets: WebSocket[] = [];
   let workspace: string | undefined;
@@ -53,7 +53,7 @@ async function queuedKeys(leave: "none" | "detach" | "replace" | "reattach" | "r
   };
   try {
     const created = await herdr.herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: "herdr-web-ui-test-keys-lifecycle", cwd: root, focus: false },
+      "workspace.create", { label: "ovis-test-keys-lifecycle", cwd: root, focus: false },
     );
     workspace = created.workspace.workspace_id;
     const pane = created.root_pane.pane_id;
@@ -138,7 +138,7 @@ it("drops a queued click after its sender detaches while a peer keeps the attach
 it("drops a queued click after its attachment is replaced", () => queuedKeys("replace", true, CLICK), 20_000);
 
 it("cancels a pending attach continuation when detach and reattach installs a new claim", async () => {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-attach-claim-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-attach-claim-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
   let workspace: string | undefined;
   let socket: WebSocket | undefined;
@@ -161,7 +161,7 @@ it("cancels a pending attach continuation when detach and reattach installs a ne
     }
   };
   try {
-    const made = await herdr.workspaceCreate({ cwd: root, label: "herdr-web-ui-test-attach-claim" });
+    const made = await herdr.workspaceCreate({ cwd: root, label: "ovis-test-attach-claim" });
     workspace = made.workspace.workspace_id;
     const pane = made.root_pane.pane_id;
     const seen: any[] = [];
@@ -189,7 +189,7 @@ it("cancels a pending attach continuation when detach and reattach installs a ne
 }, 20_000);
 
 it("refuses a chord sent while its attach is still being looked up, instead of sending it around the claim", async () => {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-attach-pending-keys-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-attach-pending-keys-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
   let workspace: string | undefined;
   let socket: WebSocket | undefined;
@@ -218,7 +218,7 @@ it("refuses a chord sent while its attach is still being looked up, instead of s
     }
   };
   try {
-    const made = await herdr.workspaceCreate({ cwd: root, label: "herdr-web-ui-test-attach-pending-keys" });
+    const made = await herdr.workspaceCreate({ cwd: root, label: "ovis-test-attach-pending-keys" });
     workspace = made.workspace.workspace_id;
     const pane = made.root_pane.pane_id;
     const seen: any[] = [];

@@ -1,0 +1,36 @@
+
+⚙️  /tasks
+  Running processes: 0
+  Agent: idle
+
+⚙️  /undo
+(._.) No messages to undo.
+
+⚙️  /reload-mcp
+🟡 /reload-mcp cancelled. MCP tools unchanged.
+
+⚙️  /new
+🟡 /new cancelled. Conversation unchanged.
+
+⚙️  /reset
+🟡 /new cancelled. Conversation unchanged.
+
+⚙️  /clear
+[0m[38;5;173m╭────────────────────────────────────────────────────────────────────────╮[0m
+[0m[38;5;173m│ [0m[1m[38;5;214m⚠️  /clear — destroys conversation state                              [0m[38;5;173m │[0m
+[0m[38;5;173m│                                                                        │[0m
+[0m[38;5;173m│ [0m[1m[38;5;230mThis clears the screen and starts a new session.                      [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[1m[38;5;230mThe current conversation history will be discarded.                   [0m[38;5;173m │[0m
+[0m[38;5;173m│                                                                        │[0m
+[0m[38;5;173m│ [0m[1m[38;5;220m❯ [1] Approve Once — proceed this time only                           [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  [2] Always Approve — proceed and silence this prompt permanently    [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  [3] Cancel — keep current conversation                              [0m[38;5;173m │[0m
+[0m[38;5;173m│                                                                        │[0m
+[0m[38;5;173m│ [0m[3m[38;5;136mType 1/2/3 or use ↑/↓ then Enter. ESC/Ctrl+C cancels.                 [0m[38;5;173m │[0m
+[0m[38;5;173m╰────────────────────────────────────────────────────────────────────────╯[0m
+ 
+[0m[3m[38;5;136m  type 1/2/3, or ↑/↓ to select, Enter to confirm[0m[38;5;173m  (119s)[0m
+[0m[38;5;250m[48;5;234m ☤ [0m[1m[38;5;220m[48;5;234mgpt-6-luna[0m[38;5;101m[48;5;234m │ ctx -- │ [░░░░░░░░░░] -- │ 4m │ ⏲ 0s[0m[38;5;250m[48;5;234m [0m
+[0m[38;5;173m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[3m[38;5;136m⚠ ❯ type 1/2/3, or use ↑/↓ then Enter[0m
+[0m[38;5;173m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m

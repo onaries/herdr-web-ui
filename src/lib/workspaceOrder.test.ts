@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import type { WorkspaceMoved } from "../../shared/protocol.ts";
+import { SnapshotRequests } from "./snapshotRequests.ts";
 import { movedTabOrder } from "./tabOrder.ts";
-import { placeBlock, workspaceMoves, worktreeGroups } from "./workspaceOrder.ts";
+import { placeBlock, ReorderCoordinator, workspaceMoves, worktreeGroups, type OrderRosterEntry, type RosterSource, type WorkspaceMove } from "./workspaceOrder.ts";
 
 const start = ["X", "A", "a1", "a2", "a3", "B", "b1", "C"];
 
@@ -67,5 +69,527 @@ describe("workspaceMoves", () => {
 
   test("an unchanged order needs no move", () => {
     expect(workspaceMoves(start, start)).toEqual([]);
+  });
+});
+
+type Step = { step: WorkspaceMove; resolve(receipt: WorkspaceMoved): void; reject(error: unknown): void };
+/** each move waits for the test to answer it; next() resolves when the coordinator asks for one */
+function mover() {
+  const calls: Step[] = [];
+  let woken: (() => void) | null = null;
+  const move = (step: WorkspaceMove) => new Promise<WorkspaceMoved>((resolve, reject) => { calls.push({ step, resolve, reject }); woken?.(); });
+  const next = async (): Promise<Step> => {
+    while (calls.length === 0) await new Promise<void>((resolve) => { woken = resolve; });
+    return calls.shift()!;
+  };
+  return { move, next, waiting: () => calls.length };
+}
+type Ask = { id: string; signal: AbortSignal; resolve(answer: { machines: OrderRosterEntry[]; boot_id: string } | null): void };
+function verifier() {
+  const asks: Ask[] = [];
+  let woken: (() => void) | null = null;
+  const verify = (id: string, signal: AbortSignal) => new Promise<{ machines: OrderRosterEntry[]; boot_id: string } | null>((resolve) => { asks.push({ id, signal, resolve }); woken?.(); });
+  const next = async (): Promise<Ask> => {
+    while (asks.length === 0) await new Promise<void>((resolve) => { woken = resolve; });
+    return asks.shift()!;
+  };
+  return { verify, next, count: () => asks.length };
+}
+const entry = (id: string, ids: readonly string[], epoch?: string, seq?: number, extra: Record<string, unknown> = {}): OrderRosterEntry =>
+  ({ id, snapshot: { workspaces: ids.map((workspace_id) => ({ workspace_id })), ...(epoch === undefined ? {} : { order_epoch: epoch, read_seq: seq }) }, ...extra });
+const event: RosterSource = { kind: "event" };
+const O = ["a", "b", "c"];
+const A = ["b", "c", "a"];
+const B = ["c", "a", "b"];
+/** every order the sidebar was given to draw for a PC, one per coordinator change */
+function commits(coordinator: ReorderCoordinator, id: string, ids: () => readonly string[]) {
+  const seen: string[][] = [];
+  coordinator.subscribe(() => { seen.push(coordinator.order(id, ids())); });
+  return seen;
+}
+/** drag O -> A on `id` and answer its one move with `receipt` */
+async function dragged(coordinator: ReorderCoordinator, moves: ReturnType<typeof mover>, receipt: WorkspaceMoved, id = "local") {
+  const done = coordinator.reorder(id, O, A, moves.move);
+  expect(coordinator.order(id, O)).toEqual(A);
+  (await moves.next()).resolve(receipt);
+  await done;
+}
+const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+
+describe("ReorderCoordinator", () => {
+  test("a pre-move read delivered after confirmation stays fenced", async () => {
+    const now = spyOn(Date, "now").mockReturnValue(10_000);
+    const monotonic = spyOn(performance, "now").mockReturnValue(10_000);
+    try {
+      const coordinator = new ReorderCoordinator();
+      coordinator.roster([entry("local", O, "E", 0)], { kind: "load", started: coordinator.loadStarted() });
+      const seen = commits(coordinator, "local", () => O);
+      const moves = mover();
+      await dragged(coordinator, moves, { ok: true, order_epoch: "E", moved_seq: 1 });
+      // the read began before the move: frozen, later and backward clocks change nothing
+      for (const clock of [10_000, 20_000, 10_000, 1_000]) {
+        now.mockReturnValue(clock); monotonic.mockReturnValue(clock);
+        coordinator.roster([entry("local", O, "E", 0)], event);
+        coordinator.roster([entry("local", O, "E", 0)], { kind: "load", started: coordinator.loadStarted() });
+        expect(coordinator.order("local", O)).toEqual(A);
+      }
+      expect(coordinator.state("local")).toMatchObject({ held: true, floors: { E: 1 } });
+      coordinator.roster([entry("local", A, "E", 1)], event);
+      expect(coordinator.state("local").held).toBe(false);
+      expect(seen.some((order) => order.join() === O.join())).toBe(false);
+      expect(now).not.toHaveBeenCalled();
+      expect(monotonic).not.toHaveBeenCalled();
+    } finally { now.mockRestore(); monotonic.mockRestore(); }
+  });
+
+  test("a remote opening snapshot cannot acquire freshness on arrival", async () => {
+    const coordinator = new ReorderCoordinator();
+    const moves = mover();
+    await dragged(coordinator, moves, { ok: true, order_epoch: "R", moved_seq: 4 }, "remote");
+    // the remote PC's opening snapshot was read before the proxied move, and arrives after it
+    coordinator.roster([entry("remote", O, "R", 3)], event);
+    expect(coordinator.order("remote", O)).toEqual(A);
+    expect(coordinator.state("remote").held).toBe(true);
+    coordinator.roster([entry("remote", A, "R", 4)], event);
+    expect(coordinator.state("remote").held).toBe(false);
+  });
+
+  test("stale cache status patches and another PC cannot release", async () => {
+    const coordinator = new ReorderCoordinator();
+    const moves = mover();
+    await dragged(coordinator, moves, { ok: true, order_epoch: "E", moved_seq: 1 });
+    // another PC's roster, and this PC's cached one with a pane's status patched in (same pair)
+    coordinator.roster([entry("other", B, "F", 9), entry("local", O, "E", 0, { state: "connected" })], event);
+    expect(coordinator.order("local", O)).toEqual(A);
+    expect(coordinator.state("local").held).toBe(true);
+    // membership still applies: a deleted workspace goes, a new one is appended
+    expect(coordinator.order("local", ["a", "b", "d"])).toEqual(["b", "a", "d"]);
+    coordinator.roster([entry("local", ["a", "b", "d"], "E", 1)], event);
+    expect(coordinator.order("local", ["a", "b", "d"])).toEqual(["a", "b", "d"]);
+  });
+
+  test("a later authoritative order lifts the fence without an echo of the settled order", async () => {
+    const coordinator = new ReorderCoordinator();
+    const seen = commits(coordinator, "local", () => O);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E", moved_seq: 1 });
+    // another client moved again: B, never A, is what the first qualifying roster says
+    coordinator.roster([entry("local", B, "E", 2)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local").held).toBe(false);
+    expect(seen.at(-1)).toEqual(B);
+  });
+
+  test("releasing a hold retains the acknowledged move floor", async () => {
+    const coordinator = new ReorderCoordinator();
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E", moved_seq: 1 });
+    coordinator.roster([entry("local", A, "E", 1)], event);
+    expect(coordinator.state("local")).toMatchObject({ held: false, floors: { E: 1 } });
+    // a delayed below-floor roster and an old cached GET after release: order stays, membership follows
+    coordinator.roster([entry("local", O, "E", 0)], event);
+    coordinator.roster([entry("local", [...O, "d"], "E", 0)], { kind: "load", started: coordinator.loadStarted() });
+    expect(coordinator.order("local", [...O, "d"])).toEqual([...A, "d"]);
+    coordinator.roster([entry("local", B, "E", 1)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("fresh HTTP before stale websocket never regresses the cache or order", async () => {
+    const coordinator = new ReorderCoordinator();
+    const seen = commits(coordinator, "local", () => O);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E", moved_seq: 1 });
+    coordinator.roster([entry("local", B, "E", 1)], { kind: "load", started: coordinator.loadStarted() });
+    coordinator.roster([entry("local", O, "E", 0)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local").floors).toEqual({ E: 1 });
+    expect(seen.some((order) => order.join() === O.join())).toBe(false);
+  });
+
+  test("only the newest generation applies its order; an older one's end replaces nothing", async () => {
+    const coordinator = new ReorderCoordinator();
+    const moves = mover();
+    const first = coordinator.reorder("local", O, A, moves.move);
+    const second = coordinator.reorder("local", A, B, moves.move);
+    expect(coordinator.state("local").pending).toBe(2);
+    expect(coordinator.order("local", O)).toEqual(B);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E", moved_seq: 1 });
+    await first;
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local").pending).toBe(1);
+    // the second batch runs after the first, from where the first left herdr
+    const step = await moves.next();
+    expect(step.step.workspaceId).toBeDefined();
+    step.resolve({ ok: true, order_epoch: "E", moved_seq: 2 });
+    while (moves.waiting() === 0 && coordinator.state("local").pending > 0) {
+      const more = await Promise.race([moves.next(), second.then(() => null)]);
+      if (!more) break;
+      more.resolve({ ok: true, order_epoch: "E", moved_seq: 3 });
+    }
+    await second;
+    expect(coordinator.state("local")).toMatchObject({ pending: 0, held: true });
+    coordinator.roster([entry("local", A, "E", 1)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("an older generation's failure rolls nothing back; the newest one's failure does", async () => {
+    const coordinator = new ReorderCoordinator();
+    coordinator.roster([entry("local", O, "E", 0)], event);
+    const moves = mover();
+    const first = coordinator.reorder("local", O, A, moves.move);
+    const second = coordinator.reorder("local", A, B, moves.move);
+    (await moves.next()).reject(new Error("first failed"));
+    await first;
+    expect(coordinator.order("local", O)).toEqual(B);
+    // after a failed batch the next one starts from a roster read after the receipts (none yet: the last one)
+    const step = await moves.next();
+    step.reject(new Error("second failed"));
+    await expect(second).rejects.toThrow("second failed");
+    expect(coordinator.state("local")).toMatchObject({ pending: 0, held: false });
+    expect(coordinator.order("local", O)).toEqual(O);
+  });
+
+  test("a partial failure keeps its acknowledged floor and the next batch starts from a qualified roster", async () => {
+    const coordinator = new ReorderCoordinator();
+    coordinator.roster([entry("local", ["w", "x", "y", "z"], "E", 0)], event);
+    const moves = mover();
+    const target = ["z", "y", "x", "w"];
+    const first = coordinator.reorder("local", ["w", "x", "y", "z"], target, moves.move);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E", moved_seq: 1 });
+    const later = coordinator.reorder("local", target, ["y", "z", "x", "w"], moves.move);
+    (await moves.next()).reject(new Error("herdr refused"));
+    await first;
+    expect(coordinator.state("local").floors).toEqual({ E: 1 });
+    expect(coordinator.order("local", target)).toEqual(["y", "z", "x", "w"]);
+    // the next batch waits for herdr's order after the confirmed move: a below-floor roster is not it
+    coordinator.roster([entry("local", ["w", "x", "y", "z"], "E", 0)], event);
+    expect(moves.waiting()).toBe(0);
+    coordinator.roster([entry("local", ["z", "w", "x", "y"], "E", 1)], event);
+    const step = await moves.next();
+    expect(step.step).toBeDefined();
+    step.resolve({ ok: true, order_epoch: "E", moved_seq: 2 });
+    for (;;) {
+      const more = await Promise.race([moves.next(), later.then(() => null)]);
+      if (!more) break;
+      more.resolve({ ok: true, order_epoch: "E", moved_seq: 3 });
+    }
+    await later;
+    expect(coordinator.order("local", target)).toEqual(["y", "z", "x", "w"]);
+  });
+
+  test("an older server's receipt falls back to a load started after the moves settled", async () => {
+    const settled: string[] = [];
+    const coordinator = new ReorderCoordinator({ onSettled: (id) => settled.push(id) });
+    const early = coordinator.loadStarted();
+    await dragged(coordinator, mover(), { ok: true });
+    expect(settled).toEqual(["local"]);
+    coordinator.roster([entry("local", O)], { kind: "load", started: early });
+    coordinator.roster([entry("local", O)], event);
+    expect(coordinator.order("local", O)).toEqual(A);
+    // a load started after settlement: its order is herdr's, whatever it is
+    coordinator.roster([entry("local", B)], { kind: "load", started: coordinator.loadStarted() });
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local").held).toBe(false);
+  });
+
+  test("a server that stops sending evidence cannot lift an acknowledged floor through the fallback", async () => {
+    const coordinator = new ReorderCoordinator();
+    coordinator.roster([entry("local", O, "E", 0)], event);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E", moved_seq: 1 });
+    coordinator.roster([entry("local", A, "E", 1)], event);
+    expect(coordinator.state("local")).toMatchObject({ held: false, floors: { E: 1 } });
+    const moves = mover();
+    const done = coordinator.reorder("local", A, B, moves.move);
+    (await moves.next()).resolve({ ok: true });
+    await done;
+    // the post-settlement load the fallback would trust carries no evidence: the floor still holds B
+    coordinator.roster([entry("local", O)], { kind: "load", started: coordinator.loadStarted() });
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local")).toMatchObject({ held: true, floors: { E: 1 } });
+    // an SSE roster at the floor may predate that move; a post-settlement load at the floor releases it
+    coordinator.roster([entry("local", A, "E", 2)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+    coordinator.roster([entry("local", A, "E", 2)], { kind: "load", started: coordinator.loadStarted() });
+    expect(coordinator.order("local", O)).toEqual(A);
+    expect(coordinator.state("local")).toMatchObject({ held: false, floors: { E: 1 } });
+  });
+
+  test("evidence that disappears before an earlier hold releases still needs a post-settlement load", async () => {
+    const coordinator = new ReorderCoordinator();
+    coordinator.roster([entry("local", O, "E", 0)], event);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E", moved_seq: 1 });
+    // no roster released that hold yet when the next move answers without evidence
+    const moves = mover();
+    const done = coordinator.reorder("local", A, B, moves.move);
+    (await moves.next()).resolve({ ok: true });
+    await done;
+    // an SSE roster at the earlier floor may predate the legacy move: B stays
+    coordinator.roster([entry("local", A, "E", 1)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local")).toMatchObject({ held: true, floors: { E: 1 } });
+    // an evidence-less load lifts nothing; a qualifying load started after settlement releases it
+    coordinator.roster([entry("local", A)], { kind: "load", started: coordinator.loadStarted() });
+    expect(coordinator.order("local", O)).toEqual(B);
+    coordinator.roster([entry("local", B, "E", 1)], { kind: "load", started: coordinator.loadStarted() });
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local")).toMatchObject({ held: false, floors: { E: 1 } });
+  });
+
+  test("a PC that leaves the roster settles a batch waiting for its roster, and keeps its floor", async () => {
+    const coordinator = new ReorderCoordinator();
+    const start = ["w", "x", "y", "z"];
+    const target = ["z", "y", "x", "w"];
+    coordinator.roster([{ id: "local", snapshot: null }, entry("remote", start, "E", 0)], event);
+    const moves = mover();
+    const first = coordinator.reorder("remote", start, target, moves.move);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E", moved_seq: 1 });
+    const later = coordinator.reorder("remote", target, ["y", "z", "x", "w"], moves.move);
+    const refused = later.then(() => null, (error: unknown) => error);
+    (await moves.next()).reject(new Error("herdr refused"));
+    await first;
+    // still registered without a snapshot (a disconnect): the batch keeps waiting
+    coordinator.roster([{ id: "local", snapshot: null }, { id: "remote", snapshot: null }], event);
+    expect(coordinator.state("remote")).toMatchObject({ pending: 1, held: true });
+    coordinator.roster([{ id: "local", snapshot: null }], event);
+    expect(coordinator.state("remote")).toMatchObject({ pending: 0, held: false, floors: { E: 1 } });
+    expect(await refused).toBeInstanceOf(Error);
+    expect(moves.waiting()).toBe(0);
+    expect(coordinator.state("remote")).toMatchObject({ pending: 0, held: false, floors: { E: 1 } });
+  });
+
+  test("a Sidebar remount or PC switch keeps the hold: it lives in the coordinator", async () => {
+    const coordinator = new ReorderCoordinator();
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E", moved_seq: 1 });
+    // App's rosters list every PC; one without a snapshot is still registered
+    coordinator.roster([{ id: "local", snapshot: null }, entry("other", B, "F", 0)], event);
+    expect(coordinator.order("other", B)).toEqual(B);
+    expect(coordinator.order("local", O)).toEqual(A);
+  });
+
+  test("a proven source-server restart drops the old fence", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const seen = commits(coordinator, "local", () => O);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E1", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E2", 0)], event);
+    const ask = await asks.next();
+    expect(ask.id).toBe("local");
+    ask.resolve({ machines: [entry("local", B, "E2", 0)], boot_id: "E2" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ held: false, retired: ["E1"], guard: { epoch: "E2", version: 1 }, floors: {} });
+    expect(coordinator.order("local", O)).toEqual(B);
+    // a delayed old-epoch roster cannot come back
+    coordinator.roster([entry("local", O, "E1", 5)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(seen.some((order) => order.join() === O.join())).toBe(false);
+  });
+
+  test("post-receipt restart retires only on correlated verification", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0, { source_boot_id: "E3" })], event);
+    expect(coordinator.state("local")).toMatchObject({ held: true, retired: [], checking: true });
+    (await asks.next()).resolve({ machines: [entry("local", B, "E3", 0)], boot_id: "E3" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ retired: ["E2"], guard: { epoch: "E3" } });
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("passive older boot proof never retires a newer receipt epoch", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    // an E1 roster that carries its own (older) boot proof: it may ask, never retire
+    coordinator.roster([entry("local", O, "E1", 7, { source_boot_id: "E1" })], event);
+    (await asks.next()).resolve({ machines: [entry("local", A, "E2", 1)], boot_id: "E2" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ held: true, retired: [], floors: { E2: 1 } });
+    expect(coordinator.order("local", O)).toEqual(A);
+  });
+
+  test("old proof SSE cannot invalidate retirement protection after immediate load", async () => {
+    const asks = verifier();
+    const requests = new SnapshotRequests();
+    let answerLoad: (value: OrderRosterEntry[]) => void = () => {};
+    const coordinator = new ReorderCoordinator({ verify: asks.verify, onSettled: () => {
+      const started = coordinator.loadStarted();
+      void requests.read(() => new Promise<OrderRosterEntry[]>((resolve) => { answerLoad = resolve; }), (roster) => coordinator.roster(roster, { kind: "load", started }));
+    } });
+    const seen = commits(coordinator, "local", () => O);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    // the old E1 SSE lands while the settlement's load is out: that load no longer commits
+    requests.invalidate();
+    coordinator.roster([entry("local", O, "E1", 3, { source_boot_id: "E1" })], event);
+    answerLoad([entry("local", O, "E1", 3)]);
+    await flush();
+    (await asks.next()).resolve(null);
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ held: true, retired: [], floors: { E2: 1 } });
+    expect(seen.some((order) => order.join() === O.join())).toBe(false);
+  });
+
+  test("new receipt invalidates pending boot validation", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const moves = mover();
+    await dragged(coordinator, moves, { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    const ask = await asks.next();
+    const again = coordinator.reorder("local", A, B, moves.move);
+    expect(ask.signal.aborted).toBe(true);
+    ask.resolve({ machines: [], boot_id: "E3" });
+    await flush();
+    expect(coordinator.state("local").retired).toEqual([]);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E2", moved_seq: 2 });
+    await again;
+    expect(coordinator.state("local")).toMatchObject({ floors: { E2: 2 }, held: true });
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("superseded validation grants no retirement", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const moves = mover();
+    await dragged(coordinator, moves, { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    const stale = await asks.next();
+    // the same protected context asks once: a second mismatch joins it
+    coordinator.roster([entry("local", O, "E3", 1)], event);
+    expect(asks.count()).toBe(0);
+    const again = coordinator.reorder("local", A, B, moves.move);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E2", moved_seq: 2 });
+    await again;
+    coordinator.roster([entry("local", O, "E3", 1)], event);
+    const current = await asks.next();
+    stale.resolve({ machines: [], boot_id: "E3" });
+    await flush();
+    expect(coordinator.state("local").retired).toEqual([]);
+    current.resolve({ machines: [], boot_id: "E2" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ retired: [], floors: { E2: 2 }, held: true });
+  });
+
+  test("another PC cannot retire this floor", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "R1", moved_seq: 1 }, "remote");
+    coordinator.roster([{ id: "local", snapshot: null }, entry("remote", O, "R2", 0)], event);
+    const ask = await asks.next();
+    expect(ask.id).toBe("remote");
+    ask.resolve({ machines: [entry("local", O, "E3", 0)], boot_id: "R2" });
+    await flush();
+    expect(coordinator.state("remote").retired).toEqual(["R1"]);
+    expect(coordinator.state("local")).toMatchObject({ retired: [], floors: { E2: 1 }, held: true });
+    expect(coordinator.order("local", O)).toEqual(A);
+  });
+
+  test("failed verification can retry successfully", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    (await asks.next()).resolve(null);
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ retired: [], held: true, checking: false });
+    // the next poll brings the mismatch again: it asks again
+    coordinator.roster([entry("local", B, "E3", 0)], { kind: "load", started: coordinator.loadStarted() });
+    (await asks.next()).resolve({ machines: [entry("local", B, "E3", 0)], boot_id: "E3" });
+    await flush();
+    expect(coordinator.state("local").retired).toEqual(["E2"]);
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("proof-only answer waits for matching snapshot", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    // proof of E3, but the answer's roster is still of another epoch: no order applies from it
+    (await asks.next()).resolve({ machines: [entry("local", O, "E1", 9)], boot_id: "E3" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ retired: ["E2"], guard: { epoch: "E3" } });
+    expect(coordinator.order("local", O)).toEqual(A);
+    coordinator.roster([entry("local", O, "E1", 9)], event);
+    expect(coordinator.order("local", O)).toEqual(A);
+    coordinator.roster([entry("local", B, "E3", 0)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+  });
+
+  test("proof-only successor can verify a second restart without a floor", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const seen = commits(coordinator, "local", () => O);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    (await asks.next()).resolve({ machines: [], boot_id: "E3" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ floors: {}, guard: { epoch: "E3", version: 1 } });
+    // before any E3 snapshot, the server restarts again: the guard alone asks
+    coordinator.roster([entry("local", O, "E4", 0)], event);
+    (await asks.next()).resolve({ machines: [], boot_id: "E4" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ retired: ["E2", "E3"], guard: { epoch: "E4", version: 2 } });
+    coordinator.roster([entry("local", B, "E4", 0)], event);
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(seen.some((order) => order.join() === O.join())).toBe(false);
+  });
+
+  test("accepted epoch guard survives its first full snapshot", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    (await asks.next()).resolve({ machines: [entry("local", B, "E3", 0)], boot_id: "E3" });
+    await flush();
+    coordinator.roster([entry("local", B, "E3", 1)], event);
+    expect(coordinator.state("local").guard).toEqual({ epoch: "E3", version: 1 });
+    // a real later restart can still advance it
+    coordinator.roster([entry("local", A, "E5", 0)], event);
+    (await asks.next()).resolve({ machines: [entry("local", A, "E5", 0)], boot_id: "E5" });
+    await flush();
+    expect(coordinator.state("local").guard).toEqual({ epoch: "E5", version: 2 });
+    expect(coordinator.order("local", O)).toEqual(A);
+  });
+
+  test("unseen retired-era GET and SSE cannot restore pre-move order", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const seen = commits(coordinator, "local", () => O);
+    await dragged(coordinator, mover(), { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", B, "E3", 0)], event);
+    (await asks.next()).resolve({ machines: [entry("local", B, "E3", 0)], boot_id: "E3" });
+    await flush();
+    // E1, never seen before, held since before the move: as an old GET and as an old SSE
+    coordinator.roster([entry("local", O, "E1", 4)], { kind: "load", started: coordinator.loadStarted() });
+    const ask = await asks.next();
+    coordinator.roster([entry("local", O, "E1", 4)], event);
+    ask.resolve({ machines: [entry("local", O, "E1", 4)], boot_id: "E3" });
+    await flush();
+    expect(coordinator.order("local", O)).toEqual(B);
+    expect(coordinator.state("local")).toMatchObject({ guard: { epoch: "E3", version: 1 }, retired: ["E2"] });
+    expect(seen.some((order) => order.join() === O.join())).toBe(false);
+  });
+
+  test("a receipt or answer naming a retired epoch never brings it back", async () => {
+    const asks = verifier();
+    const coordinator = new ReorderCoordinator({ verify: asks.verify });
+    const moves = mover();
+    await dragged(coordinator, moves, { ok: true, order_epoch: "E2", moved_seq: 1 });
+    coordinator.roster([entry("local", O, "E3", 0)], event);
+    (await asks.next()).resolve({ machines: [], boot_id: "E3" });
+    await flush();
+    // a roster of the retired epoch is dropped without asking
+    coordinator.roster([entry("local", O, "E2", 9)], event);
+    expect(asks.count()).toBe(0);
+    expect(coordinator.order("local", O)).toEqual(A);
+    // an answer naming it is refused rather than moving the guard back
+    coordinator.roster([entry("local", O, "E5", 0)], event);
+    (await asks.next()).resolve({ machines: [entry("local", O, "E2", 9)], boot_id: "E2" });
+    await flush();
+    expect(coordinator.state("local")).toMatchObject({ guard: { epoch: "E3", version: 1 }, retired: ["E2"] });
+    // and a receipt of it sets no floor
+    const late = coordinator.reorder("local", A, B, moves.move);
+    (await moves.next()).resolve({ ok: true, order_epoch: "E2", moved_seq: 10 });
+    await late;
+    expect(coordinator.state("local").floors).toEqual({});
   });
 });

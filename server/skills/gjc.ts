@@ -69,6 +69,8 @@ const TERMINAL_FORMS = [
   "settings", "language", "theme", "pet", "goal", "copy", "tutorial", "help", "hotkeys", "mcp", "agents",
   "extensions", "monitors", "tree", "fork", "login", "logout", "new", "drop", "resume", "sessions", "btw",
   "retry", "background", "debug", "exit",
+  // the transcript viewer overlay (slash-commands/builtin-registry.ts:1577-1581)
+  "transcript",
 ] as const;
 const FORMS: NonNullable<AgentCommandSource["forms"]> = Object.fromEntries([
   ...TERMINAL_FORMS.map((name) => [name, [{ match: "bare" as const, interaction: "terminal" as const }]]),
@@ -81,6 +83,22 @@ const FORMS: NonNullable<AgentCommandSource["forms"]> = Object.fromEntries([
     { match: "other" as const, interaction: "none" as const },
   ]],
   ["handoff", [{ match: "bare" as const, interaction: "none" as const }]],
+  // bare opens a model selector or the provider onboarding selector, `/provider login` the OAuth selector and
+  // `/session delete` a confirmation (builtin-registry.ts:1358-1384, 1979-2043; modes/controllers/selector-controller.ts:3681-3697)
+  ["routing", [
+    { match: "bare" as const, interaction: "terminal" as const },
+    { match: "other" as const, interaction: "none" as const },
+  ]],
+  ["provider", [
+    { match: "bare" as const, interaction: "terminal" as const },
+    { match: { sub: "login" }, interaction: "terminal" as const },
+    { match: "other" as const, interaction: "unknown" as const },
+  ]],
+  ["session", [
+    { match: "bare" as const, interaction: "unknown" as const },
+    { match: { sub: "delete" }, interaction: "terminal" as const },
+    { match: "other" as const, interaction: "unknown" as const },
+  ]],
 ]);
 
 // Match the pinned interactive registry: utility rows are quarantined, and

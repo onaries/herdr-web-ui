@@ -7,7 +7,7 @@ import { herdrRpc, paneClose, paneFocus, paneSplit, workspaceClose, workspaceCre
 
 /** A tapped pane alert shows an agent pane's chat once: the lens the pane remembered stays its own, and a shell keeps its terminal. */
 export async function checkNotificationView(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-alert-view-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-alert-view-"));
   const workspaces: string[] = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   try {
@@ -15,21 +15,21 @@ export async function checkNotificationView(browser: Browser, origin: string): P
     for (const name of ["agent", "shell"]) {
       const cwd = join(root, name);
       mkdirSync(cwd);
-      const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-alert-view-${name}` });
+      const created = await workspaceCreate({ cwd, label: `ovis-test-alert-view-${name}` });
       workspaces.push(created.workspace.workspace_id);
       panes.push(created.root_pane.pane_id);
     }
     const [agent, shell] = panes as [string, string];
     await herdrRpc("pane.report_agent", { pane_id: agent, source: "manual", agent: "claude", state: "idle" });
     await context.addInitScript((pane) => {
-      if (localStorage.getItem("herdr-web-ui:settings") !== null) return;
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-      localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal"); // the agent pane remembered the terminal
+      if (localStorage.getItem("ovis:settings") !== null) return;
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+      localStorage.setItem(`ovis:view:${pane}`, "terminal"); // the agent pane remembered the terminal
     }, agent);
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    const saved = () => page.evaluate((pane) => localStorage.getItem(`herdr-web-ui:view:${pane}`), agent);
+    const saved = () => page.evaluate((pane) => localStorage.getItem(`ovis:view:${pane}`), agent);
     /** the selected row and the lens drawn with it, both from the page: the stored selection is written before the render */
     const shows = (pane: string, lens: "Chat transcript" | "Live terminal") => page.waitForFunction(([id, title]) =>
       document.querySelector(".pane-select[aria-current='true']")?.getAttribute("title")?.startsWith(`${id} —`) === true

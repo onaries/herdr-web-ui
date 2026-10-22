@@ -14,7 +14,7 @@ const MAC_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 /** HTTPS ports to suggest, the conventional one first; a port another service already uses is skipped */
 export const HTTPS_PORTS: readonly number[] = [443, 8443, 7317, 17317];
 /** names the one HTTPS port to publish the app on, for a user who keeps 443 for something else */
-export const HTTPS_PORT_VARIABLE = "HERDR_WEB_TAILSCALE_HTTPS_PORT";
+export const HTTPS_PORT_VARIABLE = "OVIS_TAILSCALE_HTTPS_PORT";
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 /** stdout of the two commands; null where the command failed, timed out or is not installed */

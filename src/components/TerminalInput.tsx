@@ -225,6 +225,9 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
         placeholder={t("Type for the terminal…")}
         aria-label={t("Terminal input line")}
         enterKeyHint="send"
+        // the keyboard's word strip too: Chrome on Android hands the keyboard NO_SUGGESTIONS only
+        // for autocomplete="off", never for autocorrect or spellcheck
+        autoComplete="off"
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}

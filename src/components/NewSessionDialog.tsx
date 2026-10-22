@@ -287,7 +287,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
       const outcome = firstMessageOutcome(request, result);
       if (outcome.kind === "not_queued") {
         // the agent runs without its first message: the text waits in the new tab's message box, and the dialog says so
-        composerDrafts.set(`herdr-web-ui:composer-draft:${paneStorageId(machineId, result.pane_id)}`, request.first_message!);
+        composerDrafts.set(`ovis:composer-draft:${paneStorageId(machineId, result.pane_id)}`, request.first_message!);
         setPending(false);
         setError({
           message: outcome.error

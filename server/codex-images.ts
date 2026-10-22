@@ -44,11 +44,17 @@ export function codexImageParts(entry: RecordValue): ImagePart[] {
   });
 }
 
-function imageType(bytes: Buffer): string | null {
-  if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
-  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "image/jpeg";
-  if (/^GIF8[79]a$/.test(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
-  if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+/** Whether `bytes` holds exactly `signature` at `offset`; bytes, not text, so no high bit is dropped. */
+function hasBytes(bytes: Buffer, offset: number, signature: string): boolean {
+  return bytes.subarray(offset, offset + signature.length).equals(Buffer.from(signature, "latin1"));
+}
+
+/** The raster type its leading bytes announce: a signature check, not a decode. */
+export function imageType(bytes: Buffer): string | null {
+  if (hasBytes(bytes, 0, "\x89PNG\r\n\x1a\n")) return "image/png";
+  if (hasBytes(bytes, 0, "\xff\xd8\xff")) return "image/jpeg";
+  if (hasBytes(bytes, 0, "GIF87a") || hasBytes(bytes, 0, "GIF89a")) return "image/gif";
+  if (hasBytes(bytes, 0, "RIFF") && hasBytes(bytes, 8, "WEBP")) return "image/webp";
   return null;
 }
 

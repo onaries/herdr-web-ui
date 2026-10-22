@@ -10,10 +10,10 @@ import { createServer } from "./index.ts";
 // changes there when herdr's events say so: a token through pane.updated, the agent's line
 // through a status event of the same status. herdr's agent rows come on the same stream.
 it("carries a plugin's pane tokens and agent line to the browsers' roster, live, beside herdr's agent rows", async () => {
-  const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-test-pane-tokens-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-test-pane-tokens-"));
   const herdrConfigPath = join(stateDir, "config.toml");
   writeFileSync(herdrConfigPath, `[ui.sidebar.agents]\nrows = [["state_icon", "workspace"], ["agent", "$quota"]]\n`);
-  const workspace = await workspaceCreate({ cwd: stateDir, label: "herdr-web-ui-test-pane-tokens" });
+  const workspace = await workspaceCreate({ cwd: stateDir, label: "ovis-test-pane-tokens" });
   const paneId = workspace.root_pane.pane_id;
   const server = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "test-token", tailscaleOwner: null, herdrConfigPath });
   const abort = new AbortController();

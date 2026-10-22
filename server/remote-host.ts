@@ -127,7 +127,9 @@ export const posixHost: RemoteHost = {
   },
   stop: async (ssh, pid) => { await ssh.run(`kill -TERM ${pid}`); },
   async start(ssh, { session, herdrPath, inspection }) {
-    await ssh.run(REMOTE_PATH + `umask 077; mkdir -p "$HOME/.config/herdr-web-ui/bridges"; HERDR_REMOTE_SESSION=${shellQuote(session ?? "")} HERDR_WEB_HERDR_BIN=${shellQuote(herdrPath || `${inspection.home}/${BUNDLE_DIR}/bin/herdr`)} nohup "$HOME/${BUNDLE_DIR}/bin/bun" "$HOME/${BUNDLE_DIR}/server/remote-entry.ts" </dev/null >>"$HOME/.config/herdr-web-ui/bridges/bridge.log" 2>&1 &`);
+    // a bundle published before the rename reads HERDR_WEB_HERDR_BIN
+    const remoteHerdr = shellQuote(herdrPath || `${inspection.home}/${BUNDLE_DIR}/bin/herdr`);
+    await ssh.run(REMOTE_PATH + `umask 077; mkdir -p "$HOME/.config/herdr-web-ui/bridges"; HERDR_REMOTE_SESSION=${shellQuote(session ?? "")} OVIS_HERDR_BIN=${remoteHerdr} HERDR_WEB_HERDR_BIN=${remoteHerdr} nohup "$HOME/${BUNDLE_DIR}/bin/bun" "$HOME/${BUNDLE_DIR}/server/remote-entry.ts" </dev/null >>"$HOME/.config/herdr-web-ui/bridges/bridge.log" 2>&1 &`);
   },
   async descriptors(ssh) {
     return parseDescriptors((await ssh.run(`for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`)).split("\n"));
@@ -289,6 +291,7 @@ export const windowsHost: RemoteHost = {
       // the paths below are UTF-8: a profile such as C:\Users\홍길동 is lost in an ANSI batch file
       "chcp 65001 >nul",
       `set "HERDR_REMOTE_SESSION=${cmdValue(session ?? "")}"`,
+      `set "OVIS_HERDR_BIN=${cmdValue(herdrPath)}"`,
       `set "HERDR_WEB_HERDR_BIN=${cmdValue(herdrPath)}"`,
       `"${cmdValue(`${inspection.runtimeDir}\\bin\\bun.exe`)}" "${cmdValue(`${inspection.runtimeDir}\\server\\remote-entry.ts`)}" >> "${cmdValue(`${inspection.registryDir}\\${files.log}`)}" 2>&1`,
     ];

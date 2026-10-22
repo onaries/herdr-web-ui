@@ -160,7 +160,7 @@ try {
     newestStart = 0; beginsAtOrigin = false; slideReads = 0;
     const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, locale: "en-US" });
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await context.addInitScript((theme) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme })), theme);
+    await context.addInitScript((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme })), theme);
     const page = await context.newPage();
     activePage = page;
     page.setDefaultTimeout(15_000);

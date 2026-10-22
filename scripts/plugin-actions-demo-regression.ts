@@ -63,7 +63,7 @@ try {
       // 390x420: what `interactive-widget=resizes-content` leaves of a phone while its keyboard is up
       const context = await browser.newContext({ viewport: { width: 390, height: 420 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));

@@ -10,7 +10,7 @@ import type { ConversationResponse, InteractivePrompt } from "../shared/protocol
 
 // omp names its session file when it starts and writes it with the first message (seen on a
 // fresh omp pane: herdr held the path, the file was not there). A fake omp stands in.
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-omp-contract-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-omp-contract-"));
 const slug = join(root, ".omp", "agent", "sessions", "-omp-contract");
 const fresh = join(slug, "2026-10-06T00-00-00-000Z_omp-fresh.jsonl");
 const originalHome = process.env["HOME"];
@@ -47,7 +47,7 @@ beforeAll(async () => {
   const fakeOmp = join(bin, "omp");
   writeFileSync(fakeOmp, "#!/bin/sh\nsleep 600\n");
   chmodSync(fakeOmp, 0o755);
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omp-contract" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-omp-contract" });
   workspaceId = created.workspace.workspace_id;
   paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${fakeOmp}\n` });

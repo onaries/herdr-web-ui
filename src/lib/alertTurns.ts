@@ -7,7 +7,7 @@ const RESCUE_MS = 600;
 const PLAYING_HOLD_MS = 5_000;
 /** a chime another tab played this long before this tab heard the alert was for the same one */
 const CHIMED_BEFORE_MS = 400;
-const CHANNEL = "herdr-web-ui:alert-turns";
+const CHANNEL = "ovis:alert-turns";
 
 export interface AlertTurnMessage {
   type: "claim" | "playing" | "chimed" | "withdraw";

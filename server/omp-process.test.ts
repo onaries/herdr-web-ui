@@ -14,6 +14,14 @@ it.skipIf(process.platform !== "linux")("reads a live process's arguments and on
   } finally { target.kill(); await target.exited; }
 });
 
+it.skipIf(process.platform !== "linux")("keeps a process's empty arguments where they stand", async () => {
+  const argv = [process.execPath, "-e", "setInterval(() => {}, 1000)", "--cwd", "", "/B", ""];
+  const target = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  try {
+    expect((await createOmpProcessProbe()(target.pid, true))?.argv).toEqual(argv);
+  } finally { target.kill(); await target.exited; }
+});
+
 it.skipIf(process.platform !== "linux")("keeps a successful read per process start, never a failed one", async () => {
   const start = processStartTicks(process.pid)!;
   let starts = 0, fail = true, ticks = start;

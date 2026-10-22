@@ -12,7 +12,7 @@ import { herdrRpc, paneRead, paneSplit, tabCreate, workspaceClose, workspaceCrea
  * event that the same path would have shown after it.
  */
 export async function checkSplitView(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-split-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-split-"));
   const workspaces: string[] = [];
   const contexts: BrowserContext[] = [];
   const panesFor = async (...suffixes: string[]): Promise<string[]> => {
@@ -20,7 +20,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     for (const suffix of suffixes) {
       const cwd = join(root, suffix);
       mkdirSync(cwd);
-      const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-split-${suffix}` });
+      const created = await workspaceCreate({ cwd, label: `ovis-test-split-${suffix}` });
       workspaces.push(created.workspace.workspace_id);
       ids.push(created.root_pane.pane_id);
       await herdrRpc("pane.report_agent", { pane_id: created.root_pane.pane_id, source: "manual", agent: "claude", state: "idle" });
@@ -31,14 +31,14 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
     contexts.push(context);
     await context.addInitScript(([ids, lens, blockViewWrites, platform]) => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "off" }));
-      for (const id of ids as string[]) localStorage.setItem(`herdr-web-ui:view:${id}`, lens as string);
+      if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertDone: "off" }));
+      for (const id of ids as string[]) localStorage.setItem(`ovis:view:${id}`, lens as string);
       if (blockViewWrites) {
         const setItem = Storage.prototype.setItem;
         Object.defineProperty(Storage.prototype, "setItem", {
           configurable: true,
           value(this: Storage, key: string, value: string) {
-            if (this === localStorage && key.startsWith("herdr-web-ui:view:")) throw new DOMException("Storage disabled", "SecurityError");
+            if (this === localStorage && key.startsWith("ovis:view:")) throw new DOMException("Storage disabled", "SecurityError");
             setItem.call(this, key, value);
           },
         });
@@ -247,7 +247,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         await preview(false, null);
         assert.equal(await page.locator(".pane-slot").count(), 1, "cancelling does not create a half");
         await page.locator(`.pane-frame[data-layout-pane="${opened}"]`).getByRole("log").waitFor();
-        assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null, "cancelling does not save a split");
+        assert.equal(await page.evaluate(() => sessionStorage.getItem("ovis:split")), null, "cancelling does not save a split");
       };
 
       await preview(false, null);
@@ -433,7 +433,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
       await page.locator(`.pane-select[title^="${hidden} —"]`).click();
       await page.locator(`.pane-frame[data-layout-pane="${hidden}"]`).getByRole("log").waitFor();
-      assert.notEqual(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null, "the split is kept while the window is narrow");
+      assert.notEqual(await page.evaluate(() => sessionStorage.getItem("ovis:split")), null, "the split is kept while the window is narrow");
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
       await isActive(page, "left");
@@ -451,7 +451,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       const frames: string[] = [];
       const { page, errors } = await open([first, beside], "terminal", async (context) => {
         await context.addInitScript(([other]) => {
-          sessionStorage.setItem("herdr-web-ui:split", JSON.stringify({ other: { machineId: "local", paneId: other }, bSide: "right", active: "a" }));
+          sessionStorage.setItem("ovis:split", JSON.stringify({ other: { machineId: "local", paneId: other }, bSide: "right", active: "a" }));
         }, [first] as const);
         // what the page asks of the PC's socket: attach/detach/input frames tell an attachment lost from one never made
         const note = (direction: string, payload: string | Buffer): void => {
@@ -590,7 +590,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await settled(page);
       assert.equal(await half(page, "left").locator(".pane-slot-action").first().getAttribute("aria-label"), "Show the chat",
         "the inactive half reflects its explicit terminal choice");
-      assert.equal(await page.evaluate((pane) => localStorage.getItem(`herdr-web-ui:view:${pane}`), left), "chat",
+      assert.equal(await page.evaluate((pane) => localStorage.getItem(`ovis:view:${pane}`), left), "chat",
         "the fixture's stored value remains unchanged after the blocked write");
       await half(page, "left").locator(".terminal-host").click({ position: { x: 40, y: 40 } });
       await isActive(page, "left");
@@ -713,13 +713,13 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     {
       const [pane] = await panesFor("removed-machine") as [string];
       const { page, errors } = await open([pane], "chat", (context) => context.addInitScript(() => {
-        sessionStorage.setItem("herdr-web-ui:split", JSON.stringify({
+        sessionStorage.setItem("ovis:split", JSON.stringify({
           other: { machineId: "removed-split-fixture", paneId: "missing-pane" },
           bSide: "right", active: "a",
         }));
       }));
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1
-        && sessionStorage.getItem("herdr-web-ui:split") === null);
+        && sessionStorage.getItem("ovis:split") === null);
       await page.locator(`.pane-frame[data-layout-pane="${pane}"]`).getByRole("log").waitFor();
       assert.deepEqual(errors, []);
       console.log("PASS a saved split on a removed PC closes after the roster arrives");

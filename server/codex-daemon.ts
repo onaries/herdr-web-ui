@@ -137,7 +137,7 @@ export class DaemonConnection {
     try {
       await this.ready;
       const initialized = await this.request("initialize", {
-        clientInfo: { name: "herdr-web-ui", title: "herdr web ui", version: "0" },
+        clientInfo: { name: "ovis", title: "Ovis", version: "0" },
         capabilities: { experimentalApi: false },
       });
       this.userAgent = isObject(initialized) && typeof initialized.userAgent === "string" ? initialized.userAgent : "";

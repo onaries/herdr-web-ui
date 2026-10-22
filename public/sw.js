@@ -28,11 +28,11 @@
 // list: any file is copied forward, as before.
 // A retired cache's own shell keeps its entry script and stylesheet here too: a page that started
 // from that shell offline and has not asked for them yet still boots, then offers a reload.
-const CACHE_NAME = "herdr-web-ui-v4-ram";
+const CACHE_NAME = "ovis-v4-sheep";
 const BUILD = "";
 const BUILD_FILES = null;
 const CACHE = BUILD ? `${CACHE_NAME}-${BUILD}` : CACHE_NAME;
-const FILES = "herdr-web-ui-files-v1";
+const FILES = "ovis-files-v1";
 const buildFiles = BUILD_FILES ? new Set(BUILD_FILES) : null;
 
 /** Whether `pathname` is a file this build uses; any file, for a worker no build stamped. */
@@ -211,9 +211,9 @@ self.addEventListener("push", (event) => {
         renotify: !watching,
         silent: watching,
         data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null },
-        icon: "/icons/icon-192.png?v=ram1",
+        icon: "/icons/icon-192.png?v=sheep1",
         // Android's status bar and small icon: white on transparent, or Chrome's bell
-        badge: "/icons/badge-96.png?v=ram1",
+        badge: "/icons/badge-96.png?v=sheep1",
       });
     })(),
   );

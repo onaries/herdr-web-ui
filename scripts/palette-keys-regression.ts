@@ -33,7 +33,7 @@ export async function checkPaletteKeys(page: Page, fixture: PaletteKeysFixture):
   const focusedId = () => page.evaluate(() => (document.activeElement === document.body ? "body" : document.activeElement?.id ?? ""));
   const pickedId = () => search.getAttribute("aria-activedescendant");
   const report = (pane: string, state: string) => herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "codex", state });
-  const selectedPaneId = () => page.evaluate(() => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id as string | undefined);
+  const selectedPaneId = () => page.evaluate(() => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id as string | undefined);
   const selectedBefore = await selectedPaneId();
   assert.ok(selectedBefore, "a pane is selected before the check");
 

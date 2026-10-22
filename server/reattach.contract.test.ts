@@ -23,7 +23,7 @@ import { testShellEnv } from "../scripts/test-shell.ts";
 const SESSION = "handoff";
 const config = mkdtempSync(process.platform === "win32" ? join(tmpdir(), "hwu-") : "/tmp/hwu-");
 const socket = join(config, "herdr", "sessions", SESSION, "herdr.sock");
-const herdr = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr") || "herdr";
+const herdr = process.env["OVIS_HERDR_BIN"] || Bun.which("herdr") || "herdr";
 // run from inside a herdr pane, this process carries that pane's HERDR_* variables
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), ...testShellEnv(config), XDG_CONFIG_HOME: config };
 
@@ -124,7 +124,7 @@ function connect(port: number, paneId: string) {
 
 async function pane(label: string): Promise<string> {
   const created = await herdrRpc<{ root_pane: { pane_id: string } }>(
-    "workspace.create", { label: `herdr-web-ui-test-${label}`, cwd: root, focus: false }, socket,
+    "workspace.create", { label: `ovis-test-${label}`, cwd: root, focus: false }, socket,
   );
   return created.root_pane.pane_id;
 }

@@ -1,8 +1,9 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeviceStore, normalizeLabel } from "./devices.ts";
+import { privateStateFs } from "./private-state.ts";
 import { isTaggedNode, parseTailscaleOwner } from "./tailscale.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-devices-"));
@@ -193,17 +194,18 @@ it("reports failed registry writes without committing a pair, rename or revocati
   store.match(first.token);
   let closed = false;
   store.onRevoke(first.device.id, () => { closed = true; });
-  const blocked = join(root, `devices.json.${process.pid}.tmp`);
-  mkdirSync(blocked);
   const code = store.startPairing().code;
-  expect(() => store.pair(code, "Failed pair", "drive")).toThrow();
-  expect(() => store.update(first.device.id, { label: "Failed rename" })).toThrow();
-  expect(() => store.revoke(first.device.id)).toThrow();
+  const rename = spyOn(privateStateFs, "renameSync").mockImplementation(() => { throw new Error("EXDEV: rename refused"); });
+  try {
+    expect(() => store.pair(code, "Failed pair", "drive")).toThrow("EXDEV");
+    expect(() => store.update(first.device.id, { label: "Failed rename" })).toThrow("EXDEV");
+    expect(() => store.revoke(first.device.id)).toThrow("EXDEV");
+  } finally { rename.mockRestore(); }
   expect(closed).toBe(false);
+  expect(readdirSync(root)).toEqual(["devices.json"]);
   expect(store.list(null).map((d) => d.label)).toEqual(["Original"]);
   expect(store.match(first.token)?.label).toBe("Original");
   expect(new DeviceStore(root).match(first.token)?.label).toBe("Original");
-  rmSync(blocked, { recursive: true });
   expect(store.pair(code, "Retry", "drive")).not.toBeNull();
   expect(store.revoke(first.device.id)).toBe(true);
   expect(closed).toBe(true);
@@ -214,14 +216,84 @@ it("does not authorize a first-pair cookie when promotion cannot be persisted", 
   const root = mkdtempSync(join(dir, "promotion-failure-"));
   const store = new DeviceStore(root);
   const candidate = store.pair(store.startPairing().code, "Pending", "drive")!;
-  const blocked = join(root, `devices.json.${process.pid}.tmp`);
-  mkdirSync(blocked);
-  expect(() => store.match(candidate.token)).toThrow();
+  const fsync = spyOn(privateStateFs, "fsyncSync").mockImplementation(() => { throw Object.assign(new Error("EIO: i/o error, fsync"), { code: "EIO" }); });
+  try {
+    expect(() => store.match(candidate.token)).toThrow("EIO");
+  } finally { fsync.mockRestore(); }
+  expect(readdirSync(root)).toEqual([]);
   expect(store.gated).toBe(false);
   expect(store.list(null)).toEqual([]);
   expect(new DeviceStore(root).gated).toBe(false);
-  rmSync(blocked, { recursive: true });
   expect(store.match(candidate.token)).toEqual(candidate.device);
   expect(store.gated).toBe(true);
   expect(new DeviceStore(root).match(candidate.token)).toEqual(candidate.device);
+});
+
+it("does not commit a failed revocation", () => {
+  const root = mkdtempSync(join(dir, "revoke-failure-"));
+  const store = new DeviceStore(root);
+  const only = store.pair(store.startPairing().code, "Phone", "drive")!;
+  store.match(only.token);
+  const before = readFileSync(join(root, "devices.json"), "utf8");
+  const receipts: string[] = [];
+  store.onRevoke(only.device.id, () => { receipts.push(only.device.id); });
+  // a short write first, so the failure lands after part of the document reached the temporary file
+  const realWrite = privateStateFs.writeSync;
+  let writes = 0;
+  const write = spyOn(privateStateFs, "writeSync").mockImplementation(((fd: number, buffer: Buffer, offset: number, length: number) =>
+    realWrite(fd, buffer, offset, ++writes === 1 ? 7 : length)) as typeof realWrite);
+  const fsync = spyOn(privateStateFs, "fsyncSync").mockImplementation(() => { throw Object.assign(new Error("EIO: i/o error, fsync"), { code: "EIO" }); });
+  try {
+    expect(() => store.revoke(only.device.id)).toThrow("EIO");
+  } finally { write.mockRestore(); fsync.mockRestore(); }
+  expect(writes).toBe(2);
+  expect(receipts).toEqual([]);
+  expect(store.has(only.device.id)).toBe(true);
+  expect(store.match(only.token)?.id).toBe(only.device.id);
+  expect(readdirSync(root)).toEqual(["devices.json"]);
+  expect(readFileSync(join(root, "devices.json"), "utf8")).toBe(before);
+
+  expect(store.revoke(only.device.id)).toBe(true);
+  expect(receipts).toEqual([only.device.id]);
+  // the final revocation keeps the gate closed, also for the next start
+  const reopened = new DeviceStore(root);
+  expect(reopened.gated).toBe(true);
+  expect(reopened.match(only.token)).toBeNull();
+  expect(reopened.list(null)).toEqual([]);
+});
+
+it("flushes the last-seen update before it replaces the registry", () => {
+  const root = mkdtempSync(join(dir, "last-seen-"));
+  const store = new DeviceStore(root);
+  const paired = store.pair(store.startPairing().code, "Phone", "drive")!;
+  const confirmedAt = Date.now();
+  const fsync = spyOn(privateStateFs, "fsyncSync");
+  try {
+    store.match(paired.token, confirmedAt);
+    const authorizationSyncs = fsync.mock.calls.length;
+    expect(authorizationSyncs).toBeGreaterThanOrEqual(1);
+    store.match(paired.token, confirmedAt + 61_000);
+    expect(fsync.mock.calls.length).toBeGreaterThan(authorizationSyncs);
+  } finally { fsync.mockRestore(); }
+  expect(new DeviceStore(root).list(null)[0]?.last_seen_at).toBe(new Date(confirmedAt + 61_000).toISOString());
+});
+
+it("keeps the previous registry intact and the credential valid when a last-seen write fails before rename", () => {
+  const root = mkdtempSync(join(dir, "last-seen-failure-"));
+  const store = new DeviceStore(root);
+  const paired = store.pair(store.startPairing().code, "Phone", "drive")!;
+  const confirmedAt = Date.now();
+  store.match(paired.token, confirmedAt);
+  const before = readFileSync(join(root, "devices.json"), "utf8");
+  const rename = spyOn(privateStateFs, "renameSync").mockImplementation(() => { throw new Error("EXDEV: rename refused"); });
+  try {
+    expect(store.match(paired.token, confirmedAt + 61_000)).toEqual(paired.device);
+    expect(rename).toHaveBeenCalledTimes(1);
+  } finally { rename.mockRestore(); }
+  expect(readdirSync(root)).toEqual(["devices.json"]);
+  expect(readFileSync(join(root, "devices.json"), "utf8")).toBe(before);
+  const reopened = new DeviceStore(root);
+  expect(reopened.error).toBeNull();
+  expect(reopened.list(null)[0]?.last_seen_at).toBe(new Date(confirmedAt).toISOString());
+  expect(reopened.match(paired.token, confirmedAt + 62_000)).toEqual(paired.device);
 });

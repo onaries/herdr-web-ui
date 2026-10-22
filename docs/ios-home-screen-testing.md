@@ -1,7 +1,7 @@
 # iOS home-screen header checks
 
-[PR #199](https://github.com/devswha/herdr-web-ui/pull/199) addresses
-[#164](https://github.com/devswha/herdr-web-ui/issues/164) by removing
+[PR #199](https://github.com/devswha/ovis/pull/199) addresses
+[#164](https://github.com/devswha/ovis/issues/164) by removing
 `apple-mobile-web-app-status-bar-style="black-translucent"`. The candidate leaves
 the metadata **absent**; it does not set an explicit `default` value. Apple's
 [archived reference](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariHTMLRef/Articles/MetaTags.html)
@@ -12,11 +12,11 @@ padding.
 
 ## Evidence and limits
 
-- The original [iPhone report](https://github.com/devswha/herdr-web-ui/issues/164#issuecomment-5905630127)
+- The original [iPhone report](https://github.com/devswha/ovis/issues/164#issuecomment-5905630127)
   on iOS 27.0 (24A437) found that #178's fixed-shell workaround did not remove
   portrait blur. Landscape was already sharp. Its separate ruler page improved
   with explicit `default`; that was not a test of this candidate app.
-- A second [physical-iPhone report](https://github.com/devswha/herdr-web-ui/issues/164#issuecomment-5909282333)
+- A second [physical-iPhone report](https://github.com/devswha/ovis/issues/164#issuecomment-5909282333)
   identifies iOS 27.0.0, without a model or build number. It reports blur in both
   themes for a fresh main 0.3.34 install with `black-translucent`, and sharp text
   and a legible clock in both themes after re-adding the #199 variant. The PR
@@ -100,7 +100,7 @@ server credentials/push keys as a workaround.
 | Pairing/authentication | HttpOnly cookies plus server device records | Keep the QA server state unchanged; check access/role before and after; record whether fresh pairing is needed |
 | Notifications | OS permission, service-worker subscription and server registration | Record permission and subscription presence; verify with an owned test device/fake endpoint; note any permission or registration step needed |
 
-For developer QA, privately capture only the test origin's `herdr-web-ui:*`
+For developer QA, privately capture only the test origin's `ovis:*`
 local-storage records, together with the origin and PC/pane identifiers, and
 verify recovery in an owned fixture before any disposable-install removal.
 Composer/queue records are handled by `src/lib/composerDraft.ts` and

@@ -28,7 +28,7 @@ async function until(check: () => boolean, label: string, ms = 15000) {
 try {
   for (const suffix of ["a", "b"]) {
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: `herdr-web-ui-test-output-browser-${suffix}`, cwd: root, focus: false },
+      "workspace.create", { label: `ovis-test-output-browser-${suffix}`, cwd: root, focus: false },
     );
     workspaces.push(created.workspace.workspace_id);
     panes.push(created.root_pane.pane_id);
@@ -38,7 +38,7 @@ try {
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   await context.addInitScript((ids) => {
-    for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
+    for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "terminal");
     const page = window as unknown as { fakeHidden?: boolean };
     Object.defineProperty(Document.prototype, "visibilityState", { configurable: true, get: () => (page.fakeHidden ? "hidden" : "visible") });
     Object.defineProperty(Document.prototype, "hidden", { configurable: true, get: () => page.fakeHidden === true });

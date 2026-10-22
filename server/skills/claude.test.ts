@@ -103,8 +103,14 @@ describe("Claude discovery", () => {
     expect(source.skillsOverrideBuiltins).toBe(true);
   });
 
-  it("offers the seven former screens as terminal-bound and marks exactly the menu-hidden four", () => {
-    expect([...(source.terminalBound ?? [])].sort()).toEqual(["config", "hooks", "permissions", "plugin", "resume", "skills", "theme"]);
+  it("offers every screen Chat cannot see through as terminal-bound and marks exactly the menu-hidden four", () => {
+    expect([...(source.terminalBound ?? [])].sort()).toEqual([
+      "add-dir", "artifacts", "auto-mode-setup", "autofix-pr", "bug", "cd", "chrome", "config", "copy", "cost", "design-login", "desktop",
+      "diff", "feedback", "help", "hooks", "ide", "import", "install-github-app", "install-slack-app", "keybindings", "login", "logout",
+      "mcp", "memory", "mobile", "passes", "permissions", "plugin", "powerup", "privacy-settings", "radio", "rate-limit-options",
+      "remote-control", "remote-env", "resume", "sandbox", "scroll-speed", "skill-doctor", "skills", "stats", "status", "stickers", "tasks",
+      "teleport", "terminal-setup", "theme", "ultrareview", "upgrade", "usage", "usage-credits", "voice", "web-setup", "workflows",
+    ]);
     for (const name of source.terminalBound ?? []) expect(source.builtins).toContain(name);
     expect([...(source.agentHidden ?? [])].sort()).toEqual(["agents", "heapdump", "setup-bedrock", "setup-vertex"]);
     for (const name of source.agentHidden ?? []) expect(source.builtins).toContain(name);
@@ -116,7 +122,12 @@ describe("Claude discovery", () => {
       effort: [{ match: "bare", interaction: "dialog", dialog: "claude-effort" }, { match: "other", interaction: "none" }],
       goal: [{ match: "bare", interaction: "dialog", dialog: "claude-goal" }, { match: { sub: "clear" }, interaction: "none" }, { match: "other", interaction: "none" }],
       btw: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }],
-      rewind: [{ match: "bare", interaction: "dialog", dialog: "claude-rewind" }],
+      rewind: [{ match: "bare", interaction: "terminal" }],
+      fast: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+      autocompact: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+      advisor: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+      export: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+      plan: [{ match: "bare", interaction: "unknown" }, { match: { sub: "open" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
       review: [{ match: "bare", interaction: "unknown" }],
       "code-review": [{ match: "bare", interaction: "unknown" }],
     });
@@ -376,10 +387,11 @@ describe("Claude discovery", () => {
   });
 
   // needs todo 5's paneCommands (visibility and shadows)
-  it("lists the former screens with visibility terminal and the hidden four as agent-hidden", () => {
+  it("lists the screens with visibility terminal and the hidden four as agent-hidden", () => {
     const { home, cwd } = fixture();
     const rows = paneCommands("claude", cwd, home);
-    for (const name of ["config", "hooks", "permissions", "plugin", "resume", "skills", "theme"]) expect(rows.find((row) => row.name === name)?.visibility).toBe("terminal");
+    for (const name of ["config", "usage", "cost", "status", "help", "add-dir", "mcp"]) expect(rows.find((row) => row.name === name)?.visibility).toBe("terminal");
+    for (const name of ["fast", "export", "context", "plan"]) expect(rows.find((row) => row.name === name)?.visibility).toBe("offered");
     expect(rows.find((row) => row.name === "heapdump")?.visibility).toBe("agent-hidden");
     expect(rows.find((row) => row.name === "compact")?.visibility).toBe("offered");
   });

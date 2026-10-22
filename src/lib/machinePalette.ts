@@ -7,8 +7,8 @@ import type { WorkspaceBranch } from "./worktreeBranches.ts";
 export interface RecentPane { machineId: string; paneId: string }
 export interface MachinePane extends RecentPane { machine: Machine; pane: HerdrPane }
 export type MachineBranches = ReadonlyMap<string, ReadonlyMap<string, WorkspaceBranch>>;
-export const RECENT_KEY = "herdr-web-ui:recent-targets";
-const LEGACY_RECENT_KEY = "herdr-web-ui:recent-panes";
+export const RECENT_KEY = "ovis:recent-targets";
+const LEGACY_RECENT_KEY = "ovis:recent-panes";
 const RECENT_LIMIT = 8;
 
 /** A tuple is unambiguous even when remote IDs contain separators or match a local pane ID. */

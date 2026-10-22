@@ -1,5 +1,5 @@
 {
-  "name": "herdr-web-ui-app",
+  "name": "ovis-app",
   "private": true,
   "type": "module",
   "description": "The iOS app: a native shell around the client each PC serves (docs/native-app.md)",

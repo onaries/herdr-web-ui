@@ -9,7 +9,7 @@ import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./he
 import type { ConversationResponse } from "../shared/protocol.ts";
 
 // Real herdr metadata + HTTP + native files, all under an owned workspace/store.
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pi-contract-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-pi-contract-"));
 const sessionDir = join(root, ".pi", "agent", "sessions");
 const slug = join(sessionDir, `--${root.replaceAll("/", "-")}--`);
 const transcript = join(slug, "session.jsonl");
@@ -39,7 +39,7 @@ const turns = (prompt: string, answer: string) => page([
 ]);
 
 async function createPiPane(): Promise<string> {
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-pi-contract" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-pi-contract" });
   workspaces.push(created.workspace.workspace_id);
   const target = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: target, text: `${fakePi}\n` });
@@ -91,7 +91,7 @@ it.skipIf(process.platform !== "linux")("serves a fresh Pi session in its pane-o
   writeFileSync(profilePi, `#!/bin/bash\nexport PI_CODING_AGENT_DIR='${profileDir}'\nexec -a pi /bin/sleep 600\n`);
   chmodSync(profilePi, 0o755);
 
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-pi-custom-profile" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-pi-custom-profile" });
   workspaces.push(created.workspace.workspace_id);
   const target = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: target, text: `${profilePi}\n` });

@@ -1,0 +1,25 @@
+   /resume [session-id]              [0m[38;2;124;124;124mResume a previous session (opens a picker when no id is given)[0m
+   /revert <step>                    [0m[38;2;124;124;124mRevert back to a previous step in this conversation[0m
+   /rm-session <session-id>          [0m[38;2;124;124;124mDelete a session[0m
+   /session-stats (/stats)           [0m[38;2;124;124;124mShow session statistics[0m
+   /share                            [0m[38;2;124;124;124mShare this conversation with your team on Devin[0m
+   /shortcuts                        [0m[38;2;124;124;124mShow keyboard shortcuts[0m
+   /smart                            [0m[38;2;124;124;124mSwitch to smart mode[0m
+   /status                           [0m[38;2;124;124;124mCheck authentication status[0m
+   /steps                            [0m[38;2;124;124;124mList conversation steps (for use with /fork and /revert)[0m
+   /theme [theme]                    [0m[38;2;124;124;124mSwitch between themes[0m
+   /title <new title>                [0m[38;2;124;124;124mRename the current session[0m
+   /undo-add-dir <path>              [0m[38;2;124;124;124mRemove a workspace directory[0m
+   /update [--force]                 [0m[38;2;124;124;124mCheck for and install updates[0m
+   /upgrade                          [0m[38;2;124;124;124mUpgrade your subscription plan[0m
+   /workspace                        [0m[38;2;124;124;124mList workspace directories[0m
+   /yolo                             [0m[38;2;124;124;124mSwitch to bypass mode[0m
+
+[0m[38;2;255;255;255m[48;2;42;42;42m❭[0m[48;2;42;42;42m [0m[38;2;255;255;255m[48;2;42;42;42m/shortcuts[0m[48;2;42;42;42m                                                                                                           [0m
+
+[0m[38;2;255;255;255m[48;2;42;42;42m❭[0m[48;2;42;42;42m [0m[38;2;255;255;255m[48;2;42;42;42m/btw[0m[48;2;42;42;42m                                                                                                                 [0m
+
+[0m[38;2;94;196;255m───────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m [0m[38;2;94;196;255m/btw[0m [0m[38;2;94;196;255m──[0m
+[0m[38;2;94;196;255m❭[0m [0m[38;2;124;124;124mAsk a /btw…[0m
+[0m[38;2;94;196;255m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;124;124;124m↵[0m [0m[38;2;124;124;124mask[0m [0m[38;2;124;124;124m·[0m [0m[38;2;124;124;124mesc[0m [0m[38;2;124;124;124mback to chat[0m

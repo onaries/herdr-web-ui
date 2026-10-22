@@ -28,6 +28,9 @@ const MENU_HINT_RE = /\b(?:select|choose|pick|confirm|navigate|move|esc|cancel)\
 
 const GJC_SELECT_HINT_RE = /^(?:\[↑↓ to navigate, enter to select, esc to (?:cancel|go back)\]|up\/down navigate\s+enter select(?:\s+←\/→ question)?\s+esc cancel|↑\/↓ select\s+enter(?:\s+←\/→ question)?\s+esc\s+PgUp\/PgDn\/Ctrl\+u\/d: question · Wheel: transcript)$/i;
 
+/** GJC also uses the Nerd Font chevron for its active question row. */
+const GJC_SELECTED_RE = /^[❯›>]\s*/;
+
 /** an input field waiting at a line's end ("Password:", "Choice: 2") */
 const INPUT_FIELD_RE = /:\s*\S{0,3}$/;
 
@@ -187,7 +190,7 @@ function screenCard(lines: string[], shown: number[], steady: SteadyReader, pars
   const screen = shown.map((index) => {
     const line = cleanLine(lines[index]!);
     // GJC moves its cursor within the same menu; the selectedIndex is checked separately on reread.
-    return steady.read(cursorRows?.has(index) ? line.replace(SELECTED_RE, "") : line);
+    return steady.read(cursorRows?.has(index) ? line.replace(GJC_SELECTED_RE, "") : line);
   }).join("\n");
   parsed.id = createHash("sha256").update(JSON.stringify({ card: parsed.id, screen, ...(steady.working === null ? {} : { working: steady.working }) })).digest("hex").slice(0, 12);
   return publicPrompt(parsed);
@@ -260,8 +263,8 @@ function fallbackGjcSelectionMenu(agent: string, lines: string[], shown: number[
   const rows: MenuRow[] = [];
   for (let index = start; index < end; index += 1) {
     const text = cleanLine(lines[index]!);
-    const selected = SELECTED_RE.test(text);
-    const label = normalizeText(text.replace(SELECTED_RE, ""));
+    const selected = GJC_SELECTED_RE.test(text);
+    const label = normalizeText(text.replace(GJC_SELECTED_RE, ""));
     // A windowed/truncated list is not a complete set of choices. Keep its manual keys.
     if (!label || /^\(\d+\/\d+\)$/.test(label) || /…|\.\.\./.test(label)) return null;
     rows.push({ label, selected, checked: false, lineIndex: index });

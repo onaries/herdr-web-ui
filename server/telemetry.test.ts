@@ -122,7 +122,7 @@ describe("telemetry events", () => {
   });
 
   test("the environment can forbid sending whatever the switch says", async () => {
-    const environments: Record<string, string>[] = [{ HERDR_WEB_TELEMETRY: "0" }, { DO_NOT_TRACK: "1" }, { CI: "true" }, { HERDR_TEST_MODE: "unit" }];
+    const environments: Record<string, string>[] = [{ OVIS_TELEMETRY: "0" }, { DO_NOT_TRACK: "1" }, { CI: "true" }, { HERDR_TEST_MODE: "unit" }];
     for (const env of environments) {
       const { telemetry, sent } = setup({ env });
       telemetry.change({ notice_seen: true, notice_version: NOTICE_VERSION });
@@ -299,8 +299,8 @@ describe("telemetry events", () => {
   });
 
   test("the install method follows how the app was started", () => {
-    expect(installMethod({ HERDR_PLUGIN_ROOT: "/x", HERDR_WEB_MANAGED: "1" })).toBe("plugin");
-    expect(installMethod({ HERDR_WEB_MANAGED: "1" })).toBe("managed");
+    expect(installMethod({ HERDR_PLUGIN_ROOT: "/x", OVIS_MANAGED: "1" })).toBe("plugin");
+    expect(installMethod({ OVIS_MANAGED: "1" })).toBe("managed");
     expect(installMethod({})).toBe("source");
   });
 });
@@ -339,7 +339,7 @@ describe("daily active message", () => {
     await off.telemetry.active(["claude"]);
     expect(off.actives).toEqual([]);
 
-    const blocked = setup({ env: { HERDR_WEB_TELEMETRY: "0" } });
+    const blocked = setup({ env: { OVIS_TELEMETRY: "0" } });
     seen(blocked.telemetry);
     await blocked.telemetry.active(["claude"]);
     expect(blocked.actives).toEqual([]);

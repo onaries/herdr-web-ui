@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_PINS } from "../shared/preferences.ts";
@@ -7,7 +8,10 @@ import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 
 const roots: string[] = [];
 const root = (): string => { const dir = mkdtempSync(join(tmpdir(), "herdr-preferences-")); roots.push(dir); return dir; };
-afterEach(() => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => {
+  mock.restore();
+  for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const put = (store: PreferenceStore, body: string, headers: Record<string, string> = {}) => handlePreferencesRequest(new Request("http://x/api/preferences", { method: "PUT", body, headers }), store);
 
@@ -110,9 +114,169 @@ describe("shared preferences", () => {
     expect(heard).toEqual([]);
   });
 
-  it("starts empty over a damaged file", () => {
+});
+
+describe("a damaged preferences file", () => {
+  const file = (dir: string) => join(dir, "preferences.json");
+  const bad = (dir: string) => `${file(dir)}.bad`;
+  const files = (dir: string) => readdirSync(dir).sort();
+  const quiet = () => spyOn(console, "error").mockImplementation(() => undefined);
+  const expectPrivate = (path: string) => { if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600); };
+  const get = async (store: PreferenceStore) => (await handlePreferencesRequest(new Request("http://x/api/preferences"), store)).json();
+
+  it("preserves malformed bytes only on first effective write", async () => {
+    const logged = quiet();
     const dir = root();
-    writeFileSync(join(dir, "preferences.json"), "not json");
-    expect(new PreferenceStore(dir).get()).toEqual({ revision: 0, settings: {} });
+    const first = Buffer.from('{"revision": 7, "settings": {"theme": "dark"');
+    writeFileSync(file(dir), first);
+    const store = new PreferenceStore(dir);
+    // reading changes nothing on disk
+    expect(await get(store)).toEqual({ revision: 0, settings: {} });
+    expect(readFileSync(file(dir))).toEqual(first);
+    expect(files(dir)).toEqual(["preferences.json"]);
+    expect(logged.mock.calls.flat().join("\n")).toContain("not JSON");
+    expect(logged.mock.calls.flat().join("\n")).not.toContain('"theme"');
+    // the file changed to other damaged bytes since the start: those are the ones kept
+    const current = Buffer.from("{still not json");
+    writeFileSync(file(dir), current);
+    expect((await put(store, JSON.stringify({ settings: { theme: "light" } }))).status).toBe(200);
+    expect(readFileSync(bad(dir))).toEqual(current);
+    expectPrivate(bad(dir));
+    expect(new PreferenceStore(dir).get()).toEqual({ revision: 1, settings: { theme: "light" } });
+    store.set({ settings: { agentOrder: "activity" } });
+    expect(readFileSync(bad(dir))).toEqual(current);
+    expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
+    // damaged again: one generation, the latest
+    const again = Buffer.from("\u0000\u0001 not json either");
+    writeFileSync(file(dir), again);
+    new PreferenceStore(dir).set({ settings: { theme: "dark" } });
+    expect(readFileSync(bad(dir))).toEqual(again);
+    expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
+  });
+
+  it.each([
+    ["settings as a list", '{"revision":2,"settings":[],"pins":[]}'],
+    ["a pin that is not a string", '{"revision":2,"settings":{"theme":"dark"},"pins":[1]}'],
+    ["a list", "[]"],
+    ["a string", '"preferences"'],
+  ])("preserves wrong-shaped documents privately: %s", (_label, text) => {
+    const logged = quiet();
+    const dir = root();
+    const bytes = Buffer.from(text);
+    writeFileSync(file(dir), bytes, { mode: 0o644 });
+    const store = new PreferenceStore(dir);
+    expect(store.get()).toEqual({ revision: 0, settings: {} });
+    expect(readFileSync(file(dir))).toEqual(bytes);
+    expect(files(dir)).toEqual(["preferences.json"]);
+    expect(logged.mock.calls.flat().join("\n")).toContain("not a preferences document");
+    store.set({ settings: { theme: "light" } });
+    expect(readFileSync(bad(dir))).toEqual(bytes);
+    expectPrivate(bad(dir));
+    expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
+    expect(new PreferenceStore(dir).get()).toEqual({ revision: 1, settings: { theme: "light" } });
+  });
+
+  it("keeps a manual repair rather than quarantining it", () => {
+    quiet();
+    const dir = root();
+    writeFileSync(file(dir), "not json");
+    const store = new PreferenceStore(dir);
+    const heard: unknown[] = [];
+    store.subscribe((preferences) => heard.push(preferences));
+    // repaired by hand while the server runs
+    writeFileSync(file(dir), JSON.stringify({ revision: 5, settings: { theme: "dark", agentOrder: "activity" }, pins: ["pc:w1:p1"] }));
+    const expected = { revision: 6, settings: { theme: "light", agentOrder: "activity" }, pins: ["pc:w1:p1"] };
+    expect(store.set({ settings: { theme: "light" } })).toEqual(expected);
+    expect(heard).toEqual([expected]);
+    expect(files(dir)).toEqual(["preferences.json"]);
+    expect(new PreferenceStore(dir).get()).toEqual(expected);
+  });
+
+  it("refuses to write over a file it cannot read", async () => {
+    quiet();
+    const dir = root();
+    // a directory where the file should be: reading it fails, and it is not an absent file
+    mkdirSync(file(dir));
+    writeFileSync(join(file(dir), "keep"), "kept");
+    const store = new PreferenceStore(dir);
+    const heard: number[] = [];
+    store.subscribe((preferences) => heard.push(preferences.revision));
+    const failed = await put(store, JSON.stringify({ settings: { theme: "light" } }));
+    expect(failed.status).toBe(500);
+    expect(((await failed.json()) as { error: { code: string } }).error.code).toBe("preferences_unwritable");
+    expect(readFileSync(join(file(dir), "keep"), "utf8")).toBe("kept");
+    expect(files(dir)).toEqual(["preferences.json"]);
+    expect(heard).toEqual([]);
+  });
+
+  it("refuses overwrite when preservation fails", async () => {
+    quiet();
+    const dir = root();
+    const bytes = Buffer.from('{"settings": [1, 2, 3]}');
+    writeFileSync(file(dir), bytes);
+    // the older generation cannot be replaced: a directory with something in it
+    mkdirSync(bad(dir));
+    writeFileSync(join(bad(dir), "older"), "older");
+    const store = new PreferenceStore(dir);
+    const heard: number[] = [];
+    store.subscribe((preferences) => heard.push(preferences.revision));
+    const failed = await put(store, JSON.stringify({ settings: { theme: "light" } }));
+    expect(failed.status).toBe(500);
+    const { error } = (await failed.json()) as { error: { code: string; message: string } };
+    expect(error.code).toBe("preferences_unwritable");
+    expect(error.message).toContain("preferences.json.bad");
+    expect(readFileSync(file(dir))).toEqual(bytes);
+    expect(readFileSync(join(bad(dir), "older"), "utf8")).toBe("older");
+    expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
+    expect(store.get()).toEqual({ revision: 0, settings: {} });
+    expect(heard).toEqual([]);
+    // once it can be kept, the same change goes through
+    rmSync(bad(dir), { recursive: true });
+    expect((await put(store, JSON.stringify({ settings: { theme: "light" } }))).status).toBe(200);
+    expect(readFileSync(bad(dir))).toEqual(bytes);
+    expect(heard).toEqual([1]);
+  });
+
+  it("retains one bad generation across replacement failure", async () => {
+    quiet();
+    const dir = root();
+    const bytes = Buffer.from("{damaged");
+    writeFileSync(file(dir), bytes);
+    writeFileSync(bad(dir), "an older damaged generation");
+    const store = new PreferenceStore(dir);
+    const heard: number[] = [];
+    store.subscribe((preferences) => heard.push(preferences.revision));
+    const rename = fs.renameSync;
+    const spy = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (String(from).endsWith(".tmp")) throw Object.assign(new Error("EIO: i/o error, rename"), { code: "EIO" });
+      rename(from, to);
+    });
+    expect((await put(store, JSON.stringify({ settings: { theme: "light" } }))).status).toBe(500);
+    spy.mockRestore();
+    expect(readFileSync(bad(dir))).toEqual(bytes);
+    expect(files(dir).filter((name) => name.endsWith(".bad"))).toEqual(["preferences.json.bad"]);
+    expect(store.get()).toEqual({ revision: 0, settings: {} });
+    expect(heard).toEqual([]);
+    // the retry finds no file to keep aside and leaves the recovery bytes where they are
+    expect((await put(store, JSON.stringify({ settings: { theme: "light" } }))).status).toBe(200);
+    expect(readFileSync(bad(dir))).toEqual(bytes);
+    expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
+    expect(heard).toEqual([1]);
+    expect(new PreferenceStore(dir).get()).toEqual({ revision: 1, settings: { theme: "light" } });
+  });
+
+  it("preserves a file damaged after a valid start on the first write", () => {
+    quiet();
+    const dir = root();
+    writeFileSync(file(dir), JSON.stringify({ revision: 3, settings: { theme: "dark" } }));
+    const store = new PreferenceStore(dir);
+    expect(store.get()).toEqual({ revision: 3, settings: { theme: "dark" } });
+    const bytes = Buffer.from("{damaged after the start");
+    writeFileSync(file(dir), bytes);
+    store.set({ settings: { theme: "light" } });
+    expect(readFileSync(bad(dir))).toEqual(bytes);
+    expectPrivate(bad(dir));
+    expect(files(dir)).toEqual(["preferences.json", "preferences.json.bad"]);
+    expect(new PreferenceStore(dir).get()).toEqual({ revision: 4, settings: { theme: "light" } });
   });
 });

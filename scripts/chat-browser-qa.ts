@@ -11,7 +11,7 @@ import { createServer } from "../server/index.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-chat-browser-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-chat-browser-"));
 const codexHome = join(root, "codex");
 const rollout = join(codexHome, "sessions", "rollout.jsonl");
 const answer = "The conversation is now clean. Native transcript records preserve the user request and final answer while internal instructions stay hidden.";
@@ -48,7 +48,7 @@ try {
   const executable = join(root, "bin", "codex");
   writeFileSync(executable, `#!/bin/sh\nexec 3<"$1"\nprintf '%s\\n' '${answer}'\nwhile IFS= read -r line; do :; done\n`);
   chmodSync(executable, 0o755);
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-chat-browser" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-chat-browser" });
   workspaceId = created.workspace.workspace_id;
   const paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${executable} ${rollout}\n` });
@@ -67,8 +67,8 @@ try {
   const page = await context.newPage();
   // a pane opens its terminal the first time; this QA is about the chat lens
   await page.addInitScript((id) => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-    localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+    localStorage.setItem(`ovis:view:${id}`, "chat");
   }, paneId);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -257,7 +257,7 @@ try {
   add(message("assistant", `\`\`\`sh\n${code}\n\`\`\``, "final_answer"), 9);
   persist();
   const insecure = await page.context().newPage();
-  await insecure.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
+  await insecure.addInitScript((id) => localStorage.setItem(`ovis:view:${id}`, "chat"), paneId);
   insecure.on("pageerror", (error) => errors.push(error.message));
   await insecure.goto(`http://clipboard.test:${server.port}/?pane=${encodeURIComponent(paneId)}`);
   const insecureLog = insecure.locator(`.pane-frame[data-layout-pane="${paneId}"]`).getByRole("log");

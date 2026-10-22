@@ -7,7 +7,7 @@ import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { PtySession } from "./pty/session.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 
-const realHerdr = process.env.HERDR_WEB_HERDR_BIN || Bun.which("herdr")!;
+const realHerdr = process.env.OVIS_HERDR_BIN || Bun.which("herdr")!;
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
@@ -35,11 +35,11 @@ async function fixture(steps: Step[], attachHoldMs?: number) {
   writeFileSync(join(root, "plan.json"), JSON.stringify({ herdr: realHerdr, steps }));
   const events = (): Event[] => existsSync(join(root, "events.jsonl"))
     ? readFileSync(join(root, "events.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
-  const previous = { binary: process.env.HERDR_WEB_HERDR_BIN, dir: process.env.HERDR_ATTACH_TEST_DIR };
-  process.env.HERDR_WEB_HERDR_BIN = executable;
+  const previous = { binary: process.env.OVIS_HERDR_BIN, dir: process.env.HERDR_ATTACH_TEST_DIR };
+  process.env.OVIS_HERDR_BIN = executable;
   process.env.HERDR_ATTACH_TEST_DIR = root;
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-    "workspace.create", { label: "herdr-web-ui-test-takeover-race", cwd: root, focus: false },
+    "workspace.create", { label: "ovis-test-takeover-race", cwd: root, focus: false },
   );
   const paneId = created.root_pane.pane_id;
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), attachHeldRetryMs: 80, attachRelookupForMs: 400, attachHoldMs });
@@ -53,7 +53,7 @@ async function fixture(steps: Step[], attachHoldMs?: number) {
     for (const pid of pids) if (alive(pid)) { try { process.kill(pid, "SIGTERM"); } catch {} }
     await until(() => pids.every((pid) => !alive(pid)), "owned attach processes stopped");
     await herdrRpc("workspace.close", { workspace_id: created.workspace.workspace_id });
-    for (const [key, value] of [["HERDR_WEB_HERDR_BIN", previous.binary], ["HERDR_ATTACH_TEST_DIR", previous.dir]]) {
+    for (const [key, value] of [["OVIS_HERDR_BIN", previous.binary], ["HERDR_ATTACH_TEST_DIR", previous.dir]]) {
       if (value === undefined) delete process.env[key!]; else process.env[key!] = value;
     }
     rmSync(root, { recursive: true, force: true });

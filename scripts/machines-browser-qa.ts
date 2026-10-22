@@ -117,7 +117,7 @@ try {
   await page.getByRole("button", { name: "Discard saved copy", exact: true }).click();
   await pendingRows.waitFor({ state: "hidden" });
   // Older versions' held messages remain editable, manual and scoped to their PC.
-  await page.evaluate(({ owner }) => localStorage.setItem(`herdr-web-ui:queue:${owner}`, JSON.stringify({ version: 1, messages: [{ id: "legacy-machine-browser", text: "HELD_A_MUST_NOT_SEND" }] })), { owner: paneStorageId(a, paneId) });
+  await page.evaluate(({ owner }) => localStorage.setItem(`ovis:queue:${owner}`, JSON.stringify({ version: 1, messages: [{ id: "legacy-machine-browser", text: "HELD_A_MUST_NOT_SEND" }] })), { owner: paneStorageId(a, paneId) });
   await page.reload(); await page.locator(".composer-queue-text").waitFor();
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state: "blocked" }, socket);
   await page.locator('.composer-status[data-status="blocked"]').waitFor();

@@ -23,7 +23,7 @@ const paneInfo = (id: string) => ({
 });
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "herdr-web-ui-omo-send-"));
+  root = mkdtempSync(join(tmpdir(), "ovis-omo-send-"));
   panes = {};
   calls = [];
   screens = {};
@@ -58,8 +58,11 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  for (const child of children.splice(0)) child.kill();
+afterEach(async () => {
+  await Promise.all(children.splice(0).map(async (child) => {
+    child.kill();
+    await child.exited;
+  }));
   listener.stop(true);
   if (socketBefore === undefined) delete process.env["HERDR_SOCKET"];
   else process.env["HERDR_SOCKET"] = socketBefore;
@@ -70,13 +73,28 @@ afterEach(() => {
  * A live omo holding a session: its store named in its environment and omo's holder record for its pid.
  * A child of its own, so the environment read from /proc is this one, not whatever ran the tests.
  */
+/** The first line a fixture prints: stdout can arrive in more than one chunk, so read up to the newline. */
+async function firstLine(stdout: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (!text.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`the fixture's stdout ended before a full line: ${JSON.stringify(text)}`);
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally { reader.releaseLock(); }
+  return text;
+}
+
 async function heldOmo(): Promise<{ pid: number; argv: string[]; cwd: string }> {
   const agentDir = join(root, "agent");
-  const child = Bun.spawn(["sh", "-c", "echo ready; exec sleep 60"], { cwd: root, env: { OMO_CODING_AGENT_DIR: agentDir, PATH: process.env["PATH"] ?? "" }, stdout: "pipe" });
+  // Keep the process that signals ready: another exec can make /proc/<pid>/environ
+  // briefly empty while the composer looks up the store holding this session.
+  const child = Bun.spawn(["sh", "-c", "echo ready; read -r stop"], { cwd: root, env: { OMO_CODING_AGENT_DIR: agentDir, PATH: process.env["PATH"] ?? "" }, stdin: "pipe", stdout: "pipe" });
   children.push(child);
-  const reader = child.stdout.getReader();
-  await reader.read();
-  reader.releaseLock();
+  expect(await firstLine(child.stdout)).toBe("ready\n");
   const holders = join(agentDir, "sessions", omoSessionFolder(root), "session-holders", "sess-1");
   mkdirSync(holders, { recursive: true });
   writeFileSync(join(holders, `${child.pid}.json`), JSON.stringify({ pid: child.pid, processStartedAtMs: processStartedAt(child.pid), cwd: root }));

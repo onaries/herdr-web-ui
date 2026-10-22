@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://herdrweb.dev/">公式サイト</a> ·
+  <a href="https://ovis.sh/">公式サイト</a> ·
   <a href="#install">インストール</a> ·
-  <a href="https://herdrweb.dev/demo/">デモを試す</a> ·
+  <a href="https://ovis.sh/demo/">デモを試す</a> ·
   <a href="docs/guide.md#quick-start">クイックスタート</a> ·
   <a href="#faq">よくある質問</a> ·
   <a href="#docs">ドキュメント</a>
@@ -19,8 +19,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-666666?labelColor=333333" alt="MIT ライセンス"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/stargazers"><img src="https://img.shields.io/github/stars/devswha/herdr-web-ui?labelColor=333333&color=666666&logo=github" alt="GitHub スター数"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/herdr-web-ui?label=release&labelColor=333333&color=666666" alt="最新リリース"></a>
+  <a href="https://github.com/devswha/ovis/stargazers"><img src="https://img.shields.io/github/stars/devswha/ovis?labelColor=333333&color=666666&logo=github" alt="GitHub スター数"></a>
+  <a href="https://github.com/devswha/ovis/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/ovis?label=release&labelColor=333333&color=666666" alt="最新リリース"></a>
   <a href="https://github.com/herdrdev/herdr"><img src="https://img.shields.io/badge/herdr-0.9.0%2B-666666?labelColor=333333" alt="herdr 0.9.0+"></a>
   <a href="docs/guide.md#on-your-phone"><img src="https://img.shields.io/badge/PWA-installable-666666?labelColor=333333" alt="インストール可能な PWA"></a>
 </p>
@@ -91,17 +91,17 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 ## インストール
 
 ```bash
-curl -fsSL https://herdrweb.dev/install.sh | sh
+curl -fsSL https://ovis.sh/install.sh | sh
 ```
 
 glibc を使う Linux（x64、arm64）と macOS（Intel、Apple Silicon）に対応しています。Alpine（musl）と 32 ビット ARM は対象外です。`curl`、Git、`tar` が必要で、Bun がない場合は Bash と `unzip` も必要です。必要なバージョンは herdr 0.9.0+、Bun 1.4+、Node 18+ です。不足するツールを現在のユーザー向けにインストールし、古い Bun は更新します。Node がない、または 18 より古い場合は Node 22 をインストールし、その後アプリを herdr プラグインとしてインストールします。既存の herdr が 0.9.0 より古い場合は、自分で herdr を更新・再起動してからインストーラーを再実行してください。
 
-デフォルトの待ち受けアドレスを使用し、Tailscale が起動している場合、HTTPS の設定に成功すると tailnet 内のアドレスと QR コードが表示されます。トークンを設定していない場合、`tailscale serve` がこの PC の所有者と同じログイン名を伝える自分のデバイスは、通常コードなしで接続できます。それでも自分のスマートフォンがペアリングを求められる場合、`HERDR_WEB_TAILSCALE_SERVE_ONLY=1` でログイン情報のない接続を許可できるのは、Tailscale が単一のログインの所有する tailnet でタグ付きノードもないことを確認でき、serve がこのポートへの唯一の経路である場合だけです。公開プロキシやトンネルなど別の経路でこのポートに届く場合は設定しないでください（[アクセスと安全性](docs/guide.md#access-and-safety)）。
+デフォルトの待ち受けアドレスを使用し、Tailscale が起動している場合、HTTPS の設定に成功すると tailnet 内のアドレスと QR コードが表示されます。トークンを設定していない場合、`tailscale serve` がこの PC の所有者と同じログイン名を伝える自分のデバイスは、通常コードなしで接続できます。それでも自分のスマートフォンがペアリングを求められる場合、`OVIS_TAILSCALE_SERVE_ONLY=1` でログイン情報のない接続を許可できるのは、Tailscale が単一のログインの所有する tailnet でタグ付きノードもないことを確認でき、serve がこのポートへの唯一の経路である場合だけです。公開プロキシやトンネルなど別の経路でこのポートに届く場合は設定しないでください（[アクセスと安全性](docs/guide.md#access-and-safety)）。
 
 Windows x64 では PowerShell で:
 
 ```powershell
-irm https://herdrweb.dev/install.ps1 | iex
+irm https://ovis.sh/install.ps1 | iex
 ```
 
 [Git for Windows](https://git-scm.com/download/win) が必要です。足りない herdr と Bun を現在のユーザー向けにインストールし、同じプラグインをインストールします。Node や WSL は不要です。スマートフォンから使うには herdr で **Phone setup** を開いてください。herdr が Windows でターミナルのアタッチに対応するまで、Windows のターミナルは入力でき、グリッドが固定された[画面ミラー](docs/remote-pcs.md#windows-pcs)になります。
@@ -113,12 +113,12 @@ irm https://herdrweb.dev/install.ps1 | iex
 herdr 0.9.0+、Bun 1.4+、Node 18+ がすでにそろっている場合は、プラグインだけをインストールできます。Windows では Node は不要です。
 
 ```bash
-herdr plugin install devswha/herdr-web-ui
+herdr plugin install devswha/ovis
 ```
 
 古い herdr は先に更新・再起動してください。各手順と問題の対処方法は [INSTALL.md](INSTALL.md) を参照してください。
 
-herdr が起動した状態で、インストーラーが表示または開いたアドレスを使います。通常は **[127.0.0.1:7317](http://127.0.0.1:7317)** ですが、そのポートが使用中ならプラグインは別のポートを選んで記憶します。プラグインだけをインストールした場合は、herdr の **Start Ovis** を実行してください。デスクトップ環境のある PC への新規インストールではブラウザーが自動で開きます。アドレスバーの **Install** でアプリを追加し、同じアドレスを使い続けてください。`127.0.0.1` と `localhost` はブラウザーにとって別のアプリのアドレスです。自動で開くのを省くには、インストール前に `HERDR_WEB_NO_OPEN=1` を設定します。ペインを選ぶか、**New workspace（新規ワークスペース）** からエージェントを起動してください。スマートフォンではインストーラーの QR コード（herdr の **Phone setup** でも確認できます）を読み取り、ホーム画面に追加します。[クイックスタート →](docs/guide.md#quick-start)
+herdr が起動した状態で、インストーラーが表示または開いたアドレスを使います。通常は **[127.0.0.1:7317](http://127.0.0.1:7317)** ですが、そのポートが使用中ならプラグインは別のポートを選んで記憶します。プラグインだけをインストールした場合は、herdr の **Start Ovis** を実行してください。デスクトップ環境のある PC への新規インストールではブラウザーが自動で開きます。アドレスバーの **Install** でアプリを追加し、同じアドレスを使い続けてください。`127.0.0.1` と `localhost` はブラウザーにとって別のアプリのアドレスです。自動で開くのを省くには、インストール前に `OVIS_NO_OPEN=1` を設定します。ペインを選ぶか、**New workspace（新規ワークスペース）** からエージェントを起動してください。スマートフォンではインストーラーの QR コード（herdr の **Phone setup** でも確認できます）を読み取り、ホーム画面に追加します。[クイックスタート →](docs/guide.md#quick-start)
 
 サーバーのデフォルトの待ち受けアドレスは `127.0.0.1` です。別のデバイスからアクセスする場合は、[スマートフォンの設定](docs/guide.md#on-your-phone)と[アクセスと安全性](docs/guide.md#access-and-safety)を参照してください。
 
@@ -142,13 +142,13 @@ Grok のチャットは Linux のみで、プロセスが保持するセッシ�
 
 **Tailscale は必須ですか？**
 
-いいえ。Tailscale、SSH トンネル、VPN、または自分で設定した HTTPS プロキシで PC に接続できます。Portal 2.6.1 以降を別途インストールすれば、任意の [Portal 連携](docs/guide.md#behind-a-reverse-proxy)で公開 HTTPS アドレスを管理することもできます。`HERDR_WEB_TOKEN` と信頼できるリレーが必要で、`HERDR_WEB_TAILSCALE_SERVE_ONLY` は無効にする必要があります。アプリのインストールとプッシュ通知には HTTPS や localhost などのセキュアなコンテキストが必要ですが、基本的な閲覧は LAN 上の通常の HTTP アドレスでもできます。[ほかの方法 →](docs/guide.md#faq)
+いいえ。Tailscale、SSH トンネル、VPN、または自分で設定した HTTPS プロキシで PC に接続できます。Portal 2.6.1 以降を別途インストールすれば、任意の [Portal 連携](docs/guide.md#behind-a-reverse-proxy)で公開 HTTPS アドレスを管理することもできます。`OVIS_TOKEN` と信頼できるリレーが必要で、`OVIS_TAILSCALE_SERVE_ONLY` は無効にする必要があります。アプリのインストールとプッシュ通知には HTTPS や localhost などのセキュアなコンテキストが必要ですが、基本的な閲覧は LAN 上の通常の HTTP アドレスでもできます。[ほかの方法 →](docs/guide.md#faq)
 
 **コードや会話が自分のマシンの外に出ることはありますか？**
 
 セッションファイルは各エージェントを実行している PC に残り、その内容は接続したブラウザーへ送られます。このアプリ独自のクラウド中継やアカウントサービスはありません。任意の音声入力は録音を、文章の整形も使う場合はテキストも、設定したプロバイダーへ送ります。ブラウザーの音声認識もブラウザー提供元のサービスを使う場合があります。使用量表示はプロバイダーの API に接続し、更新、リモート PC の設定、プッシュ通知も外部サービスを使うことがあります。Portal を有効にすると、接続は選んだリレーを経由します。リレーは接続のメタデータを確認でき、アドレスの証明書を保持するため、信頼できるリレーを使ってください。
 
-匿名の使用状況の集計はデフォルトで有効です。アプリ内で通知を表示し、10 分の猶予期間を置いてから、インストール・更新の集計を送信できます。ランダムなインストール ID、バージョン（更新前のバージョンを含む）、OS、CPU アーキテクチャ、インストール方法、許可リストにあるアプリ設定のスナップショットが含まれます。独自のテキストやアカウント識別子は省略または要約し、コード・会話・ファイルは収集しません。リポジトリ内の受信サーバーは Cloudflare が提供する国コードを追加しますが、IP アドレスは保存しません。アクティビティの集計には、アプリを開いた日（UTC）のエージェントの種類が含まれ、新しい種類が現れると同じ日の集計を再送することがあります。**Settings → About → Anonymous usage counts** で内容を確認して無効にでき、`HERDR_WEB_TELEMETRY=0` または `DO_NOT_TRACK=1` でも停止できます。エージェント自身のモデルへの接続は、そのエージェントの設定によります。[データの送信とアクセス →](docs/guide.md#faq)
+匿名の使用状況の集計はデフォルトで有効です。アプリ内で通知を表示し、10 分の猶予期間を置いてから、インストール・更新の集計を送信できます。ランダムなインストール ID、バージョン（更新前のバージョンを含む）、OS、CPU アーキテクチャ、インストール方法、許可リストにあるアプリ設定のスナップショットが含まれます。独自のテキストやアカウント識別子は省略または要約し、コード・会話・ファイルは収集しません。リポジトリ内の受信サーバーは Cloudflare が提供する国コードを追加しますが、IP アドレスは保存しません。アクティビティの集計には、アプリを開いた日（UTC）のエージェントの種類が含まれ、新しい種類が現れると同じ日の集計を再送することがあります。**Settings → About → Anonymous usage counts** で内容を確認して無効にでき、`OVIS_TELEMETRY=0` または `DO_NOT_TRACK=1` でも停止できます。エージェント自身のモデルへの接続は、そのエージェントの設定によります。[データの送信とアクセス →](docs/guide.md#faq)
 
 ランダムな ID で同じインストールの集計を関連付けられるため、完全な匿名性を保証するものではありません。
 
@@ -191,8 +191,8 @@ Grok のチャットは Linux のみで、プロセスが保持するセッシ�
 ## 開発
 
 ```bash
-git clone https://github.com/devswha/herdr-web-ui.git
-cd herdr-web-ui
+git clone https://github.com/devswha/ovis.git
+cd ovis
 bun install
 
 bun run server      # API + WebSocket on :7317

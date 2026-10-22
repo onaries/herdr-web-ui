@@ -18,6 +18,12 @@ scripts/self-hosted-runner/run.sh --once                  # one container per sl
 
 The image `herdr-ci-runner:local` is built when missing or with `--build`. Ctrl+C stops the containers and deletes any runner of this host (`herdr-ci-<host>-*`) still registered.
 
+A slot that cannot fetch a registration token retries after 30 s, doubling up to 10 minutes: GitHub
+limits these requests per hour, and eight slots retrying every 30 s keep the account over that limit,
+which blocks every other API call too. After the repository is renamed, restart the launcher with
+`--repo OWNER/NEW-NAME`: the token request follows GitHub's redirect, but runner registration does
+not, and every container exits with a 404.
+
 `--once` exits nonzero if registration-token retrieval or any container fails. Its exit status
 reports launcher/container execution, not the GitHub Actions job's conclusion.
 

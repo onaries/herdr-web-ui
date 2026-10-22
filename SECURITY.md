@@ -6,7 +6,7 @@ check can type into them, so a flaw in who gets in is as serious as it gets here
 ## Reporting a vulnerability
 
 Report it privately through
-[GitHub's private vulnerability reporting](https://github.com/devswha/herdr-web-ui/security/advisories/new).
+[GitHub's private vulnerability reporting](https://github.com/devswha/ovis/security/advisories/new).
 Do not open a public issue, pull request or discussion about it.
 
 Include what you can of:
@@ -24,7 +24,7 @@ the details private until that release is out.
 ## Supported versions
 
 Only the latest `vX.Y.Z` release gets fixes. Installs update to it from **Settings → About** (or
-by themselves with `HERDR_WEB_AUTO_UPDATE=1`). A fix in the remote-PC runtime ships as a new
+by themselves with `OVIS_AUTO_UPDATE=1`). A fix in the remote-PC runtime ships as a new
 `remote-vN` bundle together with the release that uses it.
 
 ## Scope

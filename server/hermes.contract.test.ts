@@ -17,7 +17,7 @@ interface RunningServer {
   stop: () => void;
 }
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-hermes-contract-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-hermes-contract-"));
 const dbPath = join(root, "state.db");
 const originalHermesHome = process.env["HERMES_HOME"];
 let workspaceId: string | undefined;
@@ -56,7 +56,7 @@ beforeAll(async () => {
 
   process.env["HERMES_HOME"] = join(root, "bridge-default-without-the-session");
 
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-hermes-contract" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-hermes-contract" });
   workspaceId = created.workspace.workspace_id;
   paneId = created.root_pane.pane_id;
 
@@ -364,7 +364,7 @@ it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("select
   const servers: RunningServer[] = [];
 
   const start = async (home: string): Promise<{ paneId: string; pid: number; argv: string[] }> => {
-    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-hermes-profile" });
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-hermes-profile" });
     workspaces.push(created.workspace.workspace_id);
     const target = created.root_pane.pane_id;
     const quotedHome = home.replaceAll("'", "'\\''");

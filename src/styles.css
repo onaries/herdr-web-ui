@@ -2765,6 +2765,7 @@ button {
 
   .pill-version,
   .pill-offline,
+  .pill-stale,
   .brand-name,
   .palette-button,
   .header-desktop-only {
@@ -2788,7 +2789,10 @@ button {
 
   .app-header .view-switch > button {
     position: relative;
-    --lens-h: 34px; /* the drawn height; the expander below grows it to the tap height */
+    /* the drawn height: the density's segmented option (--control-h less the track's inset), so
+       the track keeps clear of the bar in the compact density's 46px header as in the 52px one;
+       the expander below grows it to the tap height */
+    --lens-h: calc(var(--control-h) - var(--segmented-inset));
     min-width: var(--touch-target-header);
     height: var(--lens-h);
   }

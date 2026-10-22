@@ -1,7 +1,7 @@
 # Ovis for Mac
 
 The one-click setup for a Mac, downloaded from https://ovis.sh as `Ovis.dmg`. The phone apps
-need herdr web UI running on the computer; this app sets that up without a terminal and shows the
+need the Ovis server running on the computer; this app sets that up without a terminal and shows the
 QR code the phone app scans.
 
 It is a small SwiftUI app with no code of its own for installing: everything goes through what a
@@ -9,7 +9,7 @@ terminal user runs, so the two never drift apart.
 
 | Button | What runs |
 | --- | --- |
-| **Install** | `install.sh`, downloaded fresh from https://herdrweb.dev/install.sh, with `HERDR_WEB_NO_OPEN=1` and an empty stdin. Then a LaunchAgent, `~/Library/LaunchAgents/sh.ovis.herdr-server.plist`, runs `herdr server` at login. |
+| **Install** | `install.sh`, downloaded fresh from https://ovis.sh/install.sh, with `OVIS_NO_OPEN=1` and an empty stdin. Then a LaunchAgent, `~/Library/LaunchAgents/sh.ovis.herdr-server.plist`, runs `herdr server` at login. |
 | Status (on open) | `herdr plugin list --json` finds the plugin, `scripts/plugin.ts status` gives its address, and `GET /api/access` gives the phone address, drawn as a QR code. |
 | **Make the phone address** | `scripts/plugin.ts phone`, the installer's Tailscale step. |
 | **Restart** / **Start** | The plugin's `stop` and `start` actions, or the LaunchAgent when herdr is not running. |

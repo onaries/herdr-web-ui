@@ -40,7 +40,7 @@ try {
   writeFileSync(program, `process.stdout.write(${JSON.stringify(`\x1b[2J\x1b[H${screen}\r\nROWS_READY\r\n`)});
 setInterval(() => {}, 1 << 30);
 `);
-  const made = await workspaceCreate({ cwd: state, label: "herdr-web-ui-test-cjk-punctuation" });
+  const made = await workspaceCreate({ cwd: state, label: "ovis-test-cjk-punctuation" });
   workspaces.push(made.workspace.workspace_id);
   const pane = made.root_pane.pane_id;
   const ready = herdrRpc("pane.wait_for_output", {
@@ -54,7 +54,7 @@ setInterval(() => {}, 1 << 30);
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   // a Chinese page, as the report's: under zh every fullwidth mark is trimmed, not only ，（）
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "zh-CN" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({
     language: "zh", defaultView: "terminal", alertsOn: false,
   })));
   const page = await context.newPage();

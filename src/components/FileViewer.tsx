@@ -259,6 +259,14 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     if (document.activeElement === bodyRef.current) mediaRef.current?.focus({ preventScroll: true });
   }, [mediaKind, page, docked]);
 
+  // the reader's page (FileReader) has no trap, but it opens with the focus on the document as the
+  // popup does: its body is the one scroll box at every width, so Space, Page Down, the arrows, Home
+  // and End scroll it before any click. A focus already inside the page stays where it is.
+  useLayoutEffect(() => {
+    if (!page || surface.current?.contains(document.activeElement)) return;
+    bodyRef.current?.focus({ preventScroll: true });
+  }, [page]);
+
   useEffect(() => {
     if (!keyboardActive || page) return;
     // the FilesDialog beneath listens on window too (and stands down while this is open); this
@@ -515,7 +523,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   if (page) return (
     <main ref={surface} className="file-reader">
       {header}
-      <div className={`${bodyClass} file-reader-body`}>{body}{openingNote}</div>
+      {/* the focus starts here, as in the popup: a scroll box takes Space and the arrows */}
+      <div ref={bodyRef} className={`${bodyClass} file-reader-body`} tabIndex={-1}>{body}{openingNote}</div>
     </main>
   );
 

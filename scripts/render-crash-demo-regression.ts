@@ -25,7 +25,7 @@ async function open(browser: Browser, search: string, { phone = false, clipboard
   const context = await browser.newContext(phone
     ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" }
     : { viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", fileOpen: "panel" })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", fileOpen: "panel" })));
   // a plain-HTTP LAN address: no clipboard API, and the old copy command refused too
   if (clipboardRefused) await context.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
@@ -221,7 +221,7 @@ try {
         const { page, close } = await open(browser, `${pane}&settings=appearance`, { phone: true });
         const dialog = page.getByRole("dialog", { name: "Settings" });
         await dialog.getByText("Density", { exact: true }).waitFor();
-        await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["herdr-web-ui:settings"]?.depth === 2, undefined, { timeout: 5000 });
+        await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["ovis:settings"]?.depth === 2, undefined, { timeout: 5000 });
         const compact = dialog.getByText("Compact", { exact: true });
         // Arm the failure on the actual tap, before React handles the density change.
         // Setting the URL earlier lets a content-readiness or roster render replace the
@@ -234,7 +234,7 @@ try {
         }, { once: true, capture: true }));
         await compact.tap();
         await dialog.getByRole("alert").filter({ hasText: "Settings can't be shown." }).waitFor();
-        await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["herdr-web-ui:settings"]?.depth === 1, undefined, { timeout: 5000 });
+        await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["ovis:settings"]?.depth === 1, undefined, { timeout: 5000 });
         await page.evaluate(() => window.history.back());
         await dialog.waitFor({ state: "detached", timeout: 5000 });
         assert.equal(await page.evaluate(() => "crashMarker" in window), true, "one Back closes the crashed nested page without navigating away");

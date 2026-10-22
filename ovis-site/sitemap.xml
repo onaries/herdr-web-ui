@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
 <url><loc>https://ovis.sh/</loc></url>
-<url><loc>https://ovis.sh/privacy/</loc></url>
-<url><loc>https://ovis.sh/ko/privacy/</loc></url>
-<url><loc>https://ovis.sh/support/</loc></url>
-<url><loc>https://ovis.sh/ko/support/</loc></url>
+<url><loc>https://ovis.sh/privacy/</loc>
+<xhtml:link rel="alternate" hreflang="en" href="https://ovis.sh/privacy/"/>
+<xhtml:link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/privacy/"/>
+<xhtml:link rel="alternate" hreflang="x-default" href="https://ovis.sh/privacy/"/>
+</url>
+<url><loc>https://ovis.sh/ko/privacy/</loc>
+<xhtml:link rel="alternate" hreflang="en" href="https://ovis.sh/privacy/"/>
+<xhtml:link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/privacy/"/>
+<xhtml:link rel="alternate" hreflang="x-default" href="https://ovis.sh/privacy/"/>
+</url>
+<url><loc>https://ovis.sh/support/</loc>
+<xhtml:link rel="alternate" hreflang="en" href="https://ovis.sh/support/"/>
+<xhtml:link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/support/"/>
+<xhtml:link rel="alternate" hreflang="x-default" href="https://ovis.sh/support/"/>
+</url>
+<url><loc>https://ovis.sh/ko/support/</loc>
+<xhtml:link rel="alternate" hreflang="en" href="https://ovis.sh/support/"/>
+<xhtml:link rel="alternate" hreflang="ko" href="https://ovis.sh/ko/support/"/>
+<xhtml:link rel="alternate" hreflang="x-default" href="https://ovis.sh/support/"/>
+</url>
 </urlset>

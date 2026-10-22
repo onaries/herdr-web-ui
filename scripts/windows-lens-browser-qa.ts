@@ -13,7 +13,7 @@ import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-winlens-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-winlens-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 if (evidence) mkdirSync(evidence, { recursive: true });
 const workspaces: string[] = [];
@@ -85,7 +85,7 @@ async function dragUntil(page: Page, dx: number, dy: number, done: () => Promise
 
 try {
   const cwd = join(root, "pane"); mkdirSync(cwd);
-  const created = await workspaceCreate({ cwd, label: "herdr-web-ui-test-winlens" });
+  const created = await workspaceCreate({ cwd, label: "ovis-test-winlens" });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), terminalAttach: false });
@@ -200,13 +200,13 @@ try {
 
   // A herdr that attaches: an interact client's grid is its own and fits, so nothing pans and a
   // vertical drag still scrolls herdr's history. An observer adopts the operator's grid and pans it.
-  const second = await workspaceCreate({ cwd, label: "herdr-web-ui-test-winlens-attach" });
+  const second = await workspaceCreate({ cwd, label: "ovis-test-winlens-attach" });
   workspaces.push(second.workspace.workspace_id);
   const attached = second.root_pane.pane_id;
   attachServer = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state-attach") });
   const attachOrigin = `http://127.0.0.1:${attachServer.port}`;
   const own = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  await own.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ terminalInputMode: "line" })));
+  await own.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ terminalInputMode: "line" })));
   const mine = await own.newPage();
   mine.on("pageerror", (error) => errors.push(error.message));
   mine.setDefaultTimeout(10_000);

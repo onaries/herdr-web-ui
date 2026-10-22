@@ -11,7 +11,7 @@ import { herdrRpc } from "./herdr/client.ts";
  * ↑/↓ move its `❯` and Enter logs the row it lands on, so the test sees which row an answer
  * from the chat really picked.
  */
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-prompt-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-prompt-"));
 let server: { port: number; stop: () => void };
 const workspaces: string[] = [];
 
@@ -71,7 +71,7 @@ let twin: Menu;
 
 async function menu(label: string, head: string[], rows: string[], drift = false, script = "menu.js"): Promise<Menu> {
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-    "workspace.create", { label: `herdr-web-ui-test-prompt-${label}`, cwd: root, focus: false },
+    "workspace.create", { label: `ovis-test-prompt-${label}`, cwd: root, focus: false },
   );
   workspaces.push(created.workspace.workspace_id);
   const log = join(root, `${label}.log`);
@@ -219,7 +219,7 @@ writeFileSync(out, "");
 
 async function piMenu(label: string, title: string, rows: string[]): Promise<Menu> {
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-    "workspace.create", { label: `herdr-web-ui-test-prompt-${label}`, cwd: root, focus: false },
+    "workspace.create", { label: `ovis-test-prompt-${label}`, cwd: root, focus: false },
   );
   workspaces.push(created.workspace.workspace_id);
   const log = join(root, `${label}.log`);
@@ -321,7 +321,7 @@ describe("picks from Claude Code's model list", () => {
   beforeAll(async () => {
     writeFileSync(join(root, "model.js"), MODEL_LIST);
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: "herdr-web-ui-test-prompt-claude-model", cwd: root, focus: false },
+      "workspace.create", { label: "ovis-test-prompt-claude-model", cwd: root, focus: false },
     );
     workspaces.push(created.workspace.workspace_id);
     const log = join(root, "claude-model.log");
@@ -387,7 +387,7 @@ interface Frame { lines: string[]; mark: string }
 
 async function screens(label: string, agent: string, spec: { frames: Frame[]; swap?: string; hold?: boolean }): Promise<Menu> {
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-    "workspace.create", { label: `herdr-web-ui-test-prompt-${label}`, cwd: root, focus: false },
+    "workspace.create", { label: `ovis-test-prompt-${label}`, cwd: root, focus: false },
   );
   workspaces.push(created.workspace.workspace_id);
   const log = join(root, `${label}.log`);
@@ -554,7 +554,7 @@ describe("picks from Codex's model lists", () => {
     writeFileSync(join(root, "codex-lists.js"), CODEX_LISTS);
     if (!existsSync(join(root, "codex"))) { copyFileSync(process.execPath, join(root, "codex")); chmodSync(join(root, "codex"), 0o755); }
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: "herdr-web-ui-test-prompt-codex-model", cwd: root, focus: false },
+      "workspace.create", { label: "ovis-test-prompt-codex-model", cwd: root, focus: false },
     );
     workspaces.push(created.workspace.workspace_id);
     const log = join(root, "codex-model.log");

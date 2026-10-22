@@ -42,6 +42,9 @@ const TERMINAL_BOUND = [
   "live", "record", "pause", "quit", "seance",
   "changelog", "context", "tools", "usage", "stats", "session", "dirs",
   "mcp", "plugins", "effort",
+  // the MoveOverlay path picker, and a "Create directory?" confirmation for a path that does not exist
+  // (modes/controllers/command-controller.ts:1633-1675)
+  "move",
 ] as const;
 const TERMINAL_FORMS: CommandForm[] = [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }];
 const FORMS: Record<string, CommandForm[]> = {
@@ -50,10 +53,21 @@ const FORMS: Record<string, CommandForm[]> = {
   // Models hub, which saves the default role for later sessions, and /switch its session-only
   // picker, which the omp-model card answers. /model <args> sets the model and is stored as a model change.
   model: [{ match: "bare", interaction: "dialog", dialog: "omp-model" }, { match: "other", interaction: "none" }],
+  // /switch typed by hand opens that same session-only picker (slash-commands/builtin-modes.ts:534-548)
+  switch: [{ match: "bare", interaction: "dialog", dialog: "omp-model" }, { match: "other", interaction: "none" }],
   // omp compacts in place since 17.4.0, and with or without focus instructions shows only the
   // "Generating handoff" status, cancelled with Esc (recorded on 18.8.7): no $EDITOR step.
   handoff: [{ match: "bare", interaction: "dialog", dialog: "omp-handoff" }, { match: "other", interaction: "dialog", dialog: "omp-handoff" }],
-  btw: [{ match: "bare", interaction: "none" }, { match: "other", interaction: "none" }],
+  // bare opens the BTW history overlay, which keeps focus until Esc (modes/controllers/btw-controller.ts:394-401);
+  // a question is answered in a panel while the editor keeps focus
+  btw: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  // bare opens a selector (builtin-modes.ts:857-880, slash-commands/builtin-marketplace.ts:246); the subcommands report a status
+  modelpreset: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  marketplace: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "unknown" }],
+  // `/advisor configure` and `/todo edit` open the PC's editor (slash-commands/builtin-collaboration.ts:171,
+  // modes/controllers/todo-command-controller.ts:166)
+  advisor: [{ match: "bare", interaction: "unknown" }, { match: { sub: "configure" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
+  todo: [{ match: "bare", interaction: "unknown" }, { match: { sub: "edit" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
 };
 
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];

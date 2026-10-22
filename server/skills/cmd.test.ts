@@ -120,6 +120,9 @@ describe("Command Code command catalog", () => {
     expect(source.forms?.["worktree"]).toContainEqual({ match: { sub: "list" }, interaction: "terminal" });
     expect(source.forms?.["rc"]).toContainEqual({ match: { sub: "status" }, interaction: "terminal" });
     expect(source.forms?.["memory"]).toEqual([{ match: "bare", interaction: "terminal" }]);
+    // a modal, a selector or a full-screen view bare
+    for (const name of ["add-dir", "compact-mode", "context", "language"]) expect(source.forms?.[name]?.[0]).toEqual({ match: "bare", interaction: "terminal" });
+    expect(source.forms?.["language"]?.[1]).toEqual({ match: "other", interaction: "none" });
     expect(source.forms?.["design"]?.find(({ match }) => match === "bare")?.interaction).toBe("terminal");
     expect(paneCommands("cmd", null, temp()).find(({ name }) => name === "model")?.visibility).not.toBe("terminal");
     const model = paneCommands("cmd", null, temp()).find(({ name }) => name === "model")!;

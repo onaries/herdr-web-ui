@@ -1,0 +1,19 @@
+omo (omo-ai 5.1.40)
+omo: sibling credentials detected; run `omo setup` to review them
+
+[0m[1m[38;2;167;152;215mOptimized system prompt applied: claude-opus-5-5[0m
+
+ [0m[38;2;126;136;142mTip: Trigger "visual QA" to capture browser or xterm evidence and review web or terminal interfaces.                  [0m
+ [0m[38;2;126;136;142m↳ Want the full story on any tip? Ask about it — the give-me-tips skill has the tour.[0m                                 
+
+[0m[38;2;205;154;34m[Skills][0m                                                                                                               
+[0m[38;2;126;136;142m  computer-use, dori-mode, find-skills, herdr, reverse-engineer-anything[0m                                               
+
+
+ [0m[38;2;126;136;142mSettings: settings.json (JSON)[0m                                                                                        
+
+[0m[38;2;97;133;204m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;97;133;204m❯[0m [0m[7m [0m                                                                                                                    
+[0m[38;2;97;133;204m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;167;152;215m/tmp/claude-1000/pr2-rec/omo/proj[0m[38;2;118;129;134m • [0m[38;2;205;154;34mmain[0m[38;2;118;129;134m • [0m[38;2;157;165;169m0/1M (0.0%) (auto)[0m   [0m[38;2;157;165;169m(anthropic) [0m[38;2;167;152;215mclaude-opus-5-5[0m[38;2;118;129;134m • [0m[38;2;157;165;169meffort medium[0m[38;2;126;136;142m (shift+tab)[0m
+(😺 OmO Native by Q Kim)

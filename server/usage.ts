@@ -31,7 +31,7 @@ export const MIN_REFRESH_MS = 30_000;
 export const RETRY_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const COMMAND_TIMEOUT_MS = 5_000;
-const USER_AGENT = "herdr-web-ui";
+const USER_AGENT = "ovis";
 /** the most a credential file, a command's output or a provider's answer may hold; more is unreadable */
 export const MAX_READ_BYTES = 1024 * 1024;
 
@@ -834,8 +834,8 @@ async function readKeychainInLoginSession(service: string, account?: string): Pr
   if (process.platform !== "darwin" || typeof process.getuid !== "function") return null;
   const args = ["/usr/bin/security", "find-generic-password", "-s", service, ...(account ? ["-a", account] : []), "-w"];
   const domain = `gui/${process.getuid()}`;
-  const label = `dev.herdr-web-ui.keychain.${process.pid}.${Date.now()}.${++loginSessionJobs}`;
-  const dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-keychain-"));
+  const label = `dev.ovis.keychain.${process.pid}.${Date.now()}.${++loginSessionJobs}`;
+  const dir = mkdtempSync(join(tmpdir(), "ovis-keychain-"));
   const fifo = join(dir, "out");
   const plist = join(dir, "job.plist");
   let pipe: FileHandle | undefined;

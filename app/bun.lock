@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "herdr-web-ui-app",
+      "name": "ovis-app",
       "dependencies": {
         "@capacitor/android": "8.5.3",
         "@capacitor/barcode-scanner": "3.1.3",

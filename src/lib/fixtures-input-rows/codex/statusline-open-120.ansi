@@ -1,0 +1,40 @@
+[0m[2m• [0mNo previous message to edit.
+
+
+  [0m[38;2;99;168;248m>_ [0m[1mOpenAI Codex[0m[2m (v0.163.0)[0m
+     [0m[2m/tmp/claude-1000/pr2-rec/codex/proj[0m
+[0m[2m  permissions: [0m[1m[38;5;5mYOLO mode[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  [0m[1mConfigure Status Line[0m
+  [0m[2mSelect which items to display in the status line.[0m
+
+  [0m[2mType to search[0m
+
+[0m[1m[7m› [x] Use theme colors      [0m[7mApply colors from the active /theme[0m[1m[7m                                                        [0m
+[0m[2m  ───────────────────────[0m
+  [x] model-with-reasoning  [0m[2mCurrent model name with reasoning level[0m
+  [x] git-branch            [0m[2mCurrent Git branch (omitted when unavailable)[0m
+  [x] context-remaining     [0m[2mPercentage of context window remaining (omitted when unknown)[0m
+  [x] total-input-tokens    [0m[2mTotal input tokens used in session[0m
+  [x] total-output-tokens   [0m[2mTotal output tokens used in session[0m
+  [x] five-hour-limit       [0m[2mRemaining usage on the primary usage limit (omitted when unavailable)[0m
+[0m[38;2;99;168;248m↓[0m
+  [0m[38;2;246;226;183mGPT-6-Astra default fast [0m· [0m[38;2;143;179;239mmain [0m· [0m[38;2;242;181;144mContext 100% left [0m· [0m[38;2;242;181;144m0 in [0m· [0m[38;2;242;181;144m0 out [0m· [0m[38;2;233;144;169mweekly 0% left[0m
+  [0m[1mspace[0m[2m toggle · [0m[1m←/→[0m[2m reorder · [0m[1menter[0m[2m save · [0m[1mesc[0m[2m cancel                                                                 [0m

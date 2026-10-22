@@ -14,9 +14,9 @@ import { workspaceCreate, workspaceClose, paneSendText } from "../server/herdr/c
 
 assert(process.env.HERDR_TEST_LIVE !== "1", "This diagnostic requires an isolated test session");
 assert(process.env.HERDR_TEST_MODE !== "unit", "This diagnostic requires a test herdr");
-process.env.HERDR_TEST_SESSION ||= "herdr-web-ui-test-ime";
+process.env.HERDR_TEST_SESSION ||= "ovis-test-ime";
 await import("./test-herdr.ts");
-assert(Bun.which("herdr") || process.env.HERDR_WEB_HERDR_BIN, "herdr is required");
+assert(Bun.which("herdr") || process.env.OVIS_HERDR_BIN, "herdr is required");
 assert(Bun.which("node"), "Node is required for the owned PTY capture process");
 
 const root = mkdtempSync(join(tmpdir(), "herdr-ime-diagnostic-"));
@@ -39,8 +39,8 @@ process.stdin.on('data', bytes => {
 
 /** Runs only in this diagnostic's temporary build, before the app connects. */
 function installTrace(pane: string): void {
-  localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
-  localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+  localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+  localStorage.setItem(`ovis:view:${pane}`, "terminal");
   let sequence = 0;
   let pending = Promise.resolve<unknown>(undefined);
   const trace = (row: Record<string, unknown>): void => {
@@ -124,7 +124,7 @@ function stop(): Promise<void> {
 
 try {
   api = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), registerBridge: false });
-  const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-native-ime" });
+  const made = await workspaceCreate({ cwd: root, label: "ovis-test-native-ime" });
   workspace = made.workspace.workspace_id;
   const pane = made.root_pane.pane_id;
   const quote = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'";

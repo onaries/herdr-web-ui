@@ -5,11 +5,12 @@
  * checkout's, if a new one exits before it is ready. Keep this file small: it is the one piece
  * an update cannot replace while it runs; only a restart from the source checkout does.
  */
+import "./adopt-legacy-env.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { HANDOVER_EXIT, updateStateDir } from "./update-state.ts";
+import { HANDOVER_EXIT, moveLegacyStateDir, updateStateDir } from "./update-state.ts";
 
 /** The active release's supervisor, when it is still the build of this checkout's revision. */
 function releaseSupervisor(root: string, stateDir: string): string | null {
@@ -25,6 +26,7 @@ function releaseSupervisor(root: string, stateDir: string): string | null {
 
 export async function runManaged(root = resolve(import.meta.dir, "..")) {
   root = resolve(root);
+  moveLegacyStateDir();
   const stateDir = updateStateDir(root, Number(process.env["PORT"] ?? DEFAULT_PORT));
   const own = join(import.meta.dir, "supervisor.ts");
   let child: ReturnType<typeof Bun.spawn> | null = null;
@@ -40,7 +42,7 @@ export async function runManaged(root = resolve(import.meta.dir, "..")) {
     let ready = false;
     child = Bun.spawn([process.execPath, file], {
       cwd: root, windowsHide: true, stdin: "ignore", stdout: "inherit", stderr: "inherit",
-      env: { ...process.env, HERDR_WEB_SOURCE_ROOT: root, ...(fallback ? { HERDR_WEB_SUPERVISOR_FALLBACK: "1" } : {}) },
+      env: { ...process.env, OVIS_SOURCE_ROOT: root, ...(fallback ? { OVIS_SUPERVISOR_FALLBACK: "1" } : {}) },
       ipc(message) { if (message?.type === "supervisor-ready") ready = true; },
     });
     const code = await child.exited;

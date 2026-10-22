@@ -25,9 +25,9 @@ async function until(check: () => boolean | Promise<boolean>, label: string): Pr
 }
 const paste = (text: string) => `\u001b[200~${text}\u001b[201~\r`;
 try {
-  const owner = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-pending-owner" });
+  const owner = await workspaceCreate({ cwd: root, label: "ovis-test-pending-owner" });
   workspaces.push(owner.workspace.workspace_id);
-  const away = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-pending-away" });
+  const away = await workspaceCreate({ cwd: root, label: "ovis-test-pending-away" });
   workspaces.push(away.workspace.workspace_id);
   const pane = owner.root_pane.pane_id;
   await tabRename(owner.root_pane.tab_id, "Pending owner");
@@ -51,7 +51,7 @@ try {
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), usage: new UsageService(undefined, []) });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--accept-lang=en-US"] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false })));
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];

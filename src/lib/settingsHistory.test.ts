@@ -15,7 +15,7 @@ function fakeWindow() {
   };
   const window = { history, addEventListener(type: string, listener: (event: { state: unknown }) => void) { if (type === "popstate") listeners.push(listener); } };
   /** the Settings entries up to the current one, as the module wrote them */
-  const held = () => stack.slice(0, index + 1).map((state) => (state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] ?? null);
+  const held = () => stack.slice(0, index + 1).map((state) => (state as Record<string, unknown> | null)?.["ovis:settings"] ?? null);
   return { window, held };
 }
 const fake = fakeWindow();
@@ -42,10 +42,10 @@ describe("settingsLevels", () => {
 });
 
 describe("settingsEntry", () => {
-  const state = (entry: unknown) => ({ "herdr-web-ui:settings": entry });
+  const state = (entry: unknown) => ({ "ovis:settings": entry });
 
   it("reads the entry beside whatever else the state holds", () => {
-    expect(settingsEntry({ ...state({ page: "chat", keyBar: false, depth: 2 }), "herdr-web-ui:file-preview": { path: "a" } })).toEqual({ page: "chat", keyBar: false, depth: 2 });
+    expect(settingsEntry({ ...state({ page: "chat", keyBar: false, depth: 2 }), "ovis:file-preview": { path: "a" } })).toEqual({ page: "chat", keyBar: false, depth: 2 });
     expect(settingsEntry(state({ page: null, keyBar: false, depth: 1 }))).toEqual({ page: null, keyBar: false, depth: 1 });
   });
 
@@ -81,7 +81,7 @@ describe("recordSettings", () => {
 
   it("does not take a step it cannot see on trust: entries of an earlier opening a Forward landed on are rebuilt", async () => {
     // entries an earlier opening left (a wider dialog's Terminal and its editor), landed on by Forward
-    const key = "herdr-web-ui:settings";
+    const key = "ovis:settings";
     fake.window.history.pushState({ [key]: { page: "terminal", keyBar: false, depth: 1 } });
     fake.window.history.pushState({ [key]: { page: "terminal", keyBar: true, depth: 2 } });
     // the dialog opens on a phone showing the editor: the list, the page, the editor
@@ -315,9 +315,9 @@ describe("history traversal races", () => {
 
   it("keeps a preview opened over Settings on a reload, and steps Back over the Settings under it", async () => {
     // what a link to a file and Settings leaves: the entry it opened from, Settings, the preview over it
-    const base = { "herdr-web-ui:settings-base": "a" };
-    const settings = { ...base, "herdr-web-ui:settings": { page: "about", keyBar: false, depth: 1 } };
-    const preview = { ...outsideSettings(settings), "herdr-web-ui:file-preview": { path: "README.md", paneId: null, machineId: "local" } };
+    const base = { "ovis:settings-base": "a" };
+    const settings = { ...base, "ovis:settings": { page: "about", keyBar: false, depth: 1 } };
+    const preview = { ...outsideSettings(settings), "ovis:file-preview": { path: "README.md", paneId: null, machineId: "local" } };
     expect(settingsEntry(preview)).toBeNull();
     const browser = await delayedHistory([base, settings, preview]);
     const moves: Array<[ReturnType<typeof browser.settingsEntry>, boolean]> = [];
@@ -379,8 +379,8 @@ describe("history traversal races", () => {
 
   it("steps out of reload entries even when the traversal lands late", async () => {
     const browser = await delayedHistory([null,
-      { "herdr-web-ui:settings": { page: "terminal", keyBar: false, depth: 1 } },
-      { "herdr-web-ui:settings": { page: "terminal", keyBar: true, depth: 2 } },
+      { "ovis:settings": { page: "terminal", keyBar: false, depth: 1 } },
+      { "ovis:settings": { page: "terminal", keyBar: true, depth: 2 } },
     ]);
     const moves: boolean[] = [];
     browser.onSettingsHistory((_entry, own) => moves.push(own));

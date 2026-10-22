@@ -18,7 +18,7 @@ const PINNED_GJC_BUILTINS = [
 const PINNED_GJC_TUI_ONLY = [
   "settings", "language", "theme", "pet", "goal", "copy", "tutorial", "help", "hotkeys", "mcp", "agents",
   "extensions", "monitors", "tree", "fork", "login", "logout", "new", "drop", "resume", "sessions", "btw",
-  "retry", "background", "debug", "exit",
+  "retry", "background", "debug", "exit", "transcript",
 ];
 const PINNED_GJC_ACTIVE_BUILTINS = PINNED_GJC_BUILTINS.filter(
   (name) => name !== "agents" && (process.platform === "linux" || name !== "import-session"),
@@ -329,6 +329,13 @@ describe("gjc discovery", () => {
     expect(commands.every((command) => command.provenance?.verified === true)).toBe(true);
   });
 
+  // a selector, the OAuth selector or a confirmation only some typed forms open
+  const SELECTOR_FORMS: Record<string, CommandForm[]> = {
+    routing: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+    provider: [{ match: "bare", interaction: "terminal" }, { match: { sub: "login" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
+    session: [{ match: "bare", interaction: "unknown" }, { match: { sub: "delete" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
+  };
+
   it("emits all registry commands with their required interaction forms", () => {
     const commands = fixture().commands().filter((command) => command.source === "builtin");
     expect(commands.map((command) => command.name).sort()).toEqual([...PINNED_GJC_ACTIVE_BUILTINS].sort());
@@ -344,7 +351,8 @@ describe("gjc discovery", () => {
           ]
         : name === "handoff"
           ? [{ match: "bare", interaction: "none" }]
-          : [{ match: "bare", interaction: "unknown" }];
+          : name in SELECTOR_FORMS ? SELECTOR_FORMS[name]!
+            : [{ match: "bare", interaction: "unknown" }];
       expect(forms.get(name)).toEqual(expected);
     }
   });

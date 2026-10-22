@@ -11,7 +11,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
   await context.addInitScript(() => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
+    if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
   });
   const sent: any[] = [];
   const resizes: any[] = [];
@@ -369,9 +369,9 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     await page.getByRole("combobox", { name: "Next pane", exact: true }).selectOption("p");
     await page.getByRole("button", { name: "Close settings", exact: true }).click();
     await line.focus();
-    const selectionBefore = await page.evaluate(() => localStorage.getItem("herdr-web-ui:selection"));
+    const selectionBefore = await page.evaluate(() => localStorage.getItem("ovis:selection"));
     await page.keyboard.press("ControlOrMeta+Shift+p");
-    await until(async () => (await page.evaluate(() => localStorage.getItem("herdr-web-ui:selection"))) !== selectionBefore);
+    await until(async () => (await page.evaluate(() => localStorage.getItem("ovis:selection"))) !== selectionBefore);
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await line.waitFor();
     await page.keyboard.press("ControlOrMeta+Shift+Comma");
@@ -581,7 +581,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
       if (!row) throw new Error("owned destination pane missing");
       row.click();
     }, otherPane);
-    await until(async () => (await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:selection")!).pane_id)) === otherPane);
+    await until(async () => (await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:selection")!).pane_id)) === otherPane);
     await page.waitForTimeout(75);
     assert.equal(sent.length, switchBefore, "old composition cannot cross a pane reset");
     assert.equal(await page.locator(".draft-text").count(), 0, "old commit cannot enter the new pane's held draft");
@@ -604,8 +604,8 @@ async function checkKeyBarWhileLineComposes(browser: Browser, origin: string, pa
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
   await context.addInitScript((pane) => {
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
-    localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
+    localStorage.setItem(`ovis:view:${pane}`, "terminal");
   }, pane);
   const frames: any[] = [];
   await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
@@ -676,7 +676,7 @@ if (import.meta.main) {
   try {
     const panes: string[] = [];
     for (let i = 0; i < 2; i++) {
-      const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-input" });
+      const made = await workspaceCreate({ cwd: root, label: "ovis-test-input" });
       owned.push(made.workspace.workspace_id); panes.push(made.root_pane.pane_id);
     }
     await checkTerminalInput(browser, `http://127.0.0.1:${server.port}`, panes[0]!, panes[1]!);

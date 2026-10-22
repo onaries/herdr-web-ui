@@ -17,8 +17,8 @@ let server: ReturnType<typeof createServer> | undefined;
 const oldSocket = process.env["HERDR_SOCKET"];
 process.env["HERDR_SOCKET"] = join(root, "local-offline.sock");
 // Exercise the same automatic bundle discovery used by an unconfigured server.
-const oldManifest = process.env["HERDR_WEB_BUNDLE_MANIFEST"];
-delete process.env["HERDR_WEB_BUNDLE_MANIFEST"];
+const oldManifest = process.env["OVIS_BUNDLE_MANIFEST"];
+delete process.env["OVIS_BUNDLE_MANIFEST"];
 async function docker(args: string[], input?: string): Promise<string> {
   const child = Bun.spawn(["docker", ...args], { stdin: input ? new Blob([input]) : "ignore", stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -81,7 +81,7 @@ try {
   assert.equal(job.phase, "connected", job.error ?? ""); assert.ok(askedPassword);
   assert.ok(!readFileSync(join(root, "machines.json"), "utf8").includes(password));
   const prefix = `/api/machines/${job.machine_id}`;
-  const created = await api<WorkspaceCreated>(prefix + "/workspace/create", "POST", { cwd: "/home/testpc", label: "herdr-web-ui-test-password" });
+  const created = await api<WorkspaceCreated>(prefix + "/workspace/create", "POST", { cwd: "/home/testpc", label: "ovis-test-password" });
   await api(prefix + "/pane/input", "POST", { pane_id: created.pane_id, text: "printf 'PASSWORD_PC_OK\\n'" });
   await api(prefix + "/pane/keys", "POST", { pane_id: created.pane_id, keys: ["Enter"] });
   let text = "";
@@ -103,6 +103,6 @@ try {
   server?.stop();
   await docker(["rm", "-f", name]).catch(() => {});
   if (oldSocket === undefined) delete process.env["HERDR_SOCKET"]; else process.env["HERDR_SOCKET"] = oldSocket;
-  if (oldManifest === undefined) delete process.env["HERDR_WEB_BUNDLE_MANIFEST"]; else process.env["HERDR_WEB_BUNDLE_MANIFEST"] = oldManifest;
+  if (oldManifest === undefined) delete process.env["OVIS_BUNDLE_MANIFEST"]; else process.env["OVIS_BUNDLE_MANIFEST"] = oldManifest;
   rmSync(root, { recursive: true, force: true });
 }

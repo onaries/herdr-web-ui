@@ -6,7 +6,7 @@ import "./Sidebar.css";
 import type { AgentStatus, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
-import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { useMachineApi, useMachineId, useReorderCoordinator } from "../lib/machineContext.tsx";
 import type { AppActions } from "../lib/actions.ts";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD } from "../lib/status.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -36,7 +36,7 @@ import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspaceP
 
 const ERROR_NOTE_MS = 5000;
 
-const worktreeCollapsedKey = (machineId: string, repoKey: string) => `herdr-web-ui:worktree-group-collapsed:${machineId}:${repoKey}`;
+const worktreeCollapsedKey = (machineId: string, repoKey: string) => `ovis:worktree-group-collapsed:${machineId}:${repoKey}`;
 function storedWorktreeCollapsed(machineId: string, repoKeys: string[]): Set<string> {
   const collapsed = new Set<string>();
   try {
@@ -223,7 +223,12 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   const [worktreeDialog, setWorktreeDialog] = useState<{ mode: WorktreeDialogMode; workspace: WorkspaceInfo } | null>(null);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState("");
-  const [workspaceOrder, setWorkspaceOrder] = useState<string[]>([]);
+  // the order App's coordinator draws: herdr's, or a drag's until a roster read after its moves comes
+  const reorder = useReorderCoordinator();
+  const orderVersion = useSyncExternalStore(reorder.subscribe, reorder.version, reorder.version);
+  const workspaceOrder = useMemo(() => snapshot ? reorder.order(machineId, snapshot.workspaces.map((workspace) => workspace.workspace_id)) : [],
+    // orderVersion: the coordinator's order changed
+    [reorder, orderVersion, machineId, snapshot]);
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
   // a finger's drag (lib/touchReorder.ts): the row it holds and the row it is over
   const [touchDrag, setTouchDrag] = useState<{ source: string; over: string | null } | null>(null);
@@ -262,12 +267,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   }, [inlineError]);
 
   useEffect(() => {
-    if (!snapshot) {
-      setWorkspaceOrder([]);
-      return;
-    }
-    const serverOrder = snapshot.workspaces.map((workspace) => workspace.workspace_id);
-    setWorkspaceOrder((current) => current.join("\u0000") === serverOrder.join("\u0000") ? current : serverOrder);
+    if (!snapshot) return;
     // New worktree groups bring their stored fold state after reconnecting or creating a workspace.
     setCollapsedWorktrees((current) => {
       const keys = snapshot.workspaces.flatMap((workspace) => workspace.worktree && !current.has(workspace.worktree.repo_key) ? [workspace.worktree.repo_key] : []);
@@ -468,16 +468,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   };
 
   const reorderWorkspaces = (next: string[]): void => {
-    const previous = workspaceOrder;
-    const moves = workspaceMoves(previous, next);
-    if (moves.length === 0) return;
-    setWorkspaceOrder(next);
-    void (async () => {
-      for (const move of moves) await moveWorkspace(move.workspaceId, move.insertIndex);
-    })().catch((reason: unknown) => {
-      // only this move's own optimistic order is rolled back: if a later reorder has landed in
-      // the meantime, its order is the newer one and reverting to `previous` would undo it
-      setWorkspaceOrder((current) => (current.length === next.length && current.every((id, index) => id === next[index]) ? previous : current));
+    if (workspaceMoves(workspaceOrder, next).length === 0) return;
+    // shown at once; only the newest reorder of this PC rolls back or reports its own failure
+    reorder.reorder(machineId, workspaceOrder, next, (move) => moveWorkspace(move.workspaceId, move.insertIndex)).catch((reason: unknown) => {
       const failure = userErrorMessage(reason);
       noteError(t("Reorder failed: {reason}", { reason: failure.message }), undefined, failure.detail);
     });

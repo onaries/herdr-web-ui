@@ -21,7 +21,7 @@ let screen: string;
 const recorded = (name: string): string => readFileSync(new URL(`../fixtures/claude-rewind-2.1.304-${name}-40.txt`, import.meta.url), "utf8");
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "herdr-web-ui-rewind-send-"));
+  root = mkdtempSync(join(tmpdir(), "ovis-rewind-send-"));
   calls = [];
   socketBefore = process.env["HERDR_SOCKET"];
   const socket = join(root, "herdr.sock");

@@ -5,18 +5,61 @@ import "./RepoChanges.css";
 import { FileGlyph } from "./FileGlyph.tsx";
 import { Skeleton } from "./Skeleton.tsx";
 
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffScope } from "../../shared/protocol.ts";
+import type { RepoDiffFile, RepoDiffFileList, RepoDiffRepositories, RepoDiffScope } from "../../shared/protocol.ts";
 import { changeTree, changeTreeFolders, type ChangeTreeEntry } from "../lib/changeTree.ts";
 import { useLocale, useT } from "../lib/i18n.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { diffErrorMessage, nothingChangedWord, STATUS_MARK, statusWord, type RepoComparison } from "../lib/repoDiff.ts";
 import { skeletonRows } from "../lib/skeleton.ts";
+import { useSettings } from "../lib/settings.ts";
+import { routeMissing } from "../lib/api.ts";
 
 export interface RepoChangesProps {
   paneId: string;
   /** the pane's folder, read when the pane is gone */
   directory: string;
-  onOpenDiff: (comparison: RepoComparison, file: RepoDiffFile) => void;
+  onOpenDiff: (comparison: RepoComparison, file: RepoDiffFile, directory: string) => void;
+}
+
+/** Pick one repository before reading changes, so a workspace never fans out git processes. */
+export function RepoChanges(props: RepoChangesProps) {
+  const t = useT();
+  const { settings } = useSettings();
+  const { fetchRepoDiffRepositories } = useMachineApi();
+  const [found, setFound] = useState<RepoDiffRepositories | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setFound(null);
+    setError(null);
+    fetchRepoDiffRepositories({ paneId: props.paneId, directory: props.directory }, settings.changesChildRepos, settings.changesRepoDepth).then((answer) => {
+      if (active) { setFound(answer); setSelected((current) => current !== null && answer.roots.includes(current) ? current : answer.roots[0] ?? null); }
+    }, (reason: unknown) => {
+      if (!active) return;
+      // Older remote bridges still support their original, single-repository Changes view.
+      if (routeMissing(reason)) { setFound({ roots: [props.directory], truncated: false }); setSelected(props.directory); }
+      else setError(reason);
+    });
+    return () => { active = false; };
+  }, [fetchRepoDiffRepositories, props.paneId, props.directory, settings.changesChildRepos, settings.changesRepoDepth, refresh]);
+  return <>
+    <div className="repo-changes-bar">
+      <label className="field repo-changes-picker">
+        <span className="field-label">{t("Repository")}</span>
+        <select className="input" aria-label={t("Repository")} title={selected ?? undefined} disabled={found === null || found.roots.length === 0} value={selected ?? ""} onChange={(event) => setSelected(event.target.value)}>
+          {found?.roots.map((root) => <option key={root} value={root}>{root.split(/[\\/]/).at(-1) || root} · {root}</option>)}
+        </select>
+      </label>
+      <button type="button" className="icon-button" aria-label={t("Refresh repositories")} disabled={found === null && error === null} onClick={() => setRefresh((current) => current + 1)}><RefreshCw aria-hidden="true" /></button>
+    </div>
+    {error !== null && <p className="repo-changes-note repo-changes-error" role="alert">{diffErrorMessage(t, error)}</p>}
+    {found === null && error === null && <p className="repo-changes-note" role="status">{t("Loading…")}</p>}
+    {found?.truncated && <p className="repo-changes-note" role="status">{t("Repository search was incomplete. Try a smaller folder or depth.")}</p>}
+    {found?.roots.length === 0 && <p className="repo-changes-note">{t("No Git repositories found in this folder.")}</p>}
+    {found !== null && selected !== null && <RepositoryChanges key={`${props.paneId}:${selected}`} {...props} directory={selected} />}
+  </>;
 }
 
 type Load = { status: "pending" } | { status: "failed"; error: unknown } | { status: "ready"; listing: RepoDiffFileList };
@@ -29,7 +72,7 @@ const PENDING: Load = { status: "pending" };
  * across refreshes and comparisons. The list is read on each choice and on Refresh, never polled;
  * while it is read, the last list's repository line stays and placeholder rows hold its height.
  */
-export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps) {
+function RepositoryChanges({ paneId, directory, onOpenDiff }: RepoChangesProps) {
   const t = useT();
   const locale = useLocale();
   const { fetchRepoDiffFiles } = useMachineApi();
@@ -108,7 +151,7 @@ export function RepoChanges({ paneId, directory, onOpenDiff }: RepoChangesProps)
     // a rename within the folder names only the old file; one from elsewhere says where from
     const sameFolder = file.old_path !== null && file.old_path.slice(0, file.old_path.lastIndexOf("/") + 1) === folder;
     return <li key={file.path}>
-      <button type="button" className="repo-change" style={indent} onClick={() => onOpenDiff(comparison, file)}>
+      <button type="button" className="repo-change" style={indent} onClick={() => onOpenDiff(comparison, file, directory)}>
         <span className="repo-change-mark" data-status={file.status} aria-hidden="true">{STATUS_MARK[file.status]}</span>
         <span className="visually-hidden">{word}</span>
         <FileGlyph name={file.path} className="repo-change-glyph" />

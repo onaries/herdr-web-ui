@@ -13,7 +13,7 @@ import { openSettingsPage } from "./settings-page.ts";
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-key-bar-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
-const SETTINGS_KEY = "herdr-web-ui:settings";
+const SETTINGS_KEY = "ovis:settings";
 const MIGRATED_KEYS = ["direct", "Escape", "Tab", "BackTab", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "ctrl-c", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"];
 const DEFAULT_KEY_BAR_KEYS = ["direct", "Escape", "Tab", "ctrl-c", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
@@ -147,7 +147,7 @@ try {
             language: "en", terminalInputMode: "direct",
             keyBarExtras: ["alt", "shift-tab", "home-end", "page-up-down", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"],
           }));
-          localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+          localStorage.setItem(`ovis:view:${pane}`, "terminal");
         }, { pane: panes.api, key: SETTINGS_KEY });
         const page = await context.newPage();
         const errors: string[] = [];

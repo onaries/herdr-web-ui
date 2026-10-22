@@ -6,9 +6,11 @@
 .terminal-input-slot {
   position: relative;
   flex-shrink: 0;
-  /* .terminal-input at one row: its top border and padding, then the taller of the send button
-     and a one-row .terminal-input-text (same font size, line height, padding and border) */
-  height: calc(var(--hairline) + var(--space-2) + max(var(--touch-target),
+  /* .terminal-input at one row: its top border, its padding above and below, then the taller of
+     the send button and a one-row .terminal-input-text (same font size, line height, padding and
+     border). The same height as before the padding was split: the grid, and so the pty, keep their
+     size */
+  height: calc(var(--hairline) + 2 * var(--space-1) + max(var(--touch-target),
     max(16px, var(--fs-md)) * var(--lh-base) + 2 * var(--space-2) + 2 * var(--hairline)));
 }
 
@@ -17,8 +19,9 @@
   height: 0;
 }
 
-/* the chat lens keeps the masked input in this slot too (PaneTerminal.tsx), in flow: no box */
-.terminal-stack.is-chat > .terminal-input-slot {
+/* the chat lens keeps the masked input in this slot too (PaneTerminal.tsx), in flow: no box. A
+   terminal command's peek over the chat shows the grid, so the slot is the terminal lens's there */
+.terminal-stack.is-chat:not(.is-peek) > .terminal-input-slot {
   display: contents;
 }
 
@@ -38,7 +41,9 @@
   max-height: var(--terminal-input-room);
   gap: var(--space-2);
   align-items: end;
-  padding: var(--space-2) var(--space-2) 0;
+  /* the same room under the field and the send button as over them, so they never sit on the key
+     bar's rule (or the screen's edge) below; the sides keep the key bar's --space-2 */
+  padding: var(--space-1) var(--space-2);
   border-top: var(--hairline) solid var(--border);
   background: var(--bg-panel);
 }

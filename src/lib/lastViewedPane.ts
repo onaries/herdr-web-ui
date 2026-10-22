@@ -6,7 +6,7 @@
  */
 export type ViewedScope = "workspace" | "tab";
 
-const KEY = "herdr-web-ui:last-viewed-pane";
+const KEY = "ovis:last-viewed-pane";
 const LIMIT = 200;
 
 const scopeKey = (scope: ViewedScope, machineId: string, id: string): string => `${scope}:${machineId}:${id}`;

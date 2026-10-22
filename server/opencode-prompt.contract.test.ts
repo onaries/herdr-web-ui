@@ -9,7 +9,7 @@ import { opencodeAuthHeader, type OpenCodeFormInfo } from "./opencode-service.ts
 import type { InteractivePrompt } from "../shared/protocol.ts";
 import { OpenCodePromptState } from "./prompt.ts";
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-opencode-prompt-contract-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-opencode-prompt-contract-"));
 const fakeOpencode = join(root, "bin", "opencode");
 const workspaces: string[] = [];
 let server: ReturnType<typeof createServer>;

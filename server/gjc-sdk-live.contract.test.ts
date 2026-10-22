@@ -216,7 +216,7 @@ it.skipIf(!TEST_BIN || !SUPPORTED_PLATFORM)(
       const binary = realpathSync(suppliedBin);
       expect(statSync(binary).isFile()).toBe(true);
 
-      root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-test-gjc-sdk-live-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-test-gjc-sdk-live-")));
       home = join(root, "home");
       const cwd = join(root, "project");
       const configHome = join(home, ".config");
@@ -250,7 +250,7 @@ it.skipIf(!TEST_BIN || !SUPPORTED_PLATFORM)(
       });
 
       const startPane = async (label: string, resume?: string): Promise<{ workspaceId: string; paneId: string }> => {
-        const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-gjc-sdk-live-${label}` }, socketPath);
+        const created = await workspaceCreate({ cwd, label: `ovis-test-gjc-sdk-live-${label}` }, socketPath);
         workspaceIds.push(created.workspace.workspace_id);
         await herdrRpc("pane.send_text", {
           pane_id: created.root_pane.pane_id,

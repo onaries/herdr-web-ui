@@ -291,7 +291,7 @@ export class Updater {
   }
 
   private async discover(byUser = false) {
-    this.patch({ phase: "checking", error: this.options.notice ?? null, available: false, blocked_reason: null });
+    this.patch({ phase: "checking", error: this.options.notice ?? null, error_code: null, available: false, blocked_reason: null });
     const reason = await this.sourceBlock();
     if (reason) { this.patch({ blocked_reason: reason, checked_at: new Date().toISOString() }); return; }
     // Only published releases update installs: commits pushed to main without a tag stay put.
@@ -389,14 +389,24 @@ export class Updater {
   }
 
   /** `byUser`: the request came from the settings' Check or Update (through the supervisor), not
-   * from the 5-minute timer; only the timer waits a failed unshallow fetch's backoff out. */
-  async request(command: UpdateCommand, byUser = false): Promise<void> {
+   * from the 5-minute timer; only the timer waits a failed unshallow fetch's backoff out.
+   * `expectedRevision`: the release a manual install was offered; the install goes ahead only
+   * while the check it starts with still offers exactly that one. */
+  async request(command: UpdateCommand, byUser = false, expectedRevision?: string): Promise<void> {
     if (this.busy || !this.status.managed || this.controller.signal.aborted) return;
     this.busy = true;
     let stage: string | null = null;
     let attempted: string | null = null;
     try {
       await this.discover(byUser);
+      // a release published since the person said yes is not the one they said yes to: nothing is
+      // installed, the new offer stays to be read, and nothing tries again by itself
+      // (a blocked checkout says why itself, and installs nothing either)
+      if (command === "install" && expectedRevision !== undefined && !this.status.blocked_reason && this.status.latest_revision !== expectedRevision) {
+        this.patch({ phase: "error", step: null, error_code: "update_offer_changed",
+          error: "A different release is on offer than the one asked for, so nothing was installed. Review it, then update again." });
+        return;
+      }
       if ((command === "install" || this.options.autoUpdate) && this.status.available) {
         const revision = this.status.latest_revision!;
         if (command === "check" && revision === this.failedRevision) {

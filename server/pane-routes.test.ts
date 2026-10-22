@@ -24,7 +24,7 @@ const paneInfo = (id: string) => ({
 });
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pane-routes-"));
+  root = mkdtempSync(join(tmpdir(), "ovis-pane-routes-"));
   panes = {};
   socketBefore = process.env["HERDR_SOCKET"];
   const socket = join(root, "herdr.sock");
@@ -192,7 +192,7 @@ it("lists OpenCode's skills for a folder with no pane in the form its installed 
 /** an OpenCode pane (herdr labels it opencode) in a project with one skill, under a HOME and state dir of the test's own */
 async function openCodePane(run: (f: { state: string; skill(): Promise<{ trigger?: string; provenance?: { verified?: boolean } } | undefined> }) => Promise<void>, session?: string): Promise<void> {
   const homeBefore = process.env["HOME"];
-  process.env["HOME"] = mkdtempSync(join(tmpdir(), "herdr-web-ui-pane-routes-home-"));
+  process.env["HOME"] = mkdtempSync(join(tmpdir(), "ovis-pane-routes-home-"));
   mkdirSync(join(root, ".opencode", "skills", "effect"), { recursive: true });
   writeFileSync(join(root, ".opencode", "skills", "effect", "SKILL.md"), "---\nname: effect\ndescription: Apply Effect.\n---\nBody.\n");
   const state = mkdtempSync(join(root, "opencode-state-"));

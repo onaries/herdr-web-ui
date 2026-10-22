@@ -195,8 +195,8 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
   const errors: string[] = [];
   try {
     await context.addInitScript((theme) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme, density: "comfortable", defaultView: "chat" }));
-      localStorage.setItem("herdr-web-ui:sidebar-width", "520");
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme, density: "comfortable", defaultView: "chat" }));
+      localStorage.setItem("ovis:sidebar-width", "520");
     }, scenario.theme);
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));

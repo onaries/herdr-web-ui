@@ -33,8 +33,8 @@ describe("saved theme migration", () => {
     if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
     else Reflect.deleteProperty(globalThis, "document");
   });
-  const main = "herdr-web-ui:settings";
-  const protectedThemes = "herdr-web-ui:themes";
+  const main = "ovis:settings";
+  const protectedThemes = "ovis:themes";
   const putOld = (record: object) => records.set(main, JSON.stringify(record));
   const readOld = () => oldSanitizeSettings(JSON.parse(records.get(main) ?? "{}"));
 
@@ -112,12 +112,41 @@ describe("saved theme migration", () => {
     } });
     const settings = sanitizeSettings({ theme: "light", lightTheme: "dracula" });
     const entry = themeFor(settings, "light");
-    applyToDocument(settings, entry, "en");
+    withComputedBg("#282a36", () => applyToDocument(settings, entry, "en"));
     expect(root.dataset).toMatchObject({ theme: "dark", palette: "dracula" });
     expect(root.style.colorScheme).toBe("dark");
     expect(meta).toBe(entry.bgPanel);
     expect(terminalTheme(entry.mode, entry.id)).toEqual(entry.terminal);
   });
+
+  it("keeps the row's surface on the root until a stylesheet owns it, following later themes", () => {
+    const style = {
+      colorScheme: "", backgroundColor: "#fffaf3", setProperty() {}, removeProperty(name: string) { if (name === "background-color") style.backgroundColor = ""; },
+    };
+    const root = { lang: "", dataset: {}, style };
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: root, querySelector: () => null } });
+    const light = sanitizeSettings({ theme: "light", lightTheme: "rose-pine-dawn", darkTheme: "kanagawa" });
+    // the stylesheet failed: nothing defines --bg, so the boot surface stays, on whichever row is drawn
+    withComputedBg("", () => applyToDocument(light, themeFor(light, "light"), "en"));
+    expect(style.backgroundColor).toBe(themeFor(light, "light").bg);
+    const dark = { ...light, theme: "dark" as const };
+    withComputedBg("", () => applyToDocument(dark, themeFor(dark, "dark"), "en"));
+    expect(style.backgroundColor).toBe(themeFor(dark, "dark").bg);
+    // a stylesheet that owns the surface takes it back
+    withComputedBg(" #1f1f28", () => applyToDocument(dark, themeFor(dark, "dark"), "en"));
+    expect(style.backgroundColor).toBe("");
+  });
+
+  function withComputedBg(value: string, run: () => void): void {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "getComputedStyle");
+    Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: (name: string) => (name === "--bg" ? value : "") }) });
+    try {
+      run();
+    } finally {
+      if (saved) Object.defineProperty(globalThis, "getComputedStyle", saved);
+      else Reflect.deleteProperty(globalThis, "getComputedStyle");
+    }
+  }
 });
 
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
@@ -134,6 +163,15 @@ it("leaves herdr's focus alone until this device asks to follow it, and keeps th
   expect(sanitizeSettings({ followHerdrFocus: "true" }).followHerdrFocus).toBe(false);
   expect(SETTING_SCOPE.followHerdrFocus).toBe("device");
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("followHerdrFocus");
+});
+
+it("keeps the composer's New tab button off until this device turns it on, and keeps that choice its own", () => {
+  expect(DEFAULT_SETTINGS.composerNewTabButton).toBe(false);
+  expect(sanitizeSettings({}).composerNewTabButton).toBe(false);
+  expect(sanitizeSettings({ composerNewTabButton: true }).composerNewTabButton).toBe(true);
+  expect(sanitizeSettings({ composerNewTabButton: "true" }).composerNewTabButton).toBe(false);
+  expect(SETTING_SCOPE.composerNewTabButton).toBe("device");
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("composerNewTabButton");
 });
 
 it("keeps the screen wake lock off until this device explicitly enables it", () => {
@@ -946,10 +984,10 @@ describe("default lens", () => {
     expect(sanitizeSettings({ defaultView: "split" }).defaultView).toBe("auto");
   });
   it("forgets every pane's own lens and nothing else", () => {
-    const data = new Map<string, string>([["herdr-web-ui:view:local:w1:p1", "terminal"], ["herdr-web-ui:view:remote:pc:w2:p1", "chat"], ["herdr-web-ui:settings", "{}"]]);
+    const data = new Map<string, string>([["ovis:view:local:w1:p1", "terminal"], ["ovis:view:remote:pc:w2:p1", "chat"], ["ovis:settings", "{}"]]);
     const storage = { get length() { return data.size; }, key: (i: number) => [...data.keys()][i] ?? null, removeItem: (k: string) => { data.delete(k); } };
     expect(forgetPaneViews(storage)).toBe(2);
-    expect([...data.keys()]).toEqual(["herdr-web-ui:settings"]);
+    expect([...data.keys()]).toEqual(["ovis:settings"]);
   });
 });
 
@@ -983,6 +1021,18 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
 });
 
 describe("shared settings", () => {
+  it("keeps repository discovery local, validates depth, and retains the choice on reload", () => {
+    expect(sanitizeSettings({})).toMatchObject({ changesChildRepos: true, changesRepoDepth: 2 });
+    for (const depth of [1, 2, 3, 4]) {
+      const settings = sanitizeSettings({ changesChildRepos: false, changesRepoDepth: depth });
+      expect(sanitizeSettings(JSON.parse(JSON.stringify(settings)))).toMatchObject({ changesChildRepos: false, changesRepoDepth: depth });
+    }
+    for (const depth of [0, 5, 1.5, "4", NaN, Infinity, null]) expect(sanitizeSettings({ changesRepoDepth: depth }).changesRepoDepth).toBe(2);
+    expect(sanitizeSettings({ changesChildRepos: "false" }).changesChildRepos).toBe(true);
+    expect(SETTING_SCOPE.changesChildRepos).toBe("device");
+    expect(SETTING_SCOPE.changesRepoDepth).toBe("device");
+  });
+
   it("shares exactly the settings SETTING_SCOPE marks shared", () => {
     const shared = Object.entries(SETTING_SCOPE).filter(([, scope]) => scope === "shared").map(([key]) => key).sort();
     expect([...SHARED_SETTING_KEYS].sort() as string[]).toEqual(shared);

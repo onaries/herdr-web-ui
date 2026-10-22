@@ -66,7 +66,7 @@ try {
 
   const path = `/api/machines/${machineId}`;
   const home = "C:\\Users\\" + destination.split("@")[0];
-  const created = await api<{ pane_id: string }>(path + "/workspace/create", "POST", { cwd: home, label: "herdr-web-ui-test-windows" });
+  const created = await api<{ pane_id: string }>(path + "/workspace/create", "POST", { cwd: home, label: "ovis-test-windows" });
   const paneId = created.pane_id;
   assert.ok((await api<{ snapshot: SessionSnapshot }>(path + "/session")).snapshot.panes.some((p) => p.pane_id === paneId));
   await api(path + "/pane/input", "POST", { pane_id: paneId, text: "echo windows-bridge-input-ok" });

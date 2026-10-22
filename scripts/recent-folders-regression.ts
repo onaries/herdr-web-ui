@@ -15,7 +15,7 @@ const { createServer } = await import("../server/index.ts");
 const { UsageService } = await import("../server/usage.ts");
 // not under a folder recent folders leave out: the temporary directory, or this checkout when it
 // is one of herdr's worktrees (`passingFolder`), so the fixtures live under the home's cache
-const cache = join(homedir(), ".cache", "herdr-web-ui-tests");
+const cache = join(homedir(), ".cache", "ovis-tests");
 mkdirSync(cache, { recursive: true });
 const root = realpathSync(mkdtempSync(join(cache, "herdr-recent-folders-")));
 if (passingFolder(root)) throw new Error(`the fixtures' folder ${root} is one recent folders leave out`);
@@ -50,15 +50,15 @@ try {
             const setItem = Storage.prototype.setItem;
             Storage.prototype.setItem = function (key, value) {
               setItem.call(this, key, value);
-              if (this === localStorage && key === "herdr-web-ui:recent-directories:local"
+              if (this === localStorage && key === "ovis:recent-directories:local"
                 && JSON.parse(value).includes(project)) console.info("RECENTS_SEEDED");
             };
-            localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme, language: "ko" }));
-            localStorage.setItem("herdr-web-ui:new-session-agent", "codex");
-            localStorage.setItem("herdr-web-ui:recent-directories:remote", '["/remote-only/project"]');
+            localStorage.setItem("ovis:settings", JSON.stringify({ theme, language: "ko" }));
+            localStorage.setItem("ovis:new-session-agent", "codex");
+            localStorage.setItem("ovis:recent-directories:remote", '["/remote-only/project"]');
             // a folder kept from before: the two the snapshot's panes are in go behind it
-            if (localStorage.getItem("herdr-web-ui:recent-directories:local") === null) {
-              localStorage.setItem("herdr-web-ui:recent-directories:local", '["/older/one"]');
+            if (localStorage.getItem("ovis:recent-directories:local") === null) {
+              localStorage.setItem("ovis:recent-directories:local", '["/older/one"]');
             }
           }, { theme, project });
           await context.route("**/api/agents", (route) => route.fulfill({ json: { agents: [{ kind: "codex", label: "Codex" }] } }));
@@ -185,7 +185,7 @@ try {
           owned.delete(created.workspace_id);
           // a fourth folder, and kept from before, a herdr worktree and a temporary folder
           await page.evaluate(() => {
-            const key = "herdr-web-ui:recent-directories:local";
+            const key = "ovis:recent-directories:local";
             localStorage.setItem(key, JSON.stringify([...JSON.parse(localStorage.getItem(key)!) as string[], "/home/me/.herdr/worktrees/app/feat", "/tmp/scratch", "/older/two"]));
           });
           await page.reload();

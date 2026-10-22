@@ -1,5 +1,5 @@
 import type { SshTarget } from "../shared/machines.ts";
-import { DEVICE_COOKIE, parseCookies, TOKEN_COOKIE } from "./auth.ts";
+import { deviceCookieValue, parseCookies, tokenCookie } from "./auth.ts";
 
 export function shellQuote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
@@ -32,7 +32,7 @@ export function sameOrigin(request: Request): boolean {
     // own session stay reachable by a cookie-bearing client that can state no origin at all.
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return true;
     const cookies = parseCookies(request.headers.get("cookie"));
-    if (!cookies.has(TOKEN_COOKIE) && !cookies.has(DEVICE_COOKIE)) return true; // CLI clients
+    if (tokenCookie(cookies) === undefined && deviceCookieValue(cookies) === undefined) return true; // CLI clients
     if (request.headers.get("x-herdr-machine") === "1" || request.headers.get("x-herdr-update") === "1") return true;
     const { pathname } = new URL(request.url);
     return pathname === "/api/auth" || pathname === "/api/push/subscribe";

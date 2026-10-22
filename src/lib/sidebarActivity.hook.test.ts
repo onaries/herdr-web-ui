@@ -542,13 +542,13 @@ describe("sidebar finish acknowledgement through React effects", () => {
   });
 
   it("removes old-format records and caps keys oldest first, never by a roster", () => {
-    data.set("herdr-web-ui:seen:local", '{"a":5}');
-    data.set("herdr-web-ui:settings", "{}");
+    data.set("ovis:seen:local", '{"a":5}');
+    data.set("ovis:settings", "{}");
     for (let i = 0; i <= SEEN_LIMIT; i++) data.set(seenKey("local", "server-a", `p${i}`), JSON.stringify({ id: 1, at: i }));
     cleanSeen();
-    expect(data.has("herdr-web-ui:seen:local")).toBe(false);
+    expect(data.has("ovis:seen:local")).toBe(false);
     expect(data.has(seenKey("local", "server-a", "p0"))).toBe(false);
     expect(data.has(seenKey("local", "server-a", `p${SEEN_LIMIT}`))).toBe(true);
-    expect(data.get("herdr-web-ui:settings")).toBe("{}");
+    expect(data.get("ovis:settings")).toBe("{}");
   });
 });

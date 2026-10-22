@@ -76,7 +76,7 @@ bun run check run --build bun scripts/ui-regression.ts                     # bui
 
 `fast` needs no herdr. The other modes run on a herdr of their own: its config, its plugin state
 and the web UI's state live in a directory made for the run (`XDG_CONFIG_HOME`, `XDG_STATE_HOME`,
-`HERDR_WEB_STATE_DIR`), under a session name made for the run. Nothing reads your herdr config,
+`OVIS_STATE_DIR`), under a session name made for the run. Nothing reads your herdr config,
 so no plugin installed there starts with the test servers, and two runs on one PC share no
 socket and no file. The run stops its herdr servers and removes the directory when it ends, also
 when it is interrupted; `CHECK_DIR=<path>` keeps it there instead. A few lane or `check run`
@@ -128,6 +128,16 @@ Read the verification status and source identity, not just a zero exit code. Cha
 run invalidate its source verification; a later edit or restack requires new verification.
 An unavailable source fingerprint, or an unreadable artifact after a successful build, fails
 the check even when its commands returned zero.
+Whatever a step leaves running in its process group (with its output closed or not) is ended
+when the step ends, and the step's report says so.
+A teardown that did not finish also fails the check: a step's process group still there after
+SIGTERM, then SIGKILL and their grace (only "no such process" proves it gone; a process the run may not signal
+is still there), or a herdr session of the run whose stop failed. Every other stop is still
+tried. The run then keeps its isolated directory instead of removing it, prints its absolute
+path, lists it under `evidence.retained` in the report and adds the failures to `errors`. A
+run that passed exits 1 with status `failure`. An interrupted run keeps exit code 130 or 143
+and status `interrupted`, with the same errors and kept directory. Look through the kept
+directory, stop what is left, and remove the directory yourself.
 `check run --build` records the build made for the command. Without it, an existing `dist/`
 has unknown provenance and cannot establish that a browser tested current source. Report and
 log collection is for isolated fixtures: do not pass real credentials or live-user commands to
@@ -150,6 +160,7 @@ bun scripts/sticky-modifiers-regression.ts # mobile held keys through real legac
 bun scripts/key-bar-customization-demo-regression.ts # mobile key layout, saved combinations and migration on demo fixtures
 bun scripts/key-bar-hold-repeat-regression.ts # phone touch key-bar taps, holds (arrows and editing keys), swipes and sticky Ctrl on demo fixtures
 bun scripts/settings-pages-demo-regression.ts # every Settings page on a 390px and a 320px phone, and Back stepping out of the dialog
+bun scripts/theme-first-paint-demo-regression.ts # the saved theme in every painted frame before and after the app starts, root and demo builds under the app's CSP
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/omo-plan-browser-regression.ts # OmO todo progress and plan panel on isolated native fixtures
 bun scripts/pane-input-focus-demo-regression.ts # the input focus shortcut against fictional panes
@@ -169,7 +180,7 @@ installers, a headless herdr, then `herdr plugin install` of a pushed ref (defau
 branch), the start action, `/api/health`, the PTY smoke test on the box's Node, and the startup hook
 after a herdr restart. It prints the time each step took. `KEEP=1` leaves the container for a look.
 
-Tests run against a herdr session of their own, `herdr-web-ui-test`. The first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
+Tests run against a herdr session of their own, `ovis-test`. The first run starts a headless `herdr --session ovis-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session ovis-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
 
 Browser checks launch `CHROME_PATH` when it is set, else Google Chrome at `/opt/google/chrome/chrome` where that exists, else the lockfile's Playwright Chromium (`scripts/chrome-path.ts`; install it with `bun node_modules/playwright-core/cli.js install chromium`). After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
 
@@ -400,20 +411,19 @@ in the historical table above. They were taken with a 2 s push-read bound; the b
 
 ## README media
 
-`bun run build && bun scripts/readme-media/capture.ts` regenerates the stills and demos in `docs/screenshots/` from a staged, fictional session in its own herdr session (`herdr-web-ui-demo`). Pass `shots` or `video` to redo only one of them. It needs ffmpeg.
+`bun run build && bun scripts/readme-media/capture.ts` regenerates the stills and demos in `docs/screenshots/` from a staged, fictional session in its own herdr session (`ovis-demo`). Pass `shots` or `video` to redo only one of them. It needs ffmpeg.
 
 - `stage.ts` builds the session from `site/demo/fixtures.ts`: two git repositories under `/tmp/herdr-demo`, each with two agent worktrees herdr adds, a release shell tab, curated chats served in place of transcripts, and the hostname rewritten.
 - `record.ts` records a walkthrough at 2x (Chrome's screencast, with `--force-device-scale-factor=2`), logging pointer moves, clicks, taps and camera cues as it drives the page.
 - `compose.ts` draws every output frame on a canvas: a backdrop, a browser window or a phone, the frame under an eased camera, and a vector cursor with click ripples or touch rings. It writes `demo-*.mp4` (1920×1200 and 1080×1920, 30 fps) and a GIF of each. Stills get the same window or phone on a transparent background.
 
 The MP4s are not committed: GitHub plays a README video only from an upload (`github.com/user-attachments/…`), so drop them into an issue or PR comment and use the link it gives.
-The website's page is built from the README's own artifacts: it downloads the README's top video (listed in `scripts/build-site.ts`, `videos`, so a new top video needs its link changed there as well), shows the feature grid's clips linking to their uploads (the same list of links is in `site/index.html` and `site/zh/index.html`), and uses `docs/screenshots/install.png`.
 The README's feature grid shows a looping ~7-second cut of each feature video (`docs/media/readme/*.webp`, 800×450, 15 fps), each linking to its upload. Cut one with
 `ffmpeg -ss <start> -t <seconds> -i clip.mp4 -vf "fps=15,scale=800:450:force_original_aspect_ratio=increase:flags=lanczos,crop=800:450" -c:v libwebp_anim -loop 0 -quality 72 -compression_level 6 -an out.webp`;
 the scale and crop fill 800×450 from any source aspect. Start on a sharp frame, not mid camera move. The top video stays a GitHub upload so it plays at full quality.
 
-The user guide's gallery and the retained banner assets are rendered from the film's stills (below): `bun scripts/readme-media/banner.ts [banner] [og] [look]`
-draws `banner.html` in headless Chrome into `docs/media/banner.png` (1920×800), `site/assets/og.png` (1280×640) and
+The user guide's gallery and the retained banner assets are rendered from the film's stills (below): `bun scripts/readme-media/banner.ts [banner] [look]`
+draws `banner.html` in headless Chrome into `docs/media/banner.png` (1920×800) and
 `docs/media/look-{chat,prompt,terminal}.png` (1760×1150), each quantized to 256 colours. `docs/media/chat-loop.gif`
 comes from `scripts/film/render.ts loop`.
 
@@ -421,14 +431,14 @@ comes from `scripts/film/render.ts loop`.
 
 The film (`site/media/herdr-web-ui-film.mp4`, 56 s) and chat loop (`site/media/chat-loop.mp4`, with the README's
 `docs/media/chat-loop.gif`) are the real client on the demo's fixtures, recorded and composited by `scripts/film/`.
-Raw footage and renders go to `_film/` (gitignored); only the outputs under `site/media/`, `site/assets/` and
-`docs/media/` are committed. Needs ffmpeg and Chrome at `/usr/bin/google-chrome` (`CHROME_PATH` otherwise).
+Raw footage and renders go to `_film/` (gitignored); only the outputs under `docs/media/` are committed.
+herdrweb.dev no longer publishes `site/media/` (it forwards to ovis.sh), so the film and loop MP4s wait for a
+home on ovis.sh. Needs ffmpeg and Chrome at `/usr/bin/google-chrome` (`CHROME_PATH` otherwise).
 
 ```bash
 bun run build:site                              # the demo the takes are recorded from
 bun scripts/film/capture.ts [stills] [rec] [stepped] [R10 R11 … | still names]   # _film/footage/
-bun scripts/film/site-assets.ts                 # site/assets/*.webp|jpg|png from the stills
-bun scripts/readme-media/banner.ts              # banner, og.png, look-*.png from the stills
+bun scripts/readme-media/banner.ts              # banner, look-*.png from the stills
 bun scripts/film/render.ts film                 # site/media/herdr-web-ui-film.{mp4,jpg}
 bun scripts/film/render.ts loop                 # site/media/chat-loop.{mp4,jpg}, docs/media/chat-loop.gif
 bun scripts/film/render.ts check                # acceptance frame grabs, sizes, loop seam
@@ -444,27 +454,19 @@ bun scripts/film/render.ts check                # acceptance frame grabs, sizes,
 - `render.ts` renders frames in parallel Chromes and encodes once. `render.ts report` prints the shot table with the
   maximum magnification (never above 1 source px per output px); `render.ts stills 8 13.6 …` grabs single frames.
 - After a re-capture, re-check what was placed by hand on the frames (the header of `render.ts` lists it), then
-  re-render. `build-site.ts` fails if a file in `site/media/` is over 4 MB (the film: 24 MB) or one in `site/assets/`
-  is over 750 KB.
+  re-render.
 
 ## Website
 
-<https://herdrweb.dev/> is `site/index.html`, a static page with desktop and phone
-demos, a screenshot gallery, supported agents, phone setup and a comparison table. `site/zh/index.html`
-is the same page in Simplified Chinese at `/zh/`, linked from the header; a change to one page belongs in
-the other. `bun run build:site`
-assembles it into `_site/` with icons, the social preview and scaled screenshots from `docs/screenshots/`.
-The two demo videos come from local `docs/screenshots/*.mp4` when present, otherwise the README's uploads;
-ffmpeg creates their poster frames. Without ffmpeg, the page omits unavailable posters.
+The project's website is <https://ovis.sh/>, served from `ovis-site/`. <https://herdrweb.dev/> (GitHub
+Pages, built from `site/`) keeps only what installed users and CI fetch from it: `install.sh`,
+`install.ps1` and the browser demo at `/demo/`. Its home page (`site/index.html`, and `site/zh/index.html`
+at `/zh/`) is a page whose canonical link, meta refresh and script forward to
+<https://ovis.sh/>; ovis.sh hands `/install.sh`, `/install.ps1` and `/demo/` back to herdrweb.dev
+(`ovis-site/_redirects`). `bun run build:site` assembles `_site/`: those pages, the Google site
+verification file, the installers, the favicons and the demo. It writes no sitemap.
 
-For search engines the build also writes `sitemap.xml` (the page only: the demo is `noindex`) and copies
-the page's FAQ rows (`<div class="qa">`) into its head as FAQPage structured data, so edit a question in
-the page and the data follows. The SoftwareApplication data is written in the page's head by hand.
-
-The build also copies the retained `site/assets/` and `site/media/` files, including the film linked
-from the README and its chat loop. These remain available at their existing URLs even though the
-homepage uses the desktop and phone demos.
-`.github/workflows/pages.yml` installs ffmpeg when the runner lacks it and runs after CI completes
+`.github/workflows/pages.yml` runs after CI completes
 on `main`, or on manual dispatches from `main`. A completed CI run only builds and deploys when it
 succeeded for a push from this repository; PR runs and forks cannot publish. It builds that CI run's
 head SHA without running validation again. Manual dispatches run reusable CI validation and the site
@@ -472,8 +474,12 @@ build in parallel against the dispatch SHA, and deployment requires both to succ
 Deployments are serialized. Immediately before deploying,
 the workflow checks that the validated SHA is still the latest `main` commit; it fails closed if it is
 stale or that check cannot be completed. This does not change the separate Release workflow.
-The standalone `main` CI supplies the validation for each main push, preserving its independent CI
-history while the Website workflow waits for its successful completion.
+The standalone `main` CI supplies that validation. Its push runs share one concurrency group: the
+running one finishes, and a newer push cancels the one still waiting, so a burst of merges runs
+main's checks at most twice and the newest run covers the merges in between. The Website workflow
+deploys only after a successful push run of main's newest commit; a cancelled run's Website run
+skips building. Re-running an older main run while a newer one waits cancels the newer one, and
+main's newest commit then waits for the next push or a manual Pages run.
 
 ### The browser demo
 
@@ -484,7 +490,7 @@ transport answers the app's `fetch("/api/…")`, the machines event stream and t
 socket from `site/demo/fixtures/`: the chats and the Codex approval are the README's
 (`site/demo/fixtures.ts`, shared with `scripts/readme-media/stage.ts`), and `machines.json`,
 `agents.json`, `commands.json` and the shell pane's `terminal.json` are captured from that staged
-session by `bun scripts/demo-fixtures.ts` (needs herdr; it uses the `herdr-web-ui-demo` session and
+session by `bun scripts/demo-fixtures.ts` (needs herdr; it uses the `ovis-demo` session and
 scrubs the hostname and login). Recapture them after a herdr upgrade changes the snapshot shapes, or
 after changing the staged session. Files, images, push and remote PCs are not part of the demo.
 
@@ -546,7 +552,7 @@ before it uploads it, and its log shows totals only.
 It needs two repository secrets (Settings → Secrets and variables → Actions); without them the run
 says so and ends green:
 
-- `GROWTH_METRICS_TOKEN`: a fine-grained personal access token for devswha/herdr-web-ui only, with
+- `GROWTH_METRICS_TOKEN`: a fine-grained personal access token for devswha/ovis only, with
   the repository permissions **Administration: Read-only** (the traffic endpoints need it) and
   **Metadata: Read-only**. Such a token expires within a year: put the expiry date in the token's
   name. An expired or wrong token turns the run red (exit 1 for no access to the repository, exit
@@ -558,7 +564,7 @@ says so and ends green:
 Artifacts are kept 90 days. To read one:
 
 ```sh
-gh run download <run-id> -R devswha/herdr-web-ui -n growth-snapshot-<run-id>
+gh run download <run-id> -R devswha/ovis -n growth-snapshot-<run-id>
 GROWTH_SNAPSHOT_KEY=… openssl enc -d -aes-256-cbc -pbkdf2 -pass env:GROWTH_SNAPSHOT_KEY -in growth.tar.gz.enc | tar xzf -
 ```
 
@@ -756,8 +762,10 @@ administrators. Branch protection does not require branches to be up to date bef
 does not enforce resolved review threads; resolve every review thread before merging anyway, as a
 practice. Force pushes and branch deletion are disabled. Human approvals are optional for this maintainer-led
 project; external contributions still need maintainer review. CodeRabbit is advisory, not a required
-check. It reviews a pull request once when it opens and not on later pushes;
-comment `@coderabbitai review` on the final head before merging and wait for it.
+check. It reviews a pull request once when it opens and not on later pushes; after a later
+commit that changes behaviour, comment `@coderabbitai review` on the final head and wait for it.
+Which PRs wait for a review, and what stands in when CodeRabbit skips one, is in
+[AGENTS.md](../AGENTS.md) (Maintainer workflow).
 Release tags must not be moved or deleted. These GitHub settings are separate from files
 in the checkout.
 
@@ -782,5 +790,5 @@ input regression matrix.
 | [`scripts/`](../scripts/) | Plugin lifecycle, type generation, remote bundles, README media, the film and browser checks |
 | [`public/`](../public/) | PWA manifest, service worker and icons |
 | [`docs/`](.) | Remote PCs, updates, flow control, chat audit, brand assets and README media (`docs/media/`) |
-| [`site/`](../site/) | The website, built by `scripts/build-site.ts` and deployed by GitHub Pages |
+| [`site/`](../site/) | herdrweb.dev (the installers, the browser demo and pages that forward to ovis.sh), built by `scripts/build-site.ts` and deployed by GitHub Pages |
 | [`DESIGN.md`](../DESIGN.md) | Design tokens and UI conventions |

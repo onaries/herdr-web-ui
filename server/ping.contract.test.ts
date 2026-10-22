@@ -41,7 +41,7 @@ class FrameSocket {
 }
 
 describe("WebSocket liveness ping", () => {
-  const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-ping-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-ping-"));
   const sockets: WebSocket[] = [];
   const relays: MachineRelay[] = [];
   let bridge: ServerInstance | undefined;

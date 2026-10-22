@@ -34,7 +34,7 @@ function fakeWindow() {
     get location() { return { href: entries[index]!.href }; },
     addEventListener(type: string, listener: (event: { state: unknown }) => void) { if (type === "popstate") listeners.push(listener); },
   };
-  return { window, entries, at: () => index, defer: (on: boolean) => { deferred = on; }, pending: () => pending, marks: () => entries.map((entry) => typeof (entry.state as Record<string, unknown> | null)?.["herdr-web-ui:sheet"] === "string") };
+  return { window, entries, at: () => index, defer: (on: boolean) => { deferred = on; }, pending: () => pending, marks: () => entries.map((entry) => typeof (entry.state as Record<string, unknown> | null)?.["ovis:sheet"] === "string") };
 }
 const fake = fakeWindow();
 (globalThis as unknown as { window: unknown }).window = fake.window;
@@ -44,7 +44,7 @@ const settled = async () => { await new Promise((resolve) => setTimeout(resolve,
 const h = fake.window.history;
 /** RowMenu's effect, without React: the hook's enter on mount and leave on unmount (sheetHistory exports them for this) */
 const { enterSheet, leaveSheet, sheetSteppedOff } = await import("./sheetHistory.ts");
-const hooks = { enter: (onBack: () => void): (() => void) => { const id = enterSheet(onBack, null); return () => leaveSheet(id); } };
+const hooks = { enter: (onBack: () => void, stays = false): (() => void) => { const id = enterSheet(onBack, null, stays); return () => leaveSheet(id); } };
 
 afterAll(() => {
   if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else delete (globalThis as { window?: unknown }).window;
@@ -153,6 +153,60 @@ describe("a phone's sheet in the history", () => {
     h.back(); await settled();
     expect(closed).toBe(1); expect(fake.at()).toBe(start);
     leaveSecond(); await settled();
+    expect(fake.at()).toBe(start);
+  });
+
+  it("keeps a sheet that stays up under another sheet: that sheet's close, or a Back, comes back to it", async () => {
+    const start = fake.at();
+    let peekClosed = 0;
+    let moreClosed = 0;
+    // a terminal peek (App's usePhoneSheetBack, staying), then the header's ⋯ menu over it
+    const leavePeek = hooks.enter(() => { peekClosed += 1; }, true);
+    const leaveMore = hooks.enter(() => { moreClosed += 1; });
+    expect(fake.at()).toBe(start + 1);
+    // the menu's Cancel: it steps off, and the peek's entry is made again
+    leaveMore(); await settled();
+    expect(peekClosed).toBe(0);
+    expect(fake.at()).toBe(start + 1); expect(fake.marks()[start + 1]).toBe(true);
+    // Back with the menu up closes the menu alone
+    const leaveMoreAgain = hooks.enter(() => { moreClosed += 1; });
+    h.back(); await settled();
+    expect(moreClosed).toBe(1); expect(peekClosed).toBe(0);
+    expect(fake.at()).toBe(start + 1); expect(fake.marks()[start + 1]).toBe(true);
+    leaveMoreAgain(); await settled();
+    expect(fake.at()).toBe(start + 1);
+    // and the next Back is the peek's
+    h.back(); await settled();
+    expect(peekClosed).toBe(1); expect(fake.at()).toBe(start);
+    leavePeek(); await settled();
+    expect(fake.at()).toBe(start);
+  });
+
+  it("keeps a sheet that stays up under a navigation, and makes its entry again when the navigation goes", async () => {
+    const start = fake.at();
+    let closed = 0;
+    const leave = hooks.enter(() => { closed += 1; }, true);
+    // Settings opened over it: its entry takes the sheet's, and leaving it lands under both
+    h.pushState({ settings: true }, "", "/?pane=b&settings=general");
+    expect(fake.at()).toBe(start + 1);
+    h.back(); await settled();
+    expect(closed).toBe(0);
+    expect(fake.at()).toBe(start + 1); expect(fake.marks()[start + 1]).toBe(true);
+    expect(fake.window.location.href).toBe(fake.entries[start]!.href);
+    h.back(); await settled();
+    expect(closed).toBe(1); expect(fake.at()).toBe(start);
+    leave(); await settled();
+  });
+
+  it("closes any other sheet still up under one opened over it with that one, as before", async () => {
+    // the Files dialog under the palette: the palette's close steps off and closes Files too
+    const start = fake.at();
+    let filesClosed = 0;
+    const leaveFiles = hooks.enter(() => { filesClosed += 1; });
+    const leavePalette = hooks.enter(() => {});
+    leavePalette(); await settled();
+    expect(filesClosed).toBe(1); expect(fake.at()).toBe(start);
+    leaveFiles(); await settled();
     expect(fake.at()).toBe(start);
   });
 

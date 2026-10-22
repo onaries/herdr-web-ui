@@ -16,7 +16,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
     await context.addInitScript(() => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
     });
     const page = await context.newPage();
     const errors: string[] = [];
@@ -26,6 +26,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     let status: UpdateStatus = {
       managed: true, auto_update: false, phase: "idle", current_revision: null, latest_revision: "b".repeat(40),
       current_version: "0.0.1", latest_version: "9.9.9", available: true, checked_at: new Date().toISOString(), blocked_reason: null, error: null, step: null,
+      revision_bound_install: true,
     };
     let installs = 0;
     let checks = 0;
@@ -120,7 +121,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
 
     // a PC whose bridge cannot be updated: its line closes, and stays closed
     const line = page.getByText("QA PC needs a bridge update to reconnect.", { exact: true });
-    const dismissed = () => page.evaluate(() => localStorage.getItem("herdr-web-ui:pc-notice-dismissed"));
+    const dismissed = () => page.evaluate(() => localStorage.getItem("ovis:pc-notice-dismissed"));
     remote = pc;
     await line.waitFor();
     await fits("bridge update needed");
@@ -140,7 +141,7 @@ export async function checkUpdateNotice(browser: Browser, origin: string, shots?
     await shot("5-bridge-line-closed");
     // once the PC has connected, the next time it waits is news again
     remote = { ...pc, state: "connected", action_required: null };
-    await page.waitForFunction(() => localStorage.getItem("herdr-web-ui:pc-notice-dismissed") === null);
+    await page.waitForFunction(() => localStorage.getItem("ovis:pc-notice-dismissed") === null);
     remote = pc;
     await line.waitFor();
     console.log("PASS the line for a PC that needs a bridge update closes and stays closed until the PC connects");

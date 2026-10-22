@@ -5,6 +5,7 @@ import { answerMachineSetup, fetchMachineSetup, startMachineSetup } from "../lib
 import { hostKeyFingerprints } from "../lib/hostKey.ts";
 import { sshOutputParts } from "../lib/sshOutput.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
+import { machineErrorText } from "../lib/userError.ts";
 import { BridgeUpdateProgress } from "./MachineSidebar.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
@@ -87,7 +88,7 @@ export function MachineDialog({ machine, updateRemote = false, onClose, onConnec
         <p className="field-hint">{t("Uses the web server account’s SSH config and ssh-agent. Agent CLI tools and logins use the environment on the target PC.")}</p>
         </>}
       </form>}
-      {job && job.challenge?.kind !== "host_key" && <div className="machine-progress" role="status">{running && job.progress ? <BridgeUpdateProgress update={{ job_id: job.id, step: job.step, progress: job.progress }} /> : <strong>{job.step}</strong>}{job.error && <p>{job.error}</p>}{job.ssh_output && <SshOutput text={job.ssh_output} />}</div>}
+      {job && job.challenge?.kind !== "host_key" && <div className="machine-progress" role="status">{running && job.progress ? <BridgeUpdateProgress update={{ job_id: job.id, step: job.step, progress: job.progress }} /> : <strong>{job.step}</strong>}{job.error && <p>{machineErrorText(job.error, t)}</p>}{job.ssh_output && <SshOutput text={job.ssh_output} />}</div>}
       {needsBridgeUpdate && <p className="field-hint">{t("This PC runs a bridge from a different version of Ovis. Update it to reconnect; herdr sessions keep running.")}</p>}
       {running && <p className="field-hint">{t("You can close this; the install keeps going and the sidebar shows it.")}</p>}
       {job?.phase === "approval" && <><ul className="machine-install-list">{job.installations.map((item) => <li key={item}>{item}</li>)}</ul><p className="field-hint">{t("Installs into your home directory. Existing herdr sessions keep running.")}</p></>}

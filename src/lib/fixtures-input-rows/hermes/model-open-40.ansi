@@ -1,0 +1,40 @@
+⚙️  /reload-mcp
+
+⚙️  /new
+
+⚙️  /reset
+
+⚙️  /clear
+
+⚙️  /prompt
+  [0m[2m[3m(._.) Empty prompt — nothing sent.[0m
+
+⚙️  /compose
+  [0m[2m[3m(._.) Empty prompt — nothing sent.[0m
+[0m[38;5;173m╭─ [0m[1m[38;5;220m⚙ Model Picker — Select Provider[0m[38;5;173m ─╮[0m
+[0m[38;5;173m│                                    │[0m
+[0m[38;5;173m│ [0mCurrent: gpt-6-luna on ChatGPT or Code
+x Subscription[0m[38;5;173m │[0m
+[0m[38;5;173m│                                    │[0m
+[0m[38;5;173m│ [0m[1m[38;5;220m❯ ChatGPT or Codex Subscription   [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[1m[38;5;220m  (14 models)  ← current          [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  GitHub Copilot (45 models)      [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  Anthropic (14 models)           [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  Cancel                          [0m[38;5;173m │[0m
+[0m[38;5;173m│                                    │[0m
+[0m[38;5;173m╰────────────────────────────────────╯[0m
+ 
+ 
+ 
+
+
+
+
+
+
+
+
+ 
+ 
+[0m[38;5;173m────────────────────────────────────────[0m
+[0m[38;5;230m❯ [0m[3m[38;5;136mPlan a feature, then build it step by [0m

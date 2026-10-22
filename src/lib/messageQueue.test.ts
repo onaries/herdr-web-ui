@@ -17,7 +17,7 @@ it("persists multiple independent items, including identical text, and individua
   queue.remove("local:a", first!.id);
   expect(queue.read("local:a").map(m => m.text)).toEqual(["edited"]);
   queue.remove("local:a", second!.id);
-  expect(data.has("herdr-web-ui:queue:local:a")).toBe(false);
+  expect(data.has("ovis:queue:local:a")).toBe(false);
 });
 
 it("an old acknowledgement removes only its captured item and owner", () => {
@@ -34,7 +34,7 @@ it("an old acknowledgement removes only its captured item and owner", () => {
 it("migrates the previous plain-text queue without losing JSON-like messages", () => {
   for (const text of ["legacy", '{"message":"legacy"}']) {
     const { queue, data, storage } = fixture();
-    data.set("herdr-web-ui:queue:a", text);
+    data.set("ovis:queue:a", text);
     expect(queue.read("a")[0]!.text).toBe(text);
     queue.add("a", "next");
     expect(new MessageQueueStore(() => storage).read("a").map(m => m.text)).toEqual([text, "next"]);

@@ -49,12 +49,12 @@ final class Model: ObservableObject {
             script = FileManager.default.temporaryDirectory.appendingPathComponent("ovis-install-\(UUID().uuidString).sh")
             try data.write(to: script)
         } catch {
-            fail(L("Could not download the installer from herdrweb.dev. Check the internet connection.", "herdrweb.dev에서 설치 프로그램을 받지 못했습니다. 인터넷 연결을 확인해 주세요."), detail: error.localizedDescription)
+            fail(L("Could not download the installer from ovis.sh. Check the internet connection.", "ovis.sh에서 설치 프로그램을 받지 못했습니다. 인터넷 연결을 확인해 주세요."), detail: error.localizedDescription)
             return
         }
         defer { try? FileManager.default.removeItem(at: script) }
-        phase = .working(L("Installing herdr, Bun, Node and herdr web UI…", "herdr, Bun, Node, herdr web UI를 설치하는 중…"))
-        let result = await run("/bin/sh", [script.path], env: ["HERDR_WEB_NO_OPEN": "1"], onLine: appendLine)
+        phase = .working(L("Installing herdr, Bun, Node and the Ovis server…", "herdr, Bun, Node, Ovis 서버를 설치하는 중…"))
+        let result = await run("/bin/sh", [script.path], env: ["OVIS_NO_OPEN": "1"], onLine: appendLine)
         guard result.status == 0 else {
             fail(L("The installer stopped with an error.", "설치 중 오류가 났습니다."))
             return
@@ -75,11 +75,11 @@ final class Model: ObservableObject {
         if await herdrRunning() {
             // the actions' output is in the log already: a failure only names which one stopped
             guard await run(Paths.herdr, ["plugin", "action", "invoke", "\(Ovis.pluginID).stop"], onLine: appendLine).status == 0 else {
-                fail(L("Could not stop herdr web UI.", "herdr web UI를 멈추지 못했습니다."))
+                fail(L("Could not stop the Ovis server.", "Ovis 서버를 멈추지 못했습니다."))
                 return
             }
             guard await run(Paths.herdr, ["plugin", "action", "invoke", "\(Ovis.pluginID).start"], onLine: appendLine).status == 0 else {
-                fail(L("Could not start herdr web UI.", "herdr web UI를 시작하지 못했습니다."))
+                fail(L("Could not start the Ovis server.", "Ovis 서버를 시작하지 못했습니다."))
                 return
             }
         } else if !(await LaunchAgent.start()) {
@@ -104,7 +104,7 @@ final class Model: ObservableObject {
         await refresh()
     }
 
-    /// Takes herdr web UI off this Mac, as the guide's Uninstall does. herdr, Bun and Node stay, and
+    /// Takes the Ovis server off this Mac, as the guide's Uninstall does. herdr, Bun and Node stay, and
     /// herdr keeps running: stopping it would end every agent in it.
     func uninstall() async {
         log = []

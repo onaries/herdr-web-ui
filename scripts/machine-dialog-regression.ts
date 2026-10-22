@@ -39,7 +39,7 @@ try {
       for (const width of [1280, 390]) {
         const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: width === 390 });
         try {
-          await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+          await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));

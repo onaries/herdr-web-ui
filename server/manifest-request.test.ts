@@ -14,7 +14,7 @@ const standIn = !existsSync(join(dist, "index.html"));
 describe("GET /manifest.webmanifest", () => {
   let server: ReturnType<typeof createServer>;
   let stateDir: string;
-  const previous = process.env["HERDR_WEB_APP_NAME"];
+  const previous = process.env["OVIS_APP_NAME"];
 
   beforeAll(() => {
     if (standIn) {
@@ -26,7 +26,7 @@ describe("GET /manifest.webmanifest", () => {
     server = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", machines: false, sidecar: false });
   });
   afterEach(() => {
-    if (previous === undefined) delete process.env["HERDR_WEB_APP_NAME"]; else process.env["HERDR_WEB_APP_NAME"] = previous;
+    if (previous === undefined) delete process.env["OVIS_APP_NAME"]; else process.env["OVIS_APP_NAME"] = previous;
   });
   afterAll(() => {
     server.stop();
@@ -44,22 +44,22 @@ describe("GET /manifest.webmanifest", () => {
   });
 
   it("names the origin it was reached at, and keeps revalidating", async () => {
-    delete process.env["HERDR_WEB_APP_NAME"];
+    delete process.env["OVIS_APP_NAME"];
     const answer = await get();
     expect(answer.status).toBe(200);
     expect(answer.cache).toBe("no-cache");
     expect(answer.json["related_applications"]).toEqual([{ platform: "webapp", id: `http://127.0.0.1:${server.port}/` }]);
   });
 
-  it("holds the id and the name together under HERDR_WEB_APP_NAME", async () => {
-    process.env["HERDR_WEB_APP_NAME"] = "laptop";
+  it("holds the id and the name together under OVIS_APP_NAME", async () => {
+    process.env["OVIS_APP_NAME"] = "laptop";
     const answer = await get();
     expect(answer.json["name"]).toBe("laptop");
     expect(answer.json["related_applications"]).toEqual([{ platform: "webapp", id: `http://127.0.0.1:${server.port}/` }]);
   });
 
   it("follows the Host and X-Forwarded-Proto a proxy sends", async () => {
-    delete process.env["HERDR_WEB_APP_NAME"];
+    delete process.env["OVIS_APP_NAME"];
     const answer = await get({ Host: "pc.tailnet.ts.net", "X-Forwarded-Proto": "https" });
     expect(answer.json["related_applications"]).toEqual([{ platform: "webapp", id: "https://pc.tailnet.ts.net/" }]);
   });

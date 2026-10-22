@@ -50,7 +50,7 @@ struct ContentView: View {
             }
         }
         .padding(24)
-        .confirmationDialog(L("Remove herdr web UI from this Mac?", "이 Mac에서 herdr web UI를 제거할까요?"), isPresented: $confirmRemove) {
+        .confirmationDialog(L("Remove the Ovis server from this Mac?", "이 Mac에서 Ovis 서버를 제거할까요?"), isPresented: $confirmRemove) {
             Button(L("Remove", "제거"), role: .destructive) { Task { await model.uninstall() } }
         } message: {
             Text(L("herdr, Bun and Node stay, and herdr keeps running with your agents.", "herdr, Bun, Node는 남고, herdr와 에이전트는 계속 실행됩니다."))
@@ -60,8 +60,8 @@ struct ContentView: View {
     private var notInstalled: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L("Set up this Mac for Ovis", "이 Mac을 Ovis에 연결할 준비를 합니다")).font(.headline)
-            Text(L("This installs herdr, Bun, Node and herdr web UI for your user only, with no administrator password, and starts herdr when you log in. Then scan the QR code with Ovis on your phone.",
-                   "herdr, Bun, Node, herdr web UI를 내 사용자 계정에만 설치합니다(관리자 비밀번호 필요 없음). 로그인할 때 herdr가 자동으로 켜집니다. 설치가 끝나면 휴대폰의 Ovis로 QR 코드를 찍으면 됩니다."))
+            Text(L("This installs herdr, Bun, Node and the Ovis server for your user only, with no administrator password, and starts herdr when you log in. Then scan the QR code with Ovis on your phone.",
+                   "herdr, Bun, Node, Ovis 서버를 내 사용자 계정에만 설치합니다(관리자 비밀번호 필요 없음). 로그인할 때 herdr가 자동으로 켜집니다. 설치가 끝나면 휴대폰의 Ovis로 QR 코드를 찍으면 됩니다."))
                 .fixedSize(horizontal: false, vertical: true)
             Button(L("Install", "설치")) { Task { await model.install() } }
                 .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)

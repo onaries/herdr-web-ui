@@ -22,6 +22,7 @@ import { build as viteBuild } from "vite";
 import { repoDiffResponse } from "../server/repo-diff.ts";
 import { serveStatic } from "../server/static.ts";
 import { buildDemoApp } from "./demo-build.ts";
+import { openSettingsPage } from "./settings-page.ts";
 
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
 process.env["GIT_CONFIG_NOSYSTEM"] = "1";
@@ -125,6 +126,14 @@ git(workspace, "add", "backend");
 git(workspace, "commit", "-q", "-m", "workspace");
 writeFileSync(join(backend, "server/test_out_work.py"), "assert changed_result\n");
 const panes = new Map([["pane-main", repos.main], ["pane-conflict", repos.detached], ["pane-plain", repos.plain], ["pane-nested", workspace]]);
+const discovery = join(root, "discovery");
+const deepRoots = [1, 2, 3, 4].map((depth) => {
+  const path = join(discovery, ...Array.from({ length: depth }, () => "level"));
+  mkdirSync(path, { recursive: true });
+  git(path, "init", "-q", "-b", "main");
+  return path;
+});
+panes.set("pane-discovery", discovery);
 const requests: string[] = [];
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -132,7 +141,7 @@ let demoServer: ReturnType<typeof Bun.serve> | undefined;
 
 /** The route the real server gives these paths, on a stand-in that maps a pane to its folder. */
 async function api(request: Request, url: URL): Promise<Response | null> {
-  const diff = /^\/api\/(?:machines\/([^/]+)\/)?workspace\/diff\/(files|file)$/.exec(url.pathname);
+  const diff = /^\/api\/(?:machines\/([^/]+)\/)?workspace\/diff\/(files|file|repositories)$/.exec(url.pathname);
   if (diff) {
     requests.push(url.pathname);
     const paneId = url.searchParams.get("pane_id");
@@ -140,7 +149,7 @@ async function api(request: Request, url: URL): Promise<Response | null> {
     const directory = url.searchParams.get("directory");
     const cwd = directory ? (isAbsolute(directory) ? directory : resolve(base ?? root, directory)) : base;
     if (!cwd) return Response.json({ error: { code: "pane_not_found", message: "no such pane" } }, { status: 404 });
-    return repoDiffResponse(diff[2] === "files" ? "files" : "file", cwd, url.searchParams);
+    return repoDiffResponse(diff[2] === "repositories" ? "repositories" : diff[2] === "files" ? "files" : "file", cwd, url.searchParams);
   }
   const fs = /^\/api\/(?:machines\/([^/]+)\/)?fs\/(stat|file)$/.exec(url.pathname);
   if (fs) {
@@ -297,7 +306,7 @@ try {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await context.addInitScript((theme) => {
       // once: a reload keeps what the page saved since (the diff layout)
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme }));
+      if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme }));
       const record = window as unknown as { longTasks: number[] };
       record.longTasks = [];
       new PerformanceObserver((list) => { for (const entry of list.getEntries()) record.longTasks.push(entry.duration); }).observe({ type: "longtask" });
@@ -444,7 +453,7 @@ try {
       await page.waitForFunction(() => document.querySelector(".repo-diff diffs-container")?.shadowRoot?.querySelector("pre")?.getAttribute("data-diff-type") === "split");
       const splitRows = await mounted(page);
       assert.ok(splitRows.rows > 0 && splitRows.rows < 600 && splitRows.inView > 0, `${label}: bounded split rows: ${JSON.stringify(splitRows)}`);
-      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).diffStyle), "split", `${label}: the layout is a saved setting`);
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings")!).diffStyle), "split", `${label}: the layout is a saved setting`);
       await shot(page, `split-${width}-${theme}`);
       await page.reload();
       await page.getByRole("dialog", { name: "Changes to big.ts", exact: true }).waitFor();
@@ -589,7 +598,7 @@ try {
     await closeDiff(page);
     await closeFiles(page);
     await openFiles(page, "pane-plain");
-    await page.locator(".repo-changes-error").filter({ hasText: "This folder is not in a git repository." }).waitFor();
+    await page.getByText("No Git repositories found in this folder.", { exact: true }).waitFor();
     await closeFiles(page);
     assert.deepEqual(errors, [], `${label}: no errors at the end`);
     console.log(`PASS ${label}: a conflict, a detached HEAD and a folder outside git are each explained`);
@@ -606,7 +615,7 @@ try {
       await page.evaluate((directory) => window.repoDiffQA.openFiles("local", "pane-nested", directory), workspace);
       await page.evaluate((path) => [...document.querySelectorAll<HTMLButtonElement>(".turn-changed-files button")].find((button) => button.textContent === path)?.click(), path);
       const viewer = page.getByRole("dialog", { name: "external.log", exact: true });
-      await viewer.waitFor();
+      await viewer.getByText("external file content", { exact: true }).waitFor();
       assert.match(await viewer.textContent() ?? "", /external file content/, `${label}: the external file's contents are readable`);
       await shot(page, `external-turn-${path.startsWith("/") ? "absolute" : "relative"}-${width}-${theme}`);
       await page.keyboard.press("Escape");
@@ -617,19 +626,50 @@ try {
     console.log(`PASS ${label}: relative and absolute turn files outside the repository open in the file viewer`);
     await page.evaluate((directory) => window.repoDiffQA.openFiles("local", "pane-plain", directory), repos.plain);
     await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".turn-changed-files button")].find((button) => button.textContent === "../external.log")?.click());
-    await page.getByRole("dialog", { name: "external.log", exact: true }).waitFor();
+    await page.getByRole("dialog", { name: "external.log", exact: true }).getByText("external file content", { exact: true }).waitFor();
     assert.match(await page.getByRole("dialog", { name: "external.log", exact: true }).textContent() ?? "", /external file content/, `${label}: a turn file also opens when the pane has no repository`);
     await page.keyboard.press("Escape");
     await page.getByRole("dialog", { name: "external.log", exact: true }).waitFor({ state: "detached" });
     await closeFiles(page);
     assert.deepEqual(errors, [], `${label}: a non-repository pane opens its file without errors`);
+    // Selecting an independent child must also change the root used by the opened diff.
+    await openFiles(page, "pane-nested");
+    const repositoryPicker = page.getByRole("combobox", { name: "Repository", exact: true });
+    await page.waitForFunction(() => document.querySelectorAll('.repo-changes-picker option').length === 2);
+    assert.deepEqual(await repositoryPicker.locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)), [workspace, backend].sort());
+    await repositoryPicker.selectOption(backend);
+    assert.deepEqual(await changeRows(page), ["M server/test_out_work.py +1−1"], `${label}: child repository's changed file`);
+    await openChange(page, "server/test_out_work.py");
+    await waitRows(page);
+    assert.match(await page.locator(".repo-diff-meta").textContent() ?? "", /Modified.*\+1.*−1/, `${label}: selected child owns the opened patch`);
+    await closeDiff(page);
+    await page.evaluate(() => window.repoDiffQA.settings({ changesChildRepos: false }));
+    await page.waitForFunction(() => document.querySelectorAll('.repo-changes-picker option').length === 1);
+    assert.equal(await repositoryPicker.inputValue(), workspace, `${label}: disabling child discovery selects the containing repository`);
+    await page.evaluate(() => window.repoDiffQA.settings({ changesChildRepos: true, changesRepoDepth: 4 }));
+    await page.waitForFunction(() => document.querySelectorAll('.repo-changes-picker option').length === 2);
+    const bounds = await repositoryPicker.boundingBox();
+    assert.ok(bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= width, `${label}: repository picker fits the viewport`);
+    await shot(page, `repository-picker-${width}-${theme}`);
+    await closeFiles(page);
+    console.log(`PASS ${label}: child discovery toggle, repository selection and child diff ownership`);
+
+    await openFiles(page, "pane-discovery");
+    for (const depth of [1, 2, 3, 4]) {
+      await page.evaluate((changesRepoDepth) => window.repoDiffQA.settings({ changesRepoDepth }), depth);
+      await page.waitForFunction((count) => document.querySelectorAll('.repo-changes-picker option').length === count, depth);
+      assert.deepEqual(await page.locator('.repo-changes-picker option').evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)), deepRoots.slice(0, depth).sort(), `${label}: folder depth ${depth}`);
+    }
+    await closeFiles(page);
+    console.log(`PASS ${label}: all four discovery depths apply to independent repositories`);
+
     await context.close();
   }
 
   // a remote PC's repository reads through its bridge, the file too
   {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark" })));
+    await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: "dark" })));
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(origin);
@@ -640,7 +680,7 @@ try {
     await waitRows(page);
     await page.getByRole("button", { name: "Open file", exact: true }).click();
     await page.getByRole("dialog", { name: "money.ts", exact: true }).waitFor();
-    assert.deepEqual(requests.filter((path) => path.includes("/workspace/diff/")), ["/api/machines/remote-fixture/workspace/diff/files", "/api/machines/remote-fixture/workspace/diff/file"], `remote diff requests: ${requests.join(", ")}`);
+    assert.deepEqual(requests.filter((path) => path.includes("/workspace/diff/")), ["repositories", "files", "file"].map((kind) => `/api/machines/remote-fixture/workspace/diff/${kind}`), `remote diff requests: ${requests.join(", ")}`);
     assert.ok(requests.some((path) => path === "/api/machines/remote-fixture/fs/stat"), `remote file requests: ${requests.join(", ")}`);
     await page.keyboard.press("Escape");
     await page.getByRole("dialog", { name: "money.ts", exact: true }).waitFor({ state: "detached" });
@@ -671,7 +711,7 @@ try {
       return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
     } });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark" })));
+    await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: "dark" })));
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
     const missing: string[] = [];
@@ -697,7 +737,45 @@ try {
     await context.close();
     console.log("PASS the static demo lists its fixture's changes and draws a diff with no missing route");
   }
-  console.log("repository diff: browser OK (list, bounded rows, unified/split, fold, copy, open file, Back/Close/focus, unavailable kinds, staged/commits/errors, remote, demo)");
+  for (const [width, theme] of [[1440, "dark"], [390, "light"]] as const) {
+    const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: width === 390 });
+    await context.addInitScript((theme) => {
+      if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme }));
+    }, theme);
+    const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
+    const openDiscoverySettings = async (): Promise<void> => {
+      await page.locator(".conn-live").waitFor();
+      if (await page.locator(".settings-dialog").count() === 0) await page.keyboard.press("ControlOrMeta+Shift+Comma");
+      await openSettingsPage(page, "Chat");
+      await page.locator('[data-section="changes"]').scrollIntoViewIfNeeded();
+    };
+    await page.goto(`http://127.0.0.1:${demoServer!.port}/herdr-web-ui/demo/app/`);
+    await openDiscoverySettings();
+    const toggle = page.getByRole("switch", { name: "Look for repos inside this folder", exact: true });
+    const depths = page.getByRole("group", { name: "How deep to look", exact: true });
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute("aria-checked"), "true");
+    assert.equal(await depths.getByRole("button", { name: "2", exact: true }).getAttribute("aria-pressed"), "true");
+    await depths.getByRole("button", { name: "4", exact: true }).click();
+    await toggle.click();
+    assert.equal(await depths.count(), 0, "depth is hidden while child discovery is off");
+    await page.reload();
+    await openDiscoverySettings();
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute("aria-checked"), "false", "discovery toggle survives reload");
+    await toggle.click();
+    assert.equal(await depths.getByRole("button", { name: "4", exact: true }).getAttribute("aria-pressed"), "true", "depth survives reload");
+    const overflow = await page.locator('[data-section="changes"]').evaluate((section) => [...section.querySelectorAll<HTMLElement>("button, .settings-row")].some((node) => {
+      const box = node.getBoundingClientRect(), edge = section.getBoundingClientRect();
+      return box.left < edge.left - 1 || box.right > edge.right + 1;
+    }));
+    assert.equal(overflow, false, "repository discovery controls fit the settings card");
+    await shot(page, `discovery-settings-${width}-${theme}`);
+    await context.close();
+    console.log(`PASS ${width}px ${theme}: discovery controls, defaults, persistence and layout in Settings`);
+  }
+  console.log("repository diff: browser OK (discovery/depth, list, bounded rows, unified/split, fold, copy, open file, Back/Close/focus, unavailable kinds, staged/commits/errors, remote, demo)");
 } finally {
   await browser?.close(); server?.stop(true); demoServer?.stop(true); rmSync(root, { recursive: true, force: true });
 }

@@ -29,7 +29,7 @@ const openSettings = async (page: Page): Promise<void> => {
 };
 /** The Settings entry of the current history state, as the app wrote it. */
 const entryOf = (page: Page): Promise<{ page: string | null; keyBar: boolean; depth: number } | null> =>
-  page.evaluate(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] as never ?? null);
+  page.evaluate(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] as never ?? null);
 /** Waits for the history to hold what a step left; a wait that runs out says what it holds instead, and how it came to. */
 const historyHolds = async (page: Page, step: string, holds: () => boolean): Promise<void> => {
   try { await page.waitForFunction(holds); }
@@ -80,7 +80,7 @@ try {
         const context = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, locale: language });
         try {
           await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
-          await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
+          await context.addInitScript((settings) => { if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
@@ -108,9 +108,9 @@ try {
               await page.locator(".voice-key").waitFor();
               const dictation = page.getByLabel(label("Dictation language"), { exact: true });
               await dictation.selectOption("hu-HU");
-              await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).voiceLanguage === "hu-HU");
+              await page.waitForFunction(() => JSON.parse(localStorage.getItem("ovis:settings")!).voiceLanguage === "hu-HU");
               assert.equal(await dictation.inputValue(), "hu-HU");
-              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).language), language,
+              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings")!).language), language,
                 "dictation selection does not change the display language");
               await dictation.selectOption("auto");
             }
@@ -165,8 +165,8 @@ try {
               const drawn = (mode: string, id: string): Promise<unknown> => page.waitForFunction(([mode, id]) => document.documentElement.dataset.theme === mode && document.documentElement.dataset.palette === id && getComputedStyle(document.documentElement).colorScheme === mode, [mode, id]);
               /** The theme keys of the saved record and of the second key old code never touches. */
               const stored = () => page.evaluate(() => {
-                const record = JSON.parse(localStorage.getItem("herdr-web-ui:settings")!) as Record<string, string>;
-                const themes = JSON.parse(localStorage.getItem("herdr-web-ui:themes")!) as Record<string, string>;
+                const record = JSON.parse(localStorage.getItem("ovis:settings")!) as Record<string, string>;
+                const themes = JSON.parse(localStorage.getItem("ovis:themes")!) as Record<string, string>;
                 return { palette: record["palette"], darkTheme: record["darkTheme"], lightTheme: record["lightTheme"], second: { darkTheme: themes["darkTheme"], lightTheme: themes["lightTheme"] } };
               });
               const xtermTokens = (mode: "dark" | "light", id: ThemeId): (readonly [string, string])[] => {
@@ -219,7 +219,7 @@ try {
               await pickers.light.selectOption("tokyo-night");
               await drawn("dark", "tokyo-night");
               assert.deepEqual(await stored(), { palette: "tokyo-night", darkTheme: "tokyo-night", lightTheme: "tokyo-night", second: { darkTheme: "tokyo-night", lightTheme: "tokyo-night" } }, "a dark theme on the light side is kept as chosen");
-              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).theme), "light", "the mode stays Light while the row drawn is dark");
+              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings")!).theme), "light", "the mode stays Light while the row drawn is dark");
               // a side chosen by hand keeps its theme when the other side picks a pair
               await themes.getByRole("button", { name: "Dark", exact: true }).tap();
               await pickers.dark.selectOption("gruvbox");
@@ -243,7 +243,7 @@ try {
             const replies = page.locator(".quick-replies-list li");
             assert.ok(await replies.count() > 0);
             await page.getByRole("button", { name: "Remove quick reply 1", exact: true }).tap();
-            assert.equal(await replies.count(), (JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:settings")!)) as { quickReplies: string[] }).quickReplies.length);
+            assert.equal(await replies.count(), (JSON.parse(await page.evaluate(() => localStorage.getItem("ovis:settings")!)) as { quickReplies: string[] }).quickReplies.length);
             await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();
           }
           assert.deepEqual(errors, []);
@@ -308,7 +308,7 @@ try {
 
       const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
-        await phone.addInitScript((settings) => localStorage.setItem("herdr-web-ui:settings", settings), JSON.stringify(SETTINGS));
+        await phone.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify(SETTINGS));
         // every move of the history, for historyHolds to tell when a step never lands
         await phone.addInitScript(() => {
           const trace: string[] = [];
@@ -370,7 +370,7 @@ try {
         await openSettingsPage(page, "Chat");
         await dialog.getByRole("button", { name: "Back to settings", exact: true }).tap();
         await list.waitFor();
-        await historyHolds(page, "the Back control to the list", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 1);
+        await historyHolds(page, "the Back control to the list", () => (history.state as Record<string, { depth: number }> | null)?.["ovis:settings"]?.depth === 1);
         await page.goBack();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
         console.log("PASS the Back control in the dialog and the system Back button share one history");
@@ -381,11 +381,11 @@ try {
         await dialog.getByRole("button", { name: "Edit key bar", exact: true }).tap();
         await page.getByRole("button", { name: "Close settings", exact: true }).tap();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
-        await historyHolds(page, "the X from the key bar editor", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await historyHolds(page, "the X from the key bar editor", () => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
         // and a new opening starts on the list, with one entry
         await openSettings(page);
         await list.waitFor();
-        await historyHolds(page, "a new opening", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 1);
+        await historyHolds(page, "a new opening", () => (history.state as Record<string, { depth: number }> | null)?.["ovis:settings"]?.depth === 1);
         // a reload keeps the history but not the dialog: its entries are stepped out of. The step lands
         // when the browser gets to it, which on a slow device is after the app has drawn itself from an
         // address that still names Settings: held back until then here, it must not show the dialog
@@ -395,7 +395,7 @@ try {
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
         await page.evaluate(() => (window as unknown as { releaseStepsBack: () => void }).releaseStepsBack());
-        await historyHolds(page, "the reload", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await historyHolds(page, "the reload", () => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload does not reopen Settings");
         assert.equal(await page.evaluate(() => (window as unknown as { settingsShown: boolean }).settingsShown), false, "a reload never shows Settings, however late its step back lands");
         assert.deepEqual(errors, []);
@@ -405,10 +405,10 @@ try {
         // steps back to is the one the link opened, whose address names Settings still
         await page.goto(`${url}?settings=about`);
         await dialog.getByRole("tabpanel", { name: "About", exact: true }).waitFor();
-        await historyHolds(page, "a link to Settings", () => (history.state as Record<string, { page: string; depth: number }> | null)?.["herdr-web-ui:settings"]?.page === "about");
+        await historyHolds(page, "a link to Settings", () => (history.state as Record<string, { page: string; depth: number }> | null)?.["ovis:settings"]?.page === "about");
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
-        await historyHolds(page, "the reload on a linked Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined && !new URLSearchParams(window.location.search).has("settings"));
+        await historyHolds(page, "the reload on a linked Settings", () => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined && !new URLSearchParams(window.location.search).has("settings"));
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload closes the Settings a link opened");
         assert.deepEqual(errors, []);
         console.log("PASS a link to Settings opens it, and a reload there closes it");
@@ -421,7 +421,7 @@ try {
         await openSettingsPage(page, "Terminal");
         await dialog.getByRole("button", { name: "Edit key bar", exact: true }).tap();
         await page.getByRole("dialog", { name: "Key bar", exact: true }).waitFor();
-        await historyHolds(page, "the key bar editor", () => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 3);
+        await historyHolds(page, "the key bar editor", () => (history.state as Record<string, { depth: number }> | null)?.["ovis:settings"]?.depth === 3);
         await page.evaluate(() => { history.pushState({ route: "markerless" }, ""); history.pushState({ route: "after-markerless" }, ""); });
         await page.goBack();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
@@ -433,7 +433,7 @@ try {
         await page.goBack();
         await historyHolds(page, "Back over the buried entries", () => {
           const state = history.state as Record<string, unknown> | null;
-          return state?.["herdr-web-ui:settings"] === undefined && state?.["route"] === undefined;
+          return state?.["ovis:settings"] === undefined && state?.["route"] === undefined;
         });
         assert.equal(await page.locator(".settings-dialog").count(), 0, "Back under an unrelated entry does not reopen Settings");
         assert.equal(await page.evaluate(() => (window as unknown as { settingsShown: boolean }).settingsShown), false, "the buried entries are stepped over without showing Settings");
@@ -446,7 +446,7 @@ try {
       const desktop = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
       try {
         await desktop.addInitScript((settings) => {
-          if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings);
+          if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", settings);
         }, JSON.stringify(SETTINGS));
         const page = await desktop.newPage();
         const errors: string[] = [];
@@ -478,12 +478,12 @@ try {
         await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Light", exact: true }).click();
         await page.waitForFunction(() => document.documentElement.dataset.palette === "dracula" && document.documentElement.dataset.theme === "dark" && getComputedStyle(document.documentElement).colorScheme === "dark");
         assert.equal(await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Light", exact: true }).getAttribute("aria-pressed"), "true");
-        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).theme), "light");
+        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings")!).theme), "light");
         if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "dracula-light-side-1280.png"), animations: "disabled" });
         await page.evaluate(() => {
-          const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings")!);
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, theme: "light", lightTheme: "not-a-theme" }));
-          localStorage.setItem("herdr-web-ui:themes", JSON.stringify({ darkTheme: "vesper", lightTheme: "not-a-theme" }));
+          const settings = JSON.parse(localStorage.getItem("ovis:settings")!);
+          localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, theme: "light", lightTheme: "not-a-theme" }));
+          localStorage.setItem("ovis:themes", JSON.stringify({ darkTheme: "vesper", lightTheme: "not-a-theme" }));
         });
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
@@ -493,7 +493,7 @@ try {
         await openSettings(page);
         // beside the list, turning pages is one step however many are turned
         for (const name of ["Chat", "Shortcuts", "About"]) await openSettingsPage(page, name);
-        await page.waitForFunction(() => (history.state as Record<string, { page: string; depth: number }> | null)?.["herdr-web-ui:settings"]?.page === "about");
+        await page.waitForFunction(() => (history.state as Record<string, { page: string; depth: number }> | null)?.["ovis:settings"]?.page === "about");
         assert.equal((await entryOf(page))?.depth, 1);
         await page.goBack();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
@@ -502,7 +502,7 @@ try {
         await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
         await page.keyboard.press("Escape");
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
-        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
         assert.deepEqual(errors, []);
         console.log("PASS on a desktop Back closes Settings in one step, Forward reopens its page, Escape takes the entry off");
 
@@ -510,7 +510,7 @@ try {
         await openSettings(page);
         await openSettingsPage(page, "Terminal");
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.waitForFunction(() => (history.state as Record<string, { depth: number }> | null)?.["herdr-web-ui:settings"]?.depth === 2);
+        await page.waitForFunction(() => (history.state as Record<string, { depth: number }> | null)?.["ovis:settings"]?.depth === 2);
         await page.goBack();
         await dialogOf(page).getByRole("tablist").waitFor();
         assert.equal(await dialogOf(page).getByRole("tabpanel").count(), 0, "narrowed, Back from the page shows the list");
@@ -522,13 +522,13 @@ try {
         await page.getByRole("dialog", { name: "Key bar", exact: true }).waitFor();
         await page.setViewportSize({ width: 1280, height: 800 });
         // the rebuilt stack, not the step the widening passes through
-        await page.waitForFunction(() => { const entry = (history.state as Record<string, { page: string; keyBar: boolean; depth: number }> | null)?.["herdr-web-ui:settings"]; return entry?.depth === 2 && entry.page === "terminal" && entry.keyBar === true; });
+        await page.waitForFunction(() => { const entry = (history.state as Record<string, { page: string; keyBar: boolean; depth: number }> | null)?.["ovis:settings"]; return entry?.depth === 2 && entry.page === "terminal" && entry.keyBar === true; });
         await page.goBack();
         await dialogOf(page).getByRole("tabpanel", { name: "Terminal", exact: true }).waitFor();
         assert.equal(await page.locator(".key-bar-settings").count(), 0, "widened, Back from the editor shows the Terminal page");
         await page.goBack();
         await page.locator(".settings-dialog").waitFor({ state: "detached" });
-        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await page.waitForFunction(() => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
         assert.deepEqual(errors, []);
         console.log("PASS a window that changes width with Settings open keeps Back to the steps it shows");
 
@@ -538,19 +538,19 @@ try {
         await page.goto(`${url}?ws=${infra.split(":")[0]}&pane=${encodeURIComponent(infra)}&file=README.md&settings=about`);
         await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
         await page.locator("aside.file-panel .file-viewer").waitFor();
-        await historyHolds(page, "a link to a file and Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:file-preview"] !== undefined);
+        await historyHolds(page, "a link to a file and Settings", () => (history.state as Record<string, unknown> | null)?.["ovis:file-preview"] !== undefined);
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
         await page.locator("aside.file-panel .file-viewer").waitFor();
         await historyHolds(page, "the reload on a preview over Settings", () => {
           const address = new URLSearchParams(window.location.search);
-          return address.get("file") === "README.md" && !address.has("settings") && (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined;
+          return address.get("file") === "README.md" && !address.has("settings") && (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined;
         });
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload on a preview over Settings closes Settings");
         assert.equal(await page.locator("aside.file-panel .file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
         await page.goBack();
         await page.locator("aside.file-panel .file-viewer").waitFor({ state: "detached" });
-        await historyHolds(page, "Back from the reloaded preview", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
+        await historyHolds(page, "Back from the reloaded preview", () => (history.state as Record<string, unknown> | null)?.["ovis:settings"] === undefined);
         assert.equal(await page.locator(".settings-dialog").count(), 0, "Back from the reloaded preview does not reopen Settings");
         assert.deepEqual(errors, []);
         console.log("PASS a reload on a preview opened over Settings closes Settings and keeps the file");

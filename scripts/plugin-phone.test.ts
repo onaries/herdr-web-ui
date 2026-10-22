@@ -47,10 +47,10 @@ const serving = (sites: Record<string, string>) => JSON.stringify({
 async function phone(chosen: string | null, before: Record<string, string>, after: Record<string, string> = before) {
   writeFileSync(join(fake, "serve.json"), serving(before));
   writeFileSync(join(fake, "after.json"), serving(after));
-  writeFileSync(join(scratch, "config", "env"), `PORT=${port}\n${chosen === null ? "" : `HERDR_WEB_TAILSCALE_HTTPS_PORT=${chosen}\n`}`);
+  writeFileSync(join(scratch, "config", "env"), `PORT=${port}\n${chosen === null ? "" : `OVIS_TAILSCALE_HTTPS_PORT=${chosen}\n`}`);
   const child = Bun.spawn([process.execPath, "scripts/plugin.ts", "phone"], { cwd: ROOT, windowsHide: true, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: {
     PATH: join(fake, "bin"), HOME: scratch, FAKE_TS: fake, HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT,
-    HERDR_PLUGIN_CONFIG_DIR: join(scratch, "config"), HERDR_PLUGIN_STATE_DIR: join(scratch, "plugin-state"), HERDR_WEB_STATE_DIR: join(scratch, "app-state"),
+    HERDR_PLUGIN_CONFIG_DIR: join(scratch, "config"), HERDR_PLUGIN_STATE_DIR: join(scratch, "plugin-state"), OVIS_STATE_DIR: join(scratch, "app-state"),
   } });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   const callsFile = join(fake, "calls");
@@ -59,7 +59,7 @@ async function phone(chosen: string | null, before: Record<string, string>, afte
 }
 
 describe.skipIf(process.platform === "win32")("the phone step's HTTPS port", () => {
-  it("publishes on the port HERDR_WEB_TAILSCALE_HTTPS_PORT names, leaving 443 alone", async () => {
+  it("publishes on the port OVIS_TAILSCALE_HTTPS_PORT names, leaving 443 alone", async () => {
     const app = `http://127.0.0.1:${port}`;
     const result = await phone("9443", {}, { "9443": app });
     expect(result.code, result.out + result.err).toBe(0);
@@ -72,14 +72,14 @@ describe.skipIf(process.platform === "win32")("the phone step's HTTPS port", () 
     const result = await phone("9443", { "9443": "http://127.0.0.1:8787" });
     expect(result.code, result.out + result.err).toBe(0);
     expect(result.serves).toEqual([]);
-    expect(result.out).toContain("already uses HTTPS port 9443, which HERDR_WEB_TAILSCALE_HTTPS_PORT names");
+    expect(result.out).toContain("already uses HTTPS port 9443, which OVIS_TAILSCALE_HTTPS_PORT names");
   });
 
   it("stops with an error for a value that names no port", async () => {
     const result = await phone("https", {});
     expect(result.code).toBe(1);
     expect(result.serves).toEqual([]);
-    expect(result.out).toContain('HERDR_WEB_TAILSCALE_HTTPS_PORT is "https", which is not a port');
+    expect(result.out).toContain('OVIS_TAILSCALE_HTTPS_PORT is "https", which is not a port');
   });
 
   it("still takes the first free usual port when nothing is chosen", async () => {

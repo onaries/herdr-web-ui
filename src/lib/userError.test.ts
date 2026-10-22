@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { ApiError } from "./api.ts";
+import { ApiError, fetchSession } from "./api.ts";
 import { withChatReadDeadline } from "./chatReadDeadline.ts";
 import { setCurrentLanguage, translate } from "./i18n.ts";
-import { saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
+import { RemoteResponseInvalid, RemoteResponseTooLarge } from "../../server/remote-json.ts";
+import { machineErrorText, saysHerdrAway, userErrorMessage, userFailure } from "./userError.ts";
 
 const api = (status: number, detail = "herdr said no") => new ApiError("/api/x", status, detail, null);
 
@@ -79,6 +80,53 @@ describe("saysHerdrAway", () => {
   it("reads the server's words for a herdr it could not reach, and no other failure", () => {
     expect(saysHerdrAway("cannot reach herdr at /tmp/x/herdr.sock: connect ENOENT /tmp/x/herdr.sock")).toBe(true);
     expect(saysHerdrAway("Disabled in herdr")).toBe(false);
+  });
+});
+
+describe("machineErrorText", () => {
+  const inKorean = (key: string) => translate("ko", key);
+
+  it("shows the server's sentences for an unusable PC answer in the UI language", () => {
+    for (const sentence of [new RemoteResponseTooLarge().message, new RemoteResponseInvalid().message]) {
+      const shown = machineErrorText(sentence, inKorean);
+      expect(shown).toBe(translate("ko", sentence));
+      expect(shown).not.toBe(sentence);
+      expect(machineErrorText(sentence, (key) => translate("en", key))).toBe(sentence);
+    }
+  });
+
+  it("passes any other words through unchanged", () => {
+    expect(machineErrorText("SSH connection ended", inKorean)).toBe("SSH connection ended");
+  });
+});
+
+describe("the PC proxy's unusable-answer errors", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; setCurrentLanguage("en"); });
+  // what server/machine-api.ts answers for another PC's answer it would not pass on
+  const proxied = [
+    { code: "remote_response_too_large", message: new RemoteResponseTooLarge().message },
+    { code: "remote_response_invalid", message: new RemoteResponseInvalid().message },
+  ];
+  const failure = async (error: { code: string; message: string }) => {
+    globalThis.fetch = (async () => Response.json({ error }, { status: 502 })) as unknown as typeof fetch;
+    return await fetchSession("fixture-remote").then(() => null, (cause: unknown) => cause) as ApiError;
+  };
+
+  it("shows their words in the UI language wherever a failure's detail is drawn", async () => {
+    setCurrentLanguage("ko");
+    for (const error of proxied) {
+      const korean = translate("ko", error.message);
+      expect(korean).not.toBe(error.message);
+      const cause = await failure(error);
+      expect(cause).toMatchObject({ status: 502, code: error.code, detail: korean });
+      expect(userErrorMessage(cause).detail).toBe(korean);
+      expect(userFailure(cause).detail).toBe(korean);
+    }
+  });
+
+  it("keeps the server's own sentence in English", async () => {
+    for (const error of proxied) expect((await failure(error)).detail).toBe(error.message);
   });
 });
 

@@ -11,7 +11,7 @@ import { herdrRpc } from "./herdr/client.ts";
  * for an omo pane waiting on the user): arrows move the cursor, Enter picks an option, the last answer
  * opens the review, and Enter there submits. Every answer it takes is logged.
  */
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-omo-prompt-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-omo-prompt-"));
 let server: { port: number; stop: () => void };
 let workspace: string | undefined;
 let pane: string;
@@ -93,7 +93,7 @@ beforeAll(async () => {
   copyFileSync(process.execPath, join(root, "form"));
   chmodSync(join(root, "form"), 0o755);
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-    "workspace.create", { label: "herdr-web-ui-test-omo-prompt", cwd: root, focus: false },
+    "workspace.create", { label: "ovis-test-omo-prompt", cwd: root, focus: false },
   );
   workspace = created.workspace.workspace_id;
   pane = created.root_pane.pane_id;
@@ -153,7 +153,7 @@ describe("slash commands follow the pane's process", () => {
     if (!existsSync(join(root, program))) copyFileSync(process.execPath, join(root, program));
     chmodSync(join(root, program), 0o755);
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: `herdr-web-ui-test-commands-${program}`, cwd: root, focus: false },
+      "workspace.create", { label: `ovis-test-commands-${program}`, cwd: root, focus: false },
     );
     opened.push(created.workspace.workspace_id);
     const watcher = watch(root);

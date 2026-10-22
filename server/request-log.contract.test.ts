@@ -127,7 +127,7 @@ it("records exactly one completion for HTTP responses, early refusals, streams a
     check(await fetch(`${base}/api/devices/pair`, { method: "POST", body: "{}" }), 400);
     check(await fetch(`${base}/api/session`), 401);
     check(await fetch(`${base}/api/preferences`, { method: "PUT", headers: { ...auth, origin: "https://other.example" }, body: "{}" }), 403);
-    check(await fetch(`${base}/api/fs/file?path=/fictional-secret`, { headers: { cookie: `herdr_web_device=${watch.token}` } }), 403);
+    check(await fetch(`${base}/api/fs/file?path=/fictional-secret`, { headers: { cookie: `ovis_device=${watch.token}` } }), 403);
     check(await fetch(`${base}/api/fictional-secret?token=fictional-secret`, { headers: auth }), 404);
     const shell = await fetch(`${base}/`, { headers: { ...auth, "accept-encoding": "identity" } });
     check(shell, 200);

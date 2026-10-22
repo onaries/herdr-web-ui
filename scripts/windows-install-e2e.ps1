@@ -18,9 +18,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$env:HERDR_WEB_NO_OPEN = '1'
+$env:OVIS_NO_OPEN = '1'
 $origin = 'http://127.0.0.1:7317'
-$pluginId = 'devswha.herdr-web-ui'
+$pluginId = 'devswha.ovis'
 # where the official installers put both tools; a terminal opened before them has neither on PATH
 $env:PATH = "$env:USERPROFILE\.bun\bin;$env:LOCALAPPDATA\Programs\Herdr\bin;$env:PATH"
 
@@ -42,7 +42,7 @@ function Find-Plugin {
     (herdr plugin list --json | ConvertFrom-Json).result.plugins | Where-Object { $_.plugin_id -eq $pluginId } | Select-Object -First 1
 }
 function Get-ReleaseTags {
-    $tags = @(git ls-remote --tags --refs 'https://github.com/devswha/herdr-web-ui.git' 'v*' |
+    $tags = @(git ls-remote --tags --refs 'https://github.com/devswha/ovis.git' 'v*' |
         ForEach-Object { if ($_ -match 'refs/tags/(v\d+\.\d+\.\d+)$') { $Matches[1] } } |
         Sort-Object { [version]$_.Substring(1) })
     Assert ($tags.Count -ge 2) 'Could not read the release tags from GitHub'
@@ -50,9 +50,9 @@ function Get-ReleaseTags {
 }
 function Invoke-Installer([string]$InstallRef) {
     if ($Installer -match '^https://') {
-        $env:HERDR_WEB_UI_REF = $InstallRef
+        $env:OVIS_REF = $InstallRef
         try { Invoke-RestMethod $Installer | Invoke-Expression }
-        finally { Remove-Item Env:\HERDR_WEB_UI_REF -ErrorAction SilentlyContinue }
+        finally { Remove-Item Env:\OVIS_REF -ErrorAction SilentlyContinue }
     } else { & $Installer -Ref $InstallRef }
 }
 # $Expected is a full commit or a release tag.
@@ -110,7 +110,10 @@ try {
         $found = Wait-Until { $status = Get-Json '/api/updates'; if ($status.latest_version) { $status } } 90 'the app to find the latest release'
         Assert ($found.available -and "v$($found.latest_version)" -eq $latest) "The app offers $($found.latest_version) (available: $($found.available)), not $latest"
         Write-Host "e2e: updating $expected to $latest"
-        Invoke-WebRequest "$origin/api/updates/install" -Method POST -Headers @{ 'x-herdr-update' = '1' } -UseBasicParsing -TimeoutSec 30 | Out-Null
+        # an install names the release it was offered, as the app's Update does; a release older
+        # than that contract ignores the body
+        $install = @{ expected_revision = $found.latest_revision } | ConvertTo-Json -Compress
+        Invoke-WebRequest "$origin/api/updates/install" -Method POST -Headers @{ 'x-herdr-update' = '1' } -ContentType 'application/json' -Body $install -UseBasicParsing -TimeoutSec 30 | Out-Null
         # the app restarts in the middle of this, so some of these questions go unanswered
         $after = Wait-Until {
             $status = Get-Json '/api/updates'

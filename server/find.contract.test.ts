@@ -19,7 +19,7 @@ describe("POST /api/pane/find", () => {
   beforeAll(async () => {
     stateDir = mkdtempSync(join(tmpdir(), "herdr-find-contract-"));
     server = createServer({ port: 0, stateDir, registerBridge: false });
-    const created = await workspaceCreate({ cwd: stateDir, label: "herdr-web-ui-test-find" });
+    const created = await workspaceCreate({ cwd: stateDir, label: "ovis-test-find" });
     workspaceId = created.workspace.workspace_id;
     paneId = created.root_pane.pane_id;
     // Subscribe before input. The sentinel is assembled at runtime, so the echoed command

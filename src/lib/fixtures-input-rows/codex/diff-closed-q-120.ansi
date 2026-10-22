@@ -1,0 +1,40 @@
+     [0m[2m/tmp/claude-1000/pr2-rec/codex/proj[0m
+[0m[2m  permissions: [0m[1m[38;5;5mYOLO mode[0m
+ 
+[0m[2m• [0mWorking directory changed to: /tmp/claude-1000/pr2-rec/codex/proj
+ 
+[0m[38;5;1m■ '/side' is unavailable until the current conversation has started. Send a message first, then try /side again.[0m
+ 
+[0m[38;5;1m■ '/side' is unavailable until the current conversation has started. Send a message first, then try /side again.[0m
+ 
+[0m[2m• [0mVim mode enabled.
+ 
+[0m[2m• [0mVim mode disabled.
+ 
+[0m[38;5;5m/status[0m
+ 
+  [0m[38;2;99;168;248m>_ [0m[1mOpenAI Codex[0m[2m (v0.163.0)[0m
+ 
+  [0m[38;2;99;168;248mVisit [0m[4m[38;2;99;168;248mhttps://chatgpt.com/settings/usage[0m[38;2;99;168;248m for up-to-date[0m
+  [0m[38;2;99;168;248minformation on rate limits and credits[0m
+ 
+[0m[2m  Server:              [0mLocal background server
+ 
+[0m[2m  Model:               [0mGPT-6-Astra[0m[2m (reasoning medium)[0m
+[0m[2m  Model provider:      [0mopenai
+[0m[2m  Directory:           [0m/tmp/claude-1000/pr2-rec/codex/proj
+[0m[2m  Permissions:         [0mFull Access
+[0m[2m  Agents.md:           [0m<none>
+[0m[2m  Account:             [0muser@example.test (plan 00)
+[0m[2m  Collaboration mode:  [0mDefault
+[0m[2m  Session:             [0m00000000-0000-0000-0000-000000000000
+ 
+[0m[2m  Context window:      [0m100% left[0m[2m (0 used / 1M)[0m
+[0m[2m  Weekly limit:        [0m[░░░░░░░░░░░░░░░░░░░░] 0% left[0m[2m (resets 0:00 AM on 01 Jan)[0m
+[0m[2m  Credits:             [0m00000 credits
+ 
+ 
+[0m[1m›[0m [0m[2mAsk Codex to do anything[0m
+ 
+  [0m[38;2;246;226;183mGPT-6-Astra medium fast[0m · [0m[38;2;143;179;239mmain[0m · [0m[38;2;242;181;144mContext 100% left[0m · [0m[38;2;242;181;144m0 in[0m · [0m[38;2;242;181;144m0 out[0m · [0m[38;2;233;144;169mweekly 0% left[0m
+  [0m[1m←[0m for agents · [0m[1m?[0m for shortcuts                                                              ⚠ [0m[38;2;196;167;103m1 warning[0m · [0m[1mf2[0m to view

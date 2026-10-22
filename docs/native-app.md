@@ -216,7 +216,7 @@ submitted from JavaScript. A QA server must be pointed at a test herdr session o
 `bun run check run … bun run server` is not enough: check.ts drops `HERDR_SOCKET` for its
 tests, and the server then falls back to the default session, the user's. Preloading
 `scripts/test-herdr.ts` (`bun --preload <file that imports it> server/index.ts`, with
-`HERDR_TEST_SESSION` and `HERDR_WEB_STATE_DIR` set) gives the server the test session.
+`HERDR_TEST_SESSION` and `OVIS_STATE_DIR` set) gives the server the test session.
 
 Still open:
 

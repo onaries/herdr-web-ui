@@ -70,7 +70,8 @@ export interface CheckReport {
     unchangedAfterBuild: boolean | null;
     provenance: "built-this-run" | "pre-existing-unknown" | "modified-after-build" | "unknown" | "unavailable";
   };
-  evidence: { logs: string[]; artifacts: string[] };
+  /** retained: isolated state kept, by absolute path, because the run's teardown failed */
+  evidence: { logs: string[]; artifacts: string[]; retained: string[] };
 }
 
 export function createRunId(): string {
@@ -385,6 +386,6 @@ export function initialReport(input: {
       unchangedAfterBuild: null,
       provenance: "unknown",
     },
-    evidence: { logs: input.logPaths, artifacts: [] },
+    evidence: { logs: input.logPaths, artifacts: [], retained: [] },
   };
 }

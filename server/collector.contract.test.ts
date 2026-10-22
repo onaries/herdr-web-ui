@@ -12,7 +12,7 @@ describe("socket lifecycle changes reach WebSocket clients", () => {
   let workspace: Awaited<ReturnType<typeof workspaceCreate>>;
   let ws: WebSocket;
   let movedWorkspace: string | undefined;
-  const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-collector-contract-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-collector-contract-"));
 
   function nextFrame(type: string, matches: (frame: ServerMessage) => boolean = () => true, timeoutMs = 1000): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -32,7 +32,7 @@ describe("socket lifecycle changes reach WebSocket clients", () => {
   }
 
   beforeAll(async () => {
-    workspace = await workspaceCreate({ cwd: stateDir, label: "herdr-web-ui-test-collector-lifecycle" });
+    workspace = await workspaceCreate({ cwd: stateDir, label: "ovis-test-collector-lifecycle" });
     // A single-pane zoom can only change focus, not the layout. Split before
     // starting the app so its lifecycle frame cannot satisfy the zoom matcher.
     await herdrRpc("pane.split", { target_pane_id: workspace.root_pane.pane_id, direction: "right", cwd: stateDir, focus: false });
@@ -76,7 +76,7 @@ describe("socket lifecycle changes reach WebSocket clients", () => {
     await herdrRpc("pane.report_agent", { pane_id: workspace.root_pane.pane_id, source: "manual", agent: "codex", state: "working" });
     await working;
     const { move_result } = await herdrRpc<{ move_result: { changed: boolean; pane: { pane_id: string; workspace_id: string } } }>("pane.move", {
-      pane_id: workspace.root_pane.pane_id, destination: { type: "new_workspace", label: "herdr-web-ui-test-moved-completion" }, focus: false,
+      pane_id: workspace.root_pane.pane_id, destination: { type: "new_workspace", label: "ovis-test-moved-completion" }, focus: false,
     });
     expect(move_result.changed).toBe(true);
     expect(move_result.pane.pane_id).not.toBe(workspace.root_pane.pane_id);
@@ -89,8 +89,8 @@ describe("socket lifecycle changes reach WebSocket clients", () => {
 
 describe("completion replay across a moved subscription key", () => {
   it("replays the finish when a working move overtakes a queued old-ID status event", async () => {
-    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-test-moved-gap-"));
-    const workspace = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-moved-gap" });
+    const root = mkdtempSync(join(tmpdir(), "ovis-test-moved-gap-"));
+    const workspace = await workspaceCreate({ cwd: root, label: "ovis-test-moved-gap" });
     let workspaceId = workspace.workspace.workspace_id;
     const statuses: { paneId: string; before: string | undefined }[] = [];
     await herdrRpc("pane.report_agent", { pane_id: workspace.root_pane.pane_id, source: "manual", agent: "codex", state: "idle" });
@@ -152,7 +152,7 @@ describe("completion replay across a moved subscription key", () => {
       expect(statuses).toEqual([]);
       moving = true;
       const { move_result } = await herdrRpc<{ move_result: { pane: { pane_id: string; workspace_id: string } } }>("pane.move", {
-        pane_id: workspace.root_pane.pane_id, destination: { type: "new_workspace", label: "herdr-web-ui-test-moved-gap" }, focus: false,
+        pane_id: workspace.root_pane.pane_id, destination: { type: "new_workspace", label: "ovis-test-moved-gap" }, focus: false,
       });
       workspaceId = move_result.pane.workspace_id;
       await moved.promise;

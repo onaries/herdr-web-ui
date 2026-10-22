@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { MAX_PREFERENCES_BYTES, normalizeThemeChange, sharedPreferencesBody, type PreferencesChange, type SharedPreferences } from "../shared/preferences.ts";
 import { badRequest, isJsonObject, jsonResponse } from "./http.ts";
+import { damagedCopy, readStateDocument, writeStateDocument } from "./state-document.ts";
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
@@ -20,32 +20,52 @@ export class PreferenceStore {
   private current: SharedPreferences = { revision: 0, settings: {} };
   private readonly path: string;
   private readonly listeners = new Set<(preferences: SharedPreferences) => void>();
+  /** Until this store has replaced the file, a write reads it again first: it may have been damaged or repaired since. */
+  private unsettled = true;
 
   constructor(stateDir: string) {
     this.path = join(stateDir, "preferences.json");
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
-      const body = sharedPreferencesBody(parsed);
-      const revision = isJsonObject(parsed) && Number.isSafeInteger(parsed["revision"]) ? parsed["revision"] as number : 0;
-      if (body !== null) this.current = { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }) };
+      const held = this.readDisk();
+      if (held) this.current = held;
     } catch (error) {
-      // a missing file is a server that has shared nothing yet; a damaged one is replaced by the next write
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.path}; shared preferences start empty`);
+      // a missing file is a server that has shared nothing yet; an unreadable one is not, and is never written over
+      console.error(`Cannot read ${this.path} (${(error as NodeJS.ErrnoException).code ?? "error"}); shared preferences start empty and are not saved until it can be read`);
     }
+  }
+
+  /** The document on disk: undefined when there is none, null when it is damaged. Throws when it cannot be read. */
+  private readDisk(): SharedPreferences | null | undefined {
+    const read = readStateDocument(this.path);
+    if (read.kind === "missing") return undefined;
+    const parsed = read.kind === "json" ? read.value : undefined;
+    const body = sharedPreferencesBody(parsed);
+    if (body === null) {
+      console.error(`${this.path} is ${read.kind === "malformed" ? "not JSON" : "not a preferences document"}; the next change keeps it as ${damagedCopy(this.path)}`);
+      return null;
+    }
+    const revision = isJsonObject(parsed) && Number.isSafeInteger(parsed["revision"]) ? parsed["revision"] as number : 0;
+    return { revision: Math.max(0, revision), settings: body.settings, ...(body.pins === undefined ? {} : { pins: body.pins }) };
   }
 
   get(): SharedPreferences { return this.current; }
 
   set(change: PreferencesChange): SharedPreferences {
-    change = normalizeThemeChange(this.current.settings, change);
-    const pins = change.pins ?? this.current.pins;
-    const next: SharedPreferences = { revision: this.current.revision + 1, settings: { ...this.current.settings, ...change.settings }, ...(pins === undefined ? {} : { pins }) };
+    let base = this.current;
+    let keepDamaged = false;
+    if (this.unsettled) {
+      // the file as it is now, not as it was at start: a repair is kept and the change laid over it
+      const held = this.readDisk();
+      if (held) base = held;
+      keepDamaged = held === null;
+    }
+    change = normalizeThemeChange(base.settings, change);
+    const pins = change.pins ?? base.pins;
+    const next: SharedPreferences = { revision: base.revision + 1, settings: { ...base.settings, ...change.settings }, ...(pins === undefined ? {} : { pins }) };
     const text = `${JSON.stringify(next, null, 2)}\n`;
     if (byteLength(JSON.stringify(next)) > MAX_PREFERENCES_BYTES) throw new PreferencesTooLarge();
-    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(temporary, text, { mode: 0o600 });
-    renameSync(temporary, this.path);
+    writeStateDocument(this.path, text, keepDamaged);
+    this.unsettled = false;
     this.current = next;
     for (const listener of [...this.listeners]) listener(this.current);
     return this.current;

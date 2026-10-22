@@ -12,7 +12,7 @@ import { join, resolve, sep } from "node:path";
 /** The environment variable `isolate` sets to the config directory it made. */
 export const DISPOSABLE_CONFIG_ENV = "HERDR_TEST_DISPOSABLE_CONFIG";
 /** The file `isolate` leaves in that directory. */
-export const DISPOSABLE_CONFIG_FILE = ".herdr-web-ui-check-run";
+export const DISPOSABLE_CONFIG_FILE = ".ovis-check-run";
 
 /**
  * The check run's own config directory when herdr's plugin registry and the socket under test

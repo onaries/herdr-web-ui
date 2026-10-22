@@ -13,7 +13,7 @@ await useTestHerdr();
 const stateDir = mkdtempSync(join(tmpdir(), "herdr-profile-browser-"));
 const evidence = process.env.EVIDENCE_DIR;
 if (evidence) mkdirSync(evidence, { recursive: true });
-const workspace = await workspaceCreate({ label: "herdr-web-ui-test-profile-inheritance", cwd: stateDir, focus: false });
+const workspace = await workspaceCreate({ label: "ovis-test-profile-inheritance", cwd: stateDir, focus: false });
 // Discovery must not connect. Explicit setup uses a closed loopback port, never a user’s machine.
 const profile: HerdrMachineProfile = { id: "browser-fixture", label: "Build machine", enabled: true, target: { destination: "127.0.0.1", port: 1, session: "project-agents" } };
 let profiles = [profile];
@@ -24,7 +24,7 @@ try {
     profiles = [profile];
     const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: phone, hasTouch: phone });
     try {
-      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+      await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));

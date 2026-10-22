@@ -1,0 +1,118 @@
+{
+  "about": "Codex rollout first lines (session_meta) and whether live chat and session history take each as an interactive conversation of its own. See server/fixtures/session-history/README.md for provenance. The token \"{{CWD}}\" (quotes included) stands for the test's cwd.",
+  "parent": "01a0d000-0000-7000-8000-000000000001",
+  "cases": [
+    {
+      "name": "Codex 0.162.1 TUI thread",
+      "provenance": "native: a codex-tui rollout written by Codex 0.162.1 on Linux, sanitized",
+      "file": "rollout-2026-10-20T09-00-01-01a0d000-0000-7000-8000-000000000001.jsonl",
+      "interactive": true,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000001", "id": "01a0d000-0000-7000-8000-000000000001", "timestamp": "2026-10-20T09:00:01.000Z", "cwd": "{{CWD}}", "runtime_workspace_roots": ["{{CWD}}"], "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "user", "model_provider": "openai", "base_instructions": { "text": "Fixture instructions.", "provenance": { "type": "fixture", "model": "fixture" } }, "history_mode": "paginated", "context_window": { "window_id": "01a0d000-0000-7000-8000-0000000000a1" }, "git": {} }
+    },
+    {
+      "name": "Codex 0.163.0 desktop app thread",
+      "provenance": "native: a Codex Desktop rollout written by Codex 0.163.0 (source vscode), sanitized",
+      "file": "rollout-2026-10-20T09-00-02-01a0d000-0000-7000-8000-000000000002.jsonl",
+      "interactive": true,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000002", "id": "01a0d000-0000-7000-8000-000000000002", "timestamp": "2026-10-20T09:00:02.000Z", "cwd": "{{CWD}}", "runtime_workspace_roots": ["{{CWD}}"], "originator": "Codex Desktop", "cli_version": "0.163.0", "source": "vscode", "thread_source": "user", "model_provider": "openai", "base_instructions": { "text": "Fixture instructions.", "provenance": { "type": "fixture", "model": "fixture" } }, "history_mode": "paginated", "context_window": { "window_id": "01a0d000-0000-7000-8000-0000000000a2" }, "git": { "commit_hash": "0000000000000000000000000000000000000000", "branch": "main", "repository_url": "https://example.invalid/fixture.git" } }
+    },
+    {
+      "name": "legacy thread without source, thread_source or session_id",
+      "provenance": "synthetic: the header of a Codex older than thread_source and session_id (openai/codex#29327), as the session history fixtures already had it",
+      "file": "rollout-2026-10-20T09-00-03-01a0d000-0000-7000-8000-000000000003.jsonl",
+      "interactive": true,
+      "payload": { "id": "01a0d000-0000-7000-8000-000000000003", "timestamp": "2026-10-20T09:00:03.000Z", "cwd": "{{CWD}}", "originator": "codex_cli_rs", "cli_version": "0.0.0-fixture" }
+    },
+    {
+      "name": "ids in another letter case than the file name",
+      "provenance": "synthetic: the 0.162.1 shape with an upper-case id",
+      "file": "rollout-2026-10-20T09-00-04-01a0d000-0000-7000-8000-00000000000a.jsonl",
+      "interactive": true,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-00000000000a", "id": "01A0D000-0000-7000-8000-00000000000A", "timestamp": "2026-10-20T09:00:04.000Z", "cwd": "{{CWD}}", "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "user" }
+    },
+    {
+      "name": "null child markers",
+      "provenance": "synthetic: the 0.162.1 shape with parent_thread_id and agent_role written as null",
+      "file": "rollout-2026-10-20T09-00-05-01a0d000-0000-7000-8000-000000000005.jsonl",
+      "interactive": true,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000005", "id": "01a0d000-0000-7000-8000-000000000005", "parent_thread_id": null, "agent_role": null, "timestamp": "2026-10-20T09:00:05.000Z", "cwd": "{{CWD}}", "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "user" }
+    },
+    {
+      "name": "legacy file name without a UUID",
+      "provenance": "synthetic: a rollout under a name Codex does not write, with nothing to contradict its id",
+      "file": "rollout-legacy-fixture.jsonl",
+      "interactive": true,
+      "payload": { "id": "01a0d000-0000-7000-8000-000000000006", "timestamp": "2026-10-20T09:00:06.000Z", "cwd": "{{CWD}}", "originator": "codex_cli_rs", "cli_version": "0.0.0-fixture", "source": "cli" }
+    },
+    {
+      "name": "Codex 0.163.0 subagent whose id matches its file",
+      "provenance": "native: a subagent rollout written by Codex 0.163.0 (Codex Desktop), sanitized; its session_id is the parent's",
+      "file": "rollout-2026-10-20T09-00-07-01a0d000-0000-7000-8000-000000000007.jsonl",
+      "interactive": false,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000001", "id": "01a0d000-0000-7000-8000-000000000007", "forked_from_id": "01a0d000-0000-7000-8000-000000000001", "parent_thread_id": "01a0d000-0000-7000-8000-000000000001", "timestamp": "2026-10-20T09:00:07.000Z", "cwd": "{{CWD}}", "runtime_workspace_roots": ["{{CWD}}"], "originator": "Codex Desktop", "cli_version": "0.163.0", "source": { "subagent": { "thread_spawn": { "parent_thread_id": "01a0d000-0000-7000-8000-000000000001", "depth": 1, "agent_path": "/root/fixture", "agent_nickname": "Fixture", "agent_role": null } } }, "thread_source": "subagent", "agent_nickname": "Fixture", "agent_path": "/root/fixture", "model_provider": "openai", "history_mode": "paginated", "subagent_history_start_ordinal": 3, "multi_agent_version": "fixture" }
+    },
+    {
+      "name": "self-consistent child with only parent_thread_id",
+      "provenance": "synthetic: the 0.162.1 shape, id and session_id equal to the file, with a parent",
+      "file": "rollout-2026-10-20T09-00-08-01a0d000-0000-7000-8000-000000000008.jsonl",
+      "interactive": false,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000008", "id": "01a0d000-0000-7000-8000-000000000008", "parent_thread_id": "01a0d000-0000-7000-8000-000000000001", "timestamp": "2026-10-20T09:00:08.000Z", "cwd": "{{CWD}}", "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "user" }
+    },
+    {
+      "name": "child with only agent_role",
+      "provenance": "synthetic: the legacy shape with an agent_role",
+      "file": "rollout-2026-10-20T09-00-09-01a0d000-0000-7000-8000-000000000009.jsonl",
+      "interactive": false,
+      "payload": { "id": "01a0d000-0000-7000-8000-000000000009", "agent_role": "worker", "timestamp": "2026-10-20T09:00:09.000Z", "cwd": "{{CWD}}", "originator": "codex_cli_rs", "cli_version": "0.0.0-fixture", "source": "vscode" }
+    },
+    {
+      "name": "child with thread_source subagent and a string source",
+      "provenance": "synthetic: the 0.162.1 shape with thread_source subagent",
+      "file": "rollout-2026-10-20T09-00-10-01a0d000-0000-7000-8000-000000000010.jsonl",
+      "interactive": false,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000010", "id": "01a0d000-0000-7000-8000-000000000010", "timestamp": "2026-10-20T09:00:10.000Z", "cwd": "{{CWD}}", "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "subagent" }
+    },
+    {
+      "name": "Codex 0.163.0 exec run",
+      "provenance": "native: a codex_exec rollout written by Codex 0.163.0, sanitized",
+      "file": "rollout-2026-10-20T09-00-11-01a0d000-0000-7000-8000-000000000011.jsonl",
+      "interactive": false,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000011", "id": "01a0d000-0000-7000-8000-000000000011", "timestamp": "2026-10-20T09:00:11.000Z", "cwd": "{{CWD}}", "originator": "codex_exec", "cli_version": "0.163.0", "source": "exec", "thread_source": "user", "model_provider": "openai", "history_mode": "paginated" }
+    },
+    {
+      "name": "id contradicting the file name",
+      "provenance": "synthetic: the 0.162.1 shape, both ids naming another thread",
+      "file": "rollout-2026-10-20T09-00-12-01a0d000-0000-7000-8000-000000000012.jsonl",
+      "interactive": false,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000099", "id": "01a0d000-0000-7000-8000-000000000099", "timestamp": "2026-10-20T09:00:12.000Z", "cwd": "{{CWD}}", "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "user" }
+    },
+    {
+      "name": "session_id contradicting the file name and id",
+      "provenance": "synthetic: the 0.162.1 shape, a child's session_id without its other markers",
+      "file": "rollout-2026-10-20T09-00-13-01a0d000-0000-7000-8000-000000000013.jsonl",
+      "interactive": false,
+      "payload": { "session_id": "01a0d000-0000-7000-8000-000000000001", "id": "01a0d000-0000-7000-8000-000000000013", "timestamp": "2026-10-20T09:00:13.000Z", "cwd": "{{CWD}}", "originator": "codex-tui", "cli_version": "0.162.1", "source": "cli", "thread_source": "user" }
+    },
+    {
+      "name": "id that is not a string",
+      "provenance": "synthetic: malformed",
+      "file": "rollout-2026-10-20T09-00-14-01a0d000-0000-7000-8000-000000000014.jsonl",
+      "interactive": false,
+      "payload": { "id": 14, "timestamp": "2026-10-20T09:00:14.000Z", "cwd": "{{CWD}}", "originator": "codex_cli_rs", "cli_version": "0.0.0-fixture", "source": "cli" }
+    },
+    {
+      "name": "id that is not a UUID beside a canonical name",
+      "provenance": "synthetic: malformed",
+      "file": "rollout-2026-10-20T09-00-15-01a0d000-0000-7000-8000-000000000015.jsonl",
+      "interactive": false,
+      "payload": { "id": "not-a-thread", "timestamp": "2026-10-20T09:00:15.000Z", "cwd": "{{CWD}}", "originator": "codex_cli_rs", "cli_version": "0.0.0-fixture", "source": "cli" }
+    },
+    {
+      "name": "source that is neither a string nor an object",
+      "provenance": "synthetic: malformed",
+      "file": "rollout-2026-10-20T09-00-16-01a0d000-0000-7000-8000-000000000016.jsonl",
+      "interactive": false,
+      "payload": { "id": "01a0d000-0000-7000-8000-000000000016", "timestamp": "2026-10-20T09:00:16.000Z", "cwd": "{{CWD}}", "originator": "codex_cli_rs", "cli_version": "0.0.0-fixture", "source": 1 }
+    }
+  ]
+}

@@ -19,7 +19,7 @@ describe("panelUrl", () => {
   });
 
   it("leaves every other host to a tab", () => {
-    expect(panelUrl("https://github.com/devswha/herdr-web-ui", lan)).toBeNull();
+    expect(panelUrl("https://github.com/devswha/ovis", lan)).toBeNull();
     expect(panelUrl("http://192.168.0.10:5173/", lan)).toBeNull();
     expect(panelUrl("http://localhost.example.com:5173/", lan)).toBeNull();
   });

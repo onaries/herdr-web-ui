@@ -58,7 +58,7 @@ try {
     try {
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
       await context.addInitScript((paneMenuSelector) => {
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", terminalInputMode: "line", alertsOn: false }));
+        localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", terminalInputMode: "line", alertsOn: false }));
         const name = (node: EventTarget | null): string => node instanceof Element
           ? node.tagName.toLowerCase() + (typeof node.className === "string" && node.className ? `.${node.className.split(" ")[0]}` : "") : String(node);
         window.__contextmenus = [];

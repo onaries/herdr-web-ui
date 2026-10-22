@@ -32,13 +32,31 @@ Cloudflare Pages serves it, connected to this repository:
 A push to `main` that touches `ovis-site/` deploys the site, and a pull request touching it gets a
 preview address. Cloudflare serves `404.html` for a missing page and `/privacy` at `/privacy/`.
 
+## For search and answer engines
+
+- `_headers` (Cloudflare's [headers file](https://developers.cloudflare.com/pages/configuration/headers/),
+  not served) sends `X-Robots-Tag: noindex` for `ovis.pages.dev`, every preview at
+  `<branch>.ovis.pages.dev` and `/README.md`, so ovis.sh is the copy search engines keep.
+- The home page's `<head>` carries JSON-LD: the site, its maker, the app and its FAQ. The FAQ
+  part repeats the visible FAQ word for word, minus the questions the test lists in `LEFT_OUT`;
+  change both together. It states only what the repo does: no ratings, versions or dates.
+- `llms.txt` ([llmstxt.org](https://llmstxt.org/)) tells answer engines what Ovis is, how to
+  install it and where the docs are, and what it is not. Its facts come from the README and
+  docs/guide.md; change it with them.
+- The home page's title and description are translated in `#i18n-data` like the rest of the
+  page, under their English text. `sitemap.xml` lists every indexable page with its language
+  pair.
+- `scripts/ovis-site.test.ts` (Fast checks) keeps all of this true: canonicals, hreflang pairs,
+  the sitemap, title and description lengths, the JSON-LD against the FAQ, the translations,
+  llms.txt's links and the noindex rules. Each failure says what to change.
+
 ## Keep in step with the app
 
 - The privacy policy states what the app keeps (the saved PC addresses and each PC's sign-in
-  cookie), that the camera only reads the pairing QR code, and what herdr web UI's anonymous usage
+  cookie), that the camera only reads the pairing QR code, and what the Ovis server's anonymous usage
   counts hold (docs/guide.md, "Anonymous usage counts"). Change it, and its date, in both
   languages when any of those changes, before the release that changes them.
-- The support page names app labels (**Scan QR code**, **Forget**, **Change PC**) and web UI
+- The support page names app labels (**Scan QR code**, **Forget**, **Change PC**) and Ovis server
   settings (**Settings → Phone & devices**, **Settings → About**); keep them matching the app.
 - The screenshots in `assets/demo/` come from the demo build (`bun scripts/demo-build.ts <dir>`),
   never from a real session: English, light and dark theme, desktop at 1440×900 and phone at

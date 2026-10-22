@@ -9,7 +9,7 @@ import { chromePath } from "./chrome-path.ts";
 
 /** The viewer alone with its source CSS, at phone sizes: the dialog fits, a long name is cut in its stem, no control is covered. */
 async function checkLayout(): Promise<void> {
-  const fixture = mkdtempSync(join(tmpdir(), "herdr-web-ui-viewer-layout-"));
+  const fixture = mkdtempSync(join(tmpdir(), "ovis-viewer-layout-"));
   const repo = join(import.meta.dir, "..");
   const sharedCss = readFileSync(join(repo, "src/styles.css"), "utf8");
   const viewerCss = readFileSync(process.env.FILE_VIEWER_CSS ?? join(repo, "src/components/FileViewer.css"), "utf8");
@@ -173,7 +173,7 @@ async function checkLayout(): Promise<void> {
     // name, Copy and More (new tab, download) and Close in its corner, all inside the dialog.
     for (const [width, height, theme] of [[390, 844, "dark"], [390, 844, "light"], [844, 390, "dark"], [844, 390, "light"]] as const) {
     const phone = await browser.newContext({ viewport: { width, height }, isMobile: true, hasTouch: true, locale: "en-US", colorScheme: theme });
-    await phone.addInitScript((theme) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ theme, language: "en" })), theme);
+    await phone.addInitScript((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ theme, language: "en" })), theme);
     try {
       const page = await phone.newPage();
       const errors: string[] = [];

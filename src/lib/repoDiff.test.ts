@@ -68,17 +68,17 @@ describe("repository diff history entry", () => {
   const target: RepoDiffTarget = { machineId: "local", paneId: "p1", directory: null, scope: "commit", base: "a".repeat(40), head: "b".repeat(40), path: "src/a.ts", oldPath: "src/old.ts" };
 
   it("keeps the entry's other data and reads its own back", () => {
-    const state = diffTargetState({ "herdr-web-ui:file-preview": { path: "x" } }, target);
-    expect(state["herdr-web-ui:file-preview"]).toEqual({ path: "x" });
+    const state = diffTargetState({ "ovis:file-preview": { path: "x" } }, target);
+    expect(state["ovis:file-preview"]).toEqual({ path: "x" });
     expect(diffTargetFromState(state)).toEqual(target);
   });
 
   it("ignores an entry of another shape", () => {
     expect(diffTargetFromState(null)).toBeNull();
     expect(diffTargetFromState({})).toBeNull();
-    expect(diffTargetFromState({ "herdr-web-ui:repo-diff": { machineId: "local", path: "a", scope: "branches" } })).toBeNull();
-    expect(diffTargetFromState({ "herdr-web-ui:repo-diff": { ...target, paneId: 7 } })).toBeNull();
-    expect(diffTargetFromState({ "herdr-web-ui:repo-diff": { ...target, path: undefined } })).toBeNull();
+    expect(diffTargetFromState({ "ovis:repo-diff": { machineId: "local", path: "a", scope: "branches" } })).toBeNull();
+    expect(diffTargetFromState({ "ovis:repo-diff": { ...target, paneId: 7 } })).toBeNull();
+    expect(diffTargetFromState({ "ovis:repo-diff": { ...target, path: undefined } })).toBeNull();
   });
 
   it("releases only the diff when another viewer takes its entry", () => {

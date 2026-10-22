@@ -8,7 +8,7 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
 
 // Real herdr metadata + HTTP + native files, all under an owned workspace/store.
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-contract-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-codex-contract-"));
 const codexHome = join(root, "codex");
 const rollout = join(codexHome, "sessions", "rollout.jsonl");
 const answerPrefix = "The native Codex conversation now preserves the actual user request and final response while removing internal instructions. ";
@@ -29,7 +29,7 @@ beforeAll(async () => {
   db.exec("CREATE TABLE threads (rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, updated_at INTEGER)");
   db.query("INSERT INTO threads VALUES (?, ?, 0, NULL, 1)").run(rollout, root);
   db.close();
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-codex-contract" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-codex-contract" });
   workspaceId = created.workspace.workspace_id;
   paneId = created.root_pane.pane_id;
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "idle", agent_session_path: rollout });

@@ -10,7 +10,7 @@ export function setTerminalDraftSending(owner: string, value: boolean): void {
   notify();
 }
 const memory = new Map<string, string>();
-const PREFIX = "herdr-web-ui:terminal-line:";
+const PREFIX = "ovis:terminal-line:";
 export const TERMINAL_LINE_LIMIT = 32_768;
 export function readTerminalDraft(owner: string): string {
   if (memory.has(owner)) return memory.get(owner)!;

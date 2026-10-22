@@ -46,8 +46,9 @@ try {
   const url = (pane: string): string => `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(pane)}`;
   mkdirSync(evidence, { recursive: true });
 
-  /** The chat lens over one pane: a pane switched away from keeps a hidden frame, so the owner tells them apart. */
-  const chatStack = (page: Page, pane: string): Locator => page.locator(`.terminal-stack.is-chat[data-pane-owner="${pane}"]`);
+  /** The chat lens over one pane: a pane switched away from keeps a hidden frame, so the owner tells them apart. A terminal command's peek shows the grid over it. */
+  const chatStack = (page: Page, pane: string): Locator => page.locator(`.terminal-stack.is-chat:not(.is-peek)[data-pane-owner="${pane}"]`);
+  const peekStack = (page: Page, pane: string): Locator => page.locator(`.terminal-stack.is-chat.is-peek[data-pane-owner="${pane}"]`);
   /** The pane's chat log, once the chat lens shows it; the sidebar's row names its pane first. */
   const chatOf = async (page: Page, pane: string): Promise<Locator> => {
     const row = page.locator(`.pane-select[title^="${pane} —"]`).first();
@@ -74,8 +75,8 @@ try {
     const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 800 }, hasTouch: touch, isMobile: touch, colorScheme: scheme, locale: "en-US" });
     try {
       await context.addInitScript((theme) => {
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme }));
-        for (const pane of ["w1H:p1", "w1D:p1", "w1K:p1"]) localStorage.setItem(`herdr-web-ui:view:${pane}`, "chat");
+        localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme }));
+        for (const pane of ["w1H:p1", "w1D:p1", "w1K:p1"]) localStorage.setItem(`ovis:view:${pane}`, "chat");
       }, scheme);
       const page = await context.newPage();
       const errors: string[] = [];
@@ -116,56 +117,54 @@ try {
           await page.screenshot({ path: shot("context-done"), animations: "disabled" });
           console.log(`PASS ${label}: /context shows accepted, then done on the transcript, on one bubble`);
 
-          // failure: /btw is answered on the screen alone: the composer offers the terminal, Run in
-          // Terminal sends it, and back in the chat its sent row says so and never turns done
+          // /btw is answered on the screen alone: one send opens a peek of the terminal over the
+          // chat, and returning leaves one quiet command row, without an outcome chip or an
+          // unconfirmed screen preview.
           await send(page, "/btw is the retry test flaky on CI too?");
-          await page.getByRole("button", { name: "Run in Terminal", exact: true }).click();
-          await chatStack(page, panes.flaky).waitFor({ state: "detached" });
-          const back = await chatOf(page, panes.flaky);
-          const btw = chipFor(back, "/btw is the retry test flaky");
-          await btw.and(page.locator('[data-outcome-state="terminal-required"]')).waitFor();
-          assert.equal(await back.locator(".chat-turn-sent").count(), 1, "the send has a row of its own: the transcript holds no turn for it");
-          assert.equal(await back.locator(".chat-turn-user:not(.chat-turn-sent)").count(), turnsBefore + 1, "the transcript stays as it was after /context");
-          assert.equal(await btw.locator(".chat-outcome-state").innerText(), "Runs in the terminal");
-          const preview = btw.locator(".chat-outcome-preview");
-          await preview.waitFor();
-          assert.match(await preview.locator("summary").innerText(), /^Terminal output changed after \/btw, not confirmed$/);
-          assert.equal(await preview.getAttribute("open"), null, "the preview starts folded");
-          await preview.locator("summary").click();
-          await preview.locator(".chat-outcome-preview-text").waitFor();
-          const lines = await preview.locator(".chat-outcome-preview-text").evaluate((node) => node.textContent?.split("\n").length ?? 0);
-          assert.ok(lines >= 3, `the preview keeps its line breaks (${lines} lines)`);
-          assert.equal(await preview.locator(".chat-outcome-preview-text").evaluate((node) => getComputedStyle(node).whiteSpace), "pre-wrap");
-          // opened at the transcript's end, the screen text is brought into view above the input card, not left under it
-          await page.waitForFunction(() => {
-            const text = document.querySelector(".chat-outcome-preview-text");
-            const composer = document.querySelector(".terminal-stack.is-chat .composer");
-            return text !== null && composer !== null && text.getBoundingClientRect().bottom <= composer.getBoundingClientRect().top + 1;
-          }, undefined, { timeout: 5_000 });
+          await peekStack(page, panes.flaky).waitFor();
+          await page.locator(".terminal-banner-command").waitFor();
           await page.screenshot({ path: shot("btw-terminal"), animations: "disabled" });
-          // the demo's answer window has passed (the /context send above went done in it): still not done
+          await page.getByRole("button", { name: "Back to Chat", exact: true }).click();
+          const back = await chatOf(page, panes.flaky);
+          const btw = back.locator(".chat-terminal-command", { hasText: "/btw" });
+          await btw.waitFor();
+          assert.equal(await btw.count(), 1);
+          assert.equal(await btw.locator(".chat-outcome, .chat-bubble, details").count(), 0);
+          assert.equal(await back.locator(".chat-turn-user:not(.chat-terminal-command)").count(), turnsBefore + 1);
+          await page.screenshot({ path: shot("btw-returned"), animations: "disabled" });
+          // the answer is still open in the terminal, where the next message would be typed and do
+          // nothing: the composer says so (src/lib/inputRow.ts), and dismissing it there clears that
+          const stillOpen = chatStack(page, panes.flaky).locator(".composer-notice", { hasText: "/btw is still open in the terminal" });
+          await stillOpen.waitFor();
+          await stillOpen.getByRole("button", { name: "Show terminal", exact: true }).click();
+          await peekStack(page, panes.flaky).waitFor();
+          if (width <= 480) {
+            const escape = page.locator(`.terminal-stack[data-pane-owner="${panes.flaky}"] .key-bar .key[data-key="Escape"]`);
+            await page.waitForFunction((pane) => document.querySelector<HTMLButtonElement>(`.terminal-stack[data-pane-owner="${pane}"] .key-bar .key[data-key="Escape"]`)?.disabled === false, panes.flaky);
+            await escape.click();
+          } else {
+            await page.waitForFunction(() => document.activeElement?.classList.contains("xterm-helper-textarea") === true);
+            await page.keyboard.press("Escape");
+          }
+          await page.getByRole("button", { name: "Back to Chat", exact: true }).click();
+          await chatStack(page, panes.flaky).waitFor();
+          await page.locator(".composer-notice", { hasText: "is still open in the terminal" }).waitFor({ state: "detached" });
           await send(page, "and one more question for the transcript");
           await back.locator(".chat-bubble-body", { hasText: "and one more question for the transcript" }).waitFor();
           await back.locator(".chat-turn-agent").last().getByText("This is the demo, so nothing ran", { exact: false }).waitFor();
-          assert.equal(await btw.getAttribute("data-outcome-state"), "terminal-required", "a typed-only command is never done");
-          assert.equal(await back.locator(".chat-turn-sent").count(), 1, "and its row stays where it was sent");
-          console.log(`PASS ${label}: /btw keeps its sent row with Runs in the terminal, a folded preview with line breaks, and is never done`);
+          assert.equal(await btw.locator(".chat-outcome, details").count(), 0, "later preview updates cannot restore outcome UI");
+          console.log(`PASS ${label}: /btw opens a peek and keeps one quiet row without outcome UI`);
 
           if (!(width <= 480)) {
-            // keyboard: from the row's copy button, Tab reaches Open Terminal, then the preview's summary
-            await back.locator(".chat-turn-sent .chat-copy").focus();
-            await page.keyboard.press("Tab");
-            assert.equal(await page.evaluate(() => document.activeElement?.className), "chat-outcome-action", "Tab from the row reaches Open Terminal");
-            await page.keyboard.press("Tab");
-            assert.equal(await page.evaluate(() => document.activeElement?.tagName), "SUMMARY", "then the preview's summary");
+            await btw.getByRole("button", { name: "Open Terminal", exact: true }).focus();
             await page.keyboard.press("Enter");
-            await preview.locator(".chat-outcome-preview-text").waitFor({ state: "hidden" });
-            // Open Terminal from the chip shows the terminal and sends nothing
-            await btw.getByRole("button", { name: "Open Terminal", exact: true }).click();
-            await chatStack(page, panes.flaky).waitFor({ state: "detached" });
+            await peekStack(page, panes.flaky).waitFor();
+            await page.locator(".terminal-banner-command").getByText("/btw ran", { exact: true }).waitFor();
+            assert.equal(await page.locator(".terminal-banner-command").getByText("Chat may come back when you close it", { exact: true }).count(), 0, "a row's peek is ended by hand");
+            await page.getByRole("button", { name: "Back to Chat", exact: true }).click();
             const again = await chatOf(page, panes.flaky);
-            assert.equal(await again.locator(".chat-turn-sent").count(), 1);
-            console.log(`PASS ${label}: the chip's controls are reached by Tab, and Open Terminal switches the lens`);
+            assert.equal(await again.locator(".chat-terminal-command").count(), 1);
+            console.log(`PASS ${label}: the row's keyboard action opens a peek that Back to Chat ends`);
           }
 
           // an inline $review to the Codex pane, once its approval card is answered, shows its chip
@@ -193,6 +192,20 @@ try {
           assert.equal(await pi.locator(".chat-bubble-body", { hasText: "/myext run" }).count(), 1);
           await page.screenshot({ path: shot("myext-unknown"), animations: "disabled" });
           console.log(`PASS ${label}: an unlisted /myext run to the pi pane shows the unknown chip`);
+
+          // Hermes' registered informational reader still renders the actual result, not a
+          // terminal-only receipt. Dismiss affects this card alone and never sends input.
+          const hermes = await chatOf(page, panes.hermes);
+          await send(page, "/status");
+          const result = hermes.locator(".chat-outcome-result");
+          await result.waitFor();
+          assert.ok((await result.locator("pre").textContent())?.includes("Session"));
+          assert.equal(await hermes.locator(".chat-terminal-command").count(), 0);
+          assert.equal(await chatStack(page, panes.hermes).count(), 1);
+          await page.screenshot({ path: shot("hermes-result"), animations: "disabled" });
+          await result.getByRole("button", { name: "Dismiss", exact: true }).click();
+          await result.waitFor({ state: "detached" });
+          console.log(`PASS ${label}: Hermes informational result cards stay in Chat and dismiss normally`);
         });
       } catch (error) {
         failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);

@@ -9,7 +9,8 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { MAX_LABEL_CHARS } from "../shared/labels.ts";
 import { firstMessageFault } from "../shared/launch-rules.ts";
-import type { DirectoryCreated, PendingMessage, ServerMessage, TabMoved } from "../shared/protocol.ts";
+import type { DirectoryCreated, PendingMessage, ServerMessage, TabMoved, WorkspaceMoved } from "../shared/protocol.ts";
+import type { MoveReceipt } from "./order-sequence.ts";
 import { agentFault, agentLaunch, type AgentPayload } from "./agent-launch.ts";
 import { createDirectory, listDirectories } from "./directories.ts";
 import { HerdrError, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceMove, workspaceRename, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "./herdr/client.ts";
@@ -35,7 +36,9 @@ const notQueued = (error: unknown): { error: { code: string; message: string } }
 
 /** The answer for a workspace route, or null when the path is not one. */
 export async function handleWorkspaceRequest(request: Request, url: URL, pathname: string, bunServer: Pick<Server<unknown>, "timeout">, broadcastAll: (message: ServerMessage) => void,
-  queueFirstMessage: (paneId: string, text: string, kind: string, requester: string | null, launchedPid: number | null) => Promise<PendingMessage>): Promise<Response | null> {
+  queueFirstMessage: (paneId: string, text: string, kind: string, requester: string | null, launchedPid: number | null) => Promise<PendingMessage>,
+  /** a move herdr confirmed: its receipt in this server's order (server/order-sequence.ts), taken at once */
+  workspaceMoved: () => MoveReceipt): Promise<Response | null> {
   if (pathname === "/api/workspace/directories" && request.method === "POST") {
     setRequestRoute(pathname);
     let payload: unknown;
@@ -67,7 +70,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
   }
 
-  if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file") {
+  if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/repositories") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     // file contents, like /api/fs/file: this app reads them, another site's page does not
@@ -89,7 +92,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
     }
     if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
-    return repoDiffResponse(pathname.endsWith("/files") ? "files" : "file", cwd, url.searchParams);
+    return repoDiffResponse(pathname.endsWith("/repositories") ? "repositories" : pathname.endsWith("/files") ? "files" : "file", cwd, url.searchParams);
   }
 
   // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and
@@ -291,8 +294,10 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     }
     try {
       if (pathname === "/api/workspace/rename") await workspaceRename(payload.workspace_id, payload.label as string);
-      else if (pathname === "/api/workspace/move") await workspaceMove(payload.workspace_id, payload.insert_index as number);
-      else await workspaceClose(payload.workspace_id, undefined, payload.close_group === true);
+      else if (pathname === "/api/workspace/move") {
+        await workspaceMove(payload.workspace_id, payload.insert_index as number);
+        return jsonResponse({ ok: true, ...workspaceMoved() } satisfies WorkspaceMoved);
+      } else await workspaceClose(payload.workspace_id, undefined, payload.close_group === true);
       // a closed workspace's panes send no exit: without this, clients learn of it only after
       // the collector's structure debounce, and the closed workspace stays on screen meanwhile
       if (pathname === "/api/workspace/close") broadcastAll({ type: "session-changed" });

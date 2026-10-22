@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { acquire, acquireWaiting, checkoutIdentity, describeHolders, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, waitSeconds } from "./check.ts";
+import { acquire, acquireWaiting, checkoutIdentity, describeGroup, describeHolders, endGroup, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, stopSessions, teardown, waitSeconds } from "./check.ts";
 
 const made: string[] = [];
 afterEach(() => { for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -80,7 +81,7 @@ describe("isolate", () => {
     try {
       expect(first.env["PATH"]).toBe("/bin");
       expect(first.env["XDG_CONFIG_HOME"]).not.toBe("/home/someone/.config");
-      for (const name of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "HERDR_WEB_STATE_DIR"]) {
+      for (const name of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "OVIS_STATE_DIR"]) {
         expect(existsSync(first.env[name]!)).toBe(true);
         expect(first.env[name]).not.toBe(second.env[name]);
       }
@@ -88,7 +89,7 @@ describe("isolate", () => {
       expect(first.env["HERDR_TEST_SESSION"]).toMatch(/^check-[0-9a-f]{6}$/);
       expect(first.env["HERDR_TEST_SESSION"]).not.toBe(second.env["HERDR_TEST_SESSION"]);
       if (process.platform !== "win32") {
-        for (const name of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "HERDR_WEB_STATE_DIR"]) expect(statSync(first.env[name]!).mode & 0o777).toBe(0o700);
+        for (const name of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "OVIS_STATE_DIR"]) expect(statSync(first.env[name]!).mode & 0o777).toBe(0o700);
       }
       // one integration file at a time unless asked otherwise
       expect(first.env["HERDR_TEST_SHARDS"]).toBe("1");
@@ -115,8 +116,8 @@ describe("isolate", () => {
   it("refuses to run in the herdr the user works in, and hands on nothing that names it", () => {
     expect(() => isolate({ HERDR_TEST_LIVE: "1" }, scratch())).toThrow("HERDR_TEST_LIVE");
     // as a shell inside one of the user's panes has them
-    const { env } = isolate({ HERDR_SOCKET: "/live.sock", HERDR_SOCKET_PATH: "/live.sock", HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_TAB_ID: "w1:t1", HERDR_WORKSPACE_ID: "w1", HERDR_WEB_HERDR_BIN: "/bin/herdr" }, scratch());
-    expect(Object.keys(env).filter((name) => name.startsWith("HERDR_")).sort()).toEqual(["HERDR_TEST_DISPOSABLE_CONFIG", "HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "HERDR_WEB_HERDR_BIN", "HERDR_WEB_STATE_DIR"]);
+    const { env } = isolate({ HERDR_SOCKET: "/live.sock", HERDR_SOCKET_PATH: "/live.sock", HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_TAB_ID: "w1:t1", HERDR_WORKSPACE_ID: "w1", OVIS_HERDR_BIN: "/bin/herdr" }, scratch());
+    expect(Object.keys(env).filter((name) => name.startsWith("HERDR_") || name.startsWith("OVIS_")).sort()).toEqual(["HERDR_TEST_DISPOSABLE_CONFIG", "HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "OVIS_HERDR_BIN", "OVIS_STATE_DIR"]);
   });
 });
 
@@ -493,6 +494,440 @@ describe("slots", () => {
   });
 });
 
+/** Resolves once `stream` has said `text`, whenever it says it, before or after the call. */
+const listen = (stream: Readable): ((text: string) => Promise<void>) => {
+  let said = "";
+  const waiting: { text: string; resolve: () => void }[] = [];
+  stream.on("data", (chunk: Buffer) => {
+    said += chunk.toString();
+    for (const waiter of waiting.splice(0)) if (said.includes(waiter.text)) waiter.resolve(); else waiting.push(waiter);
+  });
+  return (text) => new Promise((resolve) => { if (said.includes(text)) resolve(); else waiting.push({ text, resolve }); });
+};
+const errno = (code: string): Error => Object.assign(new Error(`${code} (fixture)`), { code });
+/** Settles as `promise` does, or fails naming `what` (and `detail()`) once `ms` pass without it. */
+const within = <T>(promise: Promise<T>, ms: number, what: string, detail: () => string = () => ""): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} within ${ms} ms ${detail()}`.trim())), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+};
+/** A process's state and parent, for a failure that names where a lifecycle stopped. */
+const processState = (pid: number): string => {
+  try { return readFileSync(`/proc/${pid}/status`, "utf8").split("\n").filter((line) => /^(?:State|PPid):/.test(line)).join(", "); }
+  catch (error) { return `pid ${pid}: ${(error as NodeJS.ErrnoException).code ?? "no /proc"}`; }
+};
+
+describe("endGroup", () => {
+  it.skipIf(process.platform === "win32")("waits for a leaderless group until its descendant exits", async () => {
+    // The descendant says when SIGTERM reached it, then exits once released. Its handler can take
+    // effect after the code that installs it has run, and a SIGTERM before that kills it silently:
+    // it is ready only once the handler has caught a SIGTERM it sent itself. A timer keeps it alive
+    // (a read on the stdin it inherits sometimes let it exit on its own), and SIGUSR1 releases it.
+    const descendant = 'let caught = 0; process.on("SIGTERM", () => process.stdout.write(caught++ === 0 ? `READY ${process.pid}\\n` : "TERM\\n")); process.on("SIGUSR1", () => process.exit(0)); setInterval(() => {}, 1 << 30); process.kill(process.pid, "SIGTERM");';
+    const leader = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "inherit" }).unref();`;
+    const parent = spawn(process.execPath, ["-e", leader], { detached: true, stdio: ["pipe", "pipe", "inherit"] });
+    const group = parent.pid!;
+    // Every step of the lifecycle is an event, subscribed before it can happen, and each has a
+    // deadline that names the step it stopped at: a hang becomes a failure that says where.
+    const leaderExited = new Promise<void>((resolve) => parent.once("exit", () => resolve()));
+    // the descendant holds the pipe's last writer once the leader is gone: its end is the descendant's exit
+    const outputEnded = new Promise<void>((resolve) => { parent.stdout!.once("end", () => resolve()); parent.stdout!.once("close", () => resolve()); });
+    let said = "";
+    parent.stdout!.on("data", (chunk: Buffer) => { said += chunk.toString(); });
+    const saw = listen(parent.stdout!);
+    const STEP_MS = 12_000;
+    try {
+      await within(saw("READY"), STEP_MS, "the descendant did not start");
+      await within(leaderExited, STEP_MS, "the leader did not exit");
+      const pid = Number(/READY (\d+)/.exec(said)?.[1]);
+      let released = false;
+      let reapDeadline = Number.POSITIVE_INFINITY;
+      const outcome = await endGroup(group, "SIGTERM", {
+        // endGroup's clock stands still: only the descendant's exit ends the wait, never SIGKILL
+        now: () => 0,
+        wait: async () => {
+          if (!released) {
+            await within(saw("TERM"), STEP_MS, "SIGTERM did not reach the descendant:", () => processState(pid));
+            released = true;
+            process.kill(pid, "SIGUSR1");
+            await within(outputEnded, STEP_MS, "the released descendant did not exit:", () => processState(pid));
+            // an exited process stays in its group until the process that adopted it reaps it
+            reapDeadline = Date.now() + STEP_MS;
+          } else if (Date.now() > reapDeadline) {
+            throw new Error(`the exited descendant was not reaped within ${STEP_MS} ms: ${processState(pid)}`);
+          }
+          await new Promise((resolve) => setImmediate(resolve));
+        },
+      });
+      expect(released).toBe(true);
+      expect(outcome).toEqual({ pgid: group, result: "gone", signals: ["SIGTERM"], cause: null });
+      expect(() => process.kill(-group, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    } finally {
+      parent.stdin!.destroy();
+      try { process.kill(-group, "SIGKILL"); } catch { /* already gone */ }
+    }
+  }, 70_000);
+
+  it("fails after SIGKILL cannot empty the group", async () => {
+    let clock = 0;
+    const calls: [number, NodeJS.Signals | 0][] = [];
+    const outcome = await endGroup(4242, "SIGTERM", {
+      kill: (pid, signal) => { expect(pid).toBe(-4242); calls.push([clock, signal]); },
+      now: () => clock,
+      wait: async (ms) => { clock += ms; },
+    });
+    expect(outcome).toEqual({ pgid: 4242, result: "surviving", signals: ["SIGTERM", "SIGKILL"], cause: "still running after SIGKILL" });
+    // TERM first; KILL only once the 5 s grace has passed; then probes until the 2 s kill grace has
+    const sent = calls.filter(([, signal]) => signal !== 0);
+    expect(sent.map(([, signal]) => signal)).toEqual(["SIGTERM", "SIGKILL"]);
+    const killAt = sent[1]![0];
+    expect(killAt).toBeGreaterThanOrEqual(5_000);
+    expect(killAt).toBeLessThan(6_000);
+    expect(calls.at(1)).toEqual([0, 0]);
+    expect(clock - killAt).toBeGreaterThanOrEqual(2_000);
+    expect(clock - killAt).toBeLessThan(3_000);
+    expect(describeGroup(outcome)).toContain("4242");
+  });
+
+  it("treats EPERM as unproved death", async () => {
+    let clock = 0;
+    const seams = (kill: (signal: NodeJS.Signals | 0) => void) => ({ kill: (_pid: number, signal: NodeJS.Signals | 0) => kill(signal), now: () => clock, wait: async (ms: number) => { clock += ms; } });
+    // a probe answered EPERM is a process still there: escalate, then fail
+    const unprovable = await endGroup(7, "SIGINT", seams((signal) => { if (signal === 0) throw errno("EPERM"); }));
+    expect(unprovable).toMatchObject({ result: "surviving", signals: ["SIGINT", "SIGKILL"] });
+    expect(unprovable.cause).toContain("EPERM");
+    // a signal that may not be sent proves nothing either, and SIGKILL would not be allowed
+    const sent: (NodeJS.Signals | 0)[] = [];
+    const refused = await endGroup(7, "SIGTERM", seams((signal) => { sent.push(signal); throw errno("EPERM"); }));
+    expect(refused).toMatchObject({ result: "error", signals: ["SIGTERM"] });
+    expect(refused.cause).toContain("EPERM");
+    expect(sent).toEqual(["SIGTERM"]);
+    // only ESRCH is proof: at once, or after a few probes, and without SIGKILL
+    expect(await endGroup(7, "SIGTERM", seams(() => { throw errno("ESRCH"); }))).toEqual({ pgid: 7, result: "gone", signals: ["SIGTERM"], cause: null });
+    let probes = 0;
+    expect(await endGroup(7, "SIGTERM", seams((signal) => { if (signal === 0 && ++probes > 1) throw errno(probes > 2 ? "ESRCH" : "EPERM"); })))
+      .toEqual({ pgid: 7, result: "gone", signals: ["SIGTERM"], cause: null });
+  });
+});
+
+describe("teardown", () => {
+  it("stops every live session and names each that failed", async () => {
+    const sessions = join(scratch(), "sessions");
+    for (const session of ["a", "b", "c", "stopped"]) mkdirSync(join(sessions, session), { recursive: true });
+    for (const session of ["a", "b", "c"]) writeFileSync(join(sessions, session, "herdr.sock"), "");
+    const asked: string[] = [];
+    const results: Record<string, Parameters<typeof stopSessions>[1] extends (session: string) => infer R ? R : never> = {
+      a: { error: errno("ENOENT"), status: null, signal: null },
+      b: { status: 1, signal: null, stderr: "server is not running\n" },
+      c: { status: 0, signal: null },
+    };
+    await expect(stopSessions(sessions, (session) => { asked.push(session); return results[session]!; }, async () => {})).rejects.toThrow(/a \(ENOENT.*b \(herdr server stop exited with code 1: server is not running\)/);
+    expect(asked.sort()).toEqual(["a", "b", "c"]);
+    await expect(stopSessions(sessions, () => ({ status: null, signal: "SIGTERM" }), async () => {})).rejects.toThrow("terminated by SIGTERM");
+    await stopSessions(join(sessions, "none"), () => { throw new Error("nothing to stop"); });
+  });
+
+  it("accepts refused or missing sockets after a failed stop, but not live or unproven sockets", async () => {
+    const sessions = join(scratch(), "sessions");
+    const socket = join(sessions, "stale", "herdr.sock");
+    mkdirSync(join(sessions, "stale"), { recursive: true });
+    writeFileSync(socket, "");
+    const stop = () => ({ status: 1, signal: null, stderr: "Connection refused" });
+    for (const code of ["ECONNREFUSED", "ENOENT"]) {
+      await stopSessions(sessions, stop, async (path) => { expect(path).toBe(socket); throw errno(code); });
+    }
+    await expect(stopSessions(sessions, stop, async () => {})).rejects.toThrow("stale");
+    await expect(stopSessions(sessions, stop, async () => { throw errno("EACCES"); })).rejects.toThrow("EACCES");
+  });
+
+  it.skipIf(process.platform === "win32")("probes actual socket connections after a failed stop", async () => {
+    const sessions = join(scratch(), "sessions");
+    const socket = join(sessions, "owned", "herdr.sock");
+    mkdirSync(join(sessions, "owned"), { recursive: true });
+    const server = createServer((client) => client.end());
+    try {
+      await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socket, resolve); });
+      await expect(stopSessions(sessions, () => ({ status: 1, signal: null }))).rejects.toThrow("owned");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+    // A file with no listener gives the same ECONNREFUSED as a socket left after SIGKILL.
+    writeFileSync(socket, "");
+    await stopSessions(sessions, () => ({ status: 1, signal: null }));
+    await stopSessions(sessions, () => { rmSync(socket); return { status: 1, signal: null }; });
+  });
+
+  it("retains isolation and reports a cleanup exception", async () => {
+    const isolation = isolate({});
+    made.push(isolation.dir);
+    const evidence = join(isolation.env["OVIS_STATE_DIR"]!, "evidence.txt");
+    writeFileSync(evidence, "left behind");
+    const order: string[] = [];
+    const failed = await teardown([() => { order.push("first"); throw new Error("stop exploded"); }, async () => { order.push("second"); }], isolation);
+    expect(order).toEqual(["first", "second"]);
+    expect(failed).toEqual({ failures: ["stop exploded"], retained: isolation.dir });
+    expect(isAbsolute(failed.retained!)).toBe(true);
+    expect(readFileSync(evidence, "utf8")).toBe("left behind");
+    // a process group that did not end keeps it too, although every stop worked
+    expect(await teardown([() => undefined], isolation, ["step process group 1 did not end"])).toEqual({ failures: [], retained: isolation.dir });
+    // a removal that fails is a failure of its own, and names what is left
+    expect(await teardown([], { dir: isolation.dir, remove: () => { throw new Error("EBUSY (fixture)"); } }))
+      .toEqual({ failures: [`could not remove ${isolation.dir}: EBUSY (fixture)`], retained: isolation.dir });
+    expect(existsSync(evidence)).toBe(true);
+    // nothing failed: the implicit directory goes
+    expect(await teardown([() => undefined], isolation)).toEqual({ failures: [], retained: null });
+    expect(existsSync(isolation.dir)).toBe(false);
+  });
+});
+
+describe("check CLI teardown", () => {
+  const checkScript = fileURLToPath(new URL("./check.ts", import.meta.url));
+  // two sessions with a socket each, as a herdr server leaves them, and a file of the command's
+  const sessionsCommand = 'for s in fx-1 fx-2; do mkdir -p "$XDG_CONFIG_HOME/herdr/sessions/$s" && : > "$XDG_CONFIG_HOME/herdr/sessions/$s/herdr.sock"; done; echo kept > "$OVIS_STATE_DIR/evidence.txt"';
+  type Report = { status: string; exitCode: number; errors: string[]; verification: { status: string }; evidence: { retained: string[] }; steps: { name: string; status: string }[] };
+  /** A repository to check, and a herdr stand-in that records each stop and fails it when asked: no real herdr is involved. */
+  const fixture = (stopFails: boolean) => {
+    const root = scratch();
+    const script = join(root, "check.ts");
+    // Failed-stop cases stand in for sessions whose sockets still answer after stop returns.
+    writeFileSync(script, `import { main } from ${JSON.stringify(checkScript)};\nawait main({ probeSession: async () => {} });\n`);
+    const herdr = join(root, "herdr");
+    writeFileSync(herdr, '#!/bin/sh\ncase "$1" in --version) echo "herdr 0.9.3"; exit 0;; esac\necho "$2" >> "$STUB_LOG"\nif [ -n "$STUB_STOP_FAIL" ]; then echo "cannot stop $2" >&2; exit 1; fi\nrm -f "$XDG_CONFIG_HOME/herdr/sessions/$2/herdr.sock"\n');
+    chmodSync(herdr, 0o755);
+    const cwd = join(root, "repo");
+    mkdirSync(cwd);
+    git(cwd, "init", "-q");
+    git(cwd, "config", "user.name", "check test");
+    git(cwd, "config", "user.email", "check@example.invalid");
+    writeFileSync(join(cwd, ".gitignore"), "node_modules/\n.check/\n");
+    git(cwd, "add", ".gitignore");
+    git(cwd, "commit", "-qm", "fixture");
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      CHECK_REPORT: ".check/report.json",
+      // a slot of its own beside the PC's real runs, and a wait for the admission port they share (#1225)
+      CHECK_MAX_RUNS: "8",
+      CHECK_WAIT_SECONDS: "90",
+      OVIS_HERDR_BIN: herdr,
+      STUB_LOG: join(root, "stops.log"),
+      STUB_STOP_FAIL: stopFails ? "1" : "",
+    };
+    for (const name of ["CHECK_DIR", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "HERDR_TEST_LIVE"]) delete env[name];
+    const stops = (): string[] => existsSync(join(root, "stops.log")) ? readFileSync(join(root, "stops.log"), "utf8").split("\n").filter(Boolean).sort() : [];
+    const report = (path = join(cwd, ".check", "report.json")): Report => JSON.parse(readFileSync(path, "utf8")) as Report;
+    const isolated = (stdout: string): string => /config and state in (\S+)/.exec(stdout)?.[1] ?? "";
+    const runCheck = (command: string, extra: Record<string, string | undefined> = {}) => spawnSync(process.execPath, [script, "run", "sh", "-c", command], {
+      cwd, env: { ...env, ...extra }, encoding: "utf8", timeout: 200_000,
+    });
+    return { cwd, env, stops, report, isolated, runCheck, script };
+  };
+
+  it.skipIf(process.platform === "win32")("removes implicit state, keeps a named CHECK_DIR and releases its claims after the final report", () => {
+    const { cwd, stops, report, isolated, runCheck } = fixture(false);
+    const implicit = runCheck(sessionsCommand);
+    expect(implicit.status).toBe(0);
+    const dir = isolated(implicit.stdout);
+    expect(isAbsolute(dir)).toBe(true);
+    expect(existsSync(dir)).toBe(false);
+    expect(stops()).toEqual(["fx-1", "fx-2"]);
+    expect(report()).toMatchObject({ status: "success", exitCode: 0, errors: [], verification: { status: "verified" }, evidence: { retained: [] } });
+    expect(existsSync(join(cwd, ".check", "report.json.check-lock"))).toBe(false);
+
+    const named = join(cwd, ".check", "named");
+    const kept = runCheck(sessionsCommand, { CHECK_DIR: named, CHECK_REPORT: undefined });
+    expect(kept.status).toBe(0);
+    expect(isolated(kept.stdout)).toBe(named);
+    expect(readFileSync(join(named, "web-state", "evidence.txt"), "utf8")).toBe("kept\n");
+    expect(report(join(named, "report.json"))).toMatchObject({ status: "success", exitCode: 0, evidence: { retained: [] } });
+    expect(existsSync(join(named, ".check-lock"))).toBe(false);
+  }, 420_000);
+
+  it.skipIf(process.platform === "win32")("fails a zero-exit command when teardown fails", () => {
+    const { stops, report, isolated, runCheck } = fixture(true);
+    const result = runCheck(sessionsCommand);
+    const dir = isolated(result.stdout);
+    made.push(dir);
+    expect(result.status).toBe(1);
+    const failed = report();
+    expect(failed).toMatchObject({ status: "failure", exitCode: 1, verification: { status: "unknown" }, evidence: { retained: [dir] } });
+    expect(failed.steps.find((step) => step.name === "run")?.status).toBe("success");
+    expect(failed.errors.some((error) => error.startsWith("teardown: could not stop herdr session fx-1") && error.includes("fx-2"))).toBe(true);
+    // every stop was tried, and what they left is where the run said
+    expect(stops()).toEqual(["fx-1", "fx-2"]);
+    expect(isAbsolute(dir)).toBe(true);
+    expect(result.stderr).toContain(dir);
+    expect(readFileSync(join(dir, "web-state", "evidence.txt"), "utf8")).toBe("kept\n");
+    expect(existsSync(join(dir, "config", "herdr", "sessions", "fx-2", "herdr.sock"))).toBe(true);
+  }, 210_000);
+
+  it.skipIf(process.platform === "win32")("preserves interruption codes and retained teardown evidence", async () => {
+    for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+      const { cwd, env, stops, report, isolated, script } = fixture(true);
+      // `read` waits on the check's stdin, which stays open: the command runs until the signal. The
+      // check echoes the command line, so the marker is spelled so that only the command prints it.
+      const check = spawn(process.execPath, [script, "run", "sh", "-c", `${sessionsCommand}; echo "RE""ADY"; read line`], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+      const exited = new Promise<number | null>((resolve) => check.once("exit", (exitCode) => resolve(exitCode)));
+      let stdout = "";
+      check.stdout!.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+      const saw = listen(check.stdout!);
+      try {
+        await within(saw("READY"), 150_000, "the command did not start");
+        check.kill(signal);
+        expect(await within(exited, 30_000, "the interrupted run did not finish")).toBe(code);
+      } finally {
+        check.kill("SIGKILL");
+      }
+      const dir = isolated(stdout);
+      made.push(dir);
+      const interrupted = report();
+      expect(interrupted).toMatchObject({ status: "interrupted", exitCode: code, verification: { status: "unknown" }, evidence: { retained: [dir] } });
+      expect(interrupted.steps.find((step) => step.name === "run")?.status).toBe("interrupted");
+      expect(interrupted.errors.some((error) => error.startsWith("teardown: could not stop herdr session"))).toBe(true);
+      expect(stops()).toEqual(["fx-1", "fx-2"]);
+      expect(readFileSync(join(dir, "web-state", "evidence.txt"), "utf8")).toBe("kept\n");
+    }
+  }, 420_000);
+
+  it.skipIf(process.platform === "win32")("ends what a zero-exit command left running with its output closed", () => {
+    const { cwd, report, isolated, runCheck } = fixture(false);
+    const pidFile = join(cwd, "..", "left.pid");
+    // the command exits 0 at once; what it started runs on in its process group, its output closed
+    const result = runCheck(`${sessionsCommand}; tail -f /dev/null </dev/null >/dev/null 2>&1 & echo $! > "$LEFT_PID"`, { LEFT_PID: pidFile });
+    const left = Number(readFileSync(pidFile, "utf8"));
+    try {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("ended processes left running in step process group");
+      // ended (and reaped) before the run removed what the process could have been using
+      expect(() => process.kill(left, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      expect(existsSync(isolated(result.stdout))).toBe(false);
+      const ended = report();
+      expect(ended).toMatchObject({ status: "success", exitCode: 0, errors: [], evidence: { retained: [] } });
+      expect(ended.steps.find((step) => step.name === "run")).toMatchObject({ status: "success", reason: "ended processes the command left running" });
+    } finally {
+      try { process.kill(left, "SIGKILL"); } catch { /* already gone */ }
+    }
+  }, 210_000);
+
+  it.skipIf(process.platform === "win32")("finalizes an interrupted run whose step group cannot be stopped", async () => {
+    const { cwd, env, report, isolated } = fixture(false);
+    // Only this check's groups are denied, as if the step ran as another user.
+    const deny = join(cwd, "..", "deny-groups.ts");
+    writeFileSync(deny, `import { main } from ${JSON.stringify(checkScript)};\nawait main({ kill() { throw Object.assign(new Error("EPERM (fixture)"), { code: "EPERM" }); } });\n`);
+    // A listener survives even when the checker closes stdin; only our explicit cleanup ends it.
+    const command = 'Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response(); } }); console.log("GRO" + "UP " + process.pid);';
+    const check = spawn(process.execPath, [deny, "run", process.execPath, "-e", command], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    const exited = new Promise<number | null>((resolve) => check.once("exit", (exitCode) => resolve(exitCode)));
+    let stdout = "";
+    check.stdout!.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    const saw = listen(check.stdout!);
+    let group = 0;
+    try {
+      await within(saw("GROUP "), 150_000, "the command did not start");
+      group = Number(/GROUP (\d+)/.exec(stdout)?.[1]);
+      check.kill("SIGINT");
+      // the run ends with its code although the step it could not stop never settles
+      expect(await within(exited, 30_000, "the interrupted run did not finish")).toBe(130);
+      expect(() => process.kill(-group, 0)).not.toThrow();
+      const dir = isolated(stdout);
+      made.push(dir);
+      const interrupted = report() as Report & { endedAt: string | null };
+      expect(interrupted).toMatchObject({ status: "interrupted", exitCode: 130, verification: { status: "unknown" }, evidence: { retained: [dir] } });
+      expect(interrupted.endedAt).not.toBeNull();
+      expect(interrupted.errors.some((error) => error.startsWith(`teardown: step process group ${group} did not end`) && error.includes("EPERM"))).toBe(true);
+      expect(existsSync(join(dir, "web-state"))).toBe(true);
+    } finally {
+      check.kill("SIGKILL");
+      await exited;
+      if (group) expect((await endGroup(group, "SIGKILL")).result).toBe("gone");
+    }
+  }, 210_000);
+
+  it.skipIf(process.platform === "win32")("bounds interrupted draining when an escaped process holds stdout", async () => {
+    const { cwd, env, report, isolated } = fixture(false);
+    const script = join(cwd, "..", "drain-timeout.ts");
+    // Advance only the interrupted-drain deadline when it is armed, not a polling delay.
+    writeFileSync(script, `import { main } from ${JSON.stringify(checkScript)};\nawait main({ scheduleDrainTimeout(expire, ms) { if (ms !== 9000) throw new Error("unexpected drain budget"); queueMicrotask(expire); return () => {}; } });\n`);
+    const pidFile = join(cwd, "..", "escaped.pid");
+    const holder = `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response(); } }); console.log("ESCA" + "PED " + process.pid);`;
+    const leader = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(holder)}], { detached: true, stdio: ["ignore", "inherit", "inherit"] }); process.stdin.resume();`;
+    const check = spawn(process.execPath, [script, "run", process.execPath, "-e", leader], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    const exited = new Promise<number | null>((resolve) => check.once("exit", resolve));
+    let stdout = "";
+    let stderr = "";
+    check.stdout!.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    check.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    const saw = listen(check.stdout!);
+    try {
+      await within(saw("ESCAPED "), 150_000, "the escaped holder did not start");
+      check.kill("SIGINT");
+      expect(await within(exited, 15_000, "the interrupted drain did not finish")).toBe(130);
+      const dir = isolated(stdout);
+      made.push(dir);
+      const failure = "could not end the interrupted steps: interrupted step output did not finish draining";
+      expect(report()).toMatchObject({ status: "interrupted", exitCode: 130, evidence: { retained: [dir] } });
+      expect(report().errors).toEqual([`teardown: ${failure}`]);
+      expect(stderr).toContain(failure);
+      expect(existsSync(dir)).toBe(true);
+      // Its group escaped the check's ownership and is still holding the inherited stdout.
+      expect(() => process.kill(-Number(readFileSync(pidFile, "utf8")), 0)).not.toThrow();
+    } finally {
+      check.kill("SIGKILL");
+      await exited;
+      if (existsSync(pidFile)) expect((await endGroup(Number(readFileSync(pidFile, "utf8")), "SIGKILL")).result).toBe("gone");
+    }
+  }, 180_000);
+
+  it.skipIf(process.platform === "win32")("fails and retains evidence when a zero-exit step group survives KILL", () => {
+    const { cwd, env, report, isolated } = fixture(false);
+    const survive = join(cwd, "..", "survive-groups.ts");
+    // Simulate an unkillable owned group without leaving a real unkillable process on the PC.
+    // Both grace periods advance through the same clock/wait seam as the unit tests.
+    writeFileSync(survive, `import { main } from ${JSON.stringify(checkScript)};\nlet clock = 0;\nawait main({ kill() {}, now: () => clock, wait: async (ms) => { clock += ms; } });\n`);
+    const result = spawnSync(process.execPath, [survive, "run", "sh", "-c", sessionsCommand], { cwd, env, encoding: "utf8", timeout: 200_000 });
+    const dir = isolated(result.stdout);
+    made.push(dir);
+    expect(result.status).toBe(1);
+    const failed = report();
+    expect(failed).toMatchObject({ status: "failure", exitCode: 1, evidence: { retained: [dir] } });
+    expect(failed.errors.some((error) => /step process group \d+ did not end: still running after SIGKILL/.test(error))).toBe(true);
+    expect(failed.steps.find((step) => step.name === "run")?.status).toBe("success");
+    expect(isAbsolute(dir)).toBe(true);
+    expect(result.stderr).toContain(dir);
+    expect(readFileSync(join(dir, "web-state", "evidence.txt"), "utf8")).toBe("kept\n");
+  }, 210_000);
+
+  it.skipIf(process.platform === "win32")("shares a pending group termination with an interrupt", () => {
+    const { cwd, env, report, isolated } = fixture(false);
+    const script = join(cwd, "..", "overlapping-stop.ts");
+    // Deliver SIGINT while normal teardown is awaiting its first probe, not after it settles.
+    writeFileSync(script, `import { main } from ${JSON.stringify(checkScript)};
+let clock = 0;
+let interrupted = false;
+await main({
+  kill() {},
+  now: () => clock,
+  async wait(ms) {
+    clock += ms;
+    if (!interrupted) {
+      interrupted = true;
+      await new Promise<void>((resolve) => {
+        process.once("SIGINT", resolve);
+        process.kill(process.pid, "SIGINT");
+      });
+    }
+  },
+});
+`);
+    const result = spawnSync(process.execPath, [script, "run", "sh", "-c", sessionsCommand], { cwd, env, encoding: "utf8", timeout: 200_000 });
+    const dir = isolated(result.stdout);
+    made.push(dir);
+    expect(result.status).toBe(130);
+    expect(report()).toMatchObject({ status: "interrupted", evidence: { retained: [dir] } });
+    expect(report().errors).toHaveLength(1);
+    expect(report().errors[0]).toMatch(/step process group \d+ did not end: still running after SIGKILL/);
+  }, 210_000);
+});
+
 describe("check CLI", () => {
   it.skipIf(process.platform !== "linux" || process.arch !== "x64")("fails closed when source identity is lost after the fast checks", () => {
     const cwd = scratch();
@@ -595,5 +1030,5 @@ describe("check CLI", () => {
     expect(missingBuildReport.browserArtifact.buildThisRun).toBe(true);
     expect(missingBuildReport.verification.status).toBe("unknown");
     expect(missingBuildReport.errors).toContain("built dist identity unavailable; cannot verify the built artifact");
-  });
+  }, 180_000);
 });

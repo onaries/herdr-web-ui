@@ -1,9 +1,9 @@
 <!doctype html>
 <!--
-  The template banner.ts renders: the README banner, the Open Graph card and the framed
-  "A look around" shots. The graphite stage from brief section 2 (lamp, floor pool, vignette,
-  grain) with the real app in a window object and a phone object. banner.ts replaces the
-  {{…}} tokens and sets <body data-kind>; nothing here is animated.
+  The template banner.ts renders: the README banner and the framed "A look around" shots. The
+  graphite stage from brief section 2 (lamp, floor pool, vignette, grain) with the real app in a
+  window object and a phone object. banner.ts replaces the {{…}} tokens and sets
+  <body data-kind>; nothing here is animated.
 -->
 <html lang="en">
 <head>
@@ -30,6 +30,7 @@
     --dim: #9b9183;
     --strong: #f2ebdf;
     --amber: #f0a830;
+    --pink: #f29ca3;
     --sans: "Pretendard Variable", system-ui, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, monospace;
   }
@@ -80,31 +81,25 @@
 
   /* ---- type ---- */
   .copy { position: absolute; z-index: 5; }
-  .mark { display: block; }
+  /* the app icon: the navy square rounded like an app icon, a hairline to lift it off the stage */
+  .mark { display: block; border-radius: 22.5%; box-shadow: 0 0 0 1px rgba(242, 235, 223, 0.10), 0 24px 48px -16px rgba(0, 0, 0, 0.6); }
   .word { color: var(--strong); font-weight: 700; letter-spacing: -0.035em; line-height: 1; }
   .tag { color: var(--dim); font-weight: 500; letter-spacing: -0.015em; line-height: 1.2; }
+  .tag .accent { color: var(--pink); }
 
-  /* ---- banner 1920x800 and og 1280x640: copy left; window bleeding off the right and bottom,
+  /* ---- banner 1920x800: copy left; window bleeding off the right and bottom,
      phone standing clear of the bottom edge in front of it, both in one perspective ---- */
-  body[data-kind="banner"] .stage, body[data-kind="og"] .stage { --lamp-x: 22%; --pool-x: 58%; }
+  body[data-kind="banner"] .stage { --lamp-x: 22%; --pool-x: 58%; }
   .scene { position: absolute; inset: 0; perspective: 2400px; perspective-origin: 55% 45%; }
   .scene .window { transform: rotateY(-16deg) rotateX(6deg); transform-origin: 100% 50%; }
   .scene .phone { transform: rotateY(-5deg); transform-origin: 0 50%; z-index: 4; }
 
   body[data-kind="banner"] .copy { left: 96px; top: 50%; transform: translateY(-50%); width: 720px; }
-  body[data-kind="banner"] .mark { width: 128px; height: 128px; margin: 0 0 40px -10px; }
+  body[data-kind="banner"] .mark { width: 152px; height: 152px; margin: 0 0 36px; }
   body[data-kind="banner"] .word { font-size: 88px; }
   body[data-kind="banner"] .tag { font-size: 40px; margin-top: 22px; }
   body[data-kind="banner"] .window { --ww: 1240; left: 800px; top: 70px; }
   body[data-kind="banner"] .phone { --pw: 322; left: 830px; top: 186px; }
-
-  body[data-kind="og"] .copy { left: 64px; top: 50%; transform: translateY(-50%); width: 540px; }
-  body[data-kind="og"] .mark { width: 96px; height: 96px; margin: 0 0 30px -8px; }
-  body[data-kind="og"] .word { font-size: 64px; }
-  body[data-kind="og"] .tag { font-size: 30px; margin-top: 16px; }
-  body[data-kind="og"] .window { --ww: 960; left: 600px; top: 92px; }
-  body[data-kind="og"] .phone { --pw: 260; left: 606px; top: 168px; padding: 8px; border-radius: 38px; }
-  body[data-kind="og"] .phone img { border-radius: 30px; }
 
   /* ---- look: one window under the lamp; whole and centred, or a detail whose top-left corner sits
      96px in and which bleeds off the right and bottom ---- */

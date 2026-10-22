@@ -5,7 +5,7 @@ import type { SeenFinish } from "./seen.ts";
 
 export const LOCAL_MACHINE = "local";
 export const BRIDGE_PROTOCOL = 1;
-export const REMOTE_BUNDLE_VERSION = "31";
+export const REMOTE_BUNDLE_VERSION = "32";
 export interface PaneTarget { machine_id: string; pane_id: string }
 export type MachineState = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
 export interface SshTarget {
@@ -28,9 +28,19 @@ export interface Machine {
   action_required?: MachineAction | null;
   /** a bridge update running for this PC right now (in the background, or from its dialog) */
   updating?: MachineUpdate | null;
+  /** the PC's latest roster as its server read it, with that read's order_epoch/read_seq copied unchanged */
   snapshot: SessionSnapshot | null;
   herdr?: HerdrIdentity;
+  /**
+   * The boot id of the server behind this PC, as this manager last proved it: its own for the local
+   * PC, a remote one only from that bridge's authenticated /api/health over the current connection.
+   * Absent for a restored or not yet verified PC. It is information only: nothing retires a
+   * workspace-order epoch on it (only a verify_source_boot answer can, shared/protocol.ts).
+   */
+  source_boot_id?: string;
 }
+/** GET /api/machines: with ?verify_source_boot=<id>, also that PC's freshly proved boot id */
+export interface MachineRoster { machines: Machine[]; verified_source_boot?: { machine_id: string; boot_id: string } }
 /**
  * The herdr behind a PC, as its bridge can serve it. terminal_attach is false on a Windows
  * host: herdr has no `terminal attach` there yet (herdrdev/herdr#4821), and it is false on

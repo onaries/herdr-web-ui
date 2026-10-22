@@ -64,7 +64,7 @@ try {
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 844 }, locale: "en-US", isMobile: width === 390, hasTouch: width === 390 });
     try {
-      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false, autoSendQueued: false })));
+      await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false, autoSendQueued: false })));
       const page = await context.newPage();
       page.setDefaultTimeout(15_000);
       // Keep the raw recorder's lack of a real question separate from server input authority.
@@ -132,7 +132,6 @@ try {
       assert.equal(await box.inputValue(), "", "only the acknowledged draft clears");
       await row.waitFor({ state: "detached" });
       assert.equal(await card.locator(".pending-message").count(), 0, "transfer removes the same bridge item");
-      if (agent === "omo") {
       await box.fill("normal Send now still works");
       const normalMark = frames.length;
       const normalHeld = receipt((frame) => frames.indexOf(frame) >= normalMark && frame.type === "submit-result" && frame.pane_id === pane);
@@ -146,8 +145,7 @@ try {
       await normalRow.getByRole("button", { name: /^Send now:/ }).click();
       await normalDelivered;
       await normalRow.waitFor({ state: "detached" });
-      assert.equal(seen.slice(normalStart).join(""), "\u001b[200~normal Send now still works\u001b[201~\r", "normal steering remains Enter, not Ctrl+Q");
-      }
+      assert.equal(seen.slice(normalStart).join(""), "\u001b[200~normal Send now still works\u001b[201~\r", "Send now delivers only pasted text and Enter without Escape or a queue key");
       await box.fill("keep this blocked message");
       const secondMark = frames.length;
       const secondHeld = receipt((frame) => frames.indexOf(frame) >= secondMark && frame.type === "submit-result" && frame.pane_id === pane);

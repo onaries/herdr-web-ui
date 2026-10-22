@@ -10,11 +10,11 @@
  * traversal lands, and whether it was one of its own.
  */
 
-const KEY = "herdr-web-ui:settings";
+const KEY = "ovis:settings";
 /** names an opening of Settings on the entry it began from and on each of its entries */
-const BASE_KEY = "herdr-web-ui:settings-base";
+const BASE_KEY = "ovis:settings-base";
 /** names the opening an entry another dialog pushed from a Settings entry lies above */
-const ABOVE_KEY = "herdr-web-ui:settings-above";
+const ABOVE_KEY = "ovis:settings-above";
 /** how long to wait before releasing the traversal's busy state, not its ownership */
 const LANDING_MS = 1000;
 

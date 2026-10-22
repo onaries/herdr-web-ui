@@ -3,11 +3,12 @@ import { ChevronDown, Terminal } from "lucide-react";
 
 import type { AgentKind } from "../../shared/protocol.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import "./AgentPicker.css";
 
 /** The shell entry is a program name like the agents beside it, so it stays in English. */
 const SHELL_LABEL = "Shell";
 
-const LAST_AGENT_KEY = "herdr-web-ui:new-session-agent";
+const LAST_AGENT_KEY = "ovis:new-session-agent";
 
 /** The agent the last creation dialog started; "" is a plain shell. */
 export function rememberedAgent(): string {
@@ -30,6 +31,8 @@ export interface AgentPickerProps {
   agents: AgentKind[];
   /** the chosen kind; "" is a plain shell */
   value: string;
+  /** whether a plain shell leads the list (the default); false lists the agents alone, so `agents` holds at least one */
+  shell?: boolean;
   disabled?: boolean;
   labelledBy: string;
   /** a word beside an agent's row on what its launch takes (NewSessionDialog: model, effort); rows without one say nothing */
@@ -45,13 +48,13 @@ function OptionMark({ kind }: { kind: string }) {
  * A select whose rows carry each agent's mark: a native <option> cannot hold an icon.
  * The marks are the inline SVGs the sidebar already renders, so the list costs nothing extra.
  */
-export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(function AgentPicker({ agents, value, disabled, labelledBy, hints = {}, onChange }, ref) {
+export const AgentPicker = forwardRef<HTMLButtonElement, AgentPickerProps>(function AgentPicker({ agents, value, shell = true, disabled, labelledBy, hints = {}, onChange }, ref) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [place, setPlace] = useState<CSSProperties>({});
-  const options: AgentKind[] = [{ kind: "", label: SHELL_LABEL }, ...agents];
+  const options: AgentKind[] = shell ? [{ kind: "", label: SHELL_LABEL }, ...agents] : agents;
   const selectedIndex = Math.max(0, options.findIndex((option) => option.kind === value));
   const selected = options[selectedIndex]!;
 

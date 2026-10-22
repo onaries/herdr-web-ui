@@ -62,7 +62,7 @@ try {
   mkdirSync("evidence/skill-activity", { recursive: true });
   await page.screenshot({ path: "evidence/skill-activity/desktop.png" });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "ko", theme: "light" })));
+  await page.evaluate(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "ko", theme: "light" })));
   await page.reload();
   await page.getByText("지침 읽음", { exact: true }).waitFor();
   await page.locator(".chat-skill summary").click();

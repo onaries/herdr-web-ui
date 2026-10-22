@@ -189,8 +189,8 @@ describe("file view", () => {
     symlinkSync(join(root, "elsewhere"), join(site, "clips"));
     expect(pageMediaResponse(swapped, "10.0.0.2")).toBeNull();
     // ...unless it leads into a folder the operator named, and then not under a hidden name there
-    const before = process.env["HERDR_WEB_MEDIA_ROOTS"];
-    process.env["HERDR_WEB_MEDIA_ROOTS"] = ["/nonexistent-share", join(root, "share")].join(delimiter);
+    const before = process.env["OVIS_MEDIA_ROOTS"];
+    process.env["OVIS_MEDIA_ROOTS"] = ["/nonexistent-share", join(root, "share")].join(delimiter);
     try {
       const shared = await fileResponse(fileInfo(join(site, "report.html"))!, false, true, media).text();
       expect(shared).toMatch(new RegExp(`<audio id="linked" src="${source}[A-Za-z0-9_-]{32}">`));
@@ -201,8 +201,8 @@ describe("file view", () => {
       expect(shared).toContain(`<video id="private" src="private.mp4">`);
       expect(shared).toContain(`<video id="elsewhere" src="elsewhere.mp4">`);
     } finally {
-      if (before === undefined) delete process.env["HERDR_WEB_MEDIA_ROOTS"];
-      else process.env["HERDR_WEB_MEDIA_ROOTS"] = before;
+      if (before === undefined) delete process.env["OVIS_MEDIA_ROOTS"];
+      else process.env["OVIS_MEDIA_ROOTS"] = before;
     }
     // without a media source (a PC's bridge, a Host that is not plain) the page is drawn as before
     expect(await fileResponse(fileInfo(join(site, "report.html"))!, false, true).text()).toContain(`<video id="big" src="big.mp4"`);

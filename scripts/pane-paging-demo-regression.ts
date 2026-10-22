@@ -93,7 +93,7 @@ try {
       try {
         await fractional.addInitScript(() => {
           Object.defineProperty(navigator, "platform", { configurable: true, value: "iPad" });
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false }));
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false }));
         });
         const page = await fractional.newPage();
         page.setDefaultTimeout(10000);
@@ -173,7 +173,7 @@ try {
         try {
           await context.addInitScript(() => {
             Object.defineProperty(navigator, "platform", { configurable: true, value: "iPad" });
-            if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false, chatFontSize: 19 }));
+            if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false, chatFontSize: 19 }));
           });
           const page = await context.newPage();
           page.setDefaultTimeout(10000);

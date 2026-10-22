@@ -1,6 +1,6 @@
 import type { Machine } from "../../shared/machines.ts";
 
-const KEY = "herdr-web-ui:pc-notice-dismissed";
+const KEY = "ovis:pc-notice-dismissed";
 
 /** One dismissal covers one PC waiting for one thing: a PC that later waits for another shows again. */
 export function noticeKey(machine: Pick<Machine, "id" | "action_required">): string {

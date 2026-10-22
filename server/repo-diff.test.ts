@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { parsePatchFiles } from "@pierre/diffs";
 
 import type { ApiError, RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
@@ -35,6 +35,17 @@ function repository(name: string): string {
 
 const query = (values: Record<string, string> = {}) => new URLSearchParams(values);
 const lines = (count: number, prefix = "line") => Array.from({ length: count }, (_, index) => `${prefix} ${index + 1}\n`).join("");
+/** Runs `body` with `name` set to `value` for the code under test, then puts it back as it was. */
+async function withEnvironment<T>(name: string, value: string, body: () => Promise<T>): Promise<T> {
+  const inherited = process.env[name];
+  process.env[name] = value;
+  try {
+    return await body();
+  } finally {
+    if (inherited === undefined) delete process.env[name];
+    else process.env[name] = inherited;
+  }
+}
 /** What Pierre makes of a patch: the parser the diff view uses, told to throw on anything malformed. */
 const parsed = (patch: string | null) => parsePatchFiles(patch ?? "", undefined, true).flatMap((entry) => entry.files);
 
@@ -326,10 +337,49 @@ describe("bounds", () => {
     git(hooked, "config", "diff.external", program);
     git(hooked, "config", "diff.marker.textconv", program);
     git(hooked, "config", "core.fsmonitor", program);
+    // git before 2.36 reads core.fsmonitor=false as a hook named `false`, found on PATH
+    const onPath = join(scratch, "on-path");
+    mkdirSync(onPath);
+    writeFileSync(join(onPath, "false"), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`);
+    chmodSync(join(onPath, "false"), 0o755);
     rmSync(marker, { force: true });
-    expect((await repoDiffFiles(hooked, query())).files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
-    for (const path of ["a.txt", "b.txt"]) expect((await repoDiffFile(hooked, query({ path }))).patch).toStartWith(`diff --git a/${path} b/${path}\n`);
+    const spawn = spyOn(Bun, "spawn");
+    try {
+      await withEnvironment("PATH", `${onPath}${delimiter}${process.env["PATH"] ?? ""}`, async () => {
+        expect((await repoDiffFiles(hooked, query())).files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
+        for (const path of ["a.txt", "b.txt"]) expect((await repoDiffFile(hooked, query({ path }))).patch).toStartWith(`diff --git a/${path} b/${path}\n`);
+      });
+      // the stand-in above only runs on git before 2.36, so the value itself is checked on any git
+      const argvs = (spawn.mock.calls as unknown as [string[]][]).map(([argv]) => argv).filter((argv) => argv[0] === "git");
+      expect(argvs.length).toBeGreaterThan(0);
+      for (const argv of argvs) {
+        expect(argv[argv.indexOf("core.fsmonitor=") - 1]).toBe("-c");
+        expect(argv).not.toContain("core.fsmonitor=false");
+      }
+    } finally {
+      spawn.mockRestore();
+    }
     expect(existsSync(marker)).toBeFalse();
+  });
+
+  it("reads the repository asked about, not a common directory the server inherited", async () => {
+    const own = repository("own-common");
+    writeFileSync(join(own, "a.txt"), "one\n");
+    git(own, "add", ".");
+    git(own, "commit", "-q", "-m", "first");
+    writeFileSync(join(own, "a.txt"), "two\n");
+    writeFileSync(join(own, "b.txt"), "new\n");
+    const foreign = repository("foreign-common");
+    // that repository has no commit to compare with, and its info/exclude would leave b.txt out
+    mkdirSync(join(foreign, ".git", "info"), { recursive: true });
+    writeFileSync(join(foreign, ".git", "info", "exclude"), "b.txt\n");
+    const head = git(own, "rev-parse", "HEAD").trim();
+    await withEnvironment("GIT_COMMON_DIR", join(foreign, ".git"), async () => {
+      const list = await repoDiffFiles(own, query());
+      expect(list.repository.head).toBe(head);
+      expect(list.files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
+      expect((await repoDiffFile(own, query({ path: "a.txt" }))).patch).toContain("\n+two\n");
+    });
   });
 });
 
@@ -350,7 +400,7 @@ describe("GET /api/workspace/diff/*", () => {
     const watchToken = store.pair(store.startPairing().code, "Watch", "watch")!.token;
     // a first pairing is a device only once its cookie came back: that return is what saves it
     expect(store.match(watchToken)).not.toBeNull();
-    watchCookie = `herdr_web_device=${watchToken}`;
+    watchCookie = `ovis_device=${watchToken}`;
     server = createServer({ port: 0, stateDir, token: "test-repo-diff", tailscaleOwner: null, machines: false });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -358,6 +408,20 @@ describe("GET /api/workspace/diff/*", () => {
 
   const files = (search: string, headers: Record<string, string> = owner, method = "GET") => fetch(`${base}/api/workspace/diff/files?${search}`, { method, headers });
   const directory = () => `directory=${encodeURIComponent(root)}`;
+
+  it("discovers repositories through the HTTP route with the same read protections", async () => {
+    const url = `${base}/api/workspace/diff/repositories?${directory()}&children=1&depth=2`;
+    const response = await fetch(url, { headers: owner });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ roots: [root], truncated: false });
+    expect((await fetch(url)).status).toBe(401);
+    expect((await fetch(url, { headers: { ...owner, "sec-fetch-site": "cross-site" } })).status).toBe(403);
+    for (const path of ["workspace/diff/repositories", "machines/local/workspace/diff/repositories", "machines/pc1/workspace/diff/repositories"]) {
+      expect((await fetch(`${base}/api/${path}?${directory()}`, { headers: { cookie: watchCookie } })).status).toBe(403);
+    }
+    expect((await fetch(url, { method: "POST", headers: { ...owner, "x-herdr-machine": "1" } })).status).toBe(400);
+  });
 
   it("answers a named folder's list and one file's patch, never cached", async () => {
     const listed = await files(directory());

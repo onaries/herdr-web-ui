@@ -537,15 +537,27 @@ index 7542969..feb7264 100644
        this._textarea.style.lineHeight = compositionViewBounds.height + 'px';
      }
 diff --git a/src/browser/public/Terminal.ts b/src/browser/public/Terminal.ts
-index a634922..83de138 100644
+index a634922..a39fc99 100644
 --- a/src/browser/public/Terminal.ts
 +++ b/src/browser/public/Terminal.ts
-@@ -138,6 +138,10 @@ export class Terminal extends Disposable implements ITerminalApi {
+@@ -13,7 +13,7 @@ import { AddonManager } from 'common/public/AddonManager';
+ import { BufferNamespaceApi } from 'common/public/BufferNamespaceApi';
+ import { ParserApi } from 'common/public/ParserApi';
+ import { UnicodeApi } from 'common/public/UnicodeApi';
+-import { IBufferNamespace as IBufferNamespaceApi, IDecoration, IDecorationOptions, IDisposable, ILinkProvider, ILocalizableStrings, IMarker, IModes, IParser, ITerminalAddon, Terminal as ITerminalApi, ITerminalInitOnlyOptions, IUnicodeHandling } from '@xterm/xterm';
++import { IBufferNamespace as IBufferNamespaceApi, IDecoration, IDecorationOptions, IDisposable, ILinkProvider, ILocalizableStrings, IMarker, IModes, IParser, ITerminalAddon, Terminal as ITerminalApi, ITerminalInitOnlyOptions, IUnicodeHandling, IOscStringState } from '@xterm/xterm';
+ 
+ /**
+  * The set of options that only have an effect when set in the Terminal constructor.
+@@ -138,6 +138,13 @@ export class Terminal extends Disposable implements ITerminalApi {
    public focus(): void {
      this._core.focus();
    }
 +  public setTextAreaViewportBounds(bounds: { left: number; top: number; right: number; bottom: number } | undefined): void {
 +    this._core.setTextAreaViewportBounds(bounds);
++  }
++  public oscStringState(): IOscStringState {
++    return this._core.oscStringState();
 +  }
 +
    public input(data: string, wasUserInput: boolean = true): void {
@@ -564,11 +576,109 @@ index 575b62b..27e0b78 100644
  
    private readonly _onDprChange = this.register(new EventEmitter<number>());
    public readonly onDprChange = this._onDprChange.event;
+diff --git a/src/common/CoreTerminal.ts b/src/common/CoreTerminal.ts
+index 327b8bc..b94c90d 100644
+--- a/src/common/CoreTerminal.ts
++++ b/src/common/CoreTerminal.ts
+@@ -223,6 +223,11 @@ export abstract class CoreTerminal extends Disposable implements ICoreTerminal {
+     }
+   }
+ 
++  /** The parser's OSC string state. See xterm.d.ts for details. */
++  public oscStringState(): { open: boolean, id: number, idComplete: boolean } {
++    return this._inputHandler.oscStringState();
++  }
++
+   /** Add handler for ESC escape sequence. See xterm.d.ts for details. */
+   public registerEscHandler(id: IFunctionIdentifier, callback: () => boolean | Promise<boolean>): IDisposable {
+     return this._inputHandler.registerEscHandler(id, callback);
+diff --git a/src/common/InputHandler.ts b/src/common/InputHandler.ts
+index a4b8c64..6aad1ab 100644
+--- a/src/common/InputHandler.ts
++++ b/src/common/InputHandler.ts
+@@ -683,6 +683,11 @@ export class InputHandler extends Disposable implements IInputHandler {
+     return this._parser.registerOscHandler(ident, new OscHandler(callback));
+   }
+ 
++  /** The parser's OSC string state (see Terminal.oscStringState in xterm.d.ts). */
++  public oscStringState(): { open: boolean, id: number, idComplete: boolean } {
++    return this._parser.oscStringState();
++  }
++
+   /**
+    * BEL
+    * Bell (Ctrl-G).
+diff --git a/src/common/Types.d.ts b/src/common/Types.d.ts
+index 17c7231..3df9fd1 100644
+--- a/src/common/Types.d.ts
++++ b/src/common/Types.d.ts
+@@ -460,6 +460,7 @@ export interface IInputHandler {
+   registerDcsHandler(id: IFunctionIdentifier, callback: (data: string, param: IParams) => boolean | Promise<boolean>): IDisposable;
+   registerEscHandler(id: IFunctionIdentifier, callback: () => boolean | Promise<boolean>): IDisposable;
+   registerOscHandler(ident: number, callback: (data: string) => boolean | Promise<boolean>): IDisposable;
++  oscStringState(): { open: boolean, id: number, idComplete: boolean };
+ 
+   /** C0 BEL */ bell(): boolean;
+   /** C0 LF */ lineFeed(): boolean;
+diff --git a/src/common/parser/EscapeSequenceParser.ts b/src/common/parser/EscapeSequenceParser.ts
+index b3d0276..aba90ed 100644
+--- a/src/common/parser/EscapeSequenceParser.ts
++++ b/src/common/parser/EscapeSequenceParser.ts
+@@ -432,6 +432,11 @@ export class EscapeSequenceParser extends Disposable implements IEscapeSequenceP
+     this._errorHandler = this._errorHandlerFb;
+   }
+ 
++  /** Whether an OSC string is open, with the OSC parser's identifier state; id/idComplete are informational when closed. */
++  public oscStringState(): { open: boolean, id: number, idComplete: boolean } {
++    return { open: this.currentState === ParserState.OSC_STRING, ...this._oscParser.stringState() };
++  }
++
+   /**
+    * Reset parser to initial values.
+    *
+diff --git a/src/common/parser/OscParser.ts b/src/common/parser/OscParser.ts
+index 32710ae..1415ec6 100644
+--- a/src/common/parser/OscParser.ts
++++ b/src/common/parser/OscParser.ts
+@@ -50,6 +50,11 @@ export class OscParser implements IOscParser {
+     this._active = EMPTY_HANDLERS;
+   }
+ 
++  /** The OSC being parsed: its identifier so far, and whether the identifier is complete (payload reached). */
++  public stringState(): { id: number, idComplete: boolean } {
++    return { id: this._id, idComplete: this._state === OscState.PAYLOAD };
++  }
++
+   public reset(): void {
+     // force cleanup handlers if payload was already sent
+     if (this._state === OscState.PAYLOAD) {
+diff --git a/src/common/parser/Types.d.ts b/src/common/parser/Types.d.ts
+index 2ed4acd..0b26def 100644
+--- a/src/common/parser/Types.d.ts
++++ b/src/common/parser/Types.d.ts
+@@ -198,6 +198,9 @@ export interface IEscapeSequenceParser extends IDisposable {
+ 
+   setErrorHandler(handler: (state: IParsingState) => IParsingState): void;
+   clearErrorHandler(): void;
++
++  /** Whether an OSC string is open, and the identifier state of the OSC parser. */
++  oscStringState(): { open: boolean, id: number, idComplete: boolean };
+ }
+ 
+ /**
+@@ -214,6 +217,7 @@ export interface ISubParser<T, U> extends IDisposable {
+ }
+ 
+ export interface IOscParser extends ISubParser<IOscHandler, OscFallbackHandlerType> {
++  stringState(): { id: number, idComplete: boolean };
+   start(): void;
+   end(success: boolean, promiseResult?: boolean): void | Promise<boolean>;
+ }
 diff --git a/typings/xterm.d.ts b/typings/xterm.d.ts
-index 3300828..7b81ab0 100644
+index 3300828..9f57b18 100644
 --- a/typings/xterm.d.ts
 +++ b/typings/xterm.d.ts
-@@ -1905,4 +1905,14 @@ declare module '@xterm/xterm' {
+@@ -1905,4 +1905,27 @@ declare module '@xterm/xterm' {
       */
      readonly wraparoundMode: boolean;
    }
@@ -579,7 +689,20 @@ index 3300828..7b81ab0 100644
 +    bottom: number;
 +  }
 +
++  /**
++   * The parser's OSC string state between writes. `open` is true while an OSC string is being
++   * parsed; `id` is the identifier read so far (-1 before its first digit) and `idComplete` says
++   * the identifier ended and its payload began. `id` and `idComplete` mean nothing once closed.
++   */
++  export interface IOscStringState {
++    open: boolean;
++    id: number;
++    idComplete: boolean;
++  }
++
 +  export interface Terminal {
 +    setTextAreaViewportBounds(bounds: ITextAreaViewportBounds | undefined): void;
++    /** The parser's OSC string state, read between writes (in a write callback). */
++    oscStringState(): IOscStringState;
 +  }
  }

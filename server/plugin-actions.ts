@@ -46,7 +46,7 @@ export function pluginPaneContext(snapshot: SessionSnapshot, pane: HerdrPane): P
     focused_pane_cwd: cwd,
     focused_pane_agent: pane.agent ?? "",
     focused_pane_status: pane.agent_status,
-    invocation_source: "herdr-web-ui",
+    invocation_source: "ovis",
   };
 }
 

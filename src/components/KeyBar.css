@@ -8,6 +8,10 @@
  */
 
 .key-bar {
+  /* a key's drawn height: the bar's height less room above and below it, so the keys sit evenly in
+     the bar instead of meeting its rule and the screen's edge; each key still takes a
+     --touch-target tap through its invisible expander (.key::before) */
+  --key-h: calc(var(--keybar-h) - 3 * var(--space-1));
   /* the fade's width at an edge with keys out of view */
   --keybar-fade: var(--space-6);
   --keybar-fade-start: 0px;
@@ -61,13 +65,15 @@
 }
 
 .key {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  /* the touch target in both directions; a wider cap (Shift, Enter) grows the key, never shrinks it */
+  /* the touch target's width; a wider cap (Shift, Enter) grows the key, never shrinks it. Its
+     height is drawn at --key-h and reaches the touch target through the expander below */
   min-width: var(--touch-target);
-  height: var(--touch-target);
+  height: var(--key-h);
   padding: 0 var(--space-1);
   background: transparent;
   border: var(--hairline) solid var(--border);
@@ -85,6 +91,14 @@
   transition:
     background-color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
+}
+
+/* the key's --touch-target tap area: measured from the key's padding box, inside its hairline
+   edge, so the edge is counted out (as CommandPalette.css's filter chips) */
+.key::before {
+  content: "";
+  position: absolute;
+  inset: calc((var(--key-h) - var(--touch-target)) / 2 - var(--hairline)) 0;
 }
 
 .key svg {

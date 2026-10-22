@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseElapsed, processStartedAt, processStartUpperBound } from "./process-start.ts";
+import { parseElapsed, processStartedAt, processStartLowerBound, processStartUpperBound, processStartUpperBoundAsync } from "./process-start.ts";
 
 describe("process start time", () => {
   it("reads every form of ps's elapsed time", () => {
@@ -28,6 +28,50 @@ describe("process start time", () => {
       expect(upper!).toBeGreaterThanOrEqual(before);
       expect(upper!).toBeLessThanOrEqual(Date.now() + 25);
       expect(processStartUpperBound(2147483647)).toBeNull();
+      // the async form a send's process check awaits is the same bound from above, never the one from below
+      const awaited = await processStartUpperBoundAsync(child.pid);
+      expect(awaited).not.toBeNull();
+      expect(awaited!).toBeGreaterThanOrEqual(before);
+      expect(awaited!).toBeLessThanOrEqual(Date.now() + 25);
+    } finally { child.kill(); }
+  });
+
+  it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("bounds a process's start from below, closely enough to take in a thread made as it starts", async () => {
+    const before = Date.now();
+    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
+    const spawned = Date.now();
+    try {
+      const lower = processStartLowerBound(child.pid);
+      expect(lower).not.toBeNull();
+      // never after the process started (it started by the time spawn returned) ...
+      expect(lower!).toBeLessThanOrEqual(spawned);
+      // ... and close: on Linux within btime's whole second and a tick, on macOS the second `ps` counts
+      // and the one it may round away
+      expect(lower!).toBeGreaterThanOrEqual(before - (process.platform === "linux" ? 1030 : 2100));
+      expect(processStartLowerBound(2147483647)).toBeNull();
+    } finally { child.kill(); }
+  });
+
+  it.skipIf(process.platform !== "linux")("keeps a Linux start the same on every read: it is the process's identity", async () => {
+    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
+    try {
+      const reads = new Set(Array.from({ length: 20 }, () => processStartedAt(child.pid)));
+      expect(reads.size).toBe(1);
+      expect([...reads][0]).not.toBeNull();
+    } finally { child.kill(); }
+  });
+
+  it.skipIf(process.platform !== "linux")("bounds a Linux start below both readings: btime's and the uptime's", async () => {
+    // btime is whole seconds: processStartedAt may be up to a second early, the bound below it still
+    const before = Date.now();
+    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
+    const spawned = Date.now();
+    try {
+      const started = processStartedAt(child.pid)!;
+      const lower = processStartLowerBound(child.pid)!;
+      expect(lower).toBeLessThanOrEqual(started - 10);
+      expect(lower).toBeLessThanOrEqual(spawned);
+      expect(lower).toBeGreaterThanOrEqual(before - 1030);
     } finally { child.kill(); }
   });
 });

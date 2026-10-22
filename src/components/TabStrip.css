@@ -98,6 +98,11 @@
   border-radius: var(--radius-pill);
 }
 
+.tab-strip-agent-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
 .tab-strip-dot[data-status="working"] { background: var(--status-working); }
 .tab-strip-dot[data-status="blocked"] { background: var(--status-blocked); }
 .tab-strip-dot[data-status="done"] { background: var(--status-done); }

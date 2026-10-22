@@ -8,6 +8,8 @@ import type { SessionHistoryAgent, SessionSnapshot } from "../shared/protocol.ts
 import { HEAD_BYTES, listSessions, MAX_ENTRIES, MAX_ROWS, MAX_STATS, MAX_WALK, SESSION_HISTORY_AGENTS } from "./session-history.ts";
 import { handleSessionHistoryRequest, workspaceFolder } from "./session-history-routes.ts";
 import { claudeProjectDir } from "./claude-store.ts";
+import { codexRolloutPath } from "./codex.ts";
+import rolloutHeaders from "./fixtures/codex-rollout-headers.json";
 
 /** A stat as the listing asks for it: with `bigint`, the identity an NTFS file ID above 2^53 keeps exactly. */
 const statAs = (path: string, bigint?: boolean): Stats | BigIntStats => bigint ? statSync(path, { bigint: true }) : statSync(path);
@@ -27,7 +29,7 @@ const EXPECTED: Record<SessionHistoryAgent, [string, string]> = {
   devin: ["fixture-0002", "fixture-0001"],
 };
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-session-history-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-session-history-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 let homes = 0;
 const newHome = () => { const home = join(root, `home-${++homes}`); mkdirSync(home); return home; };
@@ -143,14 +145,126 @@ describe("listSessions", () => {
     expect(bytes).toBe(HEAD_BYTES);
   });
 
-  it("lists a Codex rollout whose header outgrows the read", () => {
+  /** A Codex store holding the shared fixture table's rollouts; returns the day folder and how many bytes each listing reads. */
+  const codexTable = (home: string) => {
+    const day = join(home, ".codex", "sessions", "2026", "10", "20");
+    mkdirSync(day, { recursive: true });
+    rolloutHeaders.cases.forEach((fixture, at) => {
+      const path = join(day, fixture.file);
+      writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload: fixture.payload }).replaceAll('"{{CWD}}"', JSON.stringify(CWD))}\n`
+        + `${JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: fixture.name } })}\n`);
+      utimesSync(path, 1_790_000_000 + at, 1_790_000_000 + at);
+    });
+    return day;
+  };
+  const countingReads = () => {
+    const reads = { files: 0, bytes: 0 };
+    const readHead = (fd: number, max: number) => {
+      const buffer = Buffer.alloc(max);
+      const read = readSync(fd, buffer, 0, max, 0);
+      reads.files++; reads.bytes += read;
+      return buffer.subarray(0, read);
+    };
+    return { reads, readHead };
+  };
+
+  it("live and history share interactive rollout eligibility", () => {
+    const home = newHome();
+    const day = codexTable(home);
+    const { reads, readHead } = countingReads();
+    const rows = listSessions("codex", CWD, { home, env: {}, readHead });
+    const eligible = rolloutHeaders.cases.filter((fixture) => fixture.interactive);
+    // newest first, each with the prompt and the resume command of its own verified id
+    expect(rows.map((row) => [row.id, row.firstMessage, row.resume?.argv])).toEqual([...eligible].reverse()
+      .map((fixture) => [String(fixture.payload.id), fixture.name, ["codex", "resume", String(fixture.payload.id)]]));
+    // the same files, and only they, are the live reader's
+    for (const fixture of rolloutHeaders.cases) {
+      expect([fixture.name, codexRolloutPath(join(day, fixture.file), join(home, ".codex")) !== null]).toEqual([fixture.name, fixture.interactive]);
+    }
+    // refusing a child or a contradiction reads nothing past each file's one head read
+    expect(reads.files).toBe(rolloutHeaders.cases.length);
+  });
+
+  it("legacy omitted identities remain interactive", () => {
+    const home = newHome();
+    const day = join(home, ".codex", "sessions", "2026", "10", "20");
+    mkdirSync(day, { recursive: true });
+    const thread = "01a0d000-0000-7000-8000-0000000000dd";
+    const legacy = { id: thread, timestamp: "2026-10-20T09:00:00.000Z", cwd: CWD, originator: "codex_cli_rs", cli_version: "0.0.0-fixture" };
+    const path = join(day, `rollout-2026-10-20T09-00-00-${thread}.jsonl`);
+    writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload: legacy })}\n`);
+    expect(listSessions("codex", CWD, { home, env: {} }).map((row) => [row.id, row.resume?.argv])).toEqual([[thread, ["codex", "resume", thread]]]);
+    expect(codexRolloutPath(path, join(home, ".codex"))).toBe(path);
+    // no id at all: nothing contradicts the file, and the live reader still takes it; the
+    // history has no id to resume it by
+    writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload: { ...legacy, id: undefined } })}\n`);
+    expect(codexRolloutPath(path, join(home, ".codex"))).toBe(path);
+    expect(listSessions("codex", CWD, { home, env: {} })).toEqual([]);
+  });
+
+  it("refuses an explicit null identity in live and history alike", () => {
+    const home = newHome();
+    const day = join(home, ".codex", "sessions", "2026", "10", "20");
+    mkdirSync(day, { recursive: true });
+    const thread = "01a0d000-0000-7000-8000-0000000000dd";
+    const path = join(day, `rollout-2026-10-20T09-00-00-${thread}.jsonl`);
+    const base = { id: thread, session_id: thread, cwd: CWD, source: "cli", thread_source: "user" };
+    const eligible = (payload: unknown) => {
+      writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload })}\n`);
+      return [codexRolloutPath(path, join(home, ".codex")) !== null, listSessions("codex", CWD, { home, env: {} }).map((row) => row.resume?.argv)];
+    };
+    expect(eligible(base)).toEqual([true, [["codex", "resume", thread]]]);
+    // a null id or session_id is present and not a thread: neither path takes it
+    expect(eligible({ ...base, session_id: null })).toEqual([false, []]);
+    expect(eligible({ ...base, id: null })).toEqual([false, []]);
+  });
+
+  it("lists a genuine fork apart from any child, as a thread of its own", () => {
+    const home = newHome();
+    const day = join(home, ".codex", "sessions", "2026", "10", "20");
+    mkdirSync(day, { recursive: true });
+    const fork = "01a0d000-0000-7000-8000-0000000000ee";
+    writeFileSync(join(day, `rollout-2026-10-20T09-00-00-${fork}.jsonl`), `${JSON.stringify({ type: "session_meta", payload: {
+      id: fork, session_id: fork, forked_from_id: rolloutHeaders.parent, cwd: CWD, source: "cli", thread_source: "user",
+      history_base: { thread_id: rolloutHeaders.parent, end_ordinal_exclusive: 3, end_byte_offset: 400 } } })}\n`);
+    expect(listSessions("codex", CWD, { home, env: {} }).map((row) => row.id)).toEqual([fork]);
+  });
+
+  it("a cut header cannot hide a child marker", () => {
     const home = newHome();
     const day = join(home, ".codex", "sessions", "2026", "10", "01");
     mkdirSync(day, { recursive: true });
-    writeFileSync(join(day, `rollout-2026-10-01T09-00-00-${ID(1)}.jsonl`),
-      `${JSON.stringify({ type: "session_meta", payload: { id: ID(1), timestamp: "2026-10-01T09:00:00.000Z", cwd: CWD, source: "cli", base_instructions: { text: "i".repeat(2 * HEAD_BYTES) } } })}\n`);
-    const rows = listSessions("codex", CWD, { home, env: {} });
-    expect(rows.map((row) => [row.id, row.firstMessage, row.resume?.argv])).toEqual([[ID(1), null, ["codex", "resume", ID(1)]]]);
+    const path = join(day, `rollout-2026-10-01T09-00-00-${ID(1)}.jsonl`);
+    const prompt = `${JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "cut prompt" } })}\n`;
+    /** A header line of exactly `length` bytes, the marker (when asked) at its end. */
+    const header = (length: number, marker: boolean) => {
+      const line = (padding: string) => JSON.stringify({ type: "session_meta", payload: {
+        id: ID(1), timestamp: "2026-10-01T09:00:00.000Z", cwd: CWD, source: "cli", base_instructions: { text: padding }, ...(marker ? { thread_source: "subagent" } : {}) } });
+      const text = line("i".repeat(length - Buffer.byteLength(line(""))));
+      expect(Buffer.byteLength(text)).toBe(length);
+      return text;
+    };
+    const listed = (body: string) => {
+      writeFileSync(path, body);
+      const { reads, readHead } = countingReads();
+      const ids = listSessions("codex", CWD, { home, env: {}, readHead }).map((row) => row.id);
+      // never more than the one head read
+      expect(reads).toEqual({ files: 1, bytes: Math.min(HEAD_BYTES, Buffer.byteLength(body)) });
+      return ids;
+    };
+    // the marker past the read: the header is not listed, and neither is one without it
+    expect(listed(`${header(2 * HEAD_BYTES, true)}\n${prompt}`)).toEqual([]);
+    expect(listed(`${header(2 * HEAD_BYTES, false)}\n${prompt}`)).toEqual([]);
+    // byte boundaries: a header whose newline is the read's last byte is whole and checked
+    expect(listed(`${header(HEAD_BYTES - 1, false)}\n${prompt}`)).toEqual([ID(1)]);
+    expect(listed(`${header(HEAD_BYTES - 1, true)}\n${prompt}`)).toEqual([]);
+    // one byte longer fills the read without its newline: not listed
+    expect(listed(`${header(HEAD_BYTES, false)}\n${prompt}`)).toEqual([]);
+    // a file that is only its header, without a newline, ends within the read
+    expect(listed(header(HEAD_BYTES - 1, false))).toEqual([ID(1)]);
+    // a malformed first line, or a first record that is not session_meta, is no rollout
+    expect(listed(`{"type":"session_meta","payload":\n${prompt}`)).toEqual([]);
+    expect(listed(`${JSON.stringify({ type: "event_msg", payload: { id: ID(1), cwd: CWD, source: "cli" } })}\n${prompt}`)).toEqual([]);
   });
 
   it.skipIf(!SYMLINKS)("refuses a SQLite store that a link puts outside the store", () => {
@@ -499,13 +613,18 @@ describe("listSessions", () => {
 
   it("never reads a crashed writer's uncommitted change from a rollback-journal store", () => {
     const home = newHome();
-    install("hermes", home);
+    mkdirSync(join(home, ".hermes"));
     const db = join(home, ".hermes", "state.db");
-    const writer = new Database(db);
+    const writer = new Database(db, { create: true });
     // a writer whose uncommitted pages reach the main file (a tiny cache spills them), then a crash:
     // the main file and its hot -journal, as they are on disk
-    writer.exec("PRAGMA journal_mode = DELETE; PRAGMA cache_spill = ON; PRAGMA cache_size = 1");
-    writer.transaction(() => { for (let n = 0; n < 2000; n++) writer.query("INSERT INTO messages (session_id, role, content, timestamp) VALUES ('20261004_090000_fx0004', 'assistant', ?, 1791104401)").run(`pad ${"x".repeat(500)}`); })();
+    writer.exec("PRAGMA journal_mode = DELETE; PRAGMA synchronous = OFF");
+    // Setup needs no disk syncs; eight padded rows still spill beyond the crash's one-page cache.
+    writer.transaction(() => {
+      writer.exec(readFileSync(join(FIXTURES, "hermes", "dot-hermes", "state.sql"), "utf8").replaceAll(":cwd", sql(CWD)));
+      for (let n = 0; n < 8; n++) writer.query("INSERT INTO messages (session_id, role, content, timestamp) VALUES ('20261004_090000_fx0004', 'assistant', ?, 1791104401)").run(`pad ${"x".repeat(500)}`);
+    })();
+    writer.exec("PRAGMA synchronous = FULL; PRAGMA cache_spill = ON; PRAGMA cache_size = 1");
     writer.exec("BEGIN; UPDATE messages SET content = 'uncommitted prompt' WHERE role = 'user'");
     writer.exec(`UPDATE messages SET content = '${"y".repeat(500)}' WHERE role = 'assistant'`);
     const crashed = newHome();

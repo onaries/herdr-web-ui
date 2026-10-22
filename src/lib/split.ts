@@ -31,7 +31,7 @@ export interface SplitState {
 /** what a dragged tab or sidebar row carries: the pane it opens, and the PC it is on */
 export const PANE_DRAG_TYPE = "application/x-herdr-pane";
 
-const STORAGE_KEY = "herdr-web-ui:split";
+const STORAGE_KEY = "ovis:split";
 
 export function otherSide(side: SplitSide): SplitSide {
   return side === "left" ? "right" : "left";

@@ -38,7 +38,8 @@ function store(session = "ses_test1") {
   const path = join(root, `opencode-${++stores}.db`);
   const db = new Database(path, { create: true });
   opened.push(db);
-  db.exec("PRAGMA journal_mode = WAL");
+  // These stores test committed visibility and locking, not crash durability.
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF");
   db.exec(SCHEMA);
   db.query("INSERT INTO session_v2 (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES (?, 'global', 'slug', ?, 'Test', '2.0.24', ?, ?)").run(session, root, T0, T0);
   let seq = 3;
@@ -82,7 +83,8 @@ function storeV1(session = "ses_old1") {
   const path = join(root, `opencode-v1-${++stores}.db`);
   const db = new Database(path, { create: true });
   opened.push(db);
-  db.exec("PRAGMA journal_mode = WAL");
+  // These stores test committed visibility and locking, not crash durability.
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF");
   db.exec(SCHEMA_V1);
   db.query("INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES (?, 'global', 'slug', ?, 'Old', '1.18.32', ?, ?)").run(session, root, T0, T0);
   let clock = T0;

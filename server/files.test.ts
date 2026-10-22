@@ -1,13 +1,21 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
-import { clearFileCache, paneFiles } from "./files.ts";
+import { clearFileCache, filesNamed, GIT_LIST_DEADLINE_MS, GIT_LIST_MAX_BYTES, paneFiles, setGitListOptions } from "./files.ts";
 
 const roots: string[] = [];
+/** what a test may set for the code under test to read; each is put back as it was */
+const SET_BY_TESTS = ["GIT_DIR", "GIT_COMMON_DIR", "PATH"] as const;
+const inherited = SET_BY_TESTS.map((name) => [name, process.env[name]] as const);
 afterEach(() => {
   clearFileCache();
+  setGitListOptions();
+  for (const [name, value] of inherited) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -119,5 +127,270 @@ describe("paneFiles", () => {
     writeFileSync(join(root, "docs", "design", "11_two-version-design.md"), "# design");
     expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
     expect(await paneFiles(root, "two-version", 20)).toEqual(["docs/design/11_two-version-design.md"]);
+  });
+});
+
+function gitRepository(root: string): void {
+  expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+  // README.md is left out by git alone: the bounded walk would list it
+  writeFileSync(join(root, ".gitignore"), "README.md\n");
+}
+
+/** A test-owned stand-in for git, in a folder of its own outside the tree it is asked about. */
+function fakeGit(script: (folder: string) => string): { git: string; folder: string } {
+  const folder = mkdtempSync(join(tmpdir(), "files-fake-git-"));
+  roots.push(folder);
+  const git = join(folder, "git");
+  writeFileSync(git, `#!/bin/sh\n${script(folder)}\n`);
+  chmodSync(git, 0o755);
+  return { git, folder };
+}
+
+/** Settles as `promise` does, or fails once `timeoutMs` passes without it. */
+function within<T>(promise: Promise<T>, timeoutMs: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not happen within ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * A stand-in git that prints one whole name and exits 0, leaving a holder process on its stdout
+ * until the test kills it (the holder waits on a FIFO no one writes, not on a timer). The holder
+ * also keeps the `life` FIFO open for writing: a `cat` started before the listing reads the
+ * holder's pid from it (the holder is ready) and then its end (every holder fd closed: it exited).
+ */
+function heldGit() {
+  const { git, folder } = fakeGit((dir) => `printf 'ghost-held\\0'\nsh -c 'exec 3>"$1"; echo $$ >&3; read _ < "$2"' holder "${dir}/life" "${dir}/hold" &\nexit 0`);
+  for (const fifo of ["life", "hold"]) expect(Bun.spawnSync(["mkfifo", join(folder, fifo)]).exitCode).toBe(0);
+  const watcher = Bun.spawn(["cat", join(folder, "life")], { stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+  const ready = Promise.withResolvers<number>();
+  const exited = Promise.withResolvers<void>();
+  let pid: number | undefined;
+  let running = true;
+  // awaited by the test; this only keeps an early failure from being reported a second time
+  ready.promise.catch(() => undefined);
+  void (async () => {
+    const reader = watcher.stdout.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (pid === undefined && text.includes("\n")) {
+        pid = Number(text.slice(0, text.indexOf("\n")));
+        ready.resolve(pid);
+      }
+    }
+    running = false;
+    ready.reject(new Error("the holder ended before it was ready"));
+    exited.resolve();
+  })();
+  return {
+    git,
+    ready: ready.promise,
+    /** true until the holder's end closed `life` */
+    holding: () => running,
+    /** Kills the holder, or the watcher when no holder ever came, and waits until both are gone. */
+    async end(): Promise<void> {
+      if (pid === undefined) watcher.kill("SIGKILL");
+      else process.kill(pid, "SIGKILL");
+      await within(exited.promise, 5_000, "the holder's exit");
+      await within(watcher.exited, 5_000, "the FIFO watcher's exit");
+    },
+  };
+}
+
+const INERT_ARGV = ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.fsmonitor="];
+
+describe("git inventories", () => {
+  it("isolates both Git inventories from inherited repository variables", async () => {
+    const root = fixture();
+    gitRepository(root);
+    const foreign = mkdtempSync(join(tmpdir(), "files-foreign-"));
+    roots.push(foreign);
+    expect(Bun.spawnSync(["git", "init", "-q", foreign]).exitCode).toBe(0);
+    writeFileSync(join(foreign, "foreign-only.txt"), "elsewhere");
+    expect(Bun.spawnSync(["git", "-C", foreign, "add", "foreign-only.txt"]).exitCode).toBe(0);
+
+    // a server started with these set (from a hook, say) inherits them; Bun.spawn ignores later edits to process.env
+    const script = `import { filesNamed, paneFiles } from ${JSON.stringify(join(import.meta.dir, "files.ts"))};
+      const root = process.env.FILES_ROOT;
+      console.log(JSON.stringify({ listed: await paneFiles(root, "", 100), foreign: filesNamed(root, "foreign-only.txt"), api: filesNamed(root, "api.ts") }));`;
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+      env: { ...process.env, FILES_ROOT: root, GIT_DIR: join(foreign, ".git"), GIT_WORK_TREE: foreign, GIT_INDEX_FILE: join(foreign, ".git", "index") },
+    });
+    const [output, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    expect(exitCode).toBe(0);
+    const { listed, foreign: foreignNamed, api } = JSON.parse(output) as { listed: string[]; foreign: string[]; api: string[] };
+    expect(listed).toContain("src/api.ts");
+    expect(listed).not.toContain("README.md");
+    expect(listed).not.toContain("foreign-only.txt");
+    expect(foreignNamed).toEqual([]);
+    expect(api).toEqual(["src/api.ts"]);
+  });
+
+  it("keeps an inherited common directory's excludes and config out of both inventories", async () => {
+    const root = fixture();
+    gitRepository(root);
+    // deeper than the walk goes, so only git's own listing can find it
+    const buried = "deep/1/2/3/4/5/6/buried.txt";
+    mkdirSync(join(root, buried, ".."), { recursive: true });
+    writeFileSync(join(root, buried), "deep");
+    const foreign = mkdtempSync(join(tmpdir(), "files-foreign-"));
+    roots.push(foreign);
+    expect(Bun.spawnSync(["git", "init", "-q", foreign]).exitCode).toBe(0);
+    // that repository would leave out src/api.ts by its info/exclude, and buried.txt by its configured excludes file
+    mkdirSync(join(foreign, ".git", "info"), { recursive: true });
+    writeFileSync(join(foreign, ".git", "info", "exclude"), "src/api.ts\n");
+    writeFileSync(join(foreign, "excludes"), "buried.txt\n");
+    expect(Bun.spawnSync(["git", "-C", foreign, "config", "core.excludesFile", join(foreign, "excludes")]).exitCode).toBe(0);
+
+    process.env["GIT_COMMON_DIR"] = join(foreign, ".git");
+    const listed = await paneFiles(root, "", 100);
+    expect(listed).toContain("src/api.ts");
+    expect(listed).toContain(buried);
+    expect(listed).not.toContain("README.md");
+    expect(filesNamed(root, "buried.txt")).toEqual([buried]);
+  });
+
+  it("hands both subprocess APIs the inert argv, environment, cap and deadline", async () => {
+    const root = fixture();
+    gitRepository(root);
+    process.env["GIT_DIR"] = join(root, "elsewhere");
+    const spawn = spyOn(Bun, "spawn");
+    const spawnSync = spyOn(Bun, "spawnSync");
+    try {
+      await paneFiles(root, "", 100);
+      filesNamed(root, "api.ts");
+      const argv = ["git", ...INERT_ARGV, "-C", root, "ls-files", "-z", "-co", "--exclude-standard"];
+      const calls = [spawn.mock.calls[0], spawnSync.mock.calls[0]] as unknown as [string[], { stdin?: string; env?: Record<string, string> }][];
+      for (const [command, options] of calls) {
+        expect(command).toEqual(argv);
+        expect(options.stdin).toBe("ignore");
+        expect(options.env?.["GIT_DIR"]).toBeUndefined();
+        expect(options.env).toMatchObject({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" });
+      }
+      expect(spawnSync.mock.calls[0]![1]).toMatchObject({ timeout: GIT_LIST_DEADLINE_MS, maxBuffer: GIT_LIST_MAX_BYTES });
+      expect(GIT_LIST_MAX_BYTES).toBe(16 * 1024 * 1024);
+      expect(GIT_LIST_DEADLINE_MS).toBe(3_000);
+    } finally {
+      spawn.mockRestore();
+      spawnSync.mockRestore();
+    }
+  });
+
+  it("disables a local fsmonitor for both inventories", async () => {
+    const root = fixture();
+    gitRepository(root);
+    expect(Bun.spawnSync(["git", "-C", root, "add", "src"]).exitCode).toBe(0);
+    const hook = fakeGit((folder) => `touch "${folder}/ran"\nexit 1`);
+    expect(Bun.spawnSync(["git", "-C", root, "config", "core.fsmonitor", hook.git]).exitCode).toBe(0);
+    const config = readFileSync(join(root, ".git", "config"), "utf8");
+    // git before 2.36 reads core.fsmonitor=false as a hook named `false`, found on PATH
+    const onPath = mkdtempSync(join(tmpdir(), "files-path-"));
+    roots.push(onPath);
+    writeFileSync(join(onPath, "false"), `#!/bin/sh\ntouch "${onPath}/ran"\nexit 1\n`);
+    chmodSync(join(onPath, "false"), 0o755);
+    process.env["PATH"] = `${onPath}${delimiter}${process.env["PATH"] ?? ""}`;
+
+    const files = await paneFiles(root, "", 100);
+    expect(files).toContain("src/components/PromptCard.tsx");
+    expect(files).not.toContain("README.md");
+    expect(filesNamed(root, "PromptCard.tsx")).toEqual(["src/components/PromptCard.tsx"]);
+    expect(existsSync(join(hook.folder, "ran"))).toBe(false);
+    expect(existsSync(join(onPath, "ran"))).toBe(false);
+    expect(readFileSync(join(root, ".git", "config"), "utf8")).toBe(config);
+  });
+
+  it("falls back instead of accepting an overflowing listing", async () => {
+    const root = fixture();
+    const cap = 64;
+    const listing = join(mkdtempSync(join(tmpdir(), "files-listing-")), "listing");
+    roots.push(join(listing, ".."));
+    const { git } = fakeGit(() => `exec cat "${listing}"`);
+    setGitListOptions({ git, maxBytes: cap });
+    for (const bytes of [cap - 1, cap, cap + 1]) {
+      // two complete NUL-terminated names, `bytes` long in all
+      const second = `ghost-${bytes}-`.padEnd(bytes - "ghost-first\0".length - 1, "x");
+      writeFileSync(listing, `ghost-first\0${second}\0`);
+      expect(readFileSync(listing).byteLength).toBe(bytes);
+      clearFileCache();
+      const listed = await paneFiles(root, "", 100);
+      const named = filesNamed(root, second);
+      if (bytes <= cap) {
+        expect(listed).toEqual([second, "ghost-first"].sort());
+        expect(named).toEqual([second]);
+      } else {
+        expect(listed).toEqual(["README.md", "src/api.ts", "src/components/PromptCard.tsx"]);
+        expect(named).toEqual([]);
+        expect(filesNamed(root, "ghost-first")).toEqual([]);
+      }
+    }
+  });
+
+  it("falls back instead of accepting an unterminated listing", async () => {
+    const root = fixture();
+    const listing = join(mkdtempSync(join(tmpdir(), "files-listing-")), "listing");
+    roots.push(join(listing, ".."));
+    const { git } = fakeGit(() => `cat "${listing}"\nexit 0`);
+    setGitListOptions({ git });
+    // git exits 0 yet its last name has no NUL: the listing was cut short, so none of it is used
+    for (const output of ["ghost-partial", "ghost-whole\0ghost-partial"]) {
+      writeFileSync(listing, output);
+      clearFileCache();
+      expect(await paneFiles(root, "", 100)).toEqual(["README.md", "src/api.ts", "src/components/PromptCard.tsx"]);
+      expect(filesNamed(root, "ghost-partial")).toEqual([]);
+      expect(filesNamed(root, "ghost-whole")).toEqual([]);
+      expect(filesNamed(root, "api.ts")).toEqual(["src/api.ts"]);
+    }
+  });
+
+  it("ends an inventory whose descendant holds stdout", async () => {
+    const root = fixture();
+    const deadlineMs = 300;
+    const walk = ["README.md", "src/api.ts", "src/components/PromptCard.tsx"];
+
+    const asyncHolder = heldGit();
+    setGitListOptions({ git: asyncHolder.git, deadlineMs });
+    const gitExit = Promise.withResolvers<number>();
+    const spawn = Bun.spawn;
+    const spy = spyOn(Bun, "spawn").mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+      const proc = spawn(...args);
+      void proc.exited.then(gitExit.resolve);
+      return proc;
+    }) as unknown as typeof Bun.spawn);
+    try {
+      const started = performance.now();
+      const listed = paneFiles(root, "", 100);
+      // git itself exits 0 with a whole name printed, while the holder it left keeps stdout open
+      expect(await within(gitExit.promise, deadlineMs + 1_000, "git's exit")).toBe(0);
+      await within(asyncHolder.ready, deadlineMs + 1_000, "the holder's readiness");
+      expect(await within(listed, deadlineMs + 1_000, "the async inventory")).toEqual(walk);
+      expect(performance.now() - started).toBeLessThan(deadlineMs + 1_000);
+      expect(asyncHolder.holding()).toBe(true);
+    } finally {
+      spy.mockRestore();
+      await asyncHolder.end();
+    }
+
+    const syncHolder = heldGit();
+    setGitListOptions({ git: syncHolder.git, deadlineMs });
+    clearFileCache();
+    try {
+      const started = performance.now();
+      expect(filesNamed(root, "ghost-held")).toEqual([]);
+      expect(performance.now() - started).toBeLessThan(deadlineMs + 1_000);
+      // the holder reported in while the lookup ran, and still holds stdout after it answered
+      await within(syncHolder.ready, 1_000, "the holder's readiness");
+      expect(syncHolder.holding()).toBe(true);
+    } finally {
+      await syncHolder.end();
+    }
   });
 });

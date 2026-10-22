@@ -15,6 +15,18 @@
   overflow-wrap: anywhere;
 }
 
+/* what Portal is doing right now (Starting, Recovering, Stopping) is read, not a footnote: body
+   size, and a phone's reading size under a finger */
+.portal-progress {
+  font-size: var(--fs-md);
+}
+
+@media (pointer: coarse) {
+  .portal-progress {
+    font-size: var(--fs-lg);
+  }
+}
+
 @media (max-width: 640px) {
   .settings-row.is-wide > .portal-start {
     flex: 0 0 auto;

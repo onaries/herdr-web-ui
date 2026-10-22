@@ -1,0 +1,40 @@
+[0m[2m• [0mNo previous message to edit.
+
+
+  [0m[38;2;99;168;248m>_ [0m[1mOpenAI Codex[0m[2m (v0.163.0)[0m
+     [0m[2m/tmp/claude-1000/pr2-rec/codex/proj[0m
+[0m[2m  permissions: [0m[1m[38;5;5mYOLO mode[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  [0m[1mUpdate Model Permissions[0m
+
+
+  1. Ask for approval       [0m[2mRead and edit workspace files and run commands, with approval required for internet access[0m
+                            [0m[2mor edits outside the workspace[0m
+  2. Approve for me         [0m[2mOnly ask for actions detected as potentially unsafe[0m
+[0m[1m[7m› 3. Full Access (current)  [0m[7mUse with caution: Codex can edit files outside this workspace and access the internet[0m[1m[7m      [0m
+[0m[1m[7m                            [0m[7mwithout approval[0m[1m[7m                                                                           [0m
+
+  [0m[1menter[0m[2m select · [0m[1mesc[0m[2m back                                                                                              [0m

@@ -12,7 +12,7 @@ const screenshotDir = process.env.SHORTCUT_SCREENSHOT_DIR;
 const app = mkdtempSync(join(tmpdir(), "herdr-exact-shortcuts-demo-"));
 
 async function stored(page: Page): Promise<Record<string, string | null>> {
-  return await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").shortcutOverrides ?? {});
+  return await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:settings") ?? "{}").shortcutOverrides ?? {});
 }
 
 async function record(page: Page, name: string, chord: string): Promise<string> {
@@ -45,7 +45,7 @@ try {
       try {
         await context.addInitScript(() => {
           Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
-          if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false }));
+          if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", alertsOn: false }));
         });
         const page = await context.newPage();
         page.setDefaultTimeout(10000);

@@ -9,10 +9,23 @@ import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
  * every row of its table except the ones it marks removed (pr-comments, vim, ultraplan). Bundled skills
  * and workflows are in the table, so they are offered as builtins too. --add-dir and lazily activated
  * descendant .claude/skills are not observable here.
- * The screens of these seven returned no representable prompt in the recorded screen check, so they
- * are listed as terminal rows rather than left out.
+ * Terminal rows are the commands Chat cannot see through. Sent bare in an isolated 2.1.306 session
+ * (2026-10-22), these left a panel, picker, form or prompt on the screen until Esc: the Settings
+ * tabs behind cost, usage, stats and status, help, memory, sandbox, tasks and the rest down to
+ * passes; add-dir and cd still ask to confirm a path given with them. The account, cloud and setup
+ * flows a signed-out session cannot open render the same kind of screen in their own definition.
+ * The last group answers only on the PC itself: diff's side panel, ide, copy's clipboard, voice,
+ * keybindings' editor, stickers and radio.
  */
-export const terminalBound = ["config", "hooks", "permissions", "plugin", "resume", "skills", "theme"] as const;
+export const terminalBound = [
+  "config", "hooks", "permissions", "plugin", "resume", "skills", "theme",
+  "cost", "usage", "stats", "status", "help", "memory", "sandbox", "tasks", "workflows", "powerup", "scroll-speed", "mobile", "passes",
+  "add-dir", "cd", "mcp",
+  "artifacts", "auto-mode-setup", "autofix-pr", "bug", "chrome", "design-login", "desktop", "feedback", "import", "install-github-app",
+  "install-slack-app", "login", "logout", "privacy-settings", "rate-limit-options", "remote-control", "remote-env", "skill-doctor",
+  "teleport", "terminal-setup", "ultrareview", "upgrade", "usage-credits", "web-setup",
+  "diff", "ide", "copy", "voice", "keybindings", "stickers", "radio",
+] as const;
 
 /** The reference's menu section: these four are typed in full and never shown in the `/` menu. */
 const agentHidden = ["agents", "heapdump", "setup-bedrock", "setup-vertex"] as const;
@@ -87,7 +100,14 @@ const forms: Record<string, CommandForm[]> = {
   effort: [{ match: "bare", interaction: "dialog", dialog: "claude-effort" }, { match: "other", interaction: "none" }],
   goal: [{ match: "bare", interaction: "dialog", dialog: "claude-goal" }, { match: { sub: "clear" }, interaction: "none" }, { match: "other", interaction: "none" }],
   btw: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }],
-  rewind: [{ match: "bare", interaction: "dialog", dialog: "claude-rewind" }],
+  rewind: [{ match: "bare", interaction: "terminal" }],
+  // bare opens a picker; given a value they set it and return
+  fast: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  autocompact: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  advisor: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  export: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "none" }],
+  // `/plan open` opens the plan in the PC's editor
+  plan: [{ match: "bare", interaction: "unknown" }, { match: { sub: "open" }, interaction: "terminal" }, { match: "other", interaction: "unknown" }],
   "code-review": reviewForms,
   review: reviewForms,
 };

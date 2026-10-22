@@ -255,7 +255,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390, colorScheme: theme });
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await context.addInitScript((theme) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme }));
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme }));
       const record = window as unknown as { longTasks: number[] };
       record.longTasks = [];
       new PerformanceObserver((list) => { for (const entry of list.getEntries()) record.longTasks.push(entry.duration); }).observe({ type: "longtask" });
@@ -355,7 +355,7 @@ try {
   // native selection and a real copy, in the desktop context with the owned clipboard
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark" })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: "dark" })));
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
   const errors: string[] = [];

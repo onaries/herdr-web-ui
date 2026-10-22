@@ -271,7 +271,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
             const frame = event.currentTarget;
             const input = frame.querySelector<HTMLElement>(".secret-input input")
               ?? frame.querySelector<HTMLElement>(".find-bar input")
-              ?? (frame.querySelector(".terminal-stack.is-chat")
+              ?? (frame.querySelector(".terminal-stack.is-chat:not(.is-peek)")
                 ? frame.querySelector<HTMLElement>(".composer-text")
                 : frame.querySelector<HTMLElement>(".terminal-input textarea") ?? frame.querySelector<HTMLElement>(".xterm-helper-textarea"));
             input?.focus({ preventScroll: true });
@@ -292,7 +292,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
             const frame = event.currentTarget.parentElement;
             const input = frame?.querySelector<HTMLElement>(".secret-input input")
               ?? frame?.querySelector<HTMLElement>(".find-bar input")
-              ?? (frame?.querySelector(".terminal-stack.is-chat")
+              ?? (frame?.querySelector(".terminal-stack.is-chat:not(.is-peek)")
                 ? frame.querySelector<HTMLElement>(".composer-text")
                 : frame?.querySelector<HTMLElement>(".terminal-input textarea") ?? frame?.querySelector<HTMLElement>(".xterm-helper-textarea"));
             input?.focus({ preventScroll: true });

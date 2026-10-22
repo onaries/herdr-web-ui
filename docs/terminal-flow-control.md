@@ -25,7 +25,7 @@ The replay tail is 128 KiB, half the high-water mark, so a join does not block t
 
 ## Verification and comparison
 
-Reproduce using only newly created `herdr-web-ui-test-*` workspaces:
+Reproduce using only newly created `ovis-test-*` workspaces:
 
 ```sh
 bun test server/pty/session.test.ts server/output-window.test.ts server/output.contract.test.ts

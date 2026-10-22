@@ -1,15 +1,16 @@
 /**
- * Renders the README banner, the site's Open Graph card and the README's framed "A look around"
- * shots from banner.html in headless Chrome: the graphite stage, the logo mark, and the real app
- * (the film's stills) in a window object and a phone object. Every image is an opaque rectangle
- * (the README loop GIF cannot carry soft alpha, so nothing next to it is rounded either). Each PNG
- * is then quantized to 256 colours with ffmpeg, since the README must stay light.
+ * Renders the README banner and the README's framed "A look around" shots from banner.html in
+ * headless Chrome: the graphite stage, the Ovis app icon, and the real app (the film's stills) in
+ * a window object and a phone object. Every image is an opaque rectangle (the README loop GIF
+ * cannot carry soft alpha, so nothing next to it is rounded either). Each PNG is then quantized to
+ * 256 colours with ffmpeg, since the README must stay light.
  *
- *   bun scripts/readme-media/banner.ts [banner] [og] [look]
+ *   bun scripts/readme-media/banner.ts [banner] [look]
  *
  * Inputs: the stills in _film/footage/stills (bun scripts/film/capture.ts), the brand fonts in
- * _film/fonts (falls back to the CDN copies), docs/brand/icon-source.png. Needs ffmpeg.
- * Outputs: docs/media/banner.png (1920x800, shown at 960), site/assets/og.png (1280x640),
+ * _film/fonts (falls back to the CDN copies), app/assets/icon-only.png (the sheep on navy, used as
+ * it is). Needs ffmpeg.
+ * Outputs: docs/media/banner.png (1920x800, shown at 960),
  * docs/media/look-{chat,prompt,terminal}.png (1760x1150, shown at 880 or 440): chat is the whole
  * window, centred; prompt and terminal are details on one rule (top-left corner 96px in, 1.25 px per
  * CSS px, so dots, pane title and sidebar stay in frame), bleeding off the right and bottom.
@@ -33,20 +34,20 @@ function ffmpeg(args: string[]) {
   if (proc.exitCode !== 0) throw new Error(`ffmpeg: ${proc.stderr.toString()}`);
 }
 
-// the mark in #f2ebdf on transparent and the grain tile: the same derivation as site/assets (brief section 1)
-const mark = join(tmp, "mark-paper.png");
+// the app icon as it ships, and the grain tile (brief section 1)
+const icon = join(root, "app/assets/icon-only.png");
 const grain = join(tmp, "grain.png");
-ffmpeg(["-i", join(root, "docs/brand/icon-source.png"), "-vf", "crop=1040:1040:145:127,scale=512:512:flags=lanczos,format=rgba,geq=r=242:g=235:b=223:a='clip((200-r(X,Y))*2.5,0,255)'", mark]);
 ffmpeg(["-f", "lavfi", "-i", "nullsrc=s=256x256,geq=random(1)*255:128:128,format=gray", "-frames:v", "1", grain]);
 
 const windowObject = (still: string) => `<div class="window"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">localhost:7317</span></div><img src="${url(join(stills, still))}" alt=""></div>`;
 const phoneObject = (still: string) => `<div class="phone"><img src="${url(join(stills, still))}" alt=""></div>`;
 // no install command in the art: at the README's display size it would be ~8px; the README has it as text
-const copy = `<div class="copy"><img class="mark" src="${url(mark)}" alt=""><div class="word">Ovis</div><div class="tag">Your agents, in plain conversation.</div></div>`;
-const hero = `${copy}<div class="scene">${windowObject("03-desktop-todo-open.png")}${phoneObject("14-phone-codex-approval.png")}</div>`;
+// the tagline as ovis.sh's hero sets it
+const copy = `<div class="copy"><img class="mark" src="${url(icon)}" alt=""><div class="word">Ovis</div><div class="tag">Anyharness, <span class="accent">Anywhere, Anytime.</span></div></div>`;
+const hero = `${copy}<div class="scene">${windowObject("01-desktop-chat-claude.png")}${phoneObject("14-phone-codex-approval.png")}</div>`;
 
 // look: the window's width in px, and "whole" (centred) or "detail" (top-left corner at 96,96)
-interface Job { out: string; kind: "banner" | "og" | "look"; w: number; h: number; content: string; look?: { w: number; anchor: "whole" | "detail" }; maxBytes: number }
+interface Job { out: string; kind: "banner" | "look"; w: number; h: number; content: string; look?: { w: number; anchor: "whole" | "detail" }; maxBytes: number }
 // the stills are 2x, so 1.25 px per CSS px is still below 1 output px per source px
 const looks = [
   { name: "chat", still: "02-desktop-chat-worked-open", look: { w: 1540, anchor: "whole" } },
@@ -55,7 +56,6 @@ const looks = [
 ] as const;
 const jobs = ([
   { out: "docs/media/banner.png", kind: "banner" as const, w: 1920, h: 800, content: hero, maxBytes: 600_000 },
-  { out: "site/assets/og.png", kind: "og" as const, w: 1280, h: 640, content: hero, maxBytes: 400_000 },
   ...looks.map((x): Job => ({ out: `docs/media/look-${x.name}.png`, kind: "look", w: 1760, h: 1150, content: windowObject(`${x.still}.png`), look: x.look, maxBytes: 700_000 })),
 ] satisfies Job[] as Job[]).filter((job) => want(job.kind));
 

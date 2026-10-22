@@ -11,9 +11,9 @@ Ovis, the browser and phone client for herdr.
 </p>
 
 <p align="center">
-  <a href="https://herdrweb.dev/">website</a> ·
+  <a href="https://ovis.sh/">website</a> ·
   <a href="#install">install</a> ·
-  <a href="https://herdrweb.dev/demo/">try the demo</a> ·
+  <a href="https://ovis.sh/demo/">try the demo</a> ·
   <a href="docs/guide.md#quick-start">quick start</a> ·
   <a href="#faq">faq</a> ·
   <a href="#docs">docs</a>
@@ -21,8 +21,8 @@ Ovis, the browser and phone client for herdr.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-666666?labelColor=333333" alt="MIT license"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/stargazers"><img src="https://img.shields.io/github/stars/devswha/herdr-web-ui?labelColor=333333&color=666666&logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/herdr-web-ui?label=release&labelColor=333333&color=666666" alt="Latest release"></a>
+  <a href="https://github.com/devswha/ovis/stargazers"><img src="https://img.shields.io/github/stars/devswha/ovis?labelColor=333333&color=666666&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/devswha/ovis/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/ovis?label=release&labelColor=333333&color=666666" alt="Latest release"></a>
   <a href="https://github.com/herdrdev/herdr"><img src="https://img.shields.io/badge/herdr-0.9.0%2B-666666?labelColor=333333" alt="herdr 0.9.0+"></a>
   <a href="docs/guide.md#on-your-phone"><img src="https://img.shields.io/badge/PWA-installable-666666?labelColor=333333" alt="Installable PWA"></a>
 </p>
@@ -91,17 +91,17 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 ## install
 
 ```bash
-curl -fsSL https://herdrweb.dev/install.sh | sh
+curl -fsSL https://ovis.sh/install.sh | sh
 ```
 
 Linux with glibc (x64, arm64) or macOS (Intel, Apple Silicon); not Alpine/musl or 32-bit ARM. Have `curl`, Git and `tar` installed; installing a missing Bun also needs Bash and `unzip`. Requires herdr 0.9.0+, Bun 1.4+ and Node 18+. The installer adds missing prerequisites for your user, upgrades an older Bun and installs Node 22 if Node is missing or older than 18, then installs the app as a herdr plugin. If an existing herdr installation is older than 0.9.0, update and restart herdr yourself before rerunning the installer.
 
-With the default listen address and Tailscale running, successful HTTPS setup provides a tailnet address and QR code. Without a configured token, your devices normally get in without a code when `tailscale serve` reports the same login as this PC's owner. If your own phone is asked to pair anyway, `HERDR_WEB_TAILSCALE_SERVE_ONLY=1` allows the no-login path only when Tailscale confirms one login owns the tailnet with no tagged nodes, and serve is the sole route to this port. Never enable it when a public proxy, tunnel or other forwarding server also reaches the port ([Access and safety](docs/guide.md#access-and-safety)).
+With the default listen address and Tailscale running, successful HTTPS setup provides a tailnet address and QR code. Without a configured token, your devices normally get in without a code when `tailscale serve` reports the same login as this PC's owner. If your own phone is asked to pair anyway, `OVIS_TAILSCALE_SERVE_ONLY=1` allows the no-login path only when Tailscale confirms one login owns the tailnet with no tagged nodes, and serve is the sole route to this port. Never enable it when a public proxy, tunnel or other forwarding server also reaches the port ([Access and safety](docs/guide.md#access-and-safety)).
 
 Windows x64, in PowerShell:
 
 ```powershell
-irm https://herdrweb.dev/install.ps1 | iex
+irm https://ovis.sh/install.ps1 | iex
 ```
 
 Requires [Git for Windows](https://git-scm.com/download/win). Installs missing herdr and Bun for your user, then installs the same plugin. No Node or WSL is needed. Open **Phone setup** in herdr for phone access. Windows terminals use the [screen mirror](docs/remote-pcs.md#windows-pcs), with typing and a fixed grid, until herdr supports terminal attach there.
@@ -113,12 +113,12 @@ Requires [Git for Windows](https://git-scm.com/download/win). Installs missing h
 Already have herdr 0.9.0+, Bun 1.4+ and Node 18+ (Node isn't needed on Windows)? Install just the plugin:
 
 ```bash
-herdr plugin install devswha/herdr-web-ui
+herdr plugin install devswha/ovis
 ```
 
 An older herdr has to be updated and restarted first. [INSTALL.md](INSTALL.md) walks through each step and what to do when one fails.
 
-With herdr running, use the address the installer prints or opens, normally **[127.0.0.1:7317](http://127.0.0.1:7317)**; the plugin can choose and remember another port if that one is busy. On a plugin-only install, run herdr's **Start Ovis** action. On a new install on a PC with a desktop, the installer opens the address in your browser for you; click **Install** in the address bar to add the app. The installed app belongs to that exact address, so keep using it rather than switching between `127.0.0.1` and `localhost`. Set `HERDR_WEB_NO_OPEN=1` before running the installer to skip opening the browser. Pick a pane or start an agent with **New workspace**. To use your phone, scan the installer's QR code (also available from herdr's **Phone setup**) and add the app to your home screen. [Quick start →](docs/guide.md#quick-start)
+With herdr running, use the address the installer prints or opens, normally **[127.0.0.1:7317](http://127.0.0.1:7317)**; the plugin can choose and remember another port if that one is busy. On a plugin-only install, run herdr's **Start Ovis** action. On a new install on a PC with a desktop, the installer opens the address in your browser for you; click **Install** in the address bar to add the app. The installed app belongs to that exact address, so keep using it rather than switching between `127.0.0.1` and `localhost`. Set `OVIS_NO_OPEN=1` before running the installer to skip opening the browser. Pick a pane or start an agent with **New workspace**. To use your phone, scan the installer's QR code (also available from herdr's **Phone setup**) and add the app to your home screen. [Quick start →](docs/guide.md#quick-start)
 
 The server listens on `127.0.0.1` by default. For access from another device, see [phone setup](docs/guide.md#on-your-phone) and [access and safety](docs/guide.md#access-and-safety).
 
@@ -140,13 +140,13 @@ No. Both attach to the same terminals at the same time, so the pane stays live a
 
 **Do I need Tailscale?**
 
-No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route to the PC. The optional [Portal integration](docs/guide.md#behind-a-reverse-proxy) can manage a public HTTPS address after you install Portal 2.6.1+ separately; it requires `HERDR_WEB_TOKEN`, a trusted relay and `HERDR_WEB_TAILSCALE_SERVE_ONLY` off. Installation and push alerts need a secure context such as HTTPS or localhost; basic browsing also works over plain HTTP on a LAN. [The options →](docs/guide.md#faq)
+No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route to the PC. The optional [Portal integration](docs/guide.md#behind-a-reverse-proxy) can manage a public HTTPS address after you install Portal 2.6.1+ separately; it requires `OVIS_TOKEN`, a trusted relay and `OVIS_TAILSCALE_SERVE_ONLY` off. Installation and push alerts need a secure context such as HTTPS or localhost; basic browsing also works over plain HTTP on a LAN. [The options →](docs/guide.md#faq)
 
 **Does my code or conversation leave my machine?**
 
 Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; browser speech recognition may also use the browser vendor's service. Enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. If you enable Portal, connections pass through your chosen relay, which sees connection metadata and holds the address's certificate; use a relay you trust.
 
-Anonymous usage counts are on by default. After showing its notice and a ten-minute grace period, the app can send install/update counts with a random installation ID, version (and previous version on update), OS, CPU architecture, install method and an allowlisted settings snapshot. Custom text and account identities are omitted or summarized; code, conversations and files are not collected. The checked-in receiver adds a country code when Cloudflare provides one, but stores no IP address. Activity counts include the kinds of agents running on days the app is opened (UTC); the same day's count can be updated when a new kind appears. **Settings → About → Anonymous usage counts** shows the payload and turns sending off; `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` also disables it. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
+Anonymous usage counts are on by default. After showing its notice and a ten-minute grace period, the app can send install/update counts with a random installation ID, version (and previous version on update), OS, CPU architecture, install method and an allowlisted settings snapshot. Custom text and account identities are omitted or summarized; code, conversations and files are not collected. The checked-in receiver adds a country code when Cloudflare provides one, but stores no IP address. Activity counts include the kinds of agents running on days the app is opened (UTC); the same day's count can be updated when a new kind appears. **Settings → About → Anonymous usage counts** shows the payload and turns sending off; `OVIS_TELEMETRY=0` or `DO_NOT_TRACK=1` also disables it. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
 
 The random ID links counts from the same installation; it is not a guarantee of anonymity.
 
@@ -181,8 +181,8 @@ Helping someone install the app? Follow [INSTALL.md](INSTALL.md). For repository
 ## development
 
 ```bash
-git clone https://github.com/devswha/herdr-web-ui.git
-cd herdr-web-ui
+git clone https://github.com/devswha/ovis.git
+cd ovis
 bun install
 
 bun run server      # API + WebSocket on :7317

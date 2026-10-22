@@ -64,11 +64,11 @@ it("does not discard older folders as more projects are opened", () => {
 
 it("ignores malformed history and invalid entries at the storage boundary", () => {
   const { data, store } = fixture();
-  data.set("herdr-web-ui:recent-directories:local", "{broken");
+  data.set("ovis:recent-directories:local", "{broken");
   expect(store.read("local")).toEqual([]);
-  data.set("herdr-web-ui:recent-directories:local", '{"path":"/wrong-shape"}');
+  data.set("ovis:recent-directories:local", '{"path":"/wrong-shape"}');
   expect(store.read("local")).toEqual([]);
-  data.set("herdr-web-ui:recent-directories:local", JSON.stringify([null, 1, {}, "/ok/", "/ok", ""]));
+  data.set("ovis:recent-directories:local", JSON.stringify([null, 1, {}, "/ok/", "/ok", ""]));
   expect(store.read("local")).toEqual(["/ok"]);
 });
 

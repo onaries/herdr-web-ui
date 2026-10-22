@@ -11,7 +11,7 @@ import { paneRead, paneSendText, workspaceClose, workspaceCreate } from "../serv
 import { chromePath } from "./chrome-path.ts";
 
 assert(process.env.HERDR_TEST_LIVE !== "1" && process.env.HERDR_TEST_MODE !== "unit");
-process.env.HERDR_TEST_SESSION ||= "herdr-web-ui-test-ime-evidence";
+process.env.HERDR_TEST_SESSION ||= "ovis-test-ime-evidence";
 await import("./test-herdr.ts");
 const [before, after] = process.argv.slice(2);
 assert(before && after, "Usage: bun scripts/terminal-safari-ime-evidence.ts BEFORE_DIST AFTER_DIST");
@@ -67,7 +67,7 @@ process.stdin.on('data', bytes => {
     const context = await browser.newContext({ viewport: { width: 1240, height: 540 },
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/26.6.2 Safari/605.1.15" });
     try {
-      const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-ime-evidence" });
+      const made = await workspaceCreate({ cwd: root, label: "ovis-test-ime-evidence" });
       workspace = made.workspace.workspace_id;
       const pane = made.root_pane.pane_id;
       const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
@@ -80,8 +80,8 @@ process.stdin.on('data', bytes => {
       const address = web.httpServer.address(); assert(address && typeof address !== "string");
       await context.addInitScript(pane => {
         Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
-        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
-        localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+        localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+        localStorage.setItem(`ovis:view:${pane}`, "terminal");
       }, pane);
       const page = await context.newPage();
       let ready = false;

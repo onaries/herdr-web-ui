@@ -1,10 +1,10 @@
 # Contributing
 
-Thanks for helping. Bugs and ideas go in an [issue](https://github.com/devswha/herdr-web-ui/issues/new/choose);
+Thanks for helping. Bugs and ideas go in an [issue](https://github.com/devswha/ovis/issues/new/choose);
 security problems never do: see [SECURITY.md](SECURITY.md). For a larger change, open an issue first so
 the approach can be agreed before you build it. Small fixes can go straight to a PR.
 
-**Features.** Open a [feature request](https://github.com/devswha/herdr-web-ui/issues/new?template=feature_request.yml)
+**Features.** Open a [feature request](https://github.com/devswha/ovis/issues/new?template=feature_request.yml)
 and wait for a maintainer's yes before you write code; a feature PR without one may be closed, however
 well it is built. The app is a bridge to herdr, so a feature should either mirror something herdr's
 own TUI does, or meet a need that widely used coding-agent apps already meet (the Codex and Claude
@@ -66,14 +66,14 @@ bun run build
 bun run test:unit
 ```
 
-**Integration and browser** needs herdr on `PATH` (or `HERDR_WEB_HERDR_BIN`) and Chrome
+**Integration and browser** needs herdr on `PATH` (or `OVIS_HERDR_BIN`) and Chrome
 (`CHROME_PATH`, default `/opt/google/chrome/chrome`):
 
 ```bash
-bun run test:integration   # runs the files 4 at a time on `herdr-web-ui-test-1` to `-4`, which it
+bun run test:integration   # runs the files 4 at a time on `ovis-test-1` to `-4`, which it
                            # stops itself; HERDR_TEST_SHARDS=1 runs them one by one on `-1`
-bun run test:ui            # builds, then browser regression on `herdr-web-ui-test`; stop it with
-                           # herdr --session herdr-web-ui-test server stop
+bun run test:ui            # builds, then browser regression on `ovis-test`; stop it with
+                           # herdr --session ovis-test server stop
 ```
 
 `bun test` runs the unit and integration suites together. Remote-PC changes also have
@@ -89,9 +89,13 @@ running terminals: see [development](docs/development.md#checks).
 - **Theme colors:** edit them only in the theme blocks of `src/styles.css`. Never edit
   `src/lib/themes.generated.ts` or the generated copies in DESIGN.md, `index.html` and
   `public/manifest.webmanifest`; run `bun run generate:themes`.
-- **UI text:** every new `t("…")` string needs an entry in `src/lib/i18n.ko.ts`, `i18n.ja.ts`
-  and `i18n.zh.ts`, with the same placeholders. `bun run test:unit` fails on a missing, unused or
-  untranslated entry.
+- **UI text:** every new `t("…")` string needs a Korean, Japanese and Simplified Chinese entry with
+  the same placeholders. A string that only one feature's files use goes in that feature's files in
+  `src/lib/i18n/` when it has them (`settings.ko.ts`, `settings.ja.ts` and `settings.zh.ts` for the
+  Settings dialog; each file's header lists its feature's files). Any other string goes in
+  `src/lib/i18n.ko.ts`, `i18n.ja.ts` and `i18n.zh.ts`, and so does a feature's string once another
+  feature uses it too. `bun run test:unit` fails on a missing, unused or untranslated entry, and on one
+  the three languages keep in different files.
 - **UI languages:** the app keeps English, Korean, Japanese and Simplified Chinese and does not take
   new ones. Every language has to translate each later string, so a PR that adds a language is
   closed.
@@ -104,7 +108,7 @@ running terminals: see [development](docs/development.md#checks).
   and a reason, including repairs the proposal tool already applied. Every
   entry has to pass the AA contrast test on the committed hex. Then run `bun run generate:themes`;
   never edit `src/lib/themes.generated.ts` or the other generated copies.
-- **The browser demo:** the [demo](https://herdrweb.dev/demo/) redeploys on every
+- **The browser demo:** the [demo](https://ovis.sh/demo/) redeploys on every
   merge to `main`. A feature meant to show there needs an answer in `site/demo/transport.ts`; anything
   else gets its 404.
 - **Changelog:** a change users notice gets a small file in [changelog.d/](changelog.d/README.md)

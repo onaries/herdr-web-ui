@@ -33,7 +33,6 @@ import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { PendingInputs, samePendingIdentity, type PendingIdentity, type PendingRecord } from "../pending-input.ts";
 import { processStartedAt } from "../process-start.ts";
 import { PendingRequestBook } from "../pending-requests.ts";
-import { interruptCodexSteering } from "../codex-steering.ts";
 import type { OmoStatus } from "../omo-status.ts";
 import { startOpenCodeWatch, openCodeSkillsToType, type OpenCodeWatch, skillsNotAttached } from "../opencode-native.ts";
 import { herdrSkillAttachIo, type PromptPiece, typeWithSkills } from "../opencode-skill-attach.ts";
@@ -309,7 +308,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     }
   }
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
-    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false): Promise<SubmitReply> {
+    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}): Promise<SubmitReply> {
     let wrote = false;
     let watch: OpenCodeWatch | null = null;
     // what the checks below read is older than a status event that arrives while they run
@@ -386,19 +385,6 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
       await paneSendKeys(paneId, [steering && beforeEnter.identity.agent === "claude" ? "ctrl+enter" : "Enter"], undefined, allowed);
-      // the status the panel was read under; a status event since (a finish, an approval) stales the Escape
-      let statusAtRead = pending.current(paneId);
-      await interruptCodexSteering(interruptWorkingCodex, closeMention(text), { agent: beforeEnter.identity.agent, working: beforeEnter.working, screen: beforeEnter.screen }, {
-        read: async () => {
-          const current = await pendingContext(owner, paneId, lease, identity, true);
-          statusAtRead = pending.current(paneId);
-          return { agent: current.identity.agent, working: current.working, screen: current.screen };
-        },
-        restarting: () => committing(true, true),
-        // herdr has no compare-and-send: the screen can change between this read and the write, so the
-        // write is refused when the lease, the deadline or the pane's status moved meanwhile
-        escape: (fresh) => paneSendKeys(paneId, ["Escape"], undefined, () => allowed() && fresh() && pending.current(paneId) === statusAtRead),
-      });
       noteSubmitted(paneId, text, command);
       if (command) watch?.commit(command, prompt, attached);
       return { ok: true };
@@ -413,13 +399,13 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
    * `by`: the connection that types the message, the owner's own for a connection's message; for a
    * first message whichever typist the caller found, whose lease is taken here for this attempt alone.
    */
-  async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number, interruptWorkingCodex = false, by: Client | null = isClient(item.owner) ? item.owner : null): Promise<SubmitReply> {
+  async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number, by: Client | null = isClient(item.owner) ? item.owner : null): Promise<SubmitReply> {
     let reply: SubmitReply;
     try {
       if (by === null) throw new HerdrError("input_not_ready", "No connection has the pane attached to type the message");
       const lease = item.lease ?? pendingLease(by, item.paneId);
       reply = await dispatchPendingText(by, item.paneId, item.message.text, lease, item.identity,
-        automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex);
+        automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting));
     } catch (error) {
       reply = { ok: false, ...pendingFault(error) };
     }
@@ -460,7 +446,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (await bindLaunched(item) === "wait") return;
       if (!pending.claim(item, true)) return;
       dispatched = true;
-      await dispatchPending(item, true, arrivedAt, false, by);
+      await dispatchPending(item, true, arrivedAt, by);
     }).catch((error) => console.warn("pending message:", pendingFault(error).code)).finally(() => {
       pendingDrains.delete(paneId);
       const again = drainAgain.delete(paneId);
@@ -753,7 +739,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
                 if (!pending.claim(item, false)) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
                 if (isClient(item.owner)) item.lease = lease!;
                 dispatched = true;
-                return await dispatchPending(item, false, arrivedAt, true, client);
+                return await dispatchPending(item, false, arrivedAt, client);
               } catch (error) { return { ok: false, ...pendingFault(error) }; }
             }, message.resend_generation);
           // A saved copy may already have completed this ID on another connection.

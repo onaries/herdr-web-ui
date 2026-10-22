@@ -1,9 +1,9 @@
-import type { BrowserContext, Page, Route } from "playwright-core";
+import type { Page, Route } from "playwright-core";
 
 const DRAIN_MS = 15_000;
 
 /**
- * `page.route` for a handler that awaits (`route.fetch()`, a gate) before it answers, with an
+ * A page or context route whose handler awaits (`route.fetch()`, a gate) before it answers, with an
  * unroute that first lets the calls in flight finish. The app polls on its own, so a call can be
  * running whenever a check ends. `page.unroute` does not wait for it: taking a page's last route
  * away continues the request on the server side, the handler's own `fulfill` then finds the
@@ -12,7 +12,7 @@ const DRAIN_MS = 15_000;
  * race between two calls in flight (playwright-core 1.63), and "ignoreErrors" would hide a
  * handler's real failure: a call that fails here fails the unroute.
  */
-export async function routeDrained(page: Page | BrowserContext, url: string, handle: (route: Route) => Promise<void>): Promise<() => Promise<void>> {
+export async function routeDrained(page: Pick<Page, "route" | "unroute">, url: string, handle: (route: Route) => Promise<void>): Promise<() => Promise<void>> {
   const running = new Set<Promise<void>>();
   const handler = (route: Route): Promise<void> => {
     const call = handle(route).finally(() => { running.delete(call); });

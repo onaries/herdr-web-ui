@@ -16,9 +16,9 @@ import { useLocale, useT } from "../lib/i18n.ts";
 
 declare const __APP_VERSION__: string;
 
-const CHANGELOG = "https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.md";
+const CHANGELOG = "https://github.com/devswha/ovis/blob/main/CHANGELOG.md";
 /** the restart commands for a plugin and a source install */
-const RESTART_HELP = "https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#updates";
+const RESTART_HELP = "https://github.com/devswha/ovis/blob/main/docs/guide.md#updates";
 
 /**
  * What an update brings, or brought: each release it installs, newest first. A release is told
@@ -80,7 +80,7 @@ function UpdateProgress({ status, fallback }: { status: UpdateStatus | null; fal
 
 export function UpdateControls({ updates, bridgesFollow = false }: { updates: UpdatesModel; bridgesFollow?: boolean }) {
   const t = useT();
-  const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
+  const { status, error, busy, needsReload, reload, notes, installed, request, failure, offered } = updates;
   const locale = useLocale();
   const installing = busy && (status?.phase === "building" || status?.phase === "restarting");
   const tabVersion = staleClientVersion(status, __APP_VERSION__);
@@ -95,18 +95,21 @@ export function UpdateControls({ updates, bridgesFollow = false }: { updates: Up
     <p className="settings-hint">{t("Running {version}", { version: runningAppVersion(status, __APP_VERSION__) })}</p>
     {tabVersion && reload !== "restart" && <p className="settings-hint">{t("This tab still runs {version} until it is reloaded.", { version: tabVersion })}</p>}
     {installing && !error ? <div role="status"><UpdateProgress status={status} fallback={t(status?.phase === "building" ? "Installing dependencies and building…" : "Restarting the bridge…")} /></div> : <p className="settings-hint" role="status">
-      {error ?? status?.error ?? (restart ? <><span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span> <a className="settings-link" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
+      {(failure === "offer-changed" ? t("A newer release was published after you chose this update, so nothing was installed. Check again to review it.") : null) ?? error ?? status?.error ?? (restart ? <><span>{t("Ovis was updated on this PC. Restart it there to load the update.")}</span> <a className="settings-link" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a></> : null) ?? blocked ?? (busy ? t("Checking for updates…") :
         status?.available ? t("Version {version} is available.", { version: versionLabel(status.latest_version, status.latest_revision) ?? "" }) : status?.checked_at ? t("Up to date.") : t("Waiting for an update check…"))}
     </p>}
     {restart && !error && !status?.error && blocked && <p className="settings-hint">{blocked}</p>}
+    {!installing && failure === "restart" && <p className="settings-hint">{t("Restart Ovis on this PC to update from here: the server running now cannot install exactly the release shown.")}</p>}
     {notes && <ReleaseNotes notes={notes} label={t("What's new")} />}
     {/* under the release on offer, when there is one: what runs now stays to be read */}
     {installed && installed.releases.length > 0 && <ReleaseNotes notes={installed} label={t("What the last update brought")} />}
     {status?.managed && <>
       <p className="settings-hint">{t("Checks for new releases every 5 minutes.")} {t(status.auto_update ? "Automatic installation is enabled." : "Install when you are ready; the bridge briefly reconnects and herdr sessions keep running.")}{bridgesFollow ? ` ${t("Remote PCs' bridges are updated afterwards when the new version needs it.")}` : ""}</p>
       <div className="update-actions">
-        <button type="button" className="btn" disabled={busy} onClick={() => void request("check")}>{t("Check for updates")}</button>
-        <button type="button" className="btn btn-primary" disabled={busy || !status.available || !!status.blocked_reason} onClick={() => void request("install")}>{t("Update and restart")}</button>
+        <button type="button" className="btn" disabled={busy} onClick={() => void request({ command: "check" })}>{t("Check for updates")}</button>
+        <button type="button" className="btn btn-primary" disabled={busy || offered === null || failure !== null} onClick={() => { if (offered) void request({ command: "install", expected_revision: offered }); }}>{t("Update and restart")}</button>
+        {/* the way forward when this server cannot install by revision: a control of the row, not a word in the sentence */}
+        {!installing && failure === "restart" && <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>}
       </div>
     </>}
     {status?.checked_at && <p className="settings-hint">{t("Last checked {when}", { when: new Date(status.checked_at).toLocaleString(locale) })}</p>}
@@ -155,7 +158,7 @@ export function HerdrUpdateControls({ enabled, herdrVersion }: { enabled: boolea
  */
 export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpen: () => void }) {
   const t = useT();
-  const { status, error, busy, needsReload, reload, notes, installed, request } = updates;
+  const { status, error, busy, needsReload, reload, notes, installed, request, failure, offered } = updates;
   // the version whose line this device closed: opening its notes closes it too, in every tab
   const [announced, setAnnounced] = useState(readAnnounced);
   // subscribed first, then read: a dismissal in another tab between this tab's first read and its subscription is not lost
@@ -201,14 +204,25 @@ export function UpdateNotice({ updates, onOpen }: { updates: UpdatesModel; onOpe
       <button type="button" className="btn" onClick={() => window.location.reload()}>{t("Reload app")}</button>
     </div>;
   }
-  // without a release in reach the server refuses an install: ask it to look again first
-  const retry = status?.available ? "install" : "check";
-  const text = failed ? t("The update could not be installed.") : status?.latest_version ? t("Ovis v{version} is available.", { version: status.latest_version }) : t("An Ovis update is available.");
-  return <div className="update-notice is-line" role="status">
+  // a server that cannot install by revision is sent no install: the line says to restart it
+  if (failure === "restart") return <div className="update-notice is-line is-warning" role="status">
+    <span>{t("Restart Ovis on this PC to update from here: the server running now cannot install exactly the release shown.")}</span>
+    <a className="btn" href={RESTART_HELP} target="_blank" rel="noreferrer">{t("How to restart")}</a>
+  </div>;
+  // without a release in reach the server refuses an install: ask it to look again first. A
+  // release that replaced the one asked for is looked at again too, never installed from here
+  // unseen. An install names the release this render offered.
+  const install = failure === null ? offered : null;
+  const changed = failure === "offer-changed";
+  const text = changed ? t("A newer release was published after you chose this update, so nothing was installed. Check again to review it.") : failed ? t("The update could not be installed.") : status?.latest_version ? t("Ovis v{version} is available.", { version: status.latest_version }) : t("An Ovis update is available.");
+  return <div className={changed ? "update-notice is-line is-warning" : "update-notice is-line"} role="status">
     <span title={text}>{text}</span>
     {failed ? <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("Details")}</button>
       : notes && <button type="button" className="btn btn-ghost" onClick={onOpen}>{t("What's new")}</button>}
-    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setAttempted(true); setStarted(retry === "install"); void request(retry); }}>{t(failed ? "Try again" : "Update")}</button>
+    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => {
+      setAttempted(true); setStarted(install !== null);
+      void request(install !== null ? { command: "install", expected_revision: install } : { command: "check" });
+    }}>{t(failed ? "Try again" : "Update")}</button>
   </div>;
 }
 

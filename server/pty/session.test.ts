@@ -1,5 +1,36 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { join } from "node:path";
 import { PtySession, writeLine } from "./session.ts";
+
+/** Prints only whether the bridge token is present, plus the socket and TERM the attach would use. */
+const REPORT_ENV = ["-e", `process.stdout.write("TOKEN_PRESENT=" + Object.prototype.hasOwnProperty.call(process.env, "OVIS_TOKEN")
+  + " SOCKET=[" + process.env.HERDR_SOCKET_PATH + "] TERM=[" + process.env.TERM + "]")`];
+const fixtureToken = () => `herdr-web-token-fixture-${crypto.randomUUID()}`;
+
+/** Runs REPORT_ENV through a PtySession with a fixture bridge token in this process's env, capturing the sidecar's spawn options. */
+async function reportThroughSession(env: Record<string, string>) {
+  const parentToken = fixtureToken();
+  const previous = process.env["OVIS_TOKEN"];
+  process.env["OVIS_TOKEN"] = parentToken;
+  const spawn = spyOn(Bun, "spawn");
+  let output = "";
+  let session: PtySession | undefined;
+  try {
+    const code = await new Promise<number | null>((resolve) => {
+      session = new PtySession({
+        command: "node", args: REPORT_ENV, cols: 80, rows: 5, env,
+        onData: (data) => { output += data; }, onExit: resolve,
+      });
+    });
+    const options = spawn.mock.calls[0]?.[1] as { env?: Record<string, string | undefined> } | undefined;
+    return { code, output, sidecarEnv: options?.env ?? {}, parentToken, parentKept: process.env["OVIS_TOKEN"] === parentToken };
+  } finally {
+    session?.kill();
+    spawn.mockRestore();
+    if (previous === undefined) delete process.env["OVIS_TOKEN"];
+    else process.env["OVIS_TOKEN"] = previous;
+  }
+}
 
 /**
  * The attach command is `herdr terminal attach`, and herdr's CLI picks its socket from
@@ -9,7 +40,7 @@ import { PtySession, writeLine } from "./session.ts";
  */
 describe("PtySession", () => {
   it("forwards extra env to the command running on the pty", async () => {
-    const sentinel = "/tmp/herdr-web-ui-session-test.sock";
+    const sentinel = "/tmp/ovis-session-test.sock";
     let output = "";
     const printed = new Promise<string>((resolve) => {
       new PtySession({
@@ -25,6 +56,47 @@ describe("PtySession", () => {
       });
     });
     expect(await printed).toContain("[" + sentinel + "]");
+  }, 10000);
+
+  // The bridge's bearer token is for browsers: neither the Node sidecar nor the attach command needs it.
+  it("omits bridge token from the sidecar after merging overrides", async () => {
+    const overrideToken = fixtureToken();
+    const run = await reportThroughSession({ OVIS_TOKEN: overrideToken });
+    expect(run.code).toBe(0);
+    expect(Object.prototype.hasOwnProperty.call(run.sidecarEnv, "OVIS_TOKEN")).toBe(false);
+    expect(run.output).toContain("TOKEN_PRESENT=false");
+    expect(run.parentKept).toBe(true);
+    // compared as booleans so a failure never prints a token
+    expect(run.output.includes(run.parentToken) || run.output.includes(overrideToken)).toBe(false);
+  }, 10000);
+
+  it("host omits bridge token from attach environment", async () => {
+    // Launched outside PtySession: the host defends the attach child on its own.
+    const token = fixtureToken();
+    const socket = "/tmp/ovis-host-test.sock";
+    const host = Bun.spawn(
+      ["node", join(import.meta.dir, "pty-host.mjs"), "80", "5", "node", ...REPORT_ENV],
+      { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, OVIS_TOKEN: token, HERDR_SOCKET_PATH: socket } },
+    );
+    try {
+      const [code, output, errors] = await Promise.all([host.exited, new Response(host.stdout).text(), new Response(host.stderr).text()]);
+      expect(code).toBe(0);
+      expect(output).toContain("TOKEN_PRESENT=false");
+      expect(output).toContain(`SOCKET=[${socket}]`);
+      expect(output.includes(token) || errors.includes(token)).toBe(false);
+    } finally { host.kill(); }
+  }, 10000);
+
+  it("preserves socket and terminal configuration", async () => {
+    const socket = "/tmp/ovis-session-config.sock";
+    const run = await reportThroughSession({ HERDR_SOCKET_PATH: socket });
+    expect(run.code).toBe(0);
+    expect(run.sidecarEnv["HERDR_SOCKET_PATH"]).toBe(socket);
+    expect(run.sidecarEnv["PATH"]).toBe(process.env["PATH"]);
+    expect(run.sidecarEnv["HOME"]).toBe(process.env["HOME"]);
+    expect(run.output).toContain(`SOCKET=[${socket}]`);
+    expect(run.output).toContain("TERM=[xterm-256color]");
+    expect(run.output).toContain("TOKEN_PRESENT=false");
   }, 10000);
 
   it("signals SIGWINCH to the command without changing its size", async () => {

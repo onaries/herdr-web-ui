@@ -63,7 +63,7 @@ try {
         viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390, deviceScaleFactor: width === 390 ? 3 : 1,
       });
       try {
-        await context.addInitScript((settings) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify(settings)), { language, theme });
+        await context.addInitScript((settings) => localStorage.setItem("ovis:settings", JSON.stringify(settings)), { language, theme });
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -112,7 +112,7 @@ try {
       const language = "ko";
       const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
       try {
-        await context.addInitScript((settings) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify(settings)), { language, theme });
+        await context.addInitScript((settings) => localStorage.setItem("ovis:settings", JSON.stringify(settings)), { language, theme });
         const page = await context.newPage();
         await page.goto(`${server.url.origin}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.web)}`);
         await page.locator(".prompt-card").waitFor();

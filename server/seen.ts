@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { MAX_SEEN, MAX_SEEN_BYTES, mergeSeen, seenFinishBody, seenFinishKey, type SeenFinish } from "../shared/seen.ts";
 import { badRequest, jsonResponse } from "./http.ts";
+import { damagedCopy, readStateDocument, writeStateDocument } from "./state-document.ts";
 
 /**
  * The finishes some browser of this server presented (shared/seen.ts), kept in the state directory
@@ -13,39 +13,65 @@ export class SeenStore {
   private readonly finishes = new Map<string, SeenFinish>();
   private readonly path: string;
   private readonly listeners = new Set<(finish: SeenFinish) => void>();
+  /** Until this store has replaced the file, a write reads it again first: it may have been damaged or repaired since. */
+  private unsettled = true;
 
   constructor(stateDir: string) {
     this.path = join(stateDir, "seen.json");
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
-      for (const raw of Array.isArray(parsed) ? parsed : []) {
-        const finish = seenFinishBody(raw);
-        if (finish) this.finishes.set(seenFinishKey(finish), finish);
-      }
+      const disk = this.readDisk();
+      if (disk) for (const [k, v] of disk.finishes) this.finishes.set(k, v);
     } catch (error) {
-      // a missing file is a server that has recorded nothing yet; a damaged one is replaced by the next write
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.path}; read finishes start empty`);
+      // a missing file is a server that has recorded nothing yet; an unreadable one is not, and is never written over
+      console.error(`Cannot read ${this.path} (${(error as NodeJS.ErrnoException).code ?? "error"}); read finishes start empty and are not saved until it can be read`);
     }
+  }
+
+  /**
+   * The finishes on disk, undefined when there is no file. A document that is not a list, or holds
+   * a row that is not a finish, is damaged: the valid rows are used, and the whole file is kept
+   * aside before a write drops the others. Throws when it cannot be read.
+   */
+  private readDisk(): { finishes: Map<string, SeenFinish>; damaged: boolean } | undefined {
+    const read = readStateDocument(this.path);
+    if (read.kind === "missing") return undefined;
+    const finishes = new Map<string, SeenFinish>();
+    const rows = read.kind === "json" && Array.isArray(read.value) ? read.value as unknown[] : null;
+    let damaged = rows === null;
+    for (const raw of rows ?? []) {
+      const finish = seenFinishBody(raw);
+      if (finish) finishes.set(seenFinishKey(finish), finish);
+      else damaged = true;
+    }
+    if (damaged) console.error(`${this.path} is ${read.kind === "malformed" ? "not JSON" : "not a list of read finishes"}; the next change keeps it as ${damagedCopy(this.path)}`);
+    return { finishes, damaged };
   }
 
   list(): SeenFinish[] { return [...this.finishes.values()]; }
 
   record(finish: SeenFinish): SeenFinish {
+    let base = this.finishes;
+    let keepDamaged = false;
+    if (this.unsettled) {
+      // the file as it is now, not as it was at start: a repair is kept and the finish merged into
+      // it, and nothing of it is held until the write succeeds
+      const disk = this.readDisk();
+      if (disk) base = disk.finishes;
+      keepDamaged = disk?.damaged ?? false;
+    }
     const key = seenFinishKey(finish);
-    const held = this.finishes.get(key);
+    const held = base.get(key);
     const next = mergeSeen(held, finish);
     if (!next) return held!;
-    const finishes = new Map(this.finishes);
+    const finishes = new Map(base);
     finishes.delete(key);
     finishes.set(key, next);
     for (const old of finishes.keys()) {
       if (finishes.size <= MAX_SEEN) break;
       finishes.delete(old);
     }
-    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(temporary, `${JSON.stringify([...finishes.values()])}\n`, { mode: 0o600 });
-    renameSync(temporary, this.path);
+    writeStateDocument(this.path, `${JSON.stringify([...finishes.values()])}\n`, keepDamaged);
+    this.unsettled = false;
     this.finishes.clear();
     for (const [k, v] of finishes) this.finishes.set(k, v);
     for (const listener of [...this.listeners]) listener(next);

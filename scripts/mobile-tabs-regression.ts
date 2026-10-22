@@ -53,22 +53,22 @@ async function activeTabInView(page: Page, label: string): Promise<void> {
 
 /** A phone's header and tab strip over a workspace with more tabs than fit the screen. */
 export async function checkMobileTabs(browser: Browser, origin: string): Promise<void> {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-mobile-tabs-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-mobile-tabs-")));
   let workspaceId: string | null = null;
   let otherWorkspaceId: string | null = null;
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
-    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-mobile-tabs" });
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-mobile-tabs" });
     workspaceId = created.workspace.workspace_id;
     const first = created.root_pane.pane_id;
     // herdr keeps the first pane in front: the split one is seen only where the browser opens it
     const second = (await paneSplit(first, "right", false)).pane_id;
-    const other = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-mobile-tabs-other" });
+    const other = await workspaceCreate({ cwd: root, label: "ovis-test-mobile-tabs-other" });
     otherWorkspaceId = other.workspace.workspace_id;
     await herdrRpc("pane.report_agent", { pane_id: first, source: "manual", agent: "claude", state: "idle" });
 
     await context.addInitScript(() => {
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
       const viewport = window.visualViewport!;
       let height: number | null = null;
       Object.defineProperty(viewport, "height", { get: () => height ?? window.innerHeight });
@@ -197,7 +197,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     for (const scrolled of [false, true]) {
       const slow = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US", serviceWorkers: "block" });
       try {
-        await slow.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await slow.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
         const late = await slow.newPage();
         const lateErrors: string[] = [];
         late.on("pageerror", (error) => lateErrors.push(error.message));
@@ -234,6 +234,53 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
         assert.deepEqual(lateErrors, []);
       } finally { await slow.close(); }
     }
+    for (const theme of ["dark", "light"]) {
+      await herdrRpc("pane.report_agent", { pane_id: second, source: "manual", agent: "codex", state: "idle" });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.evaluate((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("ovis:settings") ?? "{}"), theme })), theme);
+      await page.goto(`${origin}/?pane=${encodeURIComponent(first)}`);
+      await page.locator(".conn-live").waitFor();
+      const firstTab = page.getByRole("tab", { name: "Tab 1", exact: true });
+      const badge = firstTab.locator(".tab-strip-agent-status .badge");
+      if (theme === "dark") assert.equal(await badge.textContent(), "READY", "an agent that has not worked is ready");
+      // The bridge turns idle after work into DONE; raw report_agent accepts no `done` state.
+      for (const [state, status, word] of [["working", "working", "RUN"], ["blocked", "blocked", "INPUT"], ["idle", "done", "DONE"]] as const) {
+        await herdrRpc("pane.report_agent", { pane_id: first, source: "manual", agent: "claude", state });
+        await page.waitForFunction(({ id, status }) => document.querySelector(`[data-tab-id="${id}"] .tab-strip-agent-status .badge`)?.getAttribute("data-status") === status, { id: created.root_pane.tab_id, status }).catch(async (cause) => {
+          await screenshot(`state-failed-${theme}-${state}`);
+          throw new Error(`${theme}: expected ${state} to show ${word}; tab shows ${await firstTab.textContent()}`, { cause });
+        });
+        assert.equal(await badge.getAttribute("aria-label"), `Agent ${word}`, `${theme}: compact state keeps its accessible label`);
+        assert.equal(await badge.locator(".visually-hidden").textContent(), word, "status words are only for assistive technology");
+        assert.equal(await badge.evaluate((node) => {
+          const copy = node.cloneNode(true) as HTMLElement;
+          copy.querySelectorAll(".visually-hidden").forEach((hidden) => hidden.remove());
+          return /RUN|INPUT|DONE|READY/.test(copy.textContent ?? "");
+        }), false, "tabs show state icons without visible status words");
+        assert.equal(await firstTab.getAttribute("aria-description"), `Agent ${word}`, "the state is also described accessibly");
+      }
+      await herdrRpc("pane.report_agent", { pane_id: second, source: "manual", agent: "codex", state: "working" });
+      await page.waitForFunction((id) => document.querySelector(`[data-tab-id="${id}"] .badge`)?.getAttribute("data-status") === "working", created.root_pane.tab_id);
+      await herdrRpc("pane.report_agent", { pane_id: first, source: "manual", agent: "claude", state: "blocked" });
+      await page.waitForFunction((id) => document.querySelector(`[data-tab-id="${id}"] .badge`)?.getAttribute("data-status") === "blocked", created.root_pane.tab_id);
+      await page.getByRole("button", { name: "Actions for Tab 1", exact: true }).tap();
+      const sheet = page.getByRole("dialog", { name: "Tab 1", exact: true });
+      await sheet.waitFor();
+      assert.deepEqual(await sheet.locator(".row-sheet-hint").allTextContents(), ["INPUT", "RUN"], "the picker identifies each split agent's state");
+      await screenshot(`agent-state-picker-${theme}`);
+      await sheet.getByRole("button", { name: "Cancel", exact: true }).tap();
+      await sheet.waitFor({ state: "detached" });
+      await herdrRpc("pane.report_agent", { pane_id: panes[0]!, source: "manual", agent: "codex", state: "working" });
+      const inactive = page.getByRole("tab", { name: "second", exact: true });
+      await page.waitForFunction(() => [...document.querySelectorAll('.tab-strip-tab')].some((tab) => tab.querySelector('.tab-strip-label')?.textContent === "second" && tab.querySelector('.badge')?.textContent === "RUN"));
+      assert.equal(await inactive.getAttribute("aria-selected"), "false", "an unselected agent's status remains visible");
+      await page.waitForFunction(() => !document.querySelector('body > div[inert][aria-hidden="true"]'));
+      await screenshot(`agent-state-tabs-${theme}`);
+      await activeTabInView(page, `${theme}: status badge keeps the selected tab in view`);
+      await assertShell(page, `${theme}: agent states`);
+    }
+    assert.deepEqual(errors, []);
+    console.log("PASS mobile agent states update in active and inactive tabs and in the split-pane picker, in light and dark");
     console.log("PASS a phone keeps the pane's title in the header and the open tab and the + in the strip, in both lenses and with the keyboard up, and reopens a tab and a workspace on the pane last seen after a reload");
   } finally {
     await context.close();
@@ -248,7 +295,7 @@ if (import.meta.main) {
   const { chromium } = await import("playwright-core");
   const { createServer } = await import("../server/index.ts");
   const { UsageService } = await import("../server/usage.ts");
-  const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-mobile-tabs-state-"));
+  const state = mkdtempSync(join(tmpdir(), "ovis-mobile-tabs-state-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
   const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try {

@@ -31,8 +31,8 @@ export async function checkCtrlEnter(browser: Browser, origin: string, paneId: s
   const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
   await context.addInitScript((id) => {
     Object.defineProperty(navigator, "platform", { get: () => "Linux x86_64" });
-    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-    localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
+    localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+    localStorage.setItem(`ovis:view:${id}`, "terminal");
   }, paneId);
   const fixture = mkdtempSync(join(tmpdir(), "herdr-ctrl-enter-"));
   const received = join(fixture, "received.txt");

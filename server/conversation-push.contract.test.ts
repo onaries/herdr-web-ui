@@ -122,7 +122,7 @@ describe("native conversation invalidation", () => {
     const executable = join(root, "bin", "omp");
     writeFileSync(executable, "#!/bin/sh\nsleep 600\n");
     chmodSync(executable, 0o755);
-    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-conversation-push" });
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-conversation-push" });
     workspaceId = created.workspace.workspace_id;
     paneId = created.root_pane.pane_id;
     await herdrRpc("pane.send_text", { pane_id: paneId, text: `${executable}\n` });

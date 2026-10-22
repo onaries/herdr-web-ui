@@ -6,9 +6,9 @@ body:
     attributes:
       value: |
         A security problem (someone gets in who should not, a secret leaks) goes to a
-        [private report](https://github.com/devswha/herdr-web-ui/security/advisories/new), not here.
+        [private report](https://github.com/devswha/ovis/security/advisories/new), not here.
 
-        **Leave out secrets.** Never paste `HERDR_WEB_TOKEN`, a pairing code or link, device cookies,
+        **Leave out secrets.** Never paste `OVIS_TOKEN`, a pairing code or link, device cookies,
         SSH keys or agent sign-ins. Blur hostnames and Tailscale logins in screenshots if you prefer.
   - type: textarea
     id: what

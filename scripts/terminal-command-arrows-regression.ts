@@ -20,8 +20,8 @@ export async function checkCommandArrows(browser: Browser, origin: string, paneI
     const context = await browser.newContext({ viewport: { width: 1100, height: 650 } });
     await context.addInitScript(({ platform, paneId }) => {
       Object.defineProperty(navigator, "platform", { get: () => platform });
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-      localStorage.setItem(`herdr-web-ui:view:${paneId}`, "terminal");
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+      localStorage.setItem(`ovis:view:${paneId}`, "terminal");
     }, { platform, paneId });
     try {
       const page = await context.newPage();
@@ -162,7 +162,7 @@ if (import.meta.main) {
   let browser: Browser | undefined;
   let workspace: string | undefined;
   try {
-    const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-command-arrows" });
+    const made = await workspaceCreate({ cwd: root, label: "ovis-test-command-arrows" });
     workspace = made.workspace.workspace_id;
     browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     await checkCommandArrows(browser, `http://127.0.0.1:${server.port}`, made.root_pane.pane_id);

@@ -99,7 +99,7 @@ try {
         const pane = kind === "pi" ? panes.cli : kind === "native" ? panes.shell : panes.web;
         const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, hasTouch: true, locale: "en-US" });
         try {
-          await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", terminalWheelSpeed: 2, alertsOn: false })));
+          await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", terminalWheelSpeed: 2, alertsOn: false })));
           const page = await context.newPage();
           page.setDefaultTimeout(10000);
           const errors: string[] = [];

@@ -1,9 +1,13 @@
 import { createContext, useContext, useMemo } from "react";
 import * as api from "./api.ts";
-import type { CreateWorktreeRequest, OpenWorktreeRequest, PaneDirection, PaneRewindRequest, PluginActionRequest, RemoveWorktreeRequest, SessionHistoryAgent, SplitPaneDirection } from "../../shared/protocol.ts";
+import type { CreateWorktreeRequest, OpenWorktreeRequest, PaneDirection, PluginActionRequest, RemoveWorktreeRequest, SessionHistoryAgent, SplitPaneDirection } from "../../shared/protocol.ts";
 import type { ZoomMode } from "./layoutMap.ts";
+import { ReorderCoordinator } from "./workspaceOrder.ts";
 export const MachineContext = createContext("local");
 export const useMachineId = () => useContext(MachineContext);
+/** App's workspace order for every PC (lib/workspaceOrder.ts); a Sidebar outside App gets its own */
+export const ReorderContext = createContext(new ReorderCoordinator());
+export const useReorderCoordinator = () => useContext(ReorderContext);
 /** Bound functions retain their owner across an async upload or a fast PC switch. */
 export function useMachineApi() {
   const id = useMachineId();
@@ -14,7 +18,6 @@ export function useMachineApi() {
     fetchPanePrompt: (pane: string) => api.fetchPanePrompt(pane, id),
     fetchPanePromptState: (pane: string) => api.fetchPanePromptState(pane, id),
     answerPanePrompt: (answer: Parameters<typeof api.answerPanePrompt>[0]) => api.answerPanePrompt(answer, id),
-    rewindPane: (request: PaneRewindRequest) => api.rewindPane(request, id),
     uploadPaneImage: (pane: string, image: Blob) => api.uploadPaneImage(pane, image, id),
     fetchPaneCommands: (pane: string) => api.fetchPaneCommands(pane, id),
     fetchAgentCommands: (agent: string, cwd: string | null) => api.fetchAgentCommands(agent, cwd, id),
@@ -49,6 +52,7 @@ export function useMachineApi() {
     fetchFileInfo: (path: string, pane: string | null) => api.fetchFileInfo(path, pane, id),
     fileUrl: (path: string, pane: string | null, download = false) => api.fileUrl(path, pane, id, download),
     fetchRepoDiffFiles: (query: api.RepoDiffQuery) => api.fetchRepoDiffFiles(query, id),
+    fetchRepoDiffRepositories: (query: Pick<api.RepoDiffQuery, "paneId" | "directory">, children: boolean, depth: number) => api.fetchRepoDiffRepositories(query, children, depth, id),
     fetchRepoDiffFile: (query: api.RepoDiffQuery, path: string, oldPath: string | null) => api.fetchRepoDiffFile(query, path, oldPath, id),
     createWorkspace: (request: api.CreateWorkspaceRequest) => api.createWorkspace(request, id),
     createTab: (request: api.CreateTabRequest) => api.createTab(request, id),

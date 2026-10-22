@@ -9,7 +9,7 @@ import type { ConversationResponse } from "../shared/protocol.ts";
 
 // Before its first message omp has written no session and a Codex started in a terminal has
 // reported none: omp waits for its transcript; Codex can name its model through its live footer.
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-start-screen-contract-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-start-screen-contract-"));
 const fresh = join(root, ".omp", "agent", "sessions", "-start-screen", "2026-10-19T00-00-00-000Z_omp-fresh.jsonl");
 const originalHome = process.env["HOME"];
 const workspaces: string[] = [];
@@ -31,7 +31,7 @@ beforeAll(async () => {
   mkdirSync(join(root, ".omp", "agent", "sessions", "-start-screen"), { recursive: true });
   const fakeOmp = join(root, "omp");
   writeFileSync(fakeOmp, FAKE_OMP);
-  const omp = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-start-screen-omp" });
+  const omp = await workspaceCreate({ cwd: root, label: "ovis-test-start-screen-omp" });
   workspaces.push(omp.workspace.workspace_id);
   ompPane = omp.root_pane.pane_id;
   let started: (() => void) | undefined;
@@ -59,7 +59,7 @@ beforeAll(async () => {
   } finally { clearTimeout(deadline); subscription.close(); }
   await herdrRpc("pane.report_agent", { pane_id: ompPane, source: "herdr:omp", agent: "omp", state: "idle", seq: ++seq });
   await herdrRpc("pane.report_agent_session", { pane_id: ompPane, source: "herdr:omp", agent: "omp", seq: ++seq, agent_session_path: fresh, session_start_source: "startup" });
-  const codex = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-start-screen-codex" });
+  const codex = await workspaceCreate({ cwd: root, label: "ovis-test-start-screen-codex" });
   workspaces.push(codex.workspace.workspace_id);
   codexPane = codex.root_pane.pane_id;
   await herdrRpc("pane.report_agent", { pane_id: codexPane, source: "manual", agent: "codex", state: "idle" });

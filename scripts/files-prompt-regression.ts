@@ -31,18 +31,18 @@ let server: ReturnType<typeof createServer> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 
 const selectedPane = (page: Page): Promise<string | null> => page.evaluate(() =>
-  JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id ?? null);
+  JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id ?? null);
 
 async function openApp(context: BrowserContext, origin: string, pane: string, panes: string[]): Promise<Page> {
   await context.addInitScript((ids: string[]) => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-    for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+    for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
   }, panes);
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
-  await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id === id, pane);
+  await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id === id, pane);
   return page;
 }
 
@@ -57,7 +57,7 @@ async function checkFiles(page: Page, label: string, phone: boolean, paneA: stri
   await page.waitForFunction((folder) => document.querySelector(".files-dialog .dir-browser-path")?.getAttribute("title") === folder, join(cwdA, "sub"));
   await page.screenshot({ path: join(shots, `files-${label}-before-switch.png`) });
   await page.keyboard.press("Control+Shift+ArrowDown");
-  await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id === id, paneB);
+  await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id === id, paneB);
   const outcome = await page.waitForFunction((folder) => {
     const current = document.querySelector(".files-dialog");
     return current === null ? "closed" : current.querySelector(".dir-browser-path")?.getAttribute("title") === folder ? "followed" : false;
@@ -164,7 +164,7 @@ try {
   mkdirSync(join(cwdB, "other"), { recursive: true });
   const panes: string[] = [];
   for (const [suffix, cwd] of [["a", cwdA], ["b", cwdB]] as const) {
-    const result = await workspaceCreate({ cwd, label: `herdr-web-ui-files-prompt-${suffix}` });
+    const result = await workspaceCreate({ cwd, label: `ovis-files-prompt-${suffix}` });
     workspaces.push(result.workspace.workspace_id);
     panes.push(result.root_pane.pane_id);
   }

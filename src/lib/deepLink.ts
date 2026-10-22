@@ -180,4 +180,4 @@ export function isNavigation(from: Pick<AppLink, "machine" | "pane">, to: Pick<A
 }
 
 /** Marks an entry the app pushed for a move between panes. */
-export const NAV_KEY = "herdr-web-ui:nav";
+export const NAV_KEY = "ovis:nav";

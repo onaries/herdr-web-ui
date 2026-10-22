@@ -61,7 +61,7 @@ function processCount(pattern: string): number {
 }
 
 describe("WebSocket read-only live watch", () => {
-  const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-watch-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-watch-"));
   const sockets = new Set<RecordingSocket>();
   let bridge: ServerInstance | undefined;
   let workspaceId: string | undefined;
@@ -87,7 +87,7 @@ describe("WebSocket read-only live watch", () => {
   beforeAll(async () => {
     bridge = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", machines: false, tailscaleOwner: null });
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: "herdr-web-ui-test-watch", cwd: tmpdir(), focus: false },
+      "workspace.create", { label: "ovis-test-watch", cwd: tmpdir(), focus: false },
     );
     workspaceId = created.workspace.workspace_id;
     paneId = created.root_pane.pane_id;

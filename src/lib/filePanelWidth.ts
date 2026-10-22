@@ -1,5 +1,5 @@
 /** The file panel's width when the user has dragged its edge: per device, like the sidebar's. */
-const KEY = "herdr-web-ui:file-panel-width";
+const KEY = "ovis:file-panel-width";
 
 /** From this window width the file panel docks beside the pane; below it the viewer is a sheet. */
 export const FILE_PANEL_DOCK_QUERY = "(min-width: 980px)";

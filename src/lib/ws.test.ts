@@ -179,7 +179,7 @@ it("keeps ordinary immediate sends working on a legacy bridge", async () => {
   socket.open();
   socket.receive(snapshot([]));
   try {
-    expect(await client.submit("w1:p1", "chat message", "chat message")).toEqual({ ok: true });
+    expect(await client.submit("w1:p1", "chat message", "chat message")).toEqual({ ok: true, unconfirmed: true });
     expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "chat message\r" }]);
   } finally {
     client.close();
@@ -193,7 +193,7 @@ it("control: a held-copy id on a legacy bridge keeps its existing immediate inpu
   socket.open();
   socket.receive(snapshot([]));
   try {
-    expect(await client.submit("w1:p1", "held copy", "held copy", false, "immediate", undefined, false, "stable-copy-id")).toEqual({ ok: true });
+    expect(await client.submit("w1:p1", "held copy", "held copy", false, "immediate", undefined, false, "stable-copy-id")).toEqual({ ok: true, unconfirmed: true });
     expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "held copy\r" }]);
   } finally { client.close(); }
 });
@@ -487,7 +487,7 @@ it("keeps existing Enter submits and the older bridge's input fallback compatibl
       expect(submissions(socket)).toEqual([{ type: "submit", id: 1, pane_id: "w1:p1", text: "steer now", payload: "steer now", typed: true }]);
       socket.receive({ type: "submit-result", id: 1, pane_id: "w1:p1", ok: true });
     } else expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "steer now\r" }]);
-    expect(await result).toEqual({ ok: true });
+    expect(await result).toEqual(features.includes("submit") ? { ok: true } : { ok: true, unconfirmed: true });
     client.close();
   }
 });

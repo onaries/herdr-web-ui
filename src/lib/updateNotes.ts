@@ -129,7 +129,7 @@ export function announcesUpdate(
 /** How far ahead of now an install time may be before it is read as a clock that was set back. */
 export const SKEW_ALLOWANCE_MS = 24 * 60 * 60 * 1000;
 
-const ANNOUNCED_KEY = "herdr-web-ui:update-announced";
+const ANNOUNCED_KEY = "ovis:update-announced";
 
 /** The version whose line this device closed. */
 export function readAnnounced(): string | null {

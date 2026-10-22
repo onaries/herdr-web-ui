@@ -26,6 +26,44 @@ export interface UpdateStatus {
    * only a restart reports it. Read by the bridge when a tab asks. Absent from an older server.
    */
   served_revision?: string | null;
+  /**
+   * A stable name for `error` where the client words it itself: `update_offer_changed` when a
+   * manual install found a different release on offer than the one it was asked for, and so
+   * installed nothing. Absent or null otherwise, and from a supervisor older than the field.
+   */
+  error_code?: UpdateErrorCode | null;
+  /**
+   * The supervisor installs only the exact revision a manual install names. Absent from an older
+   * supervisor, which would install whatever its own check finds: the controls then ask for a
+   * restart instead of offering an install.
+   */
+  revision_bound_install?: boolean;
+}
+
+export type UpdateErrorCode = "update_offer_changed";
+/** A full commit id, as `latest_revision` names it. */
+export const REVISION = /^[0-9a-f]{40,64}$/;
+
+/**
+ * What the bridge asks of the update service: a check, or the install of the exact revision the
+ * person saw offered. A manual install never goes without its revision.
+ */
+export type UpdateRequest = { command: "check" } | { command: "install"; expected_revision: string };
+
+/**
+ * The supervisor's reading of a bridge's IPC message. `update-command` carries only a check: an
+ * unbound install there is the older bridge's, and it is refused. The install travels as
+ * `update-install-revision`, a type an older supervisor does not know and so ignores, never
+ * running it as an install of whatever its own check finds.
+ */
+export function readUpdateIpcRequest(message: unknown): UpdateRequest | null {
+  const value = message as { type?: unknown; command?: unknown; expected_revision?: unknown } | null | undefined;
+  if (typeof value !== "object" || value === null) return null;
+  if (value.type === "update-command" && value.command === "check") return { command: "check" };
+  if (value.type === "update-install-revision" && typeof value.expected_revision === "string" && REVISION.test(value.expected_revision)) {
+    return { command: "install", expected_revision: value.expected_revision };
+  }
+  return null;
 }
 
 /** The update check's reason for a source checkout that moved since the server started. */

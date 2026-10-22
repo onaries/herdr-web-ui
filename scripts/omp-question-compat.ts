@@ -19,7 +19,7 @@ const out = resolve(process.env["OMP_COMPAT_OUT"] ?? "/tmp/herdr-omp-compat/evid
 const omp = resolve(process.env["OMP_BIN"] ?? "");
 const ompVersion = process.env["OMP_VERSION"] ?? "unknown";
 const childPath = process.env["PATH"] ?? "/usr/bin:/bin";
-const herdr = process.env["HERDR_WEB_HERDR_BIN"] ?? Bun.which("herdr");
+const herdr = process.env["OVIS_HERDR_BIN"] ?? Bun.which("herdr");
 assert.ok(omp && omp !== resolve(""), "Set OMP_BIN to the exact isolated OMP release executable");
 assert.ok(herdr, "herdr is required; run through scripts/check.ts admission");
 
@@ -158,7 +158,7 @@ process.on("SIGTERM", () => { app.stop(); process.exit(0); });
     env: {
       PATH: childPath, HOME: ompHome,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME!, XDG_STATE_HOME: process.env.XDG_STATE_HOME!,
-      HERDR_SOCKET: process.env.HERDR_SOCKET!, HERDR_TEST_SESSION: TEST_SESSION, HERDR_WEB_HERDR_BIN: herdr!,
+      HERDR_SOCKET: process.env.HERDR_SOCKET!, HERDR_TEST_SESSION: TEST_SESSION, OVIS_HERDR_BIN: herdr!,
       HERDR_TEST_DISPOSABLE_CONFIG: process.env.HERDR_TEST_DISPOSABLE_CONFIG!, OMP_COMPAT_READY: readyPath,
     },
     stdin: "ignore", stdout: Bun.file(appLogPath), stderr: Bun.file(appErrorPath),

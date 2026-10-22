@@ -41,7 +41,7 @@ const PIPE_GRACE_MS = 250;
 const OUTPUT_TAIL = 4_000;
 
 export interface HerdrUpdaterOptions {
-  /** the herdr to run; unset, HERDR_WEB_HERDR_BIN or `herdr` from PATH, read at each run */
+  /** the herdr to run; unset, OVIS_HERDR_BIN or `herdr` from PATH, read at each run */
   bin?: string;
   /** the herdr this server talks to; unset, herdrSocketPath() */
   socketPath?: string;
@@ -115,7 +115,7 @@ export class HerdrUpdater {
 
   /** `output` is everything herdr printed, for the app to show; `stdout` alone is what a command answers with. */
   private async exec(args: string[], timeoutMs: number): Promise<{ code: number | null; output: string; stdout: string }> {
-    const bin = this.options.bin ?? (process.env["HERDR_WEB_HERDR_BIN"] || "herdr");
+    const bin = this.options.bin ?? (process.env["OVIS_HERDR_BIN"] || "herdr");
     let proc: ReturnType<typeof Bun.spawn>;
     try {
       proc = Bun.spawn([bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: this.env() });

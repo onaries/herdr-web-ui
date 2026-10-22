@@ -47,7 +47,10 @@ const aliases: Readonly<Record<string, string>> = {
   switch: "resume", conversation: "resume", record: "voice", quota: "usage",
 };
 const canonicalName = (name: string): string => aliases[name] ?? name;
-const canonicalTerminalBound: ReadonlySet<string> = new Set(["model", "resume", "config", "permissions", "agents", "hooks", "mcp", "plugin", "skills", "voice", "effort", "keybindings", "usage", "credits", "changelog"]);
+// The second line opened a panel, viewer, picker or form on a 1.4.3 screen check (2026-10-22): /rewind and /undo open
+// the Rewind picker whatever follows them, and logout leaves the sign-in screen behind it.
+const canonicalTerminalBound: ReadonlySet<string> = new Set(["model", "resume", "config", "permissions", "agents", "hooks", "mcp", "plugin", "skills", "voice", "effort", "keybindings", "usage", "credits", "changelog",
+  "artifact", "codesearch", "cs", "search", "context", "diff", "help", "tasks", "rewind", "undo", "feedback", "logout"]);
 const terminalBound: ReadonlySet<string> = new Set([
   ...canonicalTerminalBound,
   ...Object.keys(aliases).filter((name) => canonicalTerminalBound.has(canonicalName(name))),
@@ -67,7 +70,8 @@ export const source: AgentCommandSource = {
   // the recorded 1.4.0 palette the builtin list and descriptions were checked against
   pin: "1.4.0",
   terminalBound: [...terminalBound],
-  forms: { ...canonicalForms, ...aliasForms },
+  // bare /open prints its usage; /open <file> opens the file in the PC's $EDITOR
+  forms: { ...canonicalForms, ...aliasForms, open: [{ match: "bare", interaction: "unknown" }, { match: "other", interaction: "terminal" }] },
   discover({ home, cwd, repoRoot }) {
     const found = new Map<string, SlashCommand>();
     const add = (name: string, description: string, fields: Readonly<Record<string, unknown>>, origin: SlashCommand["origin"], path: string): void => {

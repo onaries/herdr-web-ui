@@ -1,0 +1,40 @@
+[0m[2m  Model provider:      [0mopenai
+[0m[2m  Directory:           [0m/tmp/claude-1000/
+[0m[2m                       [0mpr2-rec/codex/
+[0m[2m                       [0mproj
+[0m[2m  Permissions:         [0mFull Access
+[0m[2m  Agents.md:           [0m<none>
+[0m[2m  Account:             [0muser@example.test
+[0m[2m                       [0m(plan 00)
+[0m[2m  Collaboration mode:  [0mDefault
+[0m[2m  Session:[0m
+[0m[2m                       [0m00000000-0000-000
+[0m[2m                       [0m0-0000-0000000000
+[0m[2m                       [0m00
+ 
+[0m[2m  Context window:      [0m100% left[0m[2m (0[0m
+[0m[2m                       used / 1M)[0m
+[0m[2m  Weekly limit:        [0m0% left
+[0m[2m                       (resets 0:00 AM[0m
+[0m[2m                       on 01 Jan)[0m
+[0m[2m  Credits:             [0m00000 credits
+ 
+ 
+  [0m[1mConfigure Status Line[0m
+  [0m[2mSelect which items to display in the[0m
+  [0m[2mstatus line.[0m
+ 
+  [0m[2mType to search[0m
+ 
+[0m[1m[7m› [x] Use theme colors      [0m[7mApply color…[0m
+[0m[2m  ───────────────────────[0m
+  [x] model-with-reasoning  [0m[2mCurrent mod…[0m
+  [x] git-branch            [0m[2mCurrent Git…[0m
+  [x] context-remaining     [0m[2mPercentage …[0m
+  [x] total-input-tokens    [0m[2mTotal input…[0m
+  [x] total-output-tokens   [0m[2mTotal outpu…[0m
+  [x] five-hour-limit       [0m[2mRemaining u…[0m
+[0m[38;2;99;168;248m↓[0m
+  [0m[38;2;246;226;183mGPT-6-Astra medium fast [0m· [0m[38;2;143;179;239mmain [0m· [0m[38;2;242;181;144mCo…[0m
+  [0m[1mspace[0m[2m toggle · [0m[1m←/→[0m[2m reorder · [0m[1menter[0m[2m    [0m
+  [0m[2msave · [0m[1mesc[0m[2m cancel                     [0m

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { AUTH_CLIENTS_MAX, authClient, forgetAuthAttempts, handleAuthRequest, isSecureRequest, presentedToken, recordPresentedTokenFailure, sharedFailuresSize } from "./auth.ts";
+import { AUTH_CLIENTS_MAX, authClient, deviceCookieValue, forgetAuthAttempts, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, recordPresentedTokenFailure, sharedFailuresSize } from "./auth.ts";
 import { sameOrigin } from "./machine-security.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "herdr-auth-"));
@@ -90,7 +90,7 @@ describe("authClient", () => {
 });
 
 describe("the budget visitors behind one proxy share", () => {
-  const cookie = (value: string): Request => new Request("http://h/api/health", { headers: { cookie: `herdr_web_token=${value}` } });
+  const cookie = (value: string): Request => new Request("http://h/api/health", { headers: { cookie: `ovis_token=${value}` } });
   const ask = (value: string, client: string): ReturnType<typeof presentedToken> => {
     const answer = presentedToken(cookie(value), TOKEN, client);
     if (answer === "wrong") recordPresentedTokenFailure(client);
@@ -169,14 +169,14 @@ describe("sameOrigin", () => {
   });
 
   it("reads a session cookie with no Origin as cross-site, except the paths such a client must use", () => {
-    const session = { cookie: "herdr_web_token=abc; herdr_web_device=def" };
+    const session = { cookie: "ovis_token=abc; ovis_device=def" };
     // the origin check is not a complete control until these are refused
     expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: session }))).toBe(false);
     expect(sameOrigin(new Request("http://host/api/workspace/create", { method: "POST", headers: session }))).toBe(false);
     expect(sameOrigin(new Request("http://host/api/machines/local/workspace/create", { method: "POST", headers: session }))).toBe(false);
     // either cookie alone marks it session-bearing
-    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "herdr_web_device=def" } }))).toBe(false);
-    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "herdr_web_token=abc" } }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "ovis_device=def" } }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "ovis_token=abc" } }))).toBe(false);
     // the custom mutation header is the non-browser client's proof
     expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { ...session, "x-herdr-machine": "1" } }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/updates/check", { method: "POST", headers: { ...session, "x-herdr-update": "1" } }))).toBe(true);
@@ -191,7 +191,7 @@ describe("sameOrigin", () => {
 
   it("lets a same-origin read through with no Origin, which a browser leaves off its own GET", () => {
     // EventSource("/api/machines/events") can add no header, and a same-origin GET states no Origin
-    const page = { cookie: "herdr_web_token=abc; herdr_web_device=def", "sec-fetch-site": "same-origin" };
+    const page = { cookie: "ovis_token=abc; ovis_device=def", "sec-fetch-site": "same-origin" };
     expect(sameOrigin(new Request("http://host/api/machines/events", { headers: page }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/machines/local/session", { headers: page }))).toBe(true);
     expect(sameOrigin(new Request("http://host/api/machines/local/session", { method: "HEAD", headers: page }))).toBe(true);
@@ -199,4 +199,34 @@ describe("sameOrigin", () => {
     expect(sameOrigin(new Request("http://host/api/machines/local/workspace/create", { method: "POST", headers: page }))).toBe(false);
   });
 
+});
+
+describe("the cookies a browser signed in before the rename holds", () => {
+  afterEach(() => forgetAuthAttempts());
+
+  it("still sign it in, and a wrong one still counts as wrong", () => {
+    const legacy = (value: string): Request => new Request("http://h/api/health", { headers: { cookie: `herdr_web_token=${value}` } });
+    expect(isAuthenticated(legacy(TOKEN), TOKEN)).toBe(true);
+    expect(isAuthenticated(legacy("guess"), TOKEN)).toBe(false);
+    expect(presentedToken(legacy("guess"), TOKEN, "100.64.0.20")).toBe("wrong");
+  });
+
+  it("name a paired device, the new name first", () => {
+    expect(deviceCookieValue(parseCookies("herdr_web_device=old"))).toBe("old");
+    expect(deviceCookieValue(parseCookies("herdr_web_device=old; ovis_device=new"))).toBe("new");
+  });
+
+  it("mark a request as session-bearing, so a forged mutation is refused", () => {
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "herdr_web_token=abc" } }))).toBe(false);
+    expect(sameOrigin(new Request("http://host/api/pane/close", { method: "POST", headers: { cookie: "herdr_web_device=def" } }))).toBe(false);
+  });
+
+  it("are replaced at sign-in and cleared at sign-out", async () => {
+    const signIn = await handleAuthRequest(new Request("http://h/api/auth", { method: "POST", body: JSON.stringify({ token: TOKEN }) }), TOKEN, "100.64.0.21");
+    const set = signIn.headers.getSetCookie();
+    expect(set.some((cookie) => cookie.startsWith(`ovis_token=${TOKEN};`))).toBe(true);
+    expect(set).toContain("herdr_web_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    const signOut = await handleAuthRequest(new Request("http://h/api/auth", { method: "DELETE" }), TOKEN);
+    expect(signOut.headers.getSetCookie().map((cookie) => cookie.split("=")[0]).sort()).toEqual(["herdr_web_device", "herdr_web_token", "ovis_device", "ovis_token"]);
+  });
 });

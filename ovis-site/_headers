@@ -1,0 +1,14 @@
+# Cloudflare Pages response headers (https://developers.cloudflare.com/pages/configuration/headers/).
+# The pages.dev hosts serve the same files as https://ovis.sh: the production copy at
+# ovis.pages.dev and every preview at <branch or hash>.ovis.pages.dev. Keep them out of search so
+# ovis.sh is the only copy indexed. A host placeholder stops at a dot, so neither rule reaches
+# ovis.sh.
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+https://:version.:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+# The deploy notes are served too, but they are not a page.
+/README.md
+  X-Robots-Tag: noindex

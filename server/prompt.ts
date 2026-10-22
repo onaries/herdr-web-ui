@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { HerdrPane, InteractivePrompt, InteractivePromptOption, PanePromptResponse, PromptAnswer, SessionSnapshot, SlashCommand } from "../shared/protocol.ts";
 import { builtinCommands, cachedPaneCommands } from "./commands.ts";
-import { agentProcesses, claudeRestoredOwned, readCommandTranscript, releaseClaudeRestored } from "./conversation.ts";
+import { agentProcesses, readCommandTranscript } from "./conversation.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { processAlive, processStartedAt, processStartUpperBoundAsync } from "./process-start.ts";
 import { commandInvocations, commandOutcome, CommandReservations, dialogSettlingScreen, ownsCommandDialog, WINDOW_MS as COMMAND_WINDOW_MS, type CommandSend } from "./outcome.ts";
@@ -15,13 +15,12 @@ import { listPendingQuestionForms, openCodeService, replyOpenCodeForm } from "./
 import { opencodeSessionId } from "./opencode.ts";
 import { registry } from "./dialogs/registry.ts";
 import { claudeRewindPanelBelow } from "./dialogs/claude.ts";
-import { followClaudeNeverMind, followClaudeRestore } from "./rewind.ts";
 import { ANSI_RE, type AnswerStep, KEY, type OmoAsk, type OpenCodePromptEntry, PI_MODEL_HINT_RE, type ParsedPrompt, SOLID_RULE_RE, cleanLine, findLastIndex, finishPrompt, isDivider, keySteps, navigationKeys, normalizeText, parsedByPublicPrompt, publicPrompt, wrapped } from "./dialogs/shared.ts";
 import { executeInteractionPlan } from "./dialogs/interaction-plan.ts";
 import { openCodeV1QuestionActive } from "./dialogs/opencode.ts";
 import { CODEX_ASK_HINT_RE, CODEX_ASYNC_ASK_HINT_RE, CODEX_CONTINUE_HINT_RE, CODEX_QUEUE_HEADER_RE, CODEX_WORKING_RE, codexFooterLine, codexModelListWaits } from "./dialogs/codex.ts";
 import { OMO_FOOTER_LINES, OMO_HINT_LINES, OMO_NOT_FOOTER_RE, OMO_OPTIONS_HINT_RE, OMO_PENDING_HINT_RE, OMO_REVIEW_HINT_RE, OMO_TYPING_HINT_RE, omoModelListWaits, sameText } from "./dialogs/omo.ts";
-import { CLAUDE_ASK_HINT_RE, CLAUDE_CONFIRM_HINT_RE, CLAUDE_EFFORT_GUARD_RE, CLAUDE_EFFORT_HINT_RE, CLAUDE_REWIND_NEVER_MIND, INVISIBLE_CHAR_RE, claudeModelListWaits, withoutClaudeTasks } from "./dialogs/claude.ts";
+import { CLAUDE_ASK_HINT_RE, CLAUDE_CONFIRM_HINT_RE, CLAUDE_EFFORT_GUARD_RE, CLAUDE_EFFORT_HINT_RE, INVISIBLE_CHAR_RE, claudeModelListWaits, withoutClaudeTasks } from "./dialogs/claude.ts";
 import { OMP_CLIPPED_SINGLE_HINT_RE, OMP_MULTI_HINT_RE, OMP_REVIEW_HINT_RE, OMP_SINGLE_CLIPPED_HINT_RE, OMP_SINGLE_HINT_RE } from "./dialogs/omp.ts";
 import { HERMES_HINT_RE } from "./dialogs/hermes.ts";
 import { PI_INPUT_HINT_RE, PI_MENU_HINT_RE, parsePiDialog } from "./dialogs/pi.ts";
@@ -287,22 +286,6 @@ export function noteSubmitted(paneId: string, text: string, command?: PaneComman
   if (chatSent.size > 128) chatSent.delete(chatSent.keys().next().value!);
   if (INVISIBLE_CHAR_RE.test(text)) heldCandidates.set(paneId, { text, at: Date.now() });
   else heldCandidates.delete(paneId);
-  // a message a rewind put back in Claude's box is no longer the chat's own once it sends again
-  releaseClaudeRestored(paneId);
-}
-
-/**
- * A Claude restore took the conversation back to before a message Claude wrote at `at`: the chat's
- * command sends made after it are forgotten with their outcomes, which would otherwise keep claiming
- * evidence rewound away. Sends before it keep theirs.
- */
-export function forgetChatSendsAfter(paneId: string, at: number): void {
-  const sent = chatSent.get(paneId);
-  if (!sent) return;
-  const gone = new Set(sent.commands.filter((command) => command.at > at).map((command) => command.id));
-  if (gone.size === 0) return;
-  sent.commands = sent.commands.filter((command) => !gone.has(command.id));
-  sent.reservations.forget(gone);
 }
 
 /** The text of the pane's last successful chat send (noteSubmitted), or none. */
@@ -310,14 +293,9 @@ export function lastChatSubmitted(paneId: string): string | null {
   return chatSent.get(paneId)?.text ?? null;
 }
 
-/**
- * The words in Claude Code's input box that are the chat's own to offer again and to empty before
- * the next send: the message a rewind restored there (conversation.ts claudeRestoredOwned), only
- * while the pane's one Claude process is the one that restored it; else the chat's last send, which
- * Claude puts back when that send is cancelled.
- */
+/** The last chat send remains owned when Claude puts a cancelled send back in its input box. */
 export async function chatOwnedInput(paneId: string): Promise<string | null> {
-  return await claudeRestoredOwned(paneId) ?? lastChatSubmitted(paneId);
+  return lastChatSubmitted(paneId);
 }
 
 /** Native observers must name the send they correlated; a timestamp or idle transition alone is not an event. */
@@ -528,8 +506,6 @@ function promptTailIsActive(prompt: ParsedPrompt, screen: string): boolean {
   if (prompt.responder === "omp-handoff") return true;
   // the goal dialog ends the screen with its own dismiss hint
   if (prompt.responder === "claude-goal") return ends(/esc to dismiss$/i);
-  // /rewind's list ends with its hint; its confirm step with its last choice, no hint under it
-  if (prompt.responder === "claude-rewind") return ends(/^enter to continue · esc to cancel$/i) || /^(?:❯\s*)?4\.\s+Never mind$/.test(last);
   if (prompt.responder === "claude-model") return claudeModelListWaits(screen);
   if (prompt.responder === "claude-effort") return ends(CLAUDE_EFFORT_HINT_RE);
   if (prompt.responder === "codex-model") return ends(/(?:^|\s)enter select\s*·\s*esc back$|(?:^|\s)enter (?:default|apply)\s*·\s*s session\s*·\s*esc back$/i);
@@ -2037,14 +2013,11 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         const sendStep = async (step: AnswerStep, move: boolean, more: boolean): Promise<void> => {
           const first = !move && !committed;
           if (!move) committed = true;
-          // the rewind card's keys go only while its requester is there, asked once more right before the
-          // write (herdrRpc's guard): the requester can leave while the connection opens
-          const guard = responder === "claude-rewind" ? () => !request.signal.aborted : undefined;
           try {
-            if (step.keys) await paneSendKeys(body.pane_id, step.keys, undefined, guard);
-            else if (step.text !== undefined) await paneSendText(body.pane_id, step.text, undefined, guard);
+            if (step.keys) await paneSendKeys(body.pane_id, step.keys);
+            else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
           } catch (error) {
-            // herdr was never reached, or the guard kept the write back, so nothing was pressed: the card is still to be answered
+            // herdr was never reached, or the write was cancelled, so nothing was pressed: the card is still to be answered
             if (first && error instanceof HerdrError && (error.code === "connect_failed" || error.code === "cancelled")) committed = false;
             throw error;
           }
@@ -2121,10 +2094,6 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       // the card's read right after the answer does not get the list just answered once more
       if (target.steps) form.answered = contentId(target);
       else if (responder === "claude-model" || responder === "claude-effort" || responder === "codex-model") form.answered = lastSeen ?? contentId(target);
-      // Restore conversation on Claude Code's rewind card: once its screen shows it done, the chat follows at once
-      if (responder === "claude-rewind" && body.option_index === 0) await followClaudeRestore(body.pane_id, parsedByPublicPrompt.get(target)!);
-      // Never mind went back to the list: it is closed too, so nothing is left open
-      if (responder === "claude-rewind" && target.options[body.option_index!]?.label === CLAUDE_REWIND_NEVER_MIND) await followClaudeNeverMind(body.pane_id, undefined, () => request.signal.aborted);
       return jsonResponse({ ok: true });
     });
     // the wait for the form's next step only reads the pane: after the pane's turn, so a message

@@ -1,7 +1,8 @@
 import { closeSync, lstatSync, openSync, readSync } from "node:fs";
+import { opendir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope, RepoDiffStatus } from "../shared/protocol.ts";
+import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepositories, RepoDiffRepository, RepoDiffScope, RepoDiffStatus } from "../shared/protocol.ts";
 import { errorResponse, jsonResponse } from "./http.ts";
 
 /**
@@ -69,7 +70,7 @@ function gitEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     // a repository the server itself was started inside (a hook, a test runner) is not the one asked about
-    if (value === undefined || name === "GIT_DIR" || name === "GIT_WORK_TREE" || name === "GIT_INDEX_FILE" || name === "GIT_EXTERNAL_DIFF" || name === "GIT_PAGER") continue;
+    if (value === undefined || name === "GIT_DIR" || name === "GIT_WORK_TREE" || name === "GIT_INDEX_FILE" || name === "GIT_COMMON_DIR" || name === "GIT_EXTERNAL_DIFF" || name === "GIT_PAGER") continue;
     env[name] = value;
   }
   return { ...env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" };
@@ -77,7 +78,8 @@ function gitEnvironment(): Record<string, string> {
 
 /** One git process in `cwd`: stdout up to `maxBytes`, killed at the deadline or once it prints more. */
 async function runGit(context: Context, cwd: string, args: string[], maxBytes: number): Promise<GitRun> {
-  const argv = [context.git, "--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.quotePath=false", "-c", "core.fsmonitor=false", "-c", "color.ui=never", "-C", cwd, ...args];
+  // an empty core.fsmonitor turns the hook off in every git: before 2.36, `false` names a program to run
+  const argv = [context.git, "--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.quotePath=false", "-c", "core.fsmonitor=", "-c", "color.ui=never", "-C", cwd, ...args];
   let proc: Bun.Subprocess<"ignore", "pipe", "ignore">;
   try {
     proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: gitEnvironment() });
@@ -117,10 +119,15 @@ async function runGit(context: Context, cwd: string, args: string[], maxBytes: n
   }
 }
 
-async function repositoryOf(context: Context, cwd: string): Promise<RepoDiffRepository> {
+async function repositoryRoot(context: Context, cwd: string): Promise<string> {
   const top = await runGit(context, cwd, ["rev-parse", "--show-toplevel"], 16 * 1024);
   const root = top.stdout.replace(/\r?\n$/, "");
   if (top.code !== 0 || root === "") throw new RepoDiffError("not_a_repository", "that folder is not inside a git working tree", 409);
+  return root;
+}
+
+async function repositoryOf(context: Context, cwd: string): Promise<RepoDiffRepository> {
+  const root = await repositoryRoot(context, cwd);
   const [branch, head] = await Promise.all([
     runGit(context, root, ["symbolic-ref", "--quiet", "--short", "HEAD"], 16 * 1024),
     runGit(context, root, ["rev-parse", "--quiet", "--verify", "HEAD^{commit}"], 1024),
@@ -128,6 +135,40 @@ async function repositoryOf(context: Context, cwd: string): Promise<RepoDiffRepo
   const oid = head.code === 0 ? head.stdout.trim() : "";
   const name = branch.code === 0 ? branch.stdout.replace(/\r?\n$/, "") : "";
   return { root, branch: name === "" ? null : name, head: oid === "" ? null : oid, detached: name === "" && oid !== "", unborn: oid === "" };
+}
+
+/** Discover without gitignore filtering: an ignored checkout is still a repository of its own. */
+export async function repoDiffRepositories(cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<RepoDiffRepositories> {
+  const children = params.get("children") ?? "0";
+  const depth = params.get("depth") ?? "2";
+  if (children !== "0" && children !== "1") throw new RepoDiffError("invalid_children", "children must be 0 or 1", 400);
+  if (!/^[1-4]$/.test(depth)) throw new RepoDiffError("invalid_depth", "depth must be 1 to 4", 400);
+  const context = contextOf(options);
+  const roots = new Set<string>();
+  const add = async (directory: string): Promise<void> => {
+    try { roots.add(await repositoryRoot(context, directory)); } catch (error) {
+      if (!(error instanceof RepoDiffError) || error.code !== "not_a_repository") throw error;
+    }
+  };
+  await add(cwd);
+  if (children === "0") return { roots: [...roots], truncated: false };
+  // Bound work as well as depth: a shallow workspace can still hold millions of entries.
+  const queue = [{ path: cwd, level: 0 }];
+  let entries = 0;
+  let truncated = false;
+  for (let index = 0; index < queue.length; index++) {
+    const folder = queue[index]!;
+    let dir;
+    try { dir = await opendir(folder.path); } catch { truncated = true; continue; }
+    for await (const entry of dir) {
+      if (++entries > 10_000 || roots.size >= 64) return { roots: [...roots].sort(), truncated: true };
+      if (entry.name === ".git" && folder.level > 0 && (entry.isDirectory() || entry.isFile())) await add(folder.path);
+      if (folder.level < Number(depth) && entry.isDirectory() && entry.name !== ".git" && entry.name !== "node_modules") {
+        queue.push({ path: join(folder.path, entry.name), level: folder.level + 1 });
+      }
+    }
+  }
+  return { roots: [...roots].sort(), truncated };
 }
 
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._/~^@{}-]{0,199}$/;
@@ -312,9 +353,9 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
 }
 
 /** The HTTP answer of either route, with every refusal in the `{ error: { code, message } }` envelope. */
-export async function repoDiffResponse(kind: "files" | "file", cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<Response> {
+export async function repoDiffResponse(kind: "files" | "file" | "repositories", cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<Response> {
   try {
-    const body = kind === "files" ? await repoDiffFiles(cwd, params, options) : await repoDiffFile(cwd, params, options);
+    const body = kind === "repositories" ? await repoDiffRepositories(cwd, params, options) : kind === "files" ? await repoDiffFiles(cwd, params, options) : await repoDiffFile(cwd, params, options);
     return jsonResponse(body, 200, { "cache-control": "private, no-store" });
   } catch (error) {
     if (error instanceof RepoDiffError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);

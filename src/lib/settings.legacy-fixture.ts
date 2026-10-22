@@ -9,10 +9,10 @@ import { CHAT_WIDTHS, DICTATION_LANGUAGES, DIFF_STYLES, MARKDOWN_WIDTHS, VOICE_B
   QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, USAGE_KEYS_MAX, TERMINAL_FONT_MIN, TERMINAL_FONT_MAX,
   TERMINAL_WHEEL_SPEED_MIN, TERMINAL_WHEEL_SPEED_MAX, CHAT_FONT_MIN, CHAT_FONT_MAX,
   type Settings as CurrentSettings, type ChatWidth, type DictationLanguage, type VoiceButton } from "./settings.ts";
-type Settings = Omit<CurrentSettings, "darkTheme" | "lightTheme" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode" | "followHerdrFocus">;
+type Settings = Omit<CurrentSettings, "darkTheme" | "lightTheme" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode" | "followHerdrFocus" | "composerNewTabButton" | "changesChildRepos" | "changesRepoDepth">;
 type Palette = "amber" | "charcoal" | "catppuccin";
 const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
-const STORAGE_KEY = "herdr-web-ui:settings";
+const STORAGE_KEY = "ovis:settings";
 export const DEFAULT_SETTINGS: Settings = {
   terminalInputMode: "auto",
   keyBarExtras: ["alt"],

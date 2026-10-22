@@ -11,7 +11,7 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
  * that pane; a flick up or its close button puts one away; one left alone goes by itself.
  */
 export async function checkDroplet(browser: Browser, origin: string): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-droplet-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-droplet-"));
   const workspaces: string[] = [];
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
   try {
@@ -19,7 +19,7 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     for (const suffix of ["open", "other"]) {
       const cwd = join(root, suffix);
       mkdirSync(cwd);
-      const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-droplet-${suffix}` });
+      const created = await workspaceCreate({ cwd, label: `ovis-test-droplet-${suffix}` });
       workspaces.push(created.workspace.workspace_id);
       panes.push(created.root_pane.pane_id);
     }
@@ -30,7 +30,7 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
 
     await context.addInitScript(() => {
       // finished turns stay quiet here: putting a pane back to idle between steps reads as one
-      if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "off" }));
+      if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertDone: "off" }));
     });
     const page = await context.newPage();
     const errors: string[] = [];
@@ -39,7 +39,7 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     await page.locator(".conn-live").waitFor();
     const droplet = page.locator(".droplet");
     const card = page.locator(".droplet-card");
-    const selected = () => page.evaluate(() => new URLSearchParams(location.search).get("pane") ?? JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? localStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id);
+    const selected = () => page.evaluate(() => new URLSearchParams(location.search).get("pane") ?? JSON.parse(sessionStorage.getItem("ovis:selection") ?? localStorage.getItem("ovis:selection") ?? "null")?.pane_id);
     // the app must have seen the pane work before it waits: a wait first seen is no news
     const seen = (pane: string, status: string) => page.locator(`.pane-item:has(.pane-select[title^="${pane} —"]) [data-status="${status}"]`).first().waitFor({ state: "attached" });
     const block = async (pane: string) => {
@@ -125,8 +125,8 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
 
     // turned off in Settings: none
     await page.evaluate(() => {
-      const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}");
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, alertInApp: false }));
+      const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}");
+      localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, alertInApp: false }));
     });
     await page.reload();
     await page.locator(".conn-live").waitFor();

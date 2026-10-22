@@ -7,10 +7,11 @@ import { homedir } from "node:os";
 import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
 import type { ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { patchFiles, patchText } from "../shared/patch.ts";
-import { processStartedAt, processStartUpperBound } from "./process-start.ts";
+import { processStartedAt, processStartLowerBound } from "./process-start.ts";
 import { codexImageParts } from "./codex-images.ts";
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
+import type { TranscriptParser } from "./transcript-records.ts";
 import { agentGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { resolveAgent } from "./pane-context.ts";
 
@@ -196,7 +197,7 @@ interface CodexParseState {
 }
 
 /** Complete records are folded once; snapshots detach mutable tools from prior HTTP answers. */
-export function createCodexTranscriptParser(state: CodexParseState = { turns: [], tools: new Map(), messages: [] }) {
+export function createCodexTranscriptParser(state: CodexParseState = { turns: [], tools: new Map(), messages: [] }): TranscriptParser {
   const { turns, tools, messages } = state;
   const assistant = (ts: string): ConversationTurn => {
     let turn = turns.at(-1);
@@ -430,15 +431,62 @@ export async function paneCodexHome(paneId: string, configured?: string): Promis
   return defaultCodexHome();
 }
 
-/** The session_meta payload on a rollout's first line, or null when the file is not a rollout. */
-function rolloutHeader(path: string): RecordValue | null {
+/**
+ * A rollout's first line, parsed, when it is a session_meta; null when the file is not a rollout.
+ * Throws when that line is not JSON, or when it does not end within the read (no newline in a
+ * full read): what it holds past the read cannot be checked, even when the part read parses.
+ */
+function rolloutMetaLine(path: string): RecordValue | null {
   const fd = openSync(path, "r");
   try {
     const buffer = Buffer.alloc(256 * 1024);
     const length = readSync(fd, buffer, 0, buffer.length, 0);
-    const header = record(JSON.parse(buffer.subarray(0, length).toString("utf8").split("\n")[0]!));
-    return header.type === "session_meta" ? record(header.payload) : null;
+    const end = buffer.subarray(0, length).indexOf(0x0a);
+    if (end === -1 && length === buffer.length) throw new Error("rollout header longer than the read");
+    const header = record(JSON.parse(buffer.subarray(0, end === -1 ? length : end).toString("utf8")));
+    return header.type === "session_meta" ? header : null;
   } finally { closeSync(fd); }
+}
+
+/** The session_meta payload on a rollout's first line, or null when the file is not a rollout. */
+function rolloutHeader(path: string): RecordValue | null {
+  const header = rolloutMetaLine(path);
+  return header === null ? null : record(header.payload);
+}
+
+/**
+ * The thread UUID a canonical rollout name carries: `rollout-<time>-<thread>.jsonl`, or a
+ * paginated rollout's `rollout-<time>-<thread>_<segment>.jsonl` (Codex 0.156).
+ */
+const ROLLOUT_NAME = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.jsonl$/i;
+
+/**
+ * Whether a rollout's session_meta payload makes it an interactive conversation of its own: the
+ * one rule the live chat (codexRolloutPath) and the session history apply. Interactive is a TUI's
+ * (`cli`) or an editor's (`vscode`) thread; an older Codex wrote no source, thread_source or
+ * session_id, and such a header still counts. A child names its parent (`parent_thread_id`, a
+ * subagent source object, `thread_source` other than `user`, `agent_role`) and is never one, even
+ * when its own id matches its file.
+ *
+ * `id` and `session_id` (the root session, which is the thread itself unless it is a child,
+ * openai/codex#29327), when present (null included), must be strings that name the same thread, and with a
+ * canonical file name that file's UUID, in any letter case. This proves the file is the thread it
+ * says, not that a self-consistent child is a parent. A name without a UUID, or a header without
+ * ids, has nothing to contradict.
+ */
+export function interactiveCodexRollout(payload: unknown, fileName: string): boolean {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const meta = payload as RecordValue;
+  const present = (value: unknown) => value !== undefined && value !== null;
+  if (present(meta.source) && meta.source !== "cli" && meta.source !== "vscode") return false;
+  if (present(meta.thread_source) && meta.thread_source !== "user") return false;
+  if (present(meta.parent_thread_id) || present(meta.agent_role)) return false;
+  // a child marker may be null; an identity that is there must name a thread
+  const ids = [meta.id, meta.session_id].filter((id) => id !== undefined);
+  if (ids.some((id) => typeof id !== "string")) return false;
+  const key = (id: string) => UUID.test(id) ? id.toLowerCase() : id;
+  const named = ROLLOUT_NAME.exec(fileName)?.[1]?.toLowerCase();
+  return (ids as string[]).every((id) => key(id) === (named ?? key(ids[0] as string)));
 }
 
 /**
@@ -532,12 +580,10 @@ export function codexRolloutPath(path: string, codexHome: string): string | null
     const canonical = realpathSync(withoutVerbatimPrefix(path));
     if (!rolloutInsideStore(realpathSync(join(codexHome, "sessions")), canonical) || !canonical.endsWith(".jsonl")) return null;
     if (!statSync(canonical).isFile()) return null;
-    const metadata = rolloutHeader(canonical);
+    const header = rolloutMetaLine(canonical);
     // A child Codex can be in the foreground process group too. Its rollout
     // is not the conversation of the parent TUI.
-    if (metadata === null || (metadata.source && typeof metadata.source !== "string")
-      || metadata.source === "subagent" || (metadata.thread_source && metadata.thread_source !== "user")
-      || metadata.agent_role) return null;
+    if (header === null || !interactiveCodexRollout(header.payload, nodePath.basename(canonical))) return null;
     return canonical;
   } catch { return null; }
 }
@@ -1019,15 +1065,20 @@ function matchingCodexExchanges(screen: string, candidates: readonly CodexFirstE
   return matches;
 }
 
-/** Match a submitted first prompt and its answer only when no competing exchange explains it. */
+/**
+ * Match a submitted first prompt and its answer only when no competing exchange explains it.
+ * `excluded`: threads other panes hold by stronger evidence, not begun here: they still
+ * compete as exchanges, and are never the answer.
+ */
 export function matchCodexFirstExchange(
   screen: string,
   candidates: readonly CodexFirstExchangeCandidate[],
   startedAtMs: number,
+  excluded: ReadonlySet<string> = new Set(),
 ): string | null {
   if (!Number.isFinite(startedAtMs)) return null;
   if (candidates.filter((candidate) => typeof candidate.createdAtMs === "number"
-    && candidate.createdAtMs >= startedAtMs).length !== 1) return null;
+    && candidate.createdAtMs >= startedAtMs && !excluded.has(candidate.path)).length !== 1) return null;
   const matches = matchingCodexExchanges(screen, candidates, 1);
   if (matches.length !== 1) return null;
   const match = matches[0]!;
@@ -1041,7 +1092,8 @@ export function matchCodexFirstExchange(
     || (normalizePrompt(first.assistant) !== normalizePrompt(shown.assistant)
       && normalizePrompt(first.assistant) !== normalizePrompt(shownWithFooter.assistant))
     || typeof match.candidate.createdAtMs !== "number"
-    || !Number.isFinite(match.candidate.createdAtMs) || match.candidate.createdAtMs < startedAtMs) return null;
+    || !Number.isFinite(match.candidate.createdAtMs) || match.candidate.createdAtMs < startedAtMs
+    || excluded.has(match.candidate.path)) return null;
   return match.candidate.path;
 }
 
@@ -1318,6 +1370,69 @@ async function safeShortThreads(rows: readonly CodexThreadRow[], home: string): 
 }
 
 /**
+ * Of `threads`, those another Codex pane of the cwd holds by stronger evidence than a short
+ * answer: the rollout herdr reports for that pane, and one whose long answer that pane
+ * shows below the first prompt that began it (claimedByOtherPanes, which binds the pane to it,
+ * so the next poll finds it bound there). Panes bound elsewhere already are left to theirs().
+ */
+async function heldByOtherPanes(
+  paneId: string, cwd: string, threads: string[], rows: readonly CodexThreadRow[], home: string, panes: HerdrPane[],
+  rolloutOf: (row: CodexThreadRow) => string,
+): Promise<Set<string>> {
+  const held = new Set<string>();
+  for (const pane of codexPeersIn(panes, paneId, cwd)) {
+    const session = pane.agent_session;
+    if (session?.kind === "path" && session.value) {
+      const reported = codexRolloutPath(session.value, home);
+      if (reported !== null) held.add(reported);
+    }
+  }
+  const firsts = new Map(rows.flatMap((row) => typeof row.firstUserMessage === "string" ? [[rolloutOf(row), row.firstUserMessage] as const] : []));
+  for (const claimed of await claimedByOtherPanes(paneId, cwd, threads, [], firsts, home, panes)) held.add(claimed);
+  return held;
+}
+
+/**
+ * The threads other Codex panes of the cwd show as their own first exchange, each matched the
+ * way this pane's is (matchCodexFirstExchange, from that pane's own start bound), leaving out
+ * those already found: the pane that started last tells first, and an earlier one in turn. A
+ * pane started first never tells by its own start, since every later pane's thread began after
+ * it too; that pane's first exchange, begun after it started and the only such one there, is
+ * its conversation by the evidence that would bind it there. One this pane shows as well stays
+ * open; null when another pane shows a thread one pane took: something is not as it seems.
+ * Nothing here binds: a first exchange is read again each time.
+ */
+async function peersFirstExchanges(
+  own: string, candidates: readonly CodexFirstExchangeCandidate[], peers: readonly HerdrPane[], screens: readonly string[],
+  excluded: ReadonlySet<string>,
+): Promise<Set<string> | null> {
+  const starts = await Promise.all(peers.map(async (peer) => {
+    const { list } = await codexProcessesOf(peer.pane_id);
+    const bounds = list.map(({ pid }) => processStartLowerBound(pid));
+    return bounds.length === 0 || bounds.some((bound) => bound === null) ? null : Math.min(...bounds as number[]);
+  }));
+  const owners = new Map<string, number>();
+  for (let found = true; found;) {
+    found = false;
+    peers.forEach((_, index) => {
+      const start = starts[index];
+      if (start === null || start === undefined || [...owners.values()].includes(index)) return;
+      const path = matchCodexFirstExchange(screens[index]!, candidates, start, new Set([...excluded, ...owners.keys()]));
+      if (path === null) return;
+      // this pane's screen shows that exchange too: whose it is stays open
+      if (matchingCodexExchanges(own, candidates.filter((candidate) => candidate.path === path), 1).length > 0) return;
+      owners.set(path, index);
+      found = true;
+    });
+  }
+  for (const [path, owner] of owners) {
+    const thread = candidates.filter((candidate) => candidate.path === path);
+    if (screens.some((screen, index) => index !== owner && matchingCodexExchanges(screen, thread, 1).length > 0)) return null;
+  }
+  return new Set(owners.keys());
+}
+
+/**
  * The prompt is not ownership evidence on its own. Require its submitted answer,
  * compare older conversations and other same-directory panes too. A peer showing the
  * same exchange leaves ownership ambiguous. No weak binding survives a poll.
@@ -1326,7 +1441,8 @@ async function shortThreadFromProcess(
   paneId: string, cwd: string, home: string, screen: string,
   processes: readonly { pid: number }[], panes?: HerdrPane[],
 ): Promise<string | null> {
-  const starts = processes.map(({ pid }) => processStartUpperBound(pid));
+  // no later than the process started: Codex 0.163 makes its thread in that same second
+  const starts = processes.map(({ pid }) => processStartLowerBound(pid));
   if (starts.length === 0 || starts.some((start) => start === null || !Number.isFinite(start))) return null;
   const notBefore = Math.min(...starts as number[]);
   let db: Database | undefined;
@@ -1337,7 +1453,9 @@ async function shortThreadFromProcess(
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     const columns = new Set(db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('threads')").all().map((column) => column.name));
     if (!columns.has("first_user_message") || !columns.has("source")) return null;
-    const created = columns.has("created_at_ms") ? "COALESCE(created_at_ms, created_at * 1000)" : "created_at * 1000";
+    // a time in whole seconds as the last millisecond of that second: compared with the start's
+    // lower bound, a thread made in its process's second still counts as begun since
+    const created = columns.has("created_at_ms") ? "COALESCE(created_at_ms, created_at * 1000 + 999)" : "created_at * 1000 + 999";
     // The 33rd row disables this bounded lookup, never establishes uniqueness.
     const { where, params } = storedCwdCondition(cwd);
     const rows = db.query<CodexThreadRow, string[]>(
@@ -1345,15 +1463,31 @@ async function shortThreadFromProcess(
        FROM threads WHERE ${where} AND archived = 0 AND agent_role IS NULL${interactive(db)} LIMIT 33`,
     ).all(...params);
     if (rows.length > SHORT_THREAD_LIMIT || rows.some((row) => !Number.isFinite(row.createdAtMs))) return null;
-    // Only a thread created after this process's start bound may be its new first exchange.
-    const begun = rows.filter((row) => row.createdAtMs >= notBefore);
-    if (begun.length !== 1) return null;
+    // Only a thread created after this process's start bound may be its new first exchange, and
+    // not one another pane holds by stronger evidence: after A's /new, B's one word still tells
+    const rolloutOf = (row: CodexThreadRow) => codexRolloutPath(row.rolloutPath, home) ?? row.rolloutPath;
+    const since = rows.filter((row) => row.createdAtMs >= notBefore);
+    // one thread begun since may be another pane's too: herdr reports it for that pane, or that pane shows its long answer
+    const held = since.length > 0 ? await heldByOtherPanes(paneId, cwd, since.map(rolloutOf), rows, home, peers, rolloutOf) : new Set<string>();
+    // bound to another pane, or held by it: still competing exchanges, never this pane's
+    const elsewhere = new Set(since.map(rolloutOf).filter((rollout) => theirs([rollout], paneId, held).length === 0));
+    const begun = since.filter((row) => !elsewhere.has(rolloutOf(row)));
+    if (begun.length === 0) return null;
     const candidates = await safeShortThreads(rows, home);
     if (candidates === null) return null;
-    const path = matchCodexFirstExchange(screen, candidates, notBefore);
-    if (path === null || theirs([path], paneId).length !== 1) return null;
-    const peerScreens = await Promise.all(codexPeersIn(peers, paneId, cwd).map((peer) =>
+    const peerPanes = codexPeersIn(peers, paneId, cwd);
+    const peerScreens = await Promise.all(peerPanes.map((peer) =>
       paneRead({ paneId: peer.pane_id, source: "recent", lines: 400, stripAnsi: true })));
+    // a pane that started first sees every later pane's thread begun since too: those panes show
+    // them as their own first exchange, and say so first
+    let excluded = elsewhere;
+    if (begun.length > 1) {
+      const shown = await peersFirstExchanges(screen, candidates, peerPanes, peerScreens.map((peer) => peer.text), excluded);
+      if (shown === null) return null;
+      excluded = new Set([...excluded, ...shown]);
+    }
+    const path = matchCodexFirstExchange(screen, candidates, notBefore, excluded);
+    if (path === null || theirs([path], paneId, held).length !== 1) return null;
     const own = candidates.filter((candidate) => candidate.path === path);
     for (const peer of peerScreens) {
       // Headerless exchanges can disprove ownership, but never establish it.

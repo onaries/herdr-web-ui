@@ -41,17 +41,17 @@ describe("saved herdr machine profiles", () => {
     const args = join(root, "args.json");
     writeFileSync(bin, `#!${process.execPath}\nawait Bun.write(${JSON.stringify(args)}, JSON.stringify({args:process.argv.slice(2),config:process.env.HERDR_CONFIG_PATH})); console.log(${JSON.stringify(JSON.stringify([row()]))});`);
     chmodSync(bin, 0o700);
-    const previous = process.env.HERDR_WEB_HERDR_BIN, config = process.env.HERDR_CONFIG_PATH;
-    process.env.HERDR_WEB_HERDR_BIN = bin; process.env.HERDR_CONFIG_PATH = join(root, "custom.toml");
+    const previous = process.env.OVIS_HERDR_BIN, config = process.env.HERDR_CONFIG_PATH;
+    process.env.OVIS_HERDR_BIN = bin; process.env.HERDR_CONFIG_PATH = join(root, "custom.toml");
     try {
       expect((await readHerdrProfiles())[0]?.target?.session).toBe("work");
       expect(JSON.parse(readFileSync(args, "utf8"))).toEqual({ args: ["machine", "list", "--json"], config: join(root, "custom.toml") });
       writeFileSync(bin, `#!${process.execPath}\nconsole.error("private path or diagnostic"); process.exit(2);`);
       await expect(readHerdrProfiles()).rejects.toThrow("Could not read saved herdr machines");
-      process.env.HERDR_WEB_HERDR_BIN = join(root, "missing");
+      process.env.OVIS_HERDR_BIN = join(root, "missing");
       await expect(readHerdrProfiles()).rejects.toThrow("Could not read saved herdr machines");
     } finally {
-      if (previous === undefined) delete process.env.HERDR_WEB_HERDR_BIN; else process.env.HERDR_WEB_HERDR_BIN = previous;
+      if (previous === undefined) delete process.env.OVIS_HERDR_BIN; else process.env.OVIS_HERDR_BIN = previous;
       if (config === undefined) delete process.env.HERDR_CONFIG_PATH; else process.env.HERDR_CONFIG_PATH = config;
     }
   });

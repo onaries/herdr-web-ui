@@ -4,13 +4,15 @@
  * after an install passes its health check the supervisor exits with HANDOVER_EXIT and the
  * launcher starts the new release's supervisor. `root` is always the source checkout.
  */
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import "./adopt-legacy-env.ts";
+import { mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { defaultStateDir, HANDOVER_EXIT, updateStateDir } from "./update-state.ts";
+import { readUpdateIpcRequest } from "../shared/update.ts";
+import { defaultStateDir, HANDOVER_EXIT, moveLegacyStateDir, updateStateDir } from "./update-state.ts";
 import { herdrSocketPath } from "./herdr/client.ts";
+import { acquireOwnerDirectory } from "./owner-guard.ts";
 import { Updater, type Release } from "./updater.ts";
-import { windowsProcessTable } from "./windows-processes.ts";
 
 export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   root = resolve(root);
@@ -18,32 +20,17 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   const host = process.env["HOST"] ?? "127.0.0.1";
   const probeHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "[::1]" : host.includes(":") ? `[${host}]` : host;
   const origin = `http://${probeHost}:${port}`;
+  moveLegacyStateDir();
   const appStateDir = resolve(defaultStateDir());
   const socketPath = resolve(herdrSocketPath());
   const stateDir = updateStateDir(root, port);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const lock = join(stateDir, "supervisor.lock");
-  try { mkdirSync(lock); }
-  catch {
-    const pid = Number(readFileSync(join(lock, "pid"), "utf8"));
-    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`Invalid update lock: ${lock}`);
-    let alive = true;
-    try { process.kill(pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") alive = false; }
-    if (alive && process.platform === "win32") {
-      // Forced Windows shutdown skips lock cleanup; the old PID may now belong to someone else.
-      const recordedAt = statSync(join(lock, "pid")).mtimeMs;
-      const owner = (await windowsProcessTable()).find(row => row.pid === pid);
-      if (owner?.started !== undefined && owner.started > recordedAt) {
-        if (Number(readFileSync(join(lock, "pid"), "utf8")) !== pid || statSync(join(lock, "pid")).mtimeMs !== recordedAt) {
-          throw new Error("Another server is starting. Try again.");
-        }
-        alive = false;
-      }
-    }
-    if (alive) throw new Error("A managed server is already running for this checkout and port.");
-    rmSync(lock, { recursive: true }); mkdirSync(lock);
-  }
-  writeFileSync(join(lock, "pid"), String(process.pid), { mode: 0o600 });
+  // A crash or a forced Windows shutdown skips lock cleanup, and the old PID may belong to
+  // someone else by now: the lock records the owner's birth, so only a provably gone owner is replaced.
+  const lock = acquireOwnerDirectory(join(stateDir, "supervisor.lock"), {
+    running: "A managed server is already running for this checkout and port.",
+    starting: "Another server is starting. Try again.",
+  });
   let child: ReturnType<typeof Bun.spawn> | null = null;
   let active: Release | null = null;
   let switching = true, stopping = false;
@@ -52,7 +39,8 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   const started = Promise.withResolvers<void>();
   const publish = () => {
     if (updater.status.phase === "error") console.error(`Update failed: ${updater.status.error}`);
-    try { child?.send({ type: "update-status", status: updater.status, notes: updater.notes, installed: updater.installed }); } catch { /* bridge restarting */ }
+    // revision_bound_install: this supervisor reads `update-install-revision` and installs only the revision it names
+    try { child?.send({ type: "update-status", status: { ...updater.status, revision_bound_install: true }, notes: updater.notes, installed: updater.installed }); } catch { /* bridge restarting */ }
   };
   async function stopChild() {
     const prior = child;
@@ -68,16 +56,17 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
     const bootId = crypto.randomUUID();
     const candidate = Bun.spawn([process.execPath, "server/index.ts"], {
       cwd: release?.directory ?? root, windowsHide: true, stdin: "ignore", stdout: "inherit", stderr: "inherit",
-      env: { ...process.env, HERDR_WEB_MANAGED: "1", HERDR_WEB_BOOT_ID: bootId,
-        HERDR_WEB_STATE_DIR: appStateDir, HERDR_SOCKET: socketPath,
-        HERDR_WEB_REVISION: release?.revision ?? "" },
+      env: { ...process.env, OVIS_MANAGED: "1", OVIS_BOOT_ID: bootId,
+        OVIS_STATE_DIR: appStateDir, HERDR_SOCKET: socketPath,
+        OVIS_REVISION: release?.revision ?? "" },
       ipc(message) {
         if (message?.type === "update-status-request") publish();
-        if (message?.type === "update-command" && (message.command === "check" || message.command === "install")) {
-          const command = message.command;
+        // an unbound `install` (an older bridge's) is refused: an install names the revision offered
+        const request = readUpdateIpcRequest(message);
+        if (request) {
           // a browser's Check or Update is a user's own request: it does not wait the unshallow
           // backoff out, the 5-minute timer does
-          void started.promise.then(() => updater.request(command, true));
+          void started.promise.then(() => updater.request(request.command, true, request.command === "install" ? request.expected_revision : undefined));
         }
       },
       onExit(proc, code) {
@@ -103,9 +92,9 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   const pluginRoot = process.env["HERDR_PLUGIN_ROOT"];
   // only a launcher-started supervisor can hand over: run directly, it keeps serving the update itself
   const launched = typeof process.send === "function";
-  const updater = new Updater({ root, stateDir, autoUpdate: process.env["HERDR_WEB_AUTO_UPDATE"] === "1", publish,
+  const updater = new Updater({ root, stateDir, autoUpdate: process.env["OVIS_AUTO_UPDATE"] === "1", publish,
     pluginCheckout: pluginRoot !== undefined && resolve(pluginRoot) === root,
-    notice: process.env["HERDR_WEB_SUPERVISOR_FALLBACK"]
+    notice: process.env["OVIS_SUPERVISOR_FALLBACK"]
       ? "The updated supervisor failed to start, so the previous one is running this version. The next update tries again."
       : undefined,
     async afterInstall() {
@@ -132,7 +121,7 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
     if (stopping) return;
     stopping = true; updater.stop();
     await stopChild();
-    rmSync(lock, { recursive: true, force: true });
+    lock.release();
     process.exit(code);
   }
   process.on("SIGTERM", () => void shutdown(0));
@@ -158,4 +147,4 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   }
 }
 
-if (import.meta.main) await runSupervisor(process.env["HERDR_WEB_SOURCE_ROOT"] || resolve(import.meta.dir, ".."));
+if (import.meta.main) await runSupervisor(process.env["OVIS_SOURCE_ROOT"] || resolve(import.meta.dir, ".."));

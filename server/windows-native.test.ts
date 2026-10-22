@@ -25,7 +25,7 @@ const onWindows = process.platform === "win32";
 
 it.skipIf(!onWindows)("installs with native tar when PATH shadows tar, and preserves the runtime after bad extraction", async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "herdr-bundle-native-")));
-  const before = process.env["HERDR_WEB_BUNDLE_MANIFEST"];
+  const before = process.env["OVIS_BUNDLE_MANIFEST"];
   const runtime = join(home, "herdr-web-ui", `remote-v${REMOTE_BUNDLE_VERSION}`);
   const runPowerShell = async (script: string) => {
     const prefixed = `$env:LOCALAPPDATA=${psQuote(home)}; $env:PATH=${psQuote(join(home, "shadow"))}+';'+$env:PATH; ${script}`;
@@ -48,7 +48,7 @@ it.skipIf(!onWindows)("installs with native tar when PATH shadows tar, and prese
     const manifest = join(home, "manifest.json");
     const writeManifest = async () => writeFileSync(manifest, JSON.stringify({ version: REMOTE_BUNDLE_VERSION, assets: { "win32-x64": { url: "bundle.tgz", sha256: createHash("sha256").update(new Uint8Array(await Bun.file(join(home, "bundle.tgz")).arrayBuffer())).digest("hex") } } }));
     await writeManifest();
-    process.env["HERDR_WEB_BUNDLE_MANIFEST"] = manifest;
+    process.env["OVIS_BUNDLE_MANIFEST"] = manifest;
     await windowsHost.installBundle(ssh, "win32-x64", AbortSignal.timeout(60_000));
     expect(existsSync(join(runtime, "bin", "bun.exe"))).toBe(true);
     const target = realpathSync(runtime);
@@ -59,7 +59,7 @@ it.skipIf(!onWindows)("installs with native tar when PATH shadows tar, and prese
     expect(existsSync(join(home, "herdr-web-ui", "install.lock"))).toBe(false);
     expect(existsSync(join(home, "herdr-web-ui", `install.${process.pid}`))).toBe(false);
   } finally {
-    if (before === undefined) delete process.env["HERDR_WEB_BUNDLE_MANIFEST"]; else process.env["HERDR_WEB_BUNDLE_MANIFEST"] = before;
+    if (before === undefined) delete process.env["OVIS_BUNDLE_MANIFEST"]; else process.env["OVIS_BUNDLE_MANIFEST"] = before;
     // Remove the junction separately: the immutable release is cleaned with the fixture.
     if (existsSync(runtime)) await runPowerShell(`[IO.Directory]::Delete(${psQuote(runtime)})`);
     rmSync(home, { recursive: true, force: true });

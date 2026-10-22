@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 
 import { FAVICON_CANDIDATES, findProjectFavicon } from "./project-favicon.ts";
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-project-favicon-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-project-favicon-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 /** A project folder holding these files. */

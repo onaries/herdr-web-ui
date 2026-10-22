@@ -63,7 +63,7 @@ try {
       /** A phone on a slow link: every font file is held until `release`. `stall` names files that never come at all. */
       const open = async (stall: RegExp | null, height = 844): Promise<{ page: Page; errors: string[]; held: () => number; release: () => void; close: () => Promise<void> }> => {
         const context = await browser.newContext({ viewport: { width: 390, height }, locale: "en-US", hasTouch: true, isMobile: true });
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+        await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
         const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));

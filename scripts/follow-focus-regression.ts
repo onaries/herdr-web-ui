@@ -26,7 +26,7 @@ export async function checkFollowHerdrFocus(page: Page, fixture: FollowFocusFixt
       await page.waitForTimeout(50);
     }
   };
-  const selectedPaneId = () => page.evaluate(() => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id as string | undefined);
+  const selectedPaneId = () => page.evaluate(() => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id as string | undefined);
   const shownTab = () => page.locator(".tab-strip").getByRole("tab", { selected: true }).textContent();
   const follow = async (on: boolean): Promise<void> => {
     await page.keyboard.press("ControlOrMeta+Shift+Comma");

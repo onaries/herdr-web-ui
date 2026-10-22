@@ -4,7 +4,8 @@
  * clicked (the body carries the row's argv), no second Resume in the window before herdr reports the
  * resumed pane's session (App's RecentResume record), a session a pane already shows selected instead of
  * started, a row without a verified resume listed with no button, the keyboard along the rows,
- * and a PC whose bridge answers 404 for the route, whose menu has no item. No herdr pane is
+ * the agent picker (each agent with its mark, no Shell, its open list taking Escape alone, disabled
+ * while a resume is in flight), and a PC whose bridge answers 404 for the route, whose menu has no item. No herdr pane is
  * touched; every request stays on this loopback server.
  */
 import assert from "node:assert/strict";
@@ -93,7 +94,9 @@ try {
   await page.keyboard.press("Escape");
   await menu.waitFor({ state: "detached" });
   await openHistory("w1");
-  assert.equal(await dialog.locator(".session-agent select").inputValue(), "codex", "the row's agent is listed first");
+  const picker = dialog.getByRole("combobox", { name: "Agent" });
+  assert.equal(await picker.locator(".agent-picker-label").textContent(), "Codex", "the row's agent is listed first");
+  assert.equal(await picker.locator(".agent-mark.codex").count(), 1, "the agent's mark beside its name, as the New tab dialog's picker shows it");
   assert.deepEqual(await dialog.locator(".session-title").allTextContents(), ["Retry budget for the payment client", "Flaky export test", "A session whose resume syntax is not verified."], "newest first; a row without a title shows its first prompt");
   assert.equal(await dialog.getByRole("button", { name: /^Resume / }).count(), 2, "a row without a verified resume has no Resume button");
   assert.equal(await dialog.locator(".session-row").nth(2).locator("button").count(), 0);
@@ -135,6 +138,7 @@ try {
   await resume.click({ force: true }).catch(() => undefined);
   await page.getByRole("status").filter({ hasText: "Resuming…" }).waitFor();
   assert.equal(await dialog.getByRole("button", { name: /^Resume / }).evaluateAll((buttons) => buttons.every((button) => (button as HTMLButtonElement).disabled)), true, "every Resume is disabled while one is in flight");
+  assert.equal(await picker.isDisabled(), true, "the agent picker is disabled while a resume is in flight");
   await settled(page);
   await page.screenshot({ path: join(evidence, "happy-pending.png") });
   assert.equal(tabCreates.length, 1, `a double click sends one tab/create, not ${tabCreates.length}`);
@@ -188,14 +192,32 @@ try {
   await page.waitForFunction(() => window.qa.selected === "p2");
   assert.equal(tabCreates.length, 1, "selecting the pane that shows the session creates no tab");
   console.log("PASS a session already shown by a pane is opened by selecting that pane");
-  // another agent: its (empty) list, said in words
+  // another agent: the picker lists the PC's agents with their marks and no Shell, its open list takes
+  // Escape alone (the dialog stays), the keys choose one, and its (empty) list is said in words
   await openHistory("w1");
-  await dialog.locator(".session-agent select").selectOption("claude");
+  await picker.click();
+  const agentList = page.getByRole("listbox", { name: "Agent" });
+  await agentList.waitFor();
+  assert.deepEqual(await agentList.getByRole("option").allTextContents(), ["Codex", "Claude Code"], "the agents as /api/agents lists them, no Shell");
+  assert.equal(await agentList.locator(".agent-mark").count(), 2, "each row carries its agent's mark");
+  await settled(page);
+  await page.screenshot({ path: join(evidence, "agent-list.png") });
+  await page.keyboard.press("Escape");
+  await agentList.waitFor({ state: "detached" });
+  assert.equal(await dialog.isVisible(), true, "Escape on the open list closes the list, not the dialog");
+  assert.equal(await picker.evaluate((node) => node === document.activeElement), true, "the trigger keeps the focus");
+  await page.keyboard.press("ArrowDown");
+  await agentList.waitFor();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await agentList.waitFor({ state: "detached" });
+  await picker.locator(".agent-mark.claude").waitFor();
+  assert.equal(await picker.locator(".agent-picker-label").textContent(), "Claude Code");
   await dialog.locator(".session-empty").waitFor();
   assert.equal(await dialog.locator(".session-empty").textContent(), "No earlier Claude Code sessions in this folder.");
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "detached" });
-  console.log("PASS the agent field lists another agent's sessions; an empty store is said in words");
+  console.log("PASS the agent picker lists the agents with their marks, closes its list alone on Escape and takes the keys; an empty store is said in words");
   // a PC whose bridge is from before the route: asked once without listing anything, and the item stays away
   const probed = page.waitForResponse((response) => response.url().includes("/api/machines/old-pc/sessions/history"));
   await page.evaluate(() => window.qa.machine("old-pc"));

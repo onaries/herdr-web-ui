@@ -1,0 +1,38 @@
+  [0m[38;2;95;99;104m/tmp/claude-1000/pr2-rec/agy/proj[0m
+
+[0m[1m[38;2;25;103;210m> /model[0m
+[0m[1m[38;2;25;103;210m  ⎿  [0m[38;2;60;64;67mExited /model command[0m
+
+[0m[38;2;218;220;224m────────────────────────────────────────[0m
+[0m[38;2;66;133;244m>[0m
+[0m[38;2;218;220;224m────────────────────────────────────────[0m
+[0m[1mSettings[0m
+
+  Search: [0m[7m[38;5;7m [0m
+          [0m[38;2;218;220;224m────────────────────[0m
+
+[0m[38;2;66;133;244m> Agent Mode                   default[0m
+  Animation Speed              medium
+  Artifact Review              asks for
+  Color Scheme                 light
+  Conversation Picker Grouping none
+  Copy on Select               on
+  Editor                       auto ($ED
+  Editor Mode                  default
+  Enable Telemetry             on
+  Non-Workspace Access         off
+  Notifications                off
+  Queued Messages              Queue
+  Rendering Mode               native te
+  Show Active Tasks            on
+  Show Feedback Survey         on
+  Show Tips                    on
+
+  [0m[38;2;60;64;67m'default': standard behavior. 'accept-[0m
+  [0m[38;2;60;64;67medits': auto-approve file edits,[0m
+  [0m[38;2;60;64;67mprompt for commands. 'plan': research[0m
+[0m[38;2;95;99;104m  [1-16 of 19 items][0m
+
+[0m[1mKeyboard: [0m[38;2;66;133;244m↑/↓[0m [0m[38;2;95;99;104mNavigate[0m  [0m[38;2;66;133;244m←/→[0m [0m[38;2;95;99;104mChange[0m  [0m[38;2;66;133;244mente[0m
+
+                 [0m[38;2;95;99;104mGemini 3.8 Flash · high[0m

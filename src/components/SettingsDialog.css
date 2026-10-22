@@ -143,6 +143,67 @@
   overflow-wrap: anywhere;
 }
 
+.settings-save-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* where the change is (not on the server yet, or on its way) and the Retry that sends it, under the
+   sentence; the button wraps below the words on a narrow screen rather than squeezing them. Both
+   are read, so they take the reading size: 14 px with a mouse, 15 px under a finger */
+.settings-save-local {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* never narrower than its longest unbreakable phrase (the Korean copy joins its negative predicate
+   with no-break spaces), so a large text size moves Retry below the words instead of drawing them
+   under it; a phrase wider than the whole row still breaks (break-word, unlike anywhere, leaves
+   that minimum as it is) */
+.settings-save-local > p {
+  flex: 1 1 12rem;
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+}
+
+.settings-save-local > .btn {
+  font-size: var(--fs-md);
+}
+
+/* on its way: dimmed by its color, not faded, so the word stays legible; the sentence beside it
+   says what is happening */
+.settings-save-local > .btn:disabled {
+  opacity: 1;
+  color: var(--text-dim);
+}
+
+/* a mouse's press shows as the amber edge a pressed icon button draws (styles.css .icon-button:active) */
+@media (pointer: fine) {
+  .settings-save-local > .btn:active:not(:disabled) {
+    background: var(--bg-elevated);
+    border-color: var(--accent);
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .settings-save-local > p,
+  .settings-save-local > .btn {
+    font-size: var(--fs-chat);
+  }
+
+  /* a finger's press fills Retry, as a pressed settings row fills, instead of the dim that would
+     fade its word (styles.css) */
+  .settings-save-local > .btn:active:not(:disabled) {
+    opacity: 1;
+    background: var(--bg-hover);
+  }
+}
+
 .settings-keys {
   display: inline-flex;
   gap: var(--space-1);

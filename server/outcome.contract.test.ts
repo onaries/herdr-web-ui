@@ -58,7 +58,7 @@ it("follows Chat /context through the HTTP route and keeps /btw terminal-require
   let socket: WebSocket | undefined;
   const server = createServer({ port: 0, hostname: "127.0.0.1", stateDir: join(root, "state") });
   try {
-    const created = await herdrRpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd: root, label: "herdr-web-ui-test-command-outcomes", focus: false });
+    const created = await herdrRpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd: root, label: "ovis-test-command-outcomes", focus: false });
     workspace = created.workspace.workspace_id;
     const pane = created.root_pane.pane_id;
     const ready = event("ready");

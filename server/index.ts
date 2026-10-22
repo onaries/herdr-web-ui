@@ -1,17 +1,19 @@
+import "./adopt-legacy-env.ts";
 import { handleWorkspaceRequest } from "./workspace-routes.ts";
 import { connectionData, createCore, type SocketData } from "./core/index.ts";
 import { ClientConnectionLog } from "./client-connection-log.ts";
 import { RequestLog } from "./request-log.ts";
 import { handlePaneRequest } from "./pane-routes.ts";
 import { paneContext, resolveAgent } from "./pane-context.ts";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { OrderSequence } from "./order-sequence.ts";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { AgentKind, HealthAuth, HerdrPane, IntegrationsResponse, PanePlan, PendingMessage, PluginActionsResponse, ProjectFavicon } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { DEVICE_COOKIE, authClient, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
@@ -20,7 +22,7 @@ import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { badRequest, errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
-import { claudePaneSession, configureClaudeRewinds } from "./conversation.ts";
+import { claudePaneSession } from "./conversation.ts";
 import { processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
 import { claudeSubagents, within } from "./claude-subagents.ts";
@@ -43,6 +45,7 @@ import {
   sessionSnapshot,
 } from "./herdr/client.ts";
 import { type AlertTiming, defaultStateDir, handlePushRequest } from "./push.ts";
+import { moveLegacyStateDir } from "./update-state.ts";
 import { handlePromptRequest, OpenCodePromptState } from "./prompt.ts";
 import { attachableIdentity } from "./pty/sidecar.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
@@ -158,7 +161,7 @@ export function createServer(
     stateDir?: string;
     /** the PC's own Tailscale login, for the identity check; tests set it, otherwise `tailscale status` says */
     tailscaleOwner?: string | null;
-    /** the operator declares `tailscale serve` as this install's only ingress; HERDR_WEB_TAILSCALE_SERVE_ONLY=1 says the same */
+    /** the operator declares `tailscale serve` as this install's only ingress; OVIS_TAILSCALE_SERVE_ONLY=1 says the same */
     tailscaleServeOnly?: boolean;
     /** the tailnet identity behind the access check; unset, the tailscale CLI says. Tests pass one with their own status reader. */
     tailnet?: TailnetIdentitySource;
@@ -224,34 +227,40 @@ export function createServer(
     sidecar?: boolean | (() => boolean);
   } = {},
 ): ServerInstance {
+  /**
+   * This server's lifetime: the supervisor's boot id when it manages the server, else one made now. It is
+   * /api/health's `web_ui.boot_id` and the epoch of the workspace order's counter (server/order-sequence.ts).
+   */
+  const bootId = process.env["OVIS_BOOT_ID"] || randomUUID();
+  const orderSequence = new OrderSequence(bootId);
   const hostname = options.hostname ?? process.env["HOST"] ?? "127.0.0.1";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
-  const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
+  const token = options.token ?? process.env["OVIS_TOKEN"] ?? "";
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
   const preferences = new PreferenceStore(options.stateDir ?? defaultStateDir());
   const seen = new SeenStore(options.stateDir ?? defaultStateDir());
-  // the Claude rewinds the chat saw carried out, kept with the server's state (conversation.ts ClaudeRewind)
-  configureClaudeRewinds(join(options.stateDir ?? defaultStateDir(), "claude-rewinds.json"));
   const herdrSidebar = new HerdrSidebarConfig(options.herdrConfigPath ?? herdrConfigPath());
   const cliProxy = options.cliProxy ?? new CLIProxyService(options.stateDir ?? defaultStateDir());
   const cliProxyRoutes = new CLIProxyRoutes(cliProxy);
   const usageLogin = options.usageLogin ?? new UsageLoginService();
   const usage = options.usage ?? new UsageService(undefined, undefined, (refresh) => cliProxy.report(refresh));
   const voice = options.voice ?? new VoiceService({ stateDir: options.stateDir ?? defaultStateDir(), env: process.env, fetch });
-  /** a login named here is taken as it is: a tagged node has none of its own to read (HERDR_WEB_TAILSCALE_OWNER) */
-  const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["HERDR_WEB_TAILSCALE_OWNER"]?.trim() || undefined;
+  /** a login named here is taken as it is: a tagged node has none of its own to read (OVIS_TAILSCALE_OWNER) */
+  const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["OVIS_TAILSCALE_OWNER"]?.trim() || undefined;
   const tailnet = options.tailnet ?? new TailnetIdentitySource();
   const identityOf = async (grantPath: boolean, host: string | null) => {
     if (namedOwner !== undefined) return { ...(grantPath ? await tailnet.freshIdentity(host) : { soleLogin: null, dnsName: null, tailnetIp: null }), owner: namedOwner, tagged: false };
     return grantPath ? tailnet.freshIdentity(host) : tailnet.identity();
   };
-  const serveOnly = options.tailscaleServeOnly ?? process.env["HERDR_WEB_TAILSCALE_SERVE_ONLY"] === "1";
+  const serveOnly = options.tailscaleServeOnly ?? process.env["OVIS_TAILSCALE_SERVE_ONLY"] === "1";
+  /** what lets Portal open an address: this server's own values, never a request's */
+  const portalGuards = () => ({ tokenSet: token !== "", serveOnly });
 
   const openCodeState = new OpenCodePromptState();
   const draftTimer = setInterval(() => openCodeState.prune(), 60_000);
   draftTimer.unref();
-  const core = createCore({ options: { ...options, openCodeState }, devices, usage, usageLogin, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
+  const core = createCore({ options: { ...options, openCodeState, orderSequence }, devices, usage, usageLogin, TYPED_SETTLE_MS, KEY_SETTLE_MS, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, DRAFT_CLEAR_WAIT_MS, DRAFT_CLEAR_POLL_MS });
   const { sidecar, serialize, push, logPushError, omo, claudeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
   // started after createCore's Node probe (server/pty/sidecar.ts), which can hold the thread up to 3 s: that wait
   // would count against the read's own 2.5 s limit, and a read cut short leaves the owner unknown for 5 minutes
@@ -306,7 +315,7 @@ export function createServer(
       const tokenMatched = presented === "match";
       let pairedDevice: DeviceMatch | null;
       try {
-        pairedDevice = devices.match(parseCookies(request.headers.get("cookie")).get(DEVICE_COOKIE));
+        pairedDevice = devices.match(deviceCookieValue(parseCookies(request.headers.get("cookie"))));
       } catch (error) {
         // First-cookie confirmation is an authorization write, not best-effort telemetry.
         return errorResponse(error);
@@ -447,7 +456,7 @@ export function createServer(
       }
       if (pathname === "/api/herdr/update") { setRequestRoute(pathname); return handleHerdrUpdateRequest(request, options.herdrUpdate); }
       if (pathname === "/api/portal" || pathname.startsWith("/api/portal/")) {
-        return handlePortalRequest(request, pathname, options.portal, { port: bunServer.port ?? DEFAULT_PORT, tokenSet: token !== "", serveOnly });
+        return handlePortalRequest(request, pathname, options.portal, { port: bunServer.port ?? DEFAULT_PORT, ...portalGuards() });
       }
       if (pathname === "/api/connection-diagnostics") { setRequestRoute(pathname); return clientConnectionLog.handle(request, client ?? "unknown"); }
       if (pathname === "/api/telemetry") { setRequestRoute(pathname); return handleTelemetryRequest(request, options.telemetry); }
@@ -491,7 +500,7 @@ export function createServer(
           // a forced answer (tests) and a runtime without the PTY sidecar are told the way a Windows herdr's own would be
           const herdr = attachableIdentity(info, sidecar);
           return jsonResponse({ ok: true, herdr, auth, ...(lan_exposure ? { lan_exposure } : {}),
-            web_ui: { boot_id: process.env["HERDR_WEB_BOOT_ID"] ?? null, revision: process.env["HERDR_WEB_REVISION"] ?? null } });
+            web_ui: { boot_id: bootId, revision: process.env["OVIS_REVISION"] ?? null } });
         } catch (error) {
           return errorResponse(error);
         }
@@ -578,7 +587,12 @@ export function createServer(
         return media ?? jsonResponse({ error: { code: "not_found", message: "no such page media" } }, 404);
       }
 
-      const workspaceResponse = await handleWorkspaceRequest(request, url, pathname, bunServer, broadcastAll, queueFirstMessage);
+      const workspaceResponse = await handleWorkspaceRequest(request, url, pathname, bunServer, broadcastAll, queueFirstMessage, () => {
+        // the receipt first, then the roster read that can show it: not waited for, and its failure changes no answer
+        const receipt = orderSequence.moved();
+        void machines?.refreshLocal();
+        return receipt;
+      });
       if (workspaceResponse) return workspaceResponse;
 
       if (pathname === "/api/plugins/actions") {
@@ -649,7 +663,7 @@ export function createServer(
         }
       }
 
-      const paneResponse = await handlePaneRequest(request, url, pathname, options, serialize);
+      const paneResponse = await handlePaneRequest(request, url, pathname, options);
       if (paneResponse) return paneResponse;
 
       if (pathname === "/api/pane/omo-tasks") {
@@ -729,9 +743,11 @@ export function createServer(
   const requestLog = new RequestLog(options.stateDir ?? defaultStateDir());
 
   if (options.portal) {
+    // a Portal that ends on its own is started again only while this server's own token and serve-only allow it
+    options.portal.authorize(portalGuards);
     let resume: Promise<void>;
     try {
-      resume = options.portal.resume({ port: server.port ?? DEFAULT_PORT, tokenSet: token !== "", serveOnly });
+      resume = options.portal.resume({ port: server.port ?? DEFAULT_PORT, ...portalGuards() });
     } catch (error) {
       resume = Promise.reject(error);
     }
@@ -770,6 +786,7 @@ export function createServer(
 }
 
 if (import.meta.main) {
+  moveLegacyStateDir();
   const updates = connectUpdater();
   const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
@@ -804,7 +821,7 @@ if (import.meta.main) {
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-  if (process.env["HERDR_WEB_MANAGED"] === "1") process.on("disconnect", shutdown);
+  if (process.env["OVIS_MANAGED"] === "1") process.on("disconnect", shutdown);
   console.log(`Ovis listening on http://${instance.hostname}:${instance.port}`);
   const socket = herdrSocketPath();
   void ping(socket).catch(() => {
@@ -826,19 +843,19 @@ if (import.meta.main) {
   try {
     accessSync(probe, constants.W_OK);
   } catch {
-    console.error(`cannot write ${stateDir}: settings, devices and updates will not be saved; fix its permissions or set HERDR_WEB_STATE_DIR.`);
+    console.error(`cannot write ${stateDir}: settings, devices and updates will not be saved; fix its permissions or set OVIS_STATE_DIR.`);
   }
   if (!isLoopbackBind(instance.hostname)) {
-    if (lanExposed({ hostname: instance.hostname, tokenConfigured: (process.env["HERDR_WEB_TOKEN"] ?? "") !== "", gated: false })) {
+    if (lanExposed({ hostname: instance.hostname, tokenConfigured: (process.env["OVIS_TOKEN"] ?? "") !== "", gated: false })) {
       console.error(
-        `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
+        `WARNING: listening on ${instance.hostname} without OVIS_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set OVIS_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
       );
     }
     // The bind address says nothing about the transport: a token cookie and every keystroke
     // travel in the clear on plain http, so a listener on the same network gets them.
-    if ((process.env["HERDR_WEB_TOKEN"] ?? "") !== "") {
+    if ((process.env["OVIS_TOKEN"] ?? "") !== "") {
       console.error(
-        `WARNING: listening on http://${instance.hostname}:${instance.port} - HERDR_WEB_TOKEN is not confidential over cleartext http; on an untrusted network anyone who can read the traffic has the token and everything you type. Reach this PC over Tailscale, put it behind a TLS-terminating proxy, or keep HOST=127.0.0.1.`,
+        `WARNING: listening on http://${instance.hostname}:${instance.port} - OVIS_TOKEN is not confidential over cleartext http; on an untrusted network anyone who can read the traffic has the token and everything you type. Reach this PC over Tailscale, put it behind a TLS-terminating proxy, or keep HOST=127.0.0.1.`,
       );
     }
   }

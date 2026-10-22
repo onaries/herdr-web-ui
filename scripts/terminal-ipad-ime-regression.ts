@@ -31,8 +31,8 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
     await page.addInitScript(({ pane, platform }) => {
       Object.defineProperty(navigator, "platform", { get: () => platform });
       Object.defineProperty(navigator, "maxTouchPoints", { get: () => 5 });
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
-      localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "direct" }));
+      localStorage.setItem(`ovis:view:${pane}`, "terminal");
     }, { pane, platform });
     const sent: Array<{ pane_id: string; text: string }> = [];
     const signals = new EventEmitter();
@@ -216,7 +216,7 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
       await reset(); await fresh("ㅎ"); await replace("ㅏ", "하");
       const switched = signal("ready");
       await page.locator(`.pane-select[title^="${otherPane} —"]`).first().evaluate((node: HTMLElement) => node.click());
-      await page.waitForFunction((pane) => JSON.parse(localStorage.getItem("herdr-web-ui:selection")!).pane_id === pane, otherPane);
+      await page.waitForFunction((pane) => JSON.parse(localStorage.getItem("ovis:selection")!).pane_id === pane, otherPane);
       await switched;
       const received = signal("input:\x07");
       await input.press("Control+g");
@@ -250,7 +250,7 @@ if (import.meta.main) {
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true });
     const panes: string[] = [];
     for (let i = 0; i < 2; i++) {
-      const made = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-ipad-replay" });
+      const made = await workspaceCreate({ cwd: root, label: "ovis-test-ipad-replay" });
       owned.push(made.workspace.workspace_id); panes.push(made.root_pane.pane_id);
     }
     await checkIpadIme(browser, `http://127.0.0.1:${server.port}`, panes[0]!, panes[1]!);

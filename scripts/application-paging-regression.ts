@@ -36,7 +36,7 @@ with open("keys.bin", "wb", buffering=0) as log:
 sys.stdout.write("\\x1b[?1049l")
 sys.stdout.flush()
 `);
-  const made = await workspaceCreate({ cwd: state, label: "herdr-web-ui-test-application-paging" });
+  const made = await workspaceCreate({ cwd: state, label: "ovis-test-application-paging" });
   workspace = made.workspace.workspace_id;
   const paneId = made.root_pane.pane_id;
   const ready = herdrRpc("pane.wait_for_output", { pane_id: paneId, source: "visible", match: { type: "substring", value: "paging_fixture_ready" }, timeout_ms: 10000 }, undefined, 12000);
@@ -47,7 +47,7 @@ sys.stdout.flush()
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 1024, height: 600 }, locale: "en-US" });
   await context.addInitScript(() => {
-    if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", alertsOn: false }));
+    if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", alertsOn: false }));
   });
   const page = await context.newPage();
   const errors: string[] = [];

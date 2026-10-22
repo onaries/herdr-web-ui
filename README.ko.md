@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://herdrweb.dev/">웹사이트</a> ·
+  <a href="https://ovis.sh/">웹사이트</a> ·
   <a href="#install">설치</a> ·
-  <a href="https://herdrweb.dev/demo/">데모 체험</a> ·
+  <a href="https://ovis.sh/demo/">데모 체험</a> ·
   <a href="docs/guide.md#quick-start">빠른 시작</a> ·
   <a href="#faq">자주 묻는 질문</a> ·
   <a href="#docs">문서</a>
@@ -19,8 +19,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-666666?labelColor=333333" alt="MIT license"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/stargazers"><img src="https://img.shields.io/github/stars/devswha/herdr-web-ui?labelColor=333333&color=666666&logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/herdr-web-ui?label=release&labelColor=333333&color=666666" alt="Latest release"></a>
+  <a href="https://github.com/devswha/ovis/stargazers"><img src="https://img.shields.io/github/stars/devswha/ovis?labelColor=333333&color=666666&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/devswha/ovis/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/ovis?label=release&labelColor=333333&color=666666" alt="Latest release"></a>
   <a href="https://github.com/herdrdev/herdr"><img src="https://img.shields.io/badge/herdr-0.9.0%2B-666666?labelColor=333333" alt="herdr 0.9.0+"></a>
   <a href="docs/guide.md#on-your-phone"><img src="https://img.shields.io/badge/PWA-installable-666666?labelColor=333333" alt="Installable PWA"></a>
 </p>
@@ -91,17 +91,17 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 ## 설치
 
 ```bash
-curl -fsSL https://herdrweb.dev/install.sh | sh
+curl -fsSL https://ovis.sh/install.sh | sh
 ```
 
 glibc 기반 Linux(x64, arm64)와 macOS(Intel, Apple Silicon)를 지원하며, Alpine(musl)과 32비트 ARM은 지원하지 않습니다. `curl`, Git, `tar`가 필요하며 Bun이 없다면 Bash와 `unzip`도 필요합니다. herdr 0.9.0 이상, Bun 1.4 이상, Node 18 이상이 필요합니다. 없는 도구는 현재 사용자 계정에 설치하고, 오래된 Bun은 업데이트하며, Node가 없거나 18보다 오래됐다면 Node 22를 설치한 뒤 앱을 herdr 플러그인으로 설치합니다. 이미 설치된 herdr가 0.9.0보다 오래됐다면 herdr를 직접 업데이트하고 다시 시작한 다음 설치 스크립트를 다시 실행하세요.
 
-기본 수신 주소를 쓰고 Tailscale이 켜져 있으면, HTTPS 설정이 끝났을 때 tailnet 주소와 QR 코드가 나옵니다. 별도 접근 토큰을 설정하지 않은 경우, `tailscale serve`가 이 PC 소유자와 같은 로그인임을 알려 주는 자신의 기기는 보통 코드 없이 들어갑니다. 그래도 자신의 폰이 페어링을 요구받는다면 `HERDR_WEB_TAILSCALE_SERVE_ONLY=1`은 Tailscale이 로그인이 하나뿐이고 태그된 기기가 없는 tailnet임을 확인하며 serve가 이 포트의 유일한 접근 경로일 때만 로그인 정보가 없는 접속을 허용합니다. 공용 프록시나 터널 등 다른 경로로 이 포트에 접근할 수 있다면 설정하지 마세요 ([접근과 안전](docs/guide.md#access-and-safety)).
+기본 수신 주소를 쓰고 Tailscale이 켜져 있으면, HTTPS 설정이 끝났을 때 tailnet 주소와 QR 코드가 나옵니다. 별도 접근 토큰을 설정하지 않은 경우, `tailscale serve`가 이 PC 소유자와 같은 로그인임을 알려 주는 자신의 기기는 보통 코드 없이 들어갑니다. 그래도 자신의 폰이 페어링을 요구받는다면 `OVIS_TAILSCALE_SERVE_ONLY=1`은 Tailscale이 로그인이 하나뿐이고 태그된 기기가 없는 tailnet임을 확인하며 serve가 이 포트의 유일한 접근 경로일 때만 로그인 정보가 없는 접속을 허용합니다. 공용 프록시나 터널 등 다른 경로로 이 포트에 접근할 수 있다면 설정하지 마세요 ([접근과 안전](docs/guide.md#access-and-safety)).
 
 PowerShell에서 Windows x64용으로 설치하려면:
 
 ```powershell
-irm https://herdrweb.dev/install.ps1 | iex
+irm https://ovis.sh/install.ps1 | iex
 ```
 
 [Git for Windows](https://git-scm.com/download/win)가 필요합니다. 없는 herdr와 Bun을 현재 사용자 계정에 설치한 뒤 같은 플러그인을 설치합니다. Node나 WSL은 필요 없습니다. 폰에서 쓰려면 herdr에서 **Phone setup**을 여세요. herdr가 Windows에서 터미널 attach를 지원하기 전까지 Windows 터미널은 입력은 되고 격자 크기는 고정된 [화면 미러](docs/remote-pcs.md#windows-pcs)로 보입니다.
@@ -113,12 +113,12 @@ irm https://herdrweb.dev/install.ps1 | iex
 herdr 0.9.0 이상, Bun 1.4 이상, Node 18 이상이 이미 있다면 플러그인만 설치해도 됩니다. Windows에서는 Node가 필요 없습니다.
 
 ```bash
-herdr plugin install devswha/herdr-web-ui
+herdr plugin install devswha/ovis
 ```
 
 오래된 herdr는 먼저 업데이트하고 다시 시작해야 합니다. 단계별 설치와 문제 해결은 [INSTALL.md](INSTALL.md)를 보세요.
 
-herdr가 실행 중이면 설치 스크립트가 출력하거나 열어 준 주소로 접속하세요. 기본 주소는 **[127.0.0.1:7317](http://127.0.0.1:7317)**이며, 기본 포트가 사용 중이면 플러그인이 다른 포트를 골라 기억합니다. 플러그인만 설치했다면 herdr의 **Start Ovis**를 실행하세요. 데스크톱이 있는 PC의 새 설치에서는 브라우저가 자동으로 열립니다. 주소 표시줄의 **설치(Install)**로 앱을 추가하고 같은 주소를 계속 쓰세요. `127.0.0.1`과 `localhost`는 브라우저에서 서로 다른 앱 주소입니다. 자동 열기를 건너뛰려면 설치 전에 `HERDR_WEB_NO_OPEN=1`을 설정하세요. pane을 고르거나 **New workspace**로 에이전트를 시작합니다. 폰에서는 설치 스크립트의 QR 코드(herdr의 **Phone setup**에서도 확인 가능)를 찍고 앱을 홈 화면에 추가하세요. [빠른 시작 →](docs/guide.md#quick-start)
+herdr가 실행 중이면 설치 스크립트가 출력하거나 열어 준 주소로 접속하세요. 기본 주소는 **[127.0.0.1:7317](http://127.0.0.1:7317)**이며, 기본 포트가 사용 중이면 플러그인이 다른 포트를 골라 기억합니다. 플러그인만 설치했다면 herdr의 **Start Ovis**를 실행하세요. 데스크톱이 있는 PC의 새 설치에서는 브라우저가 자동으로 열립니다. 주소 표시줄의 **설치(Install)**로 앱을 추가하고 같은 주소를 계속 쓰세요. `127.0.0.1`과 `localhost`는 브라우저에서 서로 다른 앱 주소입니다. 자동 열기를 건너뛰려면 설치 전에 `OVIS_NO_OPEN=1`을 설정하세요. pane을 고르거나 **New workspace**로 에이전트를 시작합니다. 폰에서는 설치 스크립트의 QR 코드(herdr의 **Phone setup**에서도 확인 가능)를 찍고 앱을 홈 화면에 추가하세요. [빠른 시작 →](docs/guide.md#quick-start)
 
 서버는 기본적으로 `127.0.0.1`에서만 받습니다. 다른 기기에서 접속하려면 [폰 설정](docs/guide.md#on-your-phone)과 [접근과 보안](docs/guide.md#access-and-safety)을 보세요.
 
@@ -142,13 +142,13 @@ Grok 채팅은 Linux에서 프로세스가 보유한 세션이 하나뿐이고 h
 
 **Tailscale이 꼭 필요한가요?**
 
-아니요. Tailscale, SSH 터널, VPN이나 직접 설정한 HTTPS 프록시로 PC에 접속할 수 있습니다. Portal 2.6.1 이상을 별도로 설치하면 선택 기능인 [Portal 연동](docs/guide.md#behind-a-reverse-proxy)으로 공개 HTTPS 주소를 관리할 수도 있습니다. `HERDR_WEB_TOKEN`, 신뢰할 수 있는 중계가 필요하며 `HERDR_WEB_TAILSCALE_SERVE_ONLY`는 꺼야 합니다. 앱 설치와 푸시 알림에는 HTTPS나 localhost 같은 보안 컨텍스트가 필요하며, 기본 화면은 LAN의 일반 HTTP 주소로도 열 수 있습니다. [다른 방법 →](docs/guide.md#faq)
+아니요. Tailscale, SSH 터널, VPN이나 직접 설정한 HTTPS 프록시로 PC에 접속할 수 있습니다. Portal 2.6.1 이상을 별도로 설치하면 선택 기능인 [Portal 연동](docs/guide.md#behind-a-reverse-proxy)으로 공개 HTTPS 주소를 관리할 수도 있습니다. `OVIS_TOKEN`, 신뢰할 수 있는 중계가 필요하며 `OVIS_TAILSCALE_SERVE_ONLY`는 꺼야 합니다. 앱 설치와 푸시 알림에는 HTTPS나 localhost 같은 보안 컨텍스트가 필요하며, 기본 화면은 LAN의 일반 HTTP 주소로도 열 수 있습니다. [다른 방법 →](docs/guide.md#faq)
 
 **코드나 대화가 내 컴퓨터 밖으로 나가나요?**
 
 세션 파일은 각 에이전트가 실행되는 PC에 남고, 내용은 연결한 브라우저로 전송됩니다. 이 앱 자체의 클라우드 중계나 계정 서비스는 없습니다. 선택 기능인 음성 입력은 녹음을, 텍스트 다듬기는 텍스트도 설정된 제공업체로 보냅니다. 브라우저 음성 인식도 브라우저 제공업체의 서비스를 사용할 수 있습니다. 사용량 표시를 켜면 제공업체 API에 접속하며, 업데이트, 원격 PC 설정, 푸시 알림도 외부 서비스를 사용할 수 있습니다. Portal을 켜면 연결이 선택한 중계를 거칩니다. 중계는 연결 메타데이터를 보고 해당 주소의 인증서를 보유하므로 신뢰할 수 있는 중계를 쓰세요.
 
-익명 사용 집계는 기본적으로 켜져 있습니다. 앱 안에서 안내를 보여 준 뒤 10분의 대기 시간을 두고, 설치·업데이트 집계를 보낼 수 있습니다. 무작위 설치 ID, 버전(업데이트 전 버전 포함), OS, CPU 아키텍처, 설치 방식, 허용 목록의 앱 설정 스냅샷이 포함됩니다. 사용자 지정 텍스트와 계정 식별자는 생략하거나 요약하며 코드·대화·파일은 수집하지 않습니다. 저장소에 포함된 수신 서버는 Cloudflare가 제공할 때 국가 코드를 추가하지만 IP 주소는 저장하지 않습니다. 활동 집계에는 앱을 연 날(UTC 기준) 실행 중인 에이전트 종류가 포함되며, 새 종류가 나타나면 그날의 집계를 다시 보낼 수 있습니다. **Settings → About → Anonymous usage counts**에서 내용을 보고 끌 수 있고, `HERDR_WEB_TELEMETRY=0`이나 `DO_NOT_TRACK=1`로도 비활성화할 수 있습니다. 에이전트 자체의 모델 연결은 해당 에이전트 설정에 따릅니다. [데이터 전송과 접근 →](docs/guide.md#faq)
+익명 사용 집계는 기본적으로 켜져 있습니다. 앱 안에서 안내를 보여 준 뒤 10분의 대기 시간을 두고, 설치·업데이트 집계를 보낼 수 있습니다. 무작위 설치 ID, 버전(업데이트 전 버전 포함), OS, CPU 아키텍처, 설치 방식, 허용 목록의 앱 설정 스냅샷이 포함됩니다. 사용자 지정 텍스트와 계정 식별자는 생략하거나 요약하며 코드·대화·파일은 수집하지 않습니다. 저장소에 포함된 수신 서버는 Cloudflare가 제공할 때 국가 코드를 추가하지만 IP 주소는 저장하지 않습니다. 활동 집계에는 앱을 연 날(UTC 기준) 실행 중인 에이전트 종류가 포함되며, 새 종류가 나타나면 그날의 집계를 다시 보낼 수 있습니다. **Settings → About → Anonymous usage counts**에서 내용을 보고 끌 수 있고, `OVIS_TELEMETRY=0`이나 `DO_NOT_TRACK=1`로도 비활성화할 수 있습니다. 에이전트 자체의 모델 연결은 해당 에이전트 설정에 따릅니다. [데이터 전송과 접근 →](docs/guide.md#faq)
 
 무작위 ID로 같은 설치의 집계를 연결할 수 있으므로, 완전한 익명성을 보장하는 것은 아닙니다.
 
@@ -193,8 +193,8 @@ Grok 채팅은 Linux에서 프로세스가 보유한 세션이 하나뿐이고 h
 ## 개발
 
 ```bash
-git clone https://github.com/devswha/herdr-web-ui.git
-cd herdr-web-ui
+git clone https://github.com/devswha/ovis.git
+cd ovis
 bun install
 
 bun run server      # API + WebSocket, :7317

@@ -50,7 +50,7 @@ export function sameSshSession(a: SshTarget, b: SshTarget): boolean {
 
 export async function readHerdrProfiles(): Promise<HerdrMachineProfile[]> {
   try {
-    const { stdout } = await run(process.env.HERDR_WEB_HERDR_BIN || "herdr", ["machine", "list", "--json"], {
+    const { stdout } = await run(process.env.OVIS_HERDR_BIN || "herdr", ["machine", "list", "--json"], {
       timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024, encoding: "utf8", windowsHide: true,
     });
     return parseHerdrProfiles(stdout);

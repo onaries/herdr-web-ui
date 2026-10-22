@@ -49,7 +49,7 @@ describe("all-PC palette", () => {
     expect(targetKey({ machineId: "a:b", paneId: "c" })).not.toBe(targetKey({ machineId: "a", paneId: "b:c" }));
   });
   it("migrates local and remote legacy history once and validates the global record", () => {
-    const storage = new Map<string, string>([["herdr-web-ui:recent-panes", '["p1","p1",17]'], ["herdr-web-ui:recent-panes:remote", '["p1","p2"]']]);
+    const storage = new Map<string, string>([["ovis:recent-panes", '["p1","p1",17]'], ["ovis:recent-panes:remote", '["p1","p2"]']]);
     const read = (key: string) => storage.get(key) ?? null;
     expect(loadRecentTargets(read, ["local", "remote"])).toEqual([{ machineId: "local", paneId: "p1" }, { machineId: "remote", paneId: "p1" }, { machineId: "remote", paneId: "p2" }]);
     storage.set(RECENT_KEY, '[{"machineId":"remote","paneId":"p2"},{"machineId":"remote","paneId":"p2"},null,7,{"machineId":1,"paneId":"x"}]');

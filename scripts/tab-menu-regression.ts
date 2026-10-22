@@ -58,7 +58,7 @@ async function paneMenu(page: Page, paneId: string): Promise<Locator> {
 
 async function checkDesktop(browser: Browser, origin: string, first: string, second: string, tabId: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
@@ -555,7 +555,7 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
   // Start from a known native focus before checking that a reorder preserves it.
   await paneFocus(first);
   const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
@@ -657,7 +657,7 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
 
 async function checkTouchTablet(browser: Browser, origin: string, first: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true, locale: "en-US" });
-  await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", alertsOn: false })));
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
@@ -680,10 +680,10 @@ async function checkTouchTablet(browser: Browser, origin: string, first: string)
 }
 
 export async function checkTabMenu(browser: Browser, origin: string): Promise<void> {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-tab-menu-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-tab-menu-")));
   let workspaceId: string | null = null;
   try {
-    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-tab-menu" });
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-tab-menu" });
     workspaceId = created.workspace.workspace_id;
     const first = created.root_pane.pane_id;
     const second = (await paneSplit(first, "right", false)).pane_id;
@@ -704,7 +704,7 @@ if (import.meta.main) {
   const { chromium } = await import("playwright-core");
   const { createServer } = await import("../server/index.ts");
   const { UsageService } = await import("../server/usage.ts");
-  const state = mkdtempSync(join(tmpdir(), "herdr-web-ui-tab-menu-state-"));
+  const state = mkdtempSync(join(tmpdir(), "ovis-tab-menu-state-"));
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
   const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try { await checkTabMenu(browser, `http://127.0.0.1:${server.port}`); }

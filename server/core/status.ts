@@ -22,6 +22,7 @@ import { launchedAgents } from "../launched-agents.ts";
 import { bridgeAgentNews, MachineManager } from "../machines.ts";
 import { omoPanes } from "../omo.ts";
 import { OMO_ALIASES, OmoStatus } from "../omo-status.ts";
+import type { OrderSequence } from "../order-sequence.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import { promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
 import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
@@ -46,6 +47,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, clients, prese
     backgroundWait?: { grace: number; limit: number };
     statusNow?: () => number;
     openCodeState?: OpenCodePromptState;
+    /** this server's workspace-order counter (server/order-sequence.ts); createServer makes the one there is */
+    orderSequence?: OrderSequence;
   };
   devices: DeviceStore;
   clients: Set<Client>;
@@ -129,11 +132,14 @@ export function createStatusHub<Owner, Lease>({ options, devices, clients, prese
   const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId);
   /** the snapshot clients get: finishes settled, OmO panes named, background tasks, waits and plan progress */
   const clientSnapshot = async (): Promise<SessionSnapshot> => {
+    // the order this read can show is the one of the moves confirmed before it starts: taken before any wait,
+    // and again by a read started afresh below
+    const order = options.orderSequence?.read();
     const epoch = finishes.epoch;
     const snapshot = await completions.readSnapshot(rawSnapshot);
     // A read spanning a proven daemon replacement belongs to neither generation. Read afresh.
     if (epoch !== finishes.epoch) return clientSnapshot();
-    return finishes.snapshot({
+    const settled = finishes.snapshot({
       ...snapshot,
       panes: snapshot.panes.map((pane) => {
         const background = backgroundOf(pane.pane_id);
@@ -142,6 +148,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, clients, prese
         return background > 0 || waiting || plan !== null ? { ...pane, ...(background > 0 ? { background_tasks: background } : {}), ...(waiting ? { background_wait: true as const } : {}), ...(plan !== null ? { plan } : {}) } : pane;
       }),
     }, completions);
+    return order ? { ...settled, ...order } : settled;
   };
   /**
    * A browser visit for the daily active message: the call is made now so the visit's day is the
@@ -164,7 +171,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, clients, prese
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
-  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot);
+  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
 
   function broadcastAll(message: ServerMessage): void {

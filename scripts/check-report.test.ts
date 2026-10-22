@@ -218,6 +218,7 @@ describe("check report", () => {
       expect(initial.status).toBe("running");
       expect(initial.steps.map((step: CheckStep) => step.status)).toEqual(["failure", "skipped", "not-run", "interrupted"]);
       expect(initial.evidence.logs).toEqual([log]);
+      expect(initial.evidence.retained).toEqual([]);
       expect(initial.revision).toMatchObject({ baseBranch: "main", baseSha: null });
       expect(initial.verification).toMatchObject({ status: "pending", browserCurrentSource: "not-claimed" });
       expect(initial.browserArtifact).toMatchObject({
@@ -230,10 +231,17 @@ describe("check report", () => {
       });
       expect(readFileSync(path, "utf8")).not.toContain("must-not-be-serialized");
 
+      // a teardown failure: the kept state is named in the report, and the run is not verified
+      const kept = join(dir, "hwc-kept");
       report.status = "failure";
       report.exitCode = 1;
+      report.errors.push("teardown: could not stop herdr session fx-1");
+      report.evidence.retained.push(kept);
+      report.verification = verificationResult(true, report.status);
       persistReport(path, report);
-      expect(JSON.parse(readFileSync(path, "utf8")).status).toBe("failure");
+      const failed = JSON.parse(readFileSync(path, "utf8"));
+      expect(failed).toMatchObject({ status: "failure", exitCode: 1, evidence: { retained: [kept] }, verification: { status: "unknown" } });
+      expect(failed.errors).toEqual(["teardown: could not stop herdr session fx-1"]);
       report.status = "interrupted";
       report.exitCode = 130;
       persistReport(path, report);

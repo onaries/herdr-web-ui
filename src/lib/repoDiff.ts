@@ -113,7 +113,7 @@ export function repositoryFilePath(root: string, path: string): string {
   return `${root.replace(/[\\/]+$/, "")}/${path}`;
 }
 
-const HISTORY_KEY = "herdr-web-ui:repo-diff";
+const HISTORY_KEY = "ovis:repo-diff";
 
 /** The viewer's target in a history entry, when the entry holds one of a known shape. */
 export function diffTargetFromState(state: unknown): RepoDiffTarget | null {

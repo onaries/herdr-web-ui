@@ -4,8 +4,8 @@ import { isolate } from "./check.ts";
 if (process.env.HERDR_TEST_LIVE === "1") throw new Error("Cannot run live UI context checks with HERDR_TEST_LIVE=1");
 if (process.env.HERDR_TEST_MODE === "unit") throw new Error("HERDR_TEST_MODE=unit cannot run live UI context checks");
 
-const herdr = process.env.HERDR_WEB_HERDR_BIN || Bun.which("herdr");
-if (!herdr) throw new Error("UI context checks require HERDR_WEB_HERDR_BIN or a herdr binary on PATH");
+const herdr = process.env.OVIS_HERDR_BIN || Bun.which("herdr");
+if (!herdr) throw new Error("UI context checks require OVIS_HERDR_BIN or a herdr binary on PATH");
 
 // CHECK_DIR belongs to the caller: never reuse its config, socket or state files.
 const isolation = isolate({ ...process.env, CHECK_DIR: undefined });
@@ -18,7 +18,7 @@ const session = isolation.env.HERDR_TEST_SESSION!;
 const socket = join(isolation.sessions, session, "herdr.sock");
 // Pre-point lazy imports at our socket, even before test-herdr's bootstrap has completed.
 process.env.HERDR_SOCKET = socket;
-process.env.HERDR_WEB_HERDR_BIN = herdr;
+process.env.OVIS_HERDR_BIN = herdr;
 
 let failed = false;
 let failure: unknown;

@@ -1,0 +1,40 @@
+  [0m[1m[38;5;228m[48;5;63m Antigravity CLI Changelog [0m
+  
+  [0m[38;2;32;33;36mThe terminal-first surface to interact with Antigravity agents. Stay in your flow without context switching.       [0m
+  
+  [0m[1m[38;5;27m## 1.4.4[0m
+  
+  [0m[38;2;32;33;36m• Added Auto mode on Windows 11 version 24H2 and later for personal Google Accounts, selectable via [0m[38;2;66;133;244m[48;5;254m--mode auto[0m[38;2;32;33;36m,   [0m
+  [0m[38;2;66;133;244m[48;5;254mAgent Mode[0m[38;2;32;33;36m in [0m[38;2;66;133;244m[48;5;254m/config[0m[38;2;32;33;36m, [0m[38;2;66;133;244m[48;5;254mShift+Tab[0m[38;2;32;33;36m, or Remote Control Settings ([0m[38;2;66;133;244m[48;5;254mAgent[0m[38;2;32;33;36m remains the default).[0m
+  [0m[38;2;32;33;36m• Added whole-file toggle ([0m[38;2;66;133;244m[48;5;254mf[0m[38;2;32;33;36m) and hunk folding ([0m[38;2;66;133;244m[48;5;254mCtrl+O[0m[38;2;32;33;36m) to [0m[38;2;66;133;244m[48;5;254mCommit Tree[0m[38;2;32;33;36m and [0m[38;2;66;133;244m[48;5;254mPer Turn[0m[38;2;32;33;36m views in [0m[38;2;66;133;244m[48;5;254m/diff[0m[38;2;32;33;36m, and            [0m
+  [0m[38;2;32;33;36mconsolidated [0m[38;2;66;133;244m[48;5;254mPer Turn[0m[38;2;32;33;36m diffs so multiple edits to a file in one turn appear as a single combined diff.[0m
+  [0m[38;2;32;33;36m• Added [0m[38;2;66;133;244m[48;5;254m_meta["antigravity.google/root_conversation_id"][0m[38;2;32;33;36m to MCP [0m[38;2;66;133;244m[48;5;254mtools/call[0m[38;2;32;33;36m requests so MCP servers receive the top-[0m
+  [0m[38;2;32;33;36mlevel conversation ID even when a tool is called from a nested subagent.[0m
+  [0m[38;2;32;33;36m• Improved Auto mode's review of commands that leave the terminal sandbox to include the assistant's preceding     [0m
+  [0m[38;2;32;33;36mquestion on short replies like [0m[38;2;66;133;244m[48;5;254myes[0m[38;2;32;33;36m, check every subcommand in pipelines, and prompt before destructive Git or file [0m
+  [0m[38;2;32;33;36mcommands.[0m
+  [0m[38;2;32;33;36m• Improved [0m[38;2;66;133;244m[48;5;254magy plugin validate[0m[38;2;32;33;36m with stricter checks across [0m[38;2;66;133;244m[48;5;254mplugin.json[0m[38;2;32;33;36m, MCP server configs, [0m[38;2;66;133;244m[48;5;254mhooks.json[0m[38;2;32;33;36m, and sidecar[0m
+  [0m[38;2;32;33;36mmanifests for invalid JSON syntax, unknown fields, bad variable placeholders, unrecognized hook tool matchers, and [0m
+  [0m[38;2;32;33;36mmissing hook scripts.[0m
+  [0m[38;2;32;33;36m• Improved CPU and memory usage while streaming responses by caching streamed code-block syntax tokens, rendered   [0m
+  [0m[38;2;32;33;36mMarkdown blocks, and inline file-edit confirmation diffs across frames.[0m
+  [0m[38;2;32;33;36m• Improved [0m[38;2;66;133;244m[48;5;254m/compact[0m[38;2;32;33;36m and automatic compaction to retain tool declarations on summarization requests so the model API[0m
+  [0m[38;2;32;33;36mreuses its cached prompt prefix.[0m
+  [0m[38;2;32;33;36m• Improved Remote Control on tablets and foldables to use the multi-pane layout with touch-sized controls instead  [0m
+  [0m[38;2;32;33;36mof collapsing to the phone view, and kept popovers open while dragging scrollbars.[0m
+  [0m[38;2;32;33;36m• Fixed subagents losing plugins inherited from the parent session, and fixed plugin-bundled subagents with        [0m
+  [0m[38;2;66;133;244m[48;5;254mplugins.inherit_user: false[0m[38;2;32;33;36m and restricted MCP tools failing to start with [0m[38;2;66;133;244m[48;5;254mmcp spec not found for provider[0m[38;2;32;33;36m.        [0m
+  [0m[38;2;32;33;36m• Fixed rules and [0m[38;2;66;133;244m[48;5;254mSKILL.md[0m[38;2;32;33;36m skills loading twice when discovered from both a standalone customization folder and an [0m
+  [0m[38;2;32;33;36menabled plugin.[0m
+  [0m[38;2;32;33;36m• Fixed long rows wrapping instead of truncating at the terminal width in [0m[38;2;66;133;244m[48;5;254m/diff[0m[38;2;32;33;36m's [0m[38;2;66;133;244m[48;5;254mCommit Tree[0m[38;2;32;33;36m and [0m[38;2;66;133;244m[48;5;254mPer Turn[0m[38;2;32;33;36m lists,  [0m
+  [0m[38;2;32;33;36mand [0m[38;2;66;133;244m[48;5;254mPer Turn[0m[38;2;32;33;36m headers truncating prompts at 50 characters.[0m
+  [0m[38;2;32;33;36m• Fixed the prompt box staying mid-screen after closing panels, dropdowns, or inline prompts, and blank gaps       [0m
+  [0m[38;2;32;33;36mappearing above the prompt in [0m[38;2;66;133;244m[48;5;254mMedium[0m[38;2;32;33;36m verbosity mode.[0m
+  [0m[38;2;32;33;36m• Fixed [0m[38;2;66;133;244m[48;5;254mCtrl+Z[0m[38;2;32;33;36m undo in the prompt mishandling pasted text, merging typing with recalled history entries, recording [0m
+  [0m[38;2;32;33;36mno-op [0m[38;2;66;133;244m[48;5;254mBackspace[0m[38;2;32;33;36m or [0m[38;2;66;133;244m[48;5;254mDelete[0m[38;2;32;33;36m steps, and truncating characters near emoji.[0m
+  [0m[38;2;32;33;36m• Fixed MCP client sessions and background connection routines leaking when [0m[38;2;66;133;244m[48;5;254mtools/list[0m[38;2;32;33;36m failed during server startup[0m
+  [0m[38;2;32;33;36mor when the CLI shut down while a server was connecting.[0m
+[0m[38;2;95;99;104m  (1–36 of 2062 lines)[0m
+
+  [0m[1m[38;2;66;133;244m↑/↓[0m[38;2;95;99;104m Navigate · [0m[1m[38;2;66;133;244mesc[0m[38;2;95;99;104m Cancel[0m
+                                                                                                [0m[38;2;95;99;104mGemini 3.8 Flash · high[0m

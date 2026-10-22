@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
+import { discard, readCappedJson, REMOTE_LIMITS } from "./remote-json.ts";
 
 export interface BundleManifest {
   version: string;
@@ -10,14 +11,14 @@ export interface BundleManifest {
 interface BundleSourceOptions { manifest?: string; directory?: string }
 export async function bundleManifestSource(platform: string, options: BundleSourceOptions = {}): Promise<string> {
   if (!/^((linux|darwin)-(x64|arm64)|win32-x64)$/.test(platform)) throw new Error(`Unsupported bundle platform: ${platform}`);
-  const configured = options.manifest ?? process.env["HERDR_WEB_BUNDLE_MANIFEST"];
+  const configured = options.manifest ?? process.env["OVIS_BUNDLE_MANIFEST"];
   if (configured) return configured;
   // Development installs can distribute locally built runtimes without publishing
   // a release. Resolve beside this server, never against its launch directory.
   const local = join(options.directory ?? join(import.meta.dir, "..", "remote-bundles"), `manifest-${platform}.json`);
   try { await access(local); return local; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  return `https://github.com/devswha/herdr-web-ui/releases/download/remote-v${REMOTE_BUNDLE_VERSION}/manifest.json`;
+  return `https://github.com/devswha/ovis/releases/download/remote-v${REMOTE_BUNDLE_VERSION}/manifest.json`;
 }
 export interface BundleFile { path: string; sha256: string; size: number }
 interface BundleFileOptions extends BundleSourceOptions {
@@ -88,7 +89,10 @@ export async function bundleFile(platform: string, signal: AbortSignal, options:
   const source = await bundleManifestSource(platform, options);
   const https = source.startsWith("https://");
   const manifest: BundleManifest = https
-    ? await fetch(source, { signal }).then(async (r) => { if (!r.ok) throw new Error(`Remote bundle for ${platform} is unavailable (HTTP ${r.status}). On the web server, run bun run build:remote ${platform}, or configure HERDR_WEB_BUNDLE_MANIFEST.`); return r.json() as Promise<BundleManifest>; })
+    ? await fetch(source, { signal }).then(async (r) => {
+      if (!r.ok) { await discard(r); throw new Error(`Remote bundle for ${platform} is unavailable (HTTP ${r.status}). On the web server, run bun run build:remote ${platform}, or configure OVIS_BUNDLE_MANIFEST.`); }
+      return readCappedJson<BundleManifest>(r, REMOTE_LIMITS.bundleManifest);
+    })
     : JSON.parse(await readFile(source, { encoding: "utf8", signal }));
   if (manifest.version !== REMOTE_BUNDLE_VERSION) throw new Error("Remote bundle version mismatch");
   const asset = manifest.assets[platform];

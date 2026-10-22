@@ -28,7 +28,8 @@ const DESCRIPTIONS = {
   undo: "Undo previous message", variants: "Switch model variant",
 } as const;
 const TERMINAL: CommandForm[] = [{ match: "bare", interaction: "terminal" }];
-const PICKERS = ["agents", "connect", "editor", "mcps", "models", "sessions", "skills", "themes", "variants"] as const;
+// status, debug and help are dialogs kept until Esc, and diff a route or a panel that takes focus (app.tsx at v1.19.3 and v2)
+const PICKERS = ["agents", "connect", "editor", "mcps", "models", "sessions", "skills", "themes", "variants", "status", "debug", "help", "diff"] as const;
 const FORMS: Record<string, CommandForm[]> = {
   ...Object.fromEntries(PICKERS.map((name) => [name, TERMINAL])),
   undo: [{ match: "bare", interaction: "none" }],

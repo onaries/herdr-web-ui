@@ -7,7 +7,7 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 
 // Real herdr panes running a stand-in `codex` with a CODEX_HOME of its own, and a fake Codex daemon on
 // each home's control socket: the catalog asks the daemon of the pane's own home, never the server's.
-const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-daemon-contract-")));
+const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-codex-daemon-contract-")));
 const homes = { pane: join(root, "pane-home"), server: join(root, "server-home") };
 const daemons: { stop(force: boolean): void }[] = [];
 const asked = { pane: 0, server: 0 };
@@ -73,7 +73,7 @@ beforeAll(async () => {
   writeFileSync(join(root, "work", ".codex", "skills", "scanned-one", "SKILL.md"), "---\nname: scanned-one\ndescription: A project skill\n---\nUse it.\n");
   writeFileSync(join(root, "bin", "codex"), "#!/bin/sh\nsleep 600\n");
   chmodSync(join(root, "bin", "codex"), 0o755);
-  const created = await workspaceCreate({ cwd: join(root, "work"), label: "herdr-web-ui-test-codex-daemon-home" });
+  const created = await workspaceCreate({ cwd: join(root, "work"), label: "ovis-test-codex-daemon-home" });
   workspaces.push(created.workspace.workspace_id);
   paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `CODEX_HOME=${homes.pane} ${join(root, "bin", "codex")}\n` });

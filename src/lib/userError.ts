@@ -1,5 +1,5 @@
 import { ApiError } from "./api.ts";
-import { t } from "./i18n.ts";
+import { t, type Translate } from "./i18n.ts";
 
 export interface UserError {
   message: string;
@@ -106,6 +106,20 @@ export function userErrorMessage(cause: unknown): UserError {
  */
 export function saysHerdrAway(words: string): boolean {
   return HERDR_AWAY.test(words);
+}
+
+/**
+ * The server's fixed sentences for another PC's answer it would not hold (server/remote-json.ts).
+ * They reach a PC's error and its setup job's error as they are, so the sidebar and the PC dialog
+ * show them in the user's language; any other words pass through unchanged.
+ */
+export function machineErrorText(words: string, translateIn: Translate): string {
+  const t = translateIn;
+  const known: ReadonlyArray<[string, string]> = [
+    ["The other PC's answer was larger than this app accepts", t("The other PC's answer was larger than this app accepts")],
+    ["The other PC's answer could not be read", t("The other PC's answer could not be read")],
+  ];
+  return known.reduce((text, [english, local]) => text.replaceAll(english, local), words);
 }
 
 /** The failure's parts: the cause when the status or the server's words name one, the advice, the words. */

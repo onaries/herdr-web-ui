@@ -8,7 +8,7 @@ interface InFlight { sent: string; at: number }
  * is still legitimately on its way is never seconded by a second tab.
  */
 export const SEND_LEASE_MS = 120_000;
-const SENDING_PREFIX = "herdr-web-ui:composer-sending:";
+const SENDING_PREFIX = "ovis:composer-sending:";
 export class ComposerDraftStore {
   private drafts = new Map<string, Draft>();
   private saved = new Map<string, string | null>();
@@ -131,7 +131,7 @@ export const composerDrafts = new ComposerDraftStore();
 export function storageEventDraft(key: string | null): string | null {
   if (key === null) return null;
   if (key.startsWith(SENDING_PREFIX)) return key.slice(SENDING_PREFIX.length);
-  return key.startsWith("herdr-web-ui:composer-draft:") ? key : null;
+  return key.startsWith("ovis:composer-draft:") ? key : null;
 }
 if (typeof window !== "undefined") window.addEventListener("storage", (event) => {
   const key = storageEventDraft(event.key);

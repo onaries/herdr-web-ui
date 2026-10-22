@@ -37,7 +37,7 @@ async function waitForProcess(paneId: string, marker: string) {
 }
 
 async function launch(command: string, marker: string): Promise<string> {
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omo-binding" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-omo-binding" });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${command}\n` });
@@ -77,7 +77,7 @@ it("labels a running omo pane when herdr supplies no agent kind", async () => {
 });
 
 it("leaves a shell labelled OmO DAG without an agent kind", async () => {
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omo-shell" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-omo-shell" });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   const snapshot = await sessionSnapshot();
@@ -109,7 +109,7 @@ it("uses live process evidence and stops cwd inference as soon as a second omo s
 
 it("starts omo through the pane's shell and waits until omo is its foreground process", async () => {
   const shell = async () => {
-    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-omo-start" });
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-omo-start" });
     workspaces.push(created.workspace.workspace_id);
     return created.root_pane.pane_id;
   };
@@ -207,7 +207,7 @@ it.skipIf(process.platform !== "linux")("ignores the background task logs omo ho
   // a stand-in omo that holds a task log open, as omo does while a background task runs
   const holder = join(cwd, "omo");
   writeFileSync(holder, "require('node:fs').openSync(process.argv[2], 'a');\nsetInterval(() => {}, 1000);\n");
-  const created = await workspaceCreate({ cwd, label: "herdr-web-ui-test-omo-task-log" });
+  const created = await workspaceCreate({ cwd, label: "ovis-test-omo-task-log" });
   try {
     const paneId = created.root_pane.pane_id;
     await herdrRpc("pane.send_text", { pane_id: paneId, text: `${process.execPath} ${holder} ${join(logs, "st_task.jsonl")}\n` });

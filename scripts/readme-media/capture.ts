@@ -22,7 +22,7 @@ mkdirSync(OUT, { recursive: true });
 const demo = await stage();
 // headless screencasts come at 1x unless the whole browser renders at 2x
 const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox", "--force-device-scale-factor=2"] });
-const views = Object.fromEntries(demo.panes.map((x) => ["herdr-web-ui:view:" + x.pane, x.agent ? "chat" : "terminal"]));
+const views = Object.fromEntries(demo.panes.map((x) => ["ovis:view:" + x.pane, x.agent ? "chat" : "terminal"]));
 const DESKTOP = { width: 1440, height: 900 };
 const VIDEO_DESKTOP = { width: 1280, height: 800 };
 const PHONE = { width: 390, height: 844 };

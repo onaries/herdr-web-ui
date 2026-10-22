@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Machine } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
-import { bridgeAgentNews, MachineManager } from "./machines.ts";
+import { handleMachineRequest } from "./machine-api.ts";
+import { bridgeAgentNews, MachineManager, SOURCE_CHECK_INTERVAL_MS } from "./machines.ts";
 import type { PushService } from "./push.ts";
+import { REMOTE_LIMITS, RemoteResponseTooLarge } from "./remote-json.ts";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
@@ -27,18 +29,46 @@ function snapshot(agent_status = "working"): SessionSnapshot {
   };
 }
 
+const OVER_SNAPSHOT_CAP = 96 * 1024 * 1024;
+/** `value` as JSON of `total` bytes, served lazily; `cancelled` settles when the reader gives up early. */
+function padded(value: unknown, total: number): { stream: ReadableStream<Uint8Array>; cancelled: Promise<void> } {
+  const json = JSON.stringify(value);
+  const space = new Uint8Array(64 * 1024).fill(0x20);
+  const cancelled = Promise.withResolvers<void>();
+  let left = total - json.length;
+  let opened = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (!opened) { opened = true; controller.enqueue(new TextEncoder().encode(json.slice(0, 1))); return; }
+      if (left > 0) { const size = Math.min(left, space.length); left -= size; controller.enqueue(space.slice(0, size)); return; }
+      controller.enqueue(new TextEncoder().encode(json.slice(1)));
+      controller.close();
+    },
+    cancel() { cancelled.resolve(); },
+  });
+  return { stream, cancelled: cancelled.promise };
+}
+async function within(event: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { await Promise.race([event, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("the oversized snapshot was not cancelled")), 5000); })]); }
+  finally { clearTimeout(timer); }
+}
+
 /** Actual RPC/HTTP responses wait at the server, after capturing their older state. */
 function responses() {
   let current = snapshot();
   let hold = false;
   let calls = 0;
   const pending: (() => void)[] = [];
+  let waited: (() => void) | null = null;
   return {
     read(): Promise<SessionSnapshot> {
       calls++;
       const captured = structuredClone(current);
-      return new Promise((resolve) => { if (hold) pending.push(() => resolve(captured)); else resolve(captured); });
+      return new Promise((resolve) => { if (hold) { pending.push(() => resolve(captured)); waited?.(); } else resolve(captured); });
     },
+    /** resolves once a read is held at the server */
+    held: (): Promise<void> => pending.length > 0 ? Promise.resolve() : new Promise((resolve) => { waited = resolve; }),
     hold: () => { hold = true; },
     set: (next: SessionSnapshot) => { current = next; },
     calls: () => calls,
@@ -48,7 +78,7 @@ function responses() {
   };
 }
 
-async function fixture() {
+async function fixture(options: { bootId?: string; now?: () => number } = {}) {
   const root = mkdtempSync(join(tmpdir(), "herdr-machine-refresh-"));
   const path = join(root, "herdr.sock");
   const local = responses();
@@ -70,7 +100,7 @@ async function fixture() {
   const previousSocket = process.env["HERDR_SOCKET"];
   process.env["HERDR_SOCKET"] = path;
   const push = { seed() {}, async onStatus() {}, async onEnded() {} } as unknown as PushService;
-  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null));
+  const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), undefined, options);
   cleanups.push(() => {
     manager.stop(); local.finish();
     for (const socket of sockets) socket.destroy();
@@ -108,14 +138,17 @@ type TestRuntime = {
   retry?: ReturnType<typeof setTimeout>;
 };
 
-async function remoteFixture() {
-  const local = await fixture();
+async function remoteFixture(options: { bootId?: string; now?: () => number } = {}) {
+  const local = await fixture(options);
+  /** the bridge's own /api/health; without one it answers as before (a snapshot, so no boot id) */
+  let health: ((request: Request) => Response | Promise<Response>) | null = null;
   const remote = responses();
   let observer: { send(data: string): unknown } | undefined;
   let observing = false;
   let httpStatus = 200;
   let sshCloses = 0;
   let terminalCloses = 0;
+  let answerNext: ((captured: SessionSnapshot) => Promise<Response>) | null = null;
   const bridge = Bun.serve({
     port: 0, hostname: "127.0.0.1",
     async fetch(request, server) {
@@ -124,8 +157,12 @@ async function remoteFixture() {
         if (server.upgrade(request)) return;
         return new Response(null, { status: 400 });
       }
+      if (health && new URL(request.url).pathname === "/api/health") return health(request);
       const status = httpStatus;
-      return Response.json({ snapshot: await remote.read() }, { status });
+      const captured = await remote.read();
+      const answer = answerNext;
+      answerNext = null;
+      return answer ? answer(captured) : Response.json({ snapshot: captured }, { status });
     },
     websocket: { open(ws) { observer = ws; }, message(_ws, data) { observing = JSON.parse(String(data)).mode === "observe"; } },
   });
@@ -141,6 +178,9 @@ async function remoteFixture() {
     ...local, remote, runtime, endpoint: runtime.endpoint,
     send: (message: ServerMessage) => observer!.send(JSON.stringify(message)),
     setHttpStatus: (status: number) => { httpStatus = status; },
+    setHealth: (answer: typeof health) => { health = answer; },
+    /** the next /api/session answer, built from the snapshot the PC had when asked */
+    answerNext: (answer: (captured: SessionSnapshot) => Promise<Response>) => { answerNext = answer; },
     sshCloses: () => sshCloses,
     terminalCloses: () => terminalCloses,
   };
@@ -175,6 +215,58 @@ it("records a remote bridge failure and a later recovery without its address or 
 });
 
 describe("machine snapshot refresh races", () => {
+  it("preserves newest snapshot on oversized stale refresh", async () => {
+    const { manager, drive, rosters, remote, runtime, send, answerNext } = await remoteFixture();
+    const asked = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let cancelled: Promise<void> | undefined;
+    answerNext(async (captured) => {
+      asked.resolve();
+      await release.promise;
+      const body = padded({ snapshot: captured }, OVER_SNAPSHOT_CAP);
+      cancelled = body.cancelled;
+      return new Response(body.stream);
+    });
+    const loading = drive.refresh(runtime);
+    await asked.promise;
+    remote.set(snapshot("blocked"));
+    const streamed = new Promise<void>((resolve) => {
+      const off = manager.subscribe((event) => {
+        if (event.type === "machine-message" && event.machine_id === "remote" && event.message.type === "pane-status") { queueMicrotask(off); resolve(); }
+      });
+    });
+    send({ type: "pane-status", pane_id: "fixture:p1", agent_status: "blocked" });
+    await streamed;
+    expect(runtime.machine.snapshot?.panes[0]?.agent_status).toBe("blocked");
+    rosters.length = 0;
+    release.resolve();
+    await loading;
+    await within(cancelled!);
+    expect(runtime.machine.snapshot?.panes[0]?.agent_status).toBe("blocked");
+    expect(runtime.machine.error).toBeNull();
+    expect(rosters).not.toContain("remote:working");
+    expect(remote.calls()).toBe(3);
+  });
+
+  it("fails an oversized current refresh without its address or token, then recovers", async () => {
+    const { drive, runtime, endpoint, answerNext } = await remoteFixture();
+    let cancelled: Promise<void> | undefined;
+    answerNext(async (captured) => {
+      const body = padded({ snapshot: { ...captured, panes: [{ ...captured.panes[0], agent_status: "done" }] } }, OVER_SNAPSHOT_CAP);
+      cancelled = body.cancelled;
+      return new Response(body.stream);
+    });
+    const failure = await drive.refresh(runtime).then(() => null, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(RemoteResponseTooLarge);
+    expect(String(failure)).not.toContain(endpoint!.url);
+    expect(String(failure)).not.toContain("fixture-token");
+    await within(cancelled!);
+    expect(runtime.machine.snapshot?.panes[0]?.agent_status).toBe("working");
+    await drive.refresh(runtime);
+    expect(runtime.machine.snapshot?.panes[0]?.agent_status).toBe("working");
+    expect(runtime.machine.error).toBeNull();
+  });
+
   it("preserves a remote bridge's finish identity through HTTP snapshots and status events", async () => {
     const { manager, drive, remote, runtime, send } = await remoteFixture();
     const current = snapshot("done");
@@ -540,5 +632,392 @@ describe("a bridge's agent news (#555)", () => {
     news.ended("p1");
     news.reconciled(pane("claude"));
     expect(told()).toBe(2);
+  });
+});
+
+const paired = (epoch: string, seq: number, agent_status = "working"): SessionSnapshot => ({ ...snapshot(agent_status), order_epoch: epoch, read_seq: seq });
+/** /api/health answers the test releases, counted as they start */
+function gatedHealth() {
+  const calls: { request: Request; answer(boot: string | null, status?: number): void; reply(response: Response): void }[] = [];
+  let started = 0;
+  let woken: (() => void) | null = null;
+  const handler = (request: Request) => new Promise<Response>((resolve) => {
+    started++;
+    calls.push({ request, answer: (boot, status = 200) => resolve(Response.json({ ok: true, web_ui: { boot_id: boot, revision: null } }, { status })), reply: resolve });
+    woken?.();
+  });
+  const next = async () => {
+    while (calls.length === 0) await new Promise<void>((resolve) => { woken = resolve; });
+    return calls.shift()!;
+  };
+  return { handler, next, started: () => started };
+}
+/** the next roster the manager publishes that `check` accepts */
+function published(manager: MachineManager, check: (machines: Machine[]) => boolean): Promise<Machine[]> {
+  return new Promise((resolve) => {
+    const stop = manager.subscribe((event) => { if (event.type === "machines" && check(event.machines)) { stop(); resolve(event.machines); } });
+  });
+}
+/** every remote pair the manager publishes, in order */
+function remotePairs(manager: MachineManager): string[] {
+  const pairs: string[] = [];
+  manager.subscribe((event) => {
+    if (event.type !== "machines") return;
+    const snap = event.machines.find((machine) => machine.id === "remote")?.snapshot;
+    if (snap?.order_epoch) pairs.push(`${snap.order_epoch}:${snap.read_seq}`);
+  });
+  return pairs;
+}
+/** a frame sent after the others: once it is heard, everything before it was handled */
+function heard(manager: MachineManager, send: (message: ServerMessage) => void): Promise<void> {
+  const done = new Promise<void>((resolve) => {
+    const stop = manager.subscribe((event) => {
+      if (event.type === "machine-message" && event.machine_id === "remote" && event.message.type === "pane-exited" && event.message.pane_id === "fixture:marker") { stop(); resolve(); }
+    });
+  });
+  send({ type: "pane-exited", pane_id: "fixture:marker" });
+  return done;
+}
+const remoteOf = (manager: MachineManager) => manager.list().find((machine) => machine.id === "remote");
+
+describe("workspace order evidence through the manager", () => {
+  it("a remote opening snapshot cannot acquire freshness on arrival", async () => {
+    const { manager, drive, remote, runtime, send, setHealth } = await remoteFixture();
+    setHealth(() => Response.json({ ok: true, web_ui: { boot_id: "R", revision: null } }));
+    const pairs = remotePairs(manager);
+    remote.set(paired("R", 0));
+    remote.hold();
+    const before = remote.calls();
+    const loading = drive.refresh(runtime);
+    await remote.held();
+    // the observer's opening snapshot was read before the proxied move: its pair arrives as the source made it
+    send({ type: "snapshot", snapshot: paired("R", 0) });
+    await published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.snapshot?.order_epoch === "R"));
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R", read_seq: 0 });
+    // the move is confirmed at the source; the HTTP read the snapshot invalidated is read again
+    remote.set(paired("R", 1));
+    remote.answer();
+    await remote.held();
+    remote.answer();
+    await loading;
+    expect(remote.calls() - before).toBe(2);
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R", read_seq: 1 });
+    expect(pairs).toEqual(expect.arrayContaining(["R:0", "R:1"]));
+    expect(pairs.indexOf("R:1")).toBeGreaterThan(pairs.lastIndexOf("R:0"));
+  });
+
+  it("fresh HTTP before stale websocket never regresses the cache or order", async () => {
+    const { manager, drive, remote, runtime, send, setHealth } = await remoteFixture();
+    setHealth(() => Response.json({ ok: true, web_ui: { boot_id: "R", revision: null } }));
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R"));
+    remote.set(paired("R", 1));
+    await drive.refresh(runtime);
+    await proved;
+    const pairs = remotePairs(manager);
+    send({ type: "snapshot", snapshot: paired("R", 0, "blocked") });
+    await heard(manager, send);
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R", read_seq: 1, panes: [{ agent_status: "working" }] });
+    expect(pairs).not.toContain("R:0");
+    // an actual GET /api/machines still carries the fresher read
+    const response = await handleMachineRequest(new Request("http://127.0.0.1/api/machines"), manager);
+    const roster = await response.json() as { machines: Machine[] };
+    expect(roster.machines.find((machine) => machine.id === "remote")?.snapshot).toMatchObject({ order_epoch: "R", read_seq: 1 });
+  });
+
+  it("remote epoch proof comes only from manager sideband health", async () => {
+    const { manager, runtime, send, setHealth } = await remoteFixture({ bootId: "local-boot" });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    expect(manager.list()[0]?.source_boot_id).toBe("local-boot");
+    send({ type: "snapshot", snapshot: paired("R", 0) });
+    const call = await health.next();
+    expect(call.request.headers.get("authorization")).toBe(`Bearer ${runtime.endpoint!.token}`);
+    // the snapshot's epoch is not proof: until health answers, there is none
+    expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R"));
+    call.answer("R");
+    await proved;
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R", read_seq: 0 });
+  });
+
+  it("a connection's first epoch is published only once its health proves it", async () => {
+    const { manager, send, setHealth } = await remoteFixture();
+    const health = gatedHealth();
+    setHealth(health.handler);
+    const pairs = remotePairs(manager);
+    send({ type: "snapshot", snapshot: paired("R", 0, "blocked") });
+    const call = await health.next();
+    await heard(manager, send);
+    expect(remoteOf(manager)?.snapshot?.order_epoch).toBeUndefined();
+    expect(pairs).toEqual([]);
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.snapshot?.order_epoch === "R"));
+    call.answer("R");
+    await proved;
+    expect(remoteOf(manager)).toMatchObject({ source_boot_id: "R", snapshot: { order_epoch: "R", read_seq: 0, panes: [{ agent_status: "blocked" }] } });
+  });
+
+  it("a reconnect cannot replace a cached epoch before health proves the new one", async () => {
+    let clock = 0;
+    const { manager, drive, remote, runtime, endpoint, setHealth } = await remoteFixture({ now: () => clock });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    remote.set(paired("R1", 5));
+    await drive.refresh(runtime);
+    (await health.next()).answer("R1");
+    await published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R1"));
+    // the connection drops and comes back: the cache stays, its proof goes
+    drive.disconnect(runtime);
+    runtime.endpoint = endpoint;
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    const pairs = remotePairs(manager);
+    remote.set(paired("R2", 0, "blocked"));
+    await drive.refresh(runtime);
+    const call = await health.next();
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R1", read_seq: 5 });
+    expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
+    expect(pairs).not.toContain("R2:0");
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.snapshot?.order_epoch === "R2"));
+    call.answer("R2");
+    await proved;
+    expect(remoteOf(manager)).toMatchObject({ source_boot_id: "R2", snapshot: { order_epoch: "R2", read_seq: 0 } });
+  });
+
+  it("restored remote state has no boot proof", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-machine-restored-"));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const id = "0f2b2a4c-1111-4222-8333-944455556666";
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "machines.json"), JSON.stringify([{ id, name: "saved", enabled: false, target: { destination: "saved" }, source_boot_id: "R", snapshot: paired("R", 4) }]));
+    const push = { seed() {}, async onStatus() {}, async onEnded() {} } as unknown as PushService;
+    const manager = new MachineManager(join(root, "state"), push, new CompletionTracker(null), async () => snapshot());
+    cleanups.push(() => manager.stop());
+    const saved = manager.list().find((machine) => machine.id === id);
+    expect(saved?.snapshot).toMatchObject({ order_epoch: "R", read_seq: 4 });
+    expect(saved?.source_boot_id).toBeUndefined();
+  });
+
+  it("old-generation health cannot retire a receipt epoch", async () => {
+    let clock = 0;
+    const { manager, drive, remote, runtime, send, setHealth } = await remoteFixture({ now: () => clock });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    remote.set(paired("R1", 2));
+    await drive.refresh(runtime);
+    (await health.next()).answer("R1");
+    await published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R1"));
+    // a snapshot of another epoch is held back while its health call runs
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    send({ type: "snapshot", snapshot: paired("R2", 0, "blocked") });
+    const stale = await health.next();
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R1", read_seq: 2 });
+    // the connection is replaced before that answer comes
+    const check = (runtime as unknown as { verification?: { promise: Promise<string | null> } }).verification!.promise;
+    runtime.generation++;
+    const pairs = remotePairs(manager);
+    stale.answer("R2");
+    expect(await check).toBeNull();
+    expect(remoteOf(manager)).toMatchObject({ source_boot_id: "R1", snapshot: { order_epoch: "R1", read_seq: 2 } });
+    expect(pairs).not.toContain("R2:0");
+  });
+
+  it("a health answer past its ceiling proves nothing, and one at it proves the epoch", async () => {
+    let clock = 0;
+    const { manager, runtime, send, setHealth } = await remoteFixture({ now: () => clock });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    /** a health answer naming `boot`, padded with whitespace to exactly `total` bytes and streamed without a length, so the bytes are counted */
+    const sized = (boot: string, total: number) => new Response(padded({ ok: true, web_ui: { boot_id: boot, revision: null } }, total).stream);
+    const pairs = remotePairs(manager);
+    send({ type: "snapshot", snapshot: paired("R", 0) });
+    const over = await health.next();
+    const check = (runtime as unknown as { verification?: { promise: Promise<string | null> } }).verification!.promise;
+    over.reply(sized("R", REMOTE_LIMITS.health + 1));
+    expect(await check).toBeNull();
+    expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
+    expect(pairs).toEqual([]);
+    // the next roster asks again once the interval allows it, and an answer exactly at the ceiling is read
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R" && machine.snapshot?.order_epoch === "R"));
+    send({ type: "snapshot", snapshot: paired("R", 0) });
+    (await health.next()).reply(sized("R", REMOTE_LIMITS.health));
+    await proved;
+  });
+
+  it("a validation superseded in the same generation publishes nothing", async () => {
+    const { manager, runtime, send, setHealth } = await remoteFixture();
+    const health = gatedHealth();
+    setHealth(health.handler);
+    send({ type: "snapshot", snapshot: paired("R1", 0) });
+    const stale = await health.next();
+    // the same generation, but another endpoint answers for the PC now
+    const check = (runtime as unknown as { verification?: { promise: Promise<string | null> } }).verification!.promise;
+    const generation = runtime.generation;
+    runtime.endpoint = { ...runtime.endpoint! };
+    const pairs = remotePairs(manager);
+    stale.answer("R1");
+    // asserted once the health answer has been handled, not merely sent
+    expect(await check).toBeNull();
+    await heard(manager, send);
+    expect(runtime.generation).toBe(generation);
+    expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
+    expect(remoteOf(manager)?.snapshot?.order_epoch).toBeUndefined();
+    expect(pairs).toEqual([]);
+  });
+
+  it("a proven source restart replaces the cache with the new server's read", async () => {
+    let clock = 0;
+    const { manager, drive, remote, runtime, send, setHealth } = await remoteFixture({ now: () => clock });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    remote.set(paired("R1", 3));
+    await drive.refresh(runtime);
+    (await health.next()).answer("R1");
+    await published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R1"));
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    send({ type: "snapshot", snapshot: paired("R2", 0, "blocked") });
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R2" && machine.snapshot?.order_epoch === "R2"));
+    (await health.next()).answer("R2");
+    await proved;
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R2", read_seq: 0, panes: [{ agent_status: "blocked" }] });
+  });
+
+  it("a snapshot held for health cannot overwrite a status heard while it waited", async () => {
+    let clock = 0;
+    const { manager, drive, remote, runtime, send, setHealth } = await remoteFixture({ now: () => clock });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    remote.set(paired("R1", 3));
+    await drive.refresh(runtime);
+    (await health.next()).answer("R1");
+    await published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R1"));
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    // the new server's current roster, which the status frame's follow-up read returns
+    remote.set(paired("R2", 1, "blocked"));
+    remote.hold();
+    send({ type: "snapshot", snapshot: paired("R2", 0, "working") });
+    const call = await health.next();
+    const statusHeard = new Promise<void>((resolve) => {
+      const stop = manager.subscribe((event) => { if (event.type === "machine-message" && event.message.type === "pane-status") { stop(); resolve(); } });
+    });
+    send({ type: "pane-status", pane_id: "fixture:p1", agent_status: "blocked" });
+    await statusHeard;
+    await remote.held();
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R1", read_seq: 3, panes: [{ agent_status: "blocked" }] });
+    const pairs = remotePairs(manager);
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R2"));
+    call.answer("R2");
+    await proved;
+    // the held snapshot is published with its order pair, and with the status heard while it waited
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R2", read_seq: 0, panes: [{ agent_status: "blocked" }] });
+    const current = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.snapshot?.read_seq === 1));
+    remote.finish();
+    await current;
+    expect(remoteOf(manager)?.snapshot).toMatchObject({ order_epoch: "R2", read_seq: 1, panes: [{ agent_status: "blocked" }] });
+    expect(pairs.filter((pair) => pair.startsWith("R2:"))).toEqual(["R2:0", "R2:1"]);
+  });
+
+  it("concurrent verification queries start one health call", async () => {
+    const { manager, setHealth } = await remoteFixture();
+    const health = gatedHealth();
+    setHealth(health.handler);
+    const answers = Array.from({ length: 32 }, () => manager.verifySourceBoot("remote", new AbortController().signal));
+    const call = await health.next();
+    expect(health.started()).toBe(1);
+    call.answer("R");
+    const settled = await Promise.all(answers);
+    expect(health.started()).toBe(1);
+    // the caller whose request started the call gets proof; every later one joined it and is refused
+    expect(settled[0]).toEqual({ boot_id: "R" });
+    expect(settled.slice(1).every((answer) => "refused" in answer && answer.refused === "unverified")).toBe(true);
+  });
+
+  it("sequential verification queries obey the per-PC start interval", async () => {
+    let clock = 0;
+    const { manager, drive, endpoint, setHealth } = await remoteFixture({ now: () => clock });
+    setHealth(() => Response.json({ ok: true, web_ui: { boot_id: "R", revision: null } }));
+    const second = drive.runtime({ id: "remote-2", name: "Second fixture", kind: "ssh", enabled: true, state: "connected", error: null, snapshot: null });
+    second.endpoint = endpoint;
+    drive.machines.set("remote-2", second);
+    expect(await manager.verifySourceBoot("remote")).toEqual({ boot_id: "R" });
+    clock = 500;
+    expect(await manager.verifySourceBoot("remote")).toEqual({ refused: "interval" });
+    // another PC has its own budget
+    expect(await manager.verifySourceBoot("remote-2")).toEqual({ boot_id: "R" });
+    clock = SOURCE_CHECK_INTERVAL_MS - 1;
+    expect(await manager.verifySourceBoot("remote")).toEqual({ refused: "interval" });
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    expect(await manager.verifySourceBoot("remote")).toEqual({ boot_id: "R" });
+    // a reconnect keeps the budget
+    second.generation++;
+    clock = SOURCE_CHECK_INTERVAL_MS + 400;
+    expect(await manager.verifySourceBoot("remote-2")).toEqual({ refused: "interval" });
+  });
+
+  it("a caller's abort ends only its own wait, and a lost connection refuses every caller", async () => {
+    const { manager, drive, runtime, setHealth } = await remoteFixture();
+    const health = gatedHealth();
+    setHealth(health.handler);
+    const leaving = new AbortController();
+    const asked = manager.verifySourceBoot("remote", leaving.signal);
+    const call = await health.next();
+    leaving.abort();
+    expect(await asked).toEqual({ refused: "unverified" });
+    const proved = published(manager, (machines) => machines.some((machine) => machine.id === "remote" && machine.source_boot_id === "R"));
+    call.answer("R");
+    await proved;
+    let clock = 0;
+    (manager as unknown as { now: () => number }).now = () => clock;
+    (manager as unknown as { sourceStarts: Map<string, number> }).sourceStarts.clear();
+    const lost = manager.verifySourceBoot("remote", new AbortController().signal);
+    await health.next();
+    drive.disconnect(runtime);
+    expect(await lost).toEqual({ refused: "unverified" });
+    expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
+  });
+
+  it("a failed health answer proves nothing and a later one can", async () => {
+    let clock = 0;
+    const { manager, setHealth } = await remoteFixture({ now: () => clock });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    const first = manager.verifySourceBoot("remote");
+    (await health.next()).answer(null, 503);
+    expect(await first).toEqual({ refused: "unverified" });
+    expect(remoteOf(manager)?.source_boot_id).toBeUndefined();
+    clock = SOURCE_CHECK_INTERVAL_MS;
+    const again = manager.verifySourceBoot("remote");
+    (await health.next()).answer("R");
+    expect(await again).toEqual({ boot_id: "R" });
+  });
+
+  it("the local PC answers with this server's boot id, with no remote call", async () => {
+    const { manager, setHealth } = await remoteFixture({ bootId: "local-boot" });
+    const health = gatedHealth();
+    setHealth(health.handler);
+    expect(await manager.verifySourceBoot("local")).toEqual({ boot_id: "local-boot" });
+    expect(await manager.verifySourceBoot("nobody")).toEqual({ refused: "unknown" });
+    expect(health.started()).toBe(0);
+  });
+
+  it("GET /api/machines?verify_source_boot answers a fresh proof or a refusal", async () => {
+    let clock = 0;
+    const { manager, setHealth } = await remoteFixture({ bootId: "local-boot", now: () => clock });
+    setHealth(() => Response.json({ ok: true, web_ui: { boot_id: "R", revision: null } }));
+    const ask = (query: string) => handleMachineRequest(new Request(`http://127.0.0.1/api/machines${query}`), manager);
+    const plain = await ask("");
+    expect(Object.keys(await plain.json())).toEqual(["machines"]);
+    expect((await ask("?verify_source_boot=")).status).toBe(400);
+    expect((await ask("?verify_source_boot=remote&verify_source_boot=local")).status).toBe(400);
+    expect((await ask("?verify_source_boot=nobody")).status).toBe(404);
+    const local = await ask("?verify_source_boot=local");
+    expect(local.headers.get("cache-control")).toBe("no-store");
+    expect((await local.json() as { verified_source_boot: unknown }).verified_source_boot).toEqual({ machine_id: "local", boot_id: "local-boot" });
+    const remote = await ask("?verify_source_boot=remote");
+    expect((await remote.json() as { verified_source_boot: unknown }).verified_source_boot).toEqual({ machine_id: "remote", boot_id: "R" });
+    const refused = await ask("?verify_source_boot=remote");
+    expect(refused.status).toBe(503);
+    expect(refused.headers.get("retry-after")).toBe("1");
+    expect(await refused.json()).toMatchObject({ error: { code: "source_unverified" } });
+    expect(JSON.stringify(await (await ask("")).json())).not.toContain("fixture-token");
   });
 });

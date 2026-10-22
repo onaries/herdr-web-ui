@@ -1,13 +1,22 @@
-/** Export the supplied artwork without redrawing it. Requires ffmpeg with drawtext. */
+/**
+ * Export the web app's icons and link preview from the Ovis artwork the native apps and ovis.sh
+ * already use (docs/brand/README.md), without redrawing it. Requires ffmpeg.
+ */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = new URL("..", import.meta.url).pathname;
-const source = join(root, "docs/brand/icon-source.png");
+/** the sleeping sheep on navy, 1024 px, the app icon of every Ovis app */
+const icon = join(root, "app/assets/icon-only.png");
+/** the same sheep on transparent */
+const sheep = join(root, "app/assets/ovis-sheep.png");
+/** ovis.sh's link preview: the icon above the name, 1200 × 630 */
+const preview = join(root, "ovis-site/assets/og-icon.png");
+const NAVY = "0x2e3a59";
 mkdirSync(join(root, "public/icons"), { recursive: true });
 
-function exportImage(path: string, filter: string, extra: string[] = []): void {
+function exportImage(source: string, path: string, filter: string, extra: string[] = []): void {
   const result = spawnSync("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y", "-i", source,
     "-vf", filter, "-frames:v", "1", "-threads", "1", ...extra, join(root, path),
@@ -18,22 +27,19 @@ function exportImage(path: string, filter: string, extra: string[] = []): void {
 }
 
 for (const size of [192, 512]) {
-  exportImage(`public/icons/icon-${size}.png`, `scale=${size}:${size}:flags=lanczos`);
+  exportImage(icon, `public/icons/icon-${size}.png`, `scale=${size}:${size}:flags=lanczos`);
   const inset = Math.round(size * 0.76);
-  exportImage(`public/icons/icon-maskable-${size}.png`,
-    `scale=${inset}:${inset}:flags=lanczos,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=0xd7d8d8`);
+  exportImage(icon, `public/icons/icon-maskable-${size}.png`,
+    `scale=${inset}:${inset}:flags=lanczos,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=${NAVY}`);
 }
-// Android draws a notification's small icon from its alpha alone: the dark artwork becomes
-// white on transparent, cropped to the mark. Without it Chrome shows its own bell.
-exportImage("public/icons/badge-96.png",
-  "crop=1040:1040:145:127,scale=96:96:flags=lanczos,format=rgba,geq=r=255:g=255:b=255:a='clip((200-r(X,Y))*2.5,0,255)'");
-exportImage("public/apple-touch-icon.png", "scale=180:180:flags=lanczos");
-exportImage("public/favicon.png", "scale=64:64:flags=lanczos");
-exportImage("public/favicon.ico", "scale=32:32:flags=lanczos", ["-c:v", "bmp"]);
-exportImage("public/social-preview.png", [
-  "scale=640:640:flags=lanczos",
-  "pad=1280:640:0:0:color=0xd7d8d8",
-  "drawtext=font=DejaVu Sans:fontcolor=0x2c3133:fontsize=76:text='Ovis':x=660:y=218",
-  "drawtext=font=DejaVu Sans:fontcolor=0x454c50:fontsize=28:text='Run herdr from anywhere.':x=664:y=330",
-  "drawtext=font=DejaVu Sans:fontcolor=0x454c50:fontsize=20:text='CHAT  /  TERMINAL  /  MOBILE':x=666:y=410",
-].join(","));
+// Android draws a notification's small icon from its alpha alone: the sheep becomes white on
+// transparent, cropped to it, its closed eyes and mouth left out so the face still reads.
+// Without it Chrome shows its own bell.
+exportImage(sheep, "public/icons/badge-96.png",
+  "crop=1024:966:0:52,pad=1024:1024:0:(oh-ih)/2:color=0x00000000,scale=96:96:flags=lanczos,format=rgba,geq=r=255:g=255:b=255:a='alpha(X,Y)*clip((r(X,Y)+g(X,Y)+b(X,Y))/3-110,0,40)/40'");
+exportImage(icon, "public/apple-touch-icon.png", "scale=180:180:flags=lanczos");
+exportImage(icon, "public/favicon.png", "scale=64:64:flags=lanczos");
+exportImage(icon, "public/favicon.ico", "scale=32:32:flags=lanczos", ["-c:v", "bmp"]);
+// GitHub and the chat apps want 1280 × 640: scaled to that width, the empty band above and below
+// the icon is trimmed evenly
+exportImage(preview, "public/social-preview.png", "scale=1280:672:flags=lanczos,crop=1280:640:0:16");

@@ -43,7 +43,7 @@ try {
     const touch = width <= 480;
     const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 800 }, hasTouch: touch, isMobile: touch, colorScheme: scheme, locale: "en-US" });
     try {
-      await context.addInitScript((theme) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme })), scheme);
+      await context.addInitScript((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme })), scheme);
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
       const errors: string[] = [];

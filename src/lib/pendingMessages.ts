@@ -3,7 +3,7 @@ import type { PendingMessage } from "../../shared/protocol.ts";
 export interface PendingMessageView extends PendingMessage { serverOwned: boolean; resendInFlight?: true; resendGeneration?: number }
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type Removal = { id: string; outcome: "sent" | "discarded" };
-const PREFIX = "herdr-web-ui:pending:";
+const PREFIX = "ovis:pending:";
 
 /** Connection proof stays in memory. A saved copy can never resume automatic delivery. */
 export class PendingMessageStore {

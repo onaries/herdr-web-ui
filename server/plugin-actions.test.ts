@@ -34,7 +34,7 @@ describe("pluginPaneContext", () => {
       focused_pane_cwd: "/home/me/notes",
       focused_pane_agent: "",
       focused_pane_status: "unknown",
-      invocation_source: "herdr-web-ui",
+      invocation_source: "ovis",
     });
   });
 

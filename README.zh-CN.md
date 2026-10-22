@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://herdrweb.dev/">官网</a> ·
+  <a href="https://ovis.sh/">官网</a> ·
   <a href="#install">安装</a> ·
-  <a href="https://herdrweb.dev/demo/">体验演示</a> ·
+  <a href="https://ovis.sh/demo/">体验演示</a> ·
   <a href="docs/guide.md#quick-start">快速入门</a> ·
   <a href="#faq">常见问题</a> ·
   <a href="#docs">文档</a>
@@ -19,8 +19,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-666666?labelColor=333333" alt="MIT 许可证"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/stargazers"><img src="https://img.shields.io/github/stars/devswha/herdr-web-ui?labelColor=333333&color=666666&logo=github" alt="GitHub 星标数"></a>
-  <a href="https://github.com/devswha/herdr-web-ui/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/herdr-web-ui?label=release&labelColor=333333&color=666666" alt="最新版本"></a>
+  <a href="https://github.com/devswha/ovis/stargazers"><img src="https://img.shields.io/github/stars/devswha/ovis?labelColor=333333&color=666666&logo=github" alt="GitHub 星标数"></a>
+  <a href="https://github.com/devswha/ovis/releases/latest"><img src="https://img.shields.io/github/v/release/devswha/ovis?label=release&labelColor=333333&color=666666" alt="最新版本"></a>
   <a href="https://github.com/herdrdev/herdr"><img src="https://img.shields.io/badge/herdr-0.9.0%2B-666666?labelColor=333333" alt="herdr 0.9.0+"></a>
   <a href="docs/guide.md#on-your-phone"><img src="https://img.shields.io/badge/PWA-installable-666666?labelColor=333333" alt="可安装的 PWA"></a>
 </p>
@@ -91,17 +91,17 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 ## 安装
 
 ```bash
-curl -fsSL https://herdrweb.dev/install.sh | sh
+curl -fsSL https://ovis.sh/install.sh | sh
 ```
 
 支持基于 glibc 的 Linux（x64、arm64）和 macOS（Intel、Apple Silicon）；不支持 Alpine/musl 或 32 位 ARM。需预先安装 `curl`、Git 和 `tar`；如果没有 Bun，还需要 Bash 和 `unzip`。所需版本为 herdr 0.9.0+、Bun 1.4+ 和 Node 18+。安装程序为当前用户安装缺少的工具、升级旧版 Bun，并在 Node 缺失或低于 18 时安装 Node 22，然后将应用安装为 herdr 插件。如果已安装的 herdr 低于 0.9.0，请先自行更新并重启 herdr，再重新运行安装程序。
 
-使用默认监听地址且 Tailscale 正在运行时，HTTPS 配置成功后会提供 tailnet 内的地址和二维码。未配置访问令牌时，如果 `tailscale serve` 报告的登录名与这台电脑的所有者相同，你自己的设备通常无需验证码即可进入。如果自己的手机仍被要求配对，`HERDR_WEB_TAILSCALE_SERVE_ONLY=1` 只会在 Tailscale 确认整个 tailnet 由一个登录名拥有、没有带标签的节点，且 serve 是此端口唯一访问途径时，允许没有登录信息的连接。公共代理、隧道或其他转发服务也能访问该端口时，切勿启用此设置（[访问与安全](docs/guide.md#access-and-safety)）。
+使用默认监听地址且 Tailscale 正在运行时，HTTPS 配置成功后会提供 tailnet 内的地址和二维码。未配置访问令牌时，如果 `tailscale serve` 报告的登录名与这台电脑的所有者相同，你自己的设备通常无需验证码即可进入。如果自己的手机仍被要求配对，`OVIS_TAILSCALE_SERVE_ONLY=1` 只会在 Tailscale 确认整个 tailnet 由一个登录名拥有、没有带标签的节点，且 serve 是此端口唯一访问途径时，允许没有登录信息的连接。公共代理、隧道或其他转发服务也能访问该端口时，切勿启用此设置（[访问与安全](docs/guide.md#access-and-safety)）。
 
 Windows x64 请在 PowerShell 中运行：
 
 ```powershell
-irm https://herdrweb.dev/install.ps1 | iex
+irm https://ovis.sh/install.ps1 | iex
 ```
 
 需要 [Git for Windows](https://git-scm.com/download/win)。安装程序会为当前用户补齐 herdr 和 Bun，然后安装同一个插件，无需 Node 或 WSL。要在手机上使用，请在 herdr 中打开 **Phone setup**。在 herdr 支持 Windows 终端附加之前，Windows 上的终端是一个可以输入、网格固定的[屏幕镜像](docs/remote-pcs.md#windows-pcs)。
@@ -113,12 +113,12 @@ irm https://herdrweb.dev/install.ps1 | iex
 已安装 herdr 0.9.0+、Bun 1.4+ 和 Node 18+（Windows 无需 Node）？只需安装插件：
 
 ```bash
-herdr plugin install devswha/herdr-web-ui
+herdr plugin install devswha/ovis
 ```
 
 旧版 herdr 必须先更新并重启。[INSTALL.md](INSTALL.md) 说明了各步操作及失败时的处理方法。
 
-在 herdr 运行时，使用安装程序打印或打开的地址，通常是 **[127.0.0.1:7317](http://127.0.0.1:7317)**；默认端口被占用时，插件会选择并记住其他端口。如果只安装了插件，请在 herdr 中运行 **Start Ovis**。首次安装到有桌面环境的电脑时，安装程序会自动打开浏览器；点击地址栏中的 **Install（安装）** 即可添加应用。安装后的应用属于这个确切地址，请继续使用同一地址，不要在 `127.0.0.1` 和 `localhost` 之间切换。安装前设置 `HERDR_WEB_NO_OPEN=1` 可跳过自动打开浏览器。选择一个窗格，或点击 **New workspace（新建工作区）** 启动智能体。在手机上使用时，扫描安装程序的二维码（也可从 herdr 的 **Phone setup** 查看），并将应用添加到主屏幕。[快速入门 →](docs/guide.md#quick-start)
+在 herdr 运行时，使用安装程序打印或打开的地址，通常是 **[127.0.0.1:7317](http://127.0.0.1:7317)**；默认端口被占用时，插件会选择并记住其他端口。如果只安装了插件，请在 herdr 中运行 **Start Ovis**。首次安装到有桌面环境的电脑时，安装程序会自动打开浏览器；点击地址栏中的 **Install（安装）** 即可添加应用。安装后的应用属于这个确切地址，请继续使用同一地址，不要在 `127.0.0.1` 和 `localhost` 之间切换。安装前设置 `OVIS_NO_OPEN=1` 可跳过自动打开浏览器。选择一个窗格，或点击 **New workspace（新建工作区）** 启动智能体。在手机上使用时，扫描安装程序的二维码（也可从 herdr 的 **Phone setup** 查看），并将应用添加到主屏幕。[快速入门 →](docs/guide.md#quick-start)
 
 服务器默认监听 `127.0.0.1`。如需从其他设备访问，请参阅[手机设置](docs/guide.md#on-your-phone)和[访问与安全](docs/guide.md#access-and-safety)。
 
@@ -142,13 +142,13 @@ Grok 聊天仅支持 Linux，并要求进程只持有一个会话，且与 herdr
 
 **必须使用 Tailscale 吗？**
 
-不必。Tailscale、SSH 隧道、VPN 或自行配置的 HTTPS 代理都可以提供访问电脑的通路。单独安装 Portal 2.6.1+ 后，还可通过可选的 [Portal 集成](docs/guide.md#behind-a-reverse-proxy)管理公网 HTTPS 地址；它需要 `HERDR_WEB_TOKEN`、可信中继，并关闭 `HERDR_WEB_TAILSCALE_SERVE_ONLY`。安装应用和推送提醒需要 HTTPS 或 localhost 等安全上下文；基本浏览也可以使用局域网中的普通 HTTP 地址。[其他方式 →](docs/guide.md#faq)
+不必。Tailscale、SSH 隧道、VPN 或自行配置的 HTTPS 代理都可以提供访问电脑的通路。单独安装 Portal 2.6.1+ 后，还可通过可选的 [Portal 集成](docs/guide.md#behind-a-reverse-proxy)管理公网 HTTPS 地址；它需要 `OVIS_TOKEN`、可信中继，并关闭 `OVIS_TAILSCALE_SERVE_ONLY`。安装应用和推送提醒需要 HTTPS 或 localhost 等安全上下文；基本浏览也可以使用局域网中的普通 HTTP 地址。[其他方式 →](docs/guide.md#faq)
 
 **我的代码或对话会离开我的电脑吗？**
 
 会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会将录音（启用文字整理时还包括文本）发送给配置的服务商；浏览器语音识别也可能使用浏览器厂商的服务。启用用量显示后会连接服务商 API；更新、远程电脑设置和推送提醒也可能使用外部服务。启用 Portal 后，连接会经过你选择的中继，它能看到连接元数据并持有该地址的证书，因此请只使用可信中继。
 
-匿名使用计数默认启用。在应用内显示说明并留出 10 分钟等待时间后，应用可发送安装或更新计数，包含随机安装 ID、版本（更新时包括旧版本）、操作系统、CPU 架构、安装方式和白名单内的设置快照。自定义文本和账号标识会被省略或概括，不收集代码、对话或文件。仓库中的接收端会在 Cloudflare 提供国家/地区代码时记录该代码，但不保存 IP 地址。活动计数包含打开应用当天（UTC）的智能体类型；同一天出现新类型时可更新当日计数。可在 **Settings → About → Anonymous usage counts** 中查看内容并关闭，也可设置 `HERDR_WEB_TELEMETRY=0` 或 `DO_NOT_TRACK=1`。智能体自身如何连接模型，取决于它的配置。[数据传输与访问 →](docs/guide.md#faq)
+匿名使用计数默认启用。在应用内显示说明并留出 10 分钟等待时间后，应用可发送安装或更新计数，包含随机安装 ID、版本（更新时包括旧版本）、操作系统、CPU 架构、安装方式和白名单内的设置快照。自定义文本和账号标识会被省略或概括，不收集代码、对话或文件。仓库中的接收端会在 Cloudflare 提供国家/地区代码时记录该代码，但不保存 IP 地址。活动计数包含打开应用当天（UTC）的智能体类型；同一天出现新类型时可更新当日计数。可在 **Settings → About → Anonymous usage counts** 中查看内容并关闭，也可设置 `OVIS_TELEMETRY=0` 或 `DO_NOT_TRACK=1`。智能体自身如何连接模型，取决于它的配置。[数据传输与访问 →](docs/guide.md#faq)
 
 随机 ID 可关联同一安装的计数，并不保证完全匿名。
 
@@ -185,8 +185,8 @@ Grok 聊天仅支持 Linux，并要求进程只持有一个会话，且与 herdr
 ## 开发
 
 ```bash
-git clone https://github.com/devswha/herdr-web-ui.git
-cd herdr-web-ui
+git clone https://github.com/devswha/ovis.git
+cd ovis
 bun install
 
 bun run server      # API + WebSocket on :7317

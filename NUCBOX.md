@@ -29,7 +29,7 @@ outputs survive virtual-row eviction, but reset when the chat itself unmounts.
 
 ## Updating
 
-Keep the operating checkout on `nucbox` and `HERDR_WEB_AUTO_UPDATE=0` in the systemd unit.
+Keep the operating checkout on `nucbox` and `OVIS_AUTO_UPDATE=0` in the systemd unit.
 The WebUI release installer expects `main` and must not replace this custom branch.
 Use the persistent-fork updater for a clean checkout. It merges upstream, runs the fast
 checks, commits the merge, rebuilds with the final revision and restarts only WebUI:

@@ -8,11 +8,11 @@ import type { AgentStatus, PlanSummary } from "../../shared/protocol.ts";
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { agentContext, agentTabName, paneMark, sidebarAgents, type SidebarAgent } from "../lib/sidebarAgents.ts";
+import { agentRoster, type AgentRow } from "../lib/agentRoster.ts";
+import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
-import { activityOrder } from "../lib/sidebarOrder.ts";
-import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin } from "../lib/sidebarPins.ts";
+import { currentSidebarPins, pruneSidebarPins, setSidebarPins, sidebarPinKey, subscribeSidebarPins, toggleSidebarPin } from "../lib/sidebarPins.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { AgentMark, hasAgentMark } from "./AgentMark.tsx";
 import { RowMenu } from "./RowMenu.tsx";
@@ -74,7 +74,6 @@ export interface AgentSidebarProps {
 
 /** the width under which the sidebar is a drawer (src/styles.css) */
 const DRAWER_QUERY = "(max-width: 768px)";
-interface AgentRow { machine: Machine; entry: SidebarAgent }
 /**
  * The row whose menu is open, by its pin key: at its ⋯, or at the pointer for a right-click. What
  * the menu says of the row is read from the row at each render, so a value that changes while it is
@@ -99,14 +98,11 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // which `$name` tokens herdr's own sidebar draws, from this server's herdr config (server/herdr-sidebar.ts)
   const rowTokens = useSyncExternalStore(subscribeAgentRowTokens, currentAgentRowTokens, currentAgentRowTokens);
   const activity = useSidebarActivity();
-  // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes)
+  // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes);
+  // the pinned rows stand first, in the order they were pinned (lib/agentRoster.ts)
   const byActivity = settings.agentOrder === "activity";
-  const rows = useMemo(() => machines.flatMap((machine) => {
-    const agents = sidebarAgents(machine.snapshot);
-    return (byActivity ? activityOrder(agents, (entry) => entry.pane, activity.seqs(machine.id)) : agents).map((entry): AgentRow => ({ machine, entry }));
-  }), [machines, byActivity, activity]);
-  // the pinned rows stand first, in the order they were pinned
-  const split = useMemo(() => splitPinnedRows(rows, pinned, ({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)), [rows, pinned]);
+  const split = useMemo(() => agentRoster(machines, { byActivity, seqs: activity.seqs, pinned }), [machines, byActivity, activity, pinned]);
+  const rows = useMemo(() => [...split.pinned, ...split.rest], [split]);
   const togglePin = (key: string): void => {
     // pins of panes gone from this server leave with a change of the user's, never by themselves: the
     // list is shared, and a pane this page has not seen yet (a PC still loading) is not gone

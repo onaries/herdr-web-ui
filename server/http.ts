@@ -1,5 +1,5 @@
 /**
- * The `{ error: { code, message } }` envelope every herdr-web-ui route answers with.
+ * The `{ error: { code, message } }` envelope every Ovis route answers with.
  *
  * It lives outside index.ts because the auth routes must fail in exactly the shape
  * the pane routes fail in: a second copy of this envelope is how one API ends up

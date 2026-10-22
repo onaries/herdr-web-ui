@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { herdrRpc, paneRead, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
+import rolloutHeaders from "./fixtures/codex-rollout-headers.json";
 
 // Real herdr panes running a stand-in `codex` process: which rollout the chat reads
 // while nothing Codex said is on screen.
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-binding-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-codex-binding-"));
 const codexHome = join(root, "codex");
 const threads = {
   resumed: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc01",
@@ -59,7 +60,7 @@ const codexRunning = async (paneId: string, not?: string): Promise<string> => {
 };
 
 const pane = async (label: string, command: string, cwd = root): Promise<string> => {
-  const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-codex-binding-${label}` });
+  const created = await workspaceCreate({ cwd, label: `ovis-test-codex-binding-${label}` });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${command}\n` });
@@ -94,6 +95,8 @@ const onScreen = async (paneId: string, answer: string): Promise<void> => {
   }
   throw new Error(`the answer never showed in ${paneId}`);
 };
+/** Lets a FLOOD_ON_ENTER stand-in flood its screen: Enter ends the `read` it waits in. */
+const flood = (paneId: string) => herdrRpc("pane.send_text", { pane_id: paneId, text: "\n" });
 /** Waits until the pane's flood has pushed the answer out of the 400 lines the match reads. */
 const floodedAway = async (paneId: string, answer: string): Promise<void> => {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -127,8 +130,9 @@ beforeAll(() => {
   const script = join(root, "bin", "codex");
   // `--say NAME` shows the question typed and its answer; `--quote NAME` only the answer, as
   // pasted; `--both NAME` the question and answer of NAME and the matched thread's answer too;
-  // THEN=NAME shows NAME's answers after the flood
-  writeFileSync(script, `#!/bin/sh\n[ -n "$SCREEN_FILE" ] && cat "$SCREEN_FILE"\nname="\${2:-matched}"\n[ "$1" = --say ] || [ "$1" = --both ] && echo "› question for $name"\n[ "$1" = --say ] || [ "$1" = --quote ] || [ "$1" = --both ] && cat "$(dirname "$0")/$name.txt"\n[ "$1" = --both ] && cat "$(dirname "$0")/matched.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\n[ -n "$THEN" ] && cat "$(dirname "$0")/$THEN.txt"\nsleep 600\n`);
+  // THEN=NAME shows NAME's answers after the flood; FLOOD_ON_ENTER=1 holds the flood until the
+  // test presses Enter (see `flood`), so it never races the binding the test establishes first
+  writeFileSync(script, `#!/bin/sh\n[ -n "$SCREEN_FILE" ] && cat "$SCREEN_FILE"\nname="\${2:-matched}"\n[ "$1" = --say ] || [ "$1" = --both ] && echo "› question for $name"\n[ "$1" = --say ] || [ "$1" = --quote ] || [ "$1" = --both ] && cat "$(dirname "$0")/$name.txt"\n[ "$1" = --both ] && cat "$(dirname "$0")/matched.txt"\nif [ -n "$FLOOD_ON_ENTER" ]; then read -r _; else sleep 600; fi\nseq 1 600\n[ -n "$THEN" ] && cat "$(dirname "$0")/$THEN.txt"\nsleep 600\n`);
   chmodSync(script, 0o755);
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
 });
@@ -138,6 +142,47 @@ afterAll(async () => {
   for (const id of workspaces) await workspaceClose(id);
   rmSync(root, { recursive: true, force: true });
 });
+
+it("reads a resumed thread's rollout only when its header is an interactive thread of its own, a child beside its parent included", async () => {
+  const cwd = join(root, "classifier");
+  mkdirSync(cwd);
+  const UUID_IN_NAME = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
+  const cases = rolloutHeaders.cases.map((fixture) => {
+    // the thread the store and the command line name: the file's, or the header's for a name without one
+    const id = UUID_IN_NAME.exec(fixture.file)?.[1] ?? String(fixture.payload.id);
+    const answer = `The thread of the fixture "${fixture.name}" answers this from its own rollout file.`;
+    const path = join(codexHome, "sessions", fixture.file);
+    writeFileSync(path, [
+      JSON.parse(JSON.stringify({ type: "session_meta", payload: fixture.payload }).replaceAll('"{{CWD}}"', JSON.stringify(cwd))),
+      { type: "response_item", timestamp: "2026-10-20T09:00:00Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `question for ${fixture.name}` }] } },
+      { type: "response_item", timestamp: "2026-10-20T09:00:05Z", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: answer }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    return { fixture, id, answer, path };
+  });
+  // every row is what the store lists as an interactive thread: only the rollout's own header tells a child
+  const db = new Database(join(codexHome, "state_5.sqlite"));
+  for (const { fixture, id, path } of cases) db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(id, path, cwd, `question for ${fixture.name}`);
+  db.close();
+  const opened = workspaces.length;
+  try {
+    for (const { fixture, id, answer } of cases) {
+      const paneId = await pane(`classifier-${id.slice(-4)}`, `${join(root, "bin", "codex")} resume ${id}`, cwd);
+      const conversation = await read(paneId);
+      if (fixture.interactive) {
+        expect([fixture.name, conversation.source, lastAnswer(conversation)]).toEqual([fixture.name, "codex-transcript", answer]);
+      } else {
+        // no other rollout stands in for a refused one, its parent's included
+        expect([fixture.name, conversation.source]).toEqual([fixture.name, "scrollback"]);
+        expect(lastAnswer(conversation)).not.toBe(answer);
+      }
+    }
+  } finally {
+    const db = new Database(join(codexHome, "state_5.sqlite"));
+    for (const { id } of cases) db.query("DELETE FROM threads WHERE id = ?").run(id);
+    db.close();
+    for (const workspace of workspaces.splice(opened)) await workspaceClose(workspace);
+  }
+}, 180_000);
 
 it("reads a literal short first answer through the conversation endpoint (regression)", async () => {
   const cwd = join(root, "short-first");
@@ -225,11 +270,12 @@ it("reads the thread a Codex TUI was resumed on while none of its answers is on 
 });
 
 it("keeps a matched rollout while tool output scrolls the answer away, and drops it for another process", async () => {
-  const paneId = await pane("matched", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  const paneId = await pane("matched", `FLOOD_ON_ENTER=1 ${join(root, "bin", "codex")} --say`);
   const first = await codexRunning(paneId);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
   // 600 lines of output: the answer is past the 400 the match reads
+  await flood(paneId);
   await floodedAway(paneId, answers.matched);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
   // another codex process in the pane is not the one that was matched
@@ -281,9 +327,10 @@ it("reads a thread whose answers are all short by its newest answers on screen, 
     try { expect((await read(shortPane)).source).toBe("scrollback"); } finally { forked(); }
     expect((await read(shortPane)).source).toBe("codex-transcript");
     // a pane a long answer bound keeps that rollout when another thread's short answers show later
-    const bound = await pane("bound-short", `FLOOD_AFTER=3 THEN=short ${join(root, "bin", "codex")} --say`);
+    const bound = await pane("bound-short", `FLOOD_ON_ENTER=1 THEN=short ${join(root, "bin", "codex")} --say`);
     for (let attempt = 0; attempt < 30 && lastAnswer(await read(bound)) !== answers.matched; attempt++) await Bun.sleep(100);
     expect(lastAnswer(await read(bound))).toBe(answers.matched);
+    await flood(bound);
     await floodedAway(bound, answers.matched);
     await onScreen(bound, shortAnswers[1]!);
     expect(lastAnswer(await read(bound))).toBe(answers.matched);
@@ -311,9 +358,10 @@ it("reads a thread whose answers are all short by its newest answers on screen, 
 }, 30_000);
 
 it("drops a matched rollout once a newer interactive thread begins in its cwd, as /new does, not for a subagent or codex exec", async () => {
-  const paneId = await pane("renewed", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  const paneId = await pane("renewed", `FLOOD_ON_ENTER=1 ${join(root, "bin", "codex")} --say`);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  await flood(paneId);
   await floodedAway(paneId, answers.matched);
   // the pane's own subagent (agent_role NULL, as many are) and a `codex exec` in the repo
   const spawned = [
@@ -335,8 +383,10 @@ it("drops a matched rollout once a newer interactive thread begins in its cwd, a
 }, 30_000);
 
 it("keeps a matched rollout when the newer thread shows in another Codex pane, whether or not its chat was opened", async () => {
-  const paneId = await pane("mine", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  const paneId = await pane("mine", `FLOOD_ON_ENTER=1 ${join(root, "bin", "codex")} --say`);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
+  expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  await flood(paneId);
   await floodedAway(paneId, answers.matched);
   const remove = newerThread("cli", threads.other, rollout("other"), "question for other");
   try {
@@ -369,8 +419,10 @@ it("finds a pane's thread however many codex exec runs the repo had since", asyn
 }, 30_000);
 
 it("claims nothing for a pane whose screen matches this pane's thread as well, nor for a closed pane", async () => {
-  const paneId = await pane("unique", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  const paneId = await pane("unique", `FLOOD_ON_ENTER=1 ${join(root, "bin", "codex")} --say`);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
+  expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  await flood(paneId);
   await floodedAway(paneId, answers.matched);
   const remove = newerThread("cli", threads.fresh, rollout("fresh"), "question for fresh");
   try {

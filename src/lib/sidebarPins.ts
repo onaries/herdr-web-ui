@@ -6,7 +6,7 @@
 
 import { placeBlock } from "./workspaceOrder.ts";
 
-const STORAGE_KEY = "herdr-web-ui:sidebar-agent-pins";
+const STORAGE_KEY = "ovis:sidebar-agent-pins";
 
 export function sidebarPinKey(machineId: string, paneId: string): string {
   return `${machineId}:${paneId}`;

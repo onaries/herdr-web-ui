@@ -53,10 +53,10 @@ describe("a paired watch device", () => {
     const devices = new DeviceStore(root);
     const paired = devices.pair(devices.startPairing().code, "Watch", "watch")!;
     expect(devices.match(paired.token)).not.toBeNull();
-    cookie = `herdr_web_device=${encodeURIComponent(paired.token)}`;
+    cookie = `ovis_device=${encodeURIComponent(paired.token)}`;
     // and one that may drive, for what the watcher is refused
     const driver = devices.pair(devices.startPairing().code, "Driver", "drive")!;
-    interactCookie = `herdr_web_device=${encodeURIComponent(driver.token)}`;
+    interactCookie = `ovis_device=${encodeURIComponent(driver.token)}`;
     server = createServer({ port: 0, stateDir: root });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -196,7 +196,7 @@ describe("a token set: guessing it", () => {
   it("counts a paired watch device's guesses, so it cannot guess its way up to drive", async () => {
     const watcher = (bearer: string): Promise<Response> => fetch(`${base}/api/push/test`, {
       method: "POST",
-      headers: { cookie: `herdr_web_device=${encodeURIComponent(watchToken)}`, authorization: `Bearer ${bearer}`, origin: base, "content-type": "application/json", "x-forwarded-for": "100.64.0.5" },
+      headers: { cookie: `ovis_device=${encodeURIComponent(watchToken)}`, authorization: `Bearer ${bearer}`, origin: base, "content-type": "application/json", "x-forwarded-for": "100.64.0.5" },
       body: "{}",
     });
     for (let attempt = 0; attempt < 5; attempt += 1) expect((await watcher(`guess-${attempt}`)).status).toBe(403);
@@ -209,7 +209,7 @@ describe("a token set: guessing it", () => {
   });
 
   it("lets the owner sign in while their cookie's wait runs, and the sign-in spends it", async () => {
-    const cookie = { cookie: "herdr_web_token=stale-token", "x-forwarded-for": "100.64.0.3" };
+    const cookie = { cookie: "ovis_token=stale-token", "x-forwarded-for": "100.64.0.3" };
     for (let attempt = 0; attempt < 6; attempt += 1) await fetch(`${base}/api/health`, { headers: cookie });
     const signIn = await fetch(`${base}/api/auth`, { method: "POST", headers: { origin: base, "content-type": "application/json", "x-forwarded-for": "100.64.0.3" }, body: JSON.stringify({ token: TOKEN }) });
     expect(signIn.status).toBe(204);

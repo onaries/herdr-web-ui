@@ -46,7 +46,7 @@ export class RecentDirectoryStore {
   read(machineId: string): string[] {
     if (this.unsaved.has(machineId)) return this.memory.get(machineId) ?? [];
     try {
-      const raw = this.storage().getItem(`herdr-web-ui:recent-directories:${machineId}`);
+      const raw = this.storage().getItem(`ovis:recent-directories:${machineId}`);
       if (raw !== null) {
         const parsed: unknown = JSON.parse(raw);
         if (Array.isArray(parsed)) {
@@ -67,7 +67,7 @@ export class RecentDirectoryStore {
     if (next.length === previous.length && next.every((path, index) => path === previous[index])) return previous;
     this.memory.set(machineId, next);
     try {
-      this.storage().setItem(`herdr-web-ui:recent-directories:${machineId}`, JSON.stringify(next));
+      this.storage().setItem(`ovis:recent-directories:${machineId}`, JSON.stringify(next));
       this.unsaved.delete(machineId);
     } catch {
       // A read may still work after a quota/write failure; do not replace unsaved history with it.

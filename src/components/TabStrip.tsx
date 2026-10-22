@@ -27,11 +27,11 @@ import { rosterPanes } from "../lib/dagPane.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useTabReorder } from "../lib/useTabReorder.ts";
-import { indicatorGlyph, paneStatus, rollupStatus } from "../lib/status.ts";
+import { indicatorGlyph, paneStatus, rollupStatus, STATUS_WORD } from "../lib/status.ts";
 import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { displayPaneTitle } from "./Sidebar.tsx";
+import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { paneDrag } from "../lib/paneDrag.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
@@ -340,6 +340,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
     const groups: RowMenuItem[][] = [
       own.length < 2 ? [] : own.map((pane): RowMenuItem => ({
         id: `pane:${pane.pane_id}`, label: displayPaneTitle(pane), icon: Terminal,
+        hint: pane.agent ? t(STATUS_WORD[paneStatus(pane)]) : undefined,
         glyph: pane.agent ? <AgentMark agent={pane.agent} size={16} /> : undefined,
         current: pane.pane_id === selectedPane.pane_id, run: () => onSelectPane(pane.pane_id),
       })),
@@ -372,6 +373,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
           const own = panesOf(tab);
           // Settle each pane's wait before rolling up, so a sibling's RUN or DONE stays visible.
           const status = rollupStatus(own.map((pane) => paneStatus(pane as HerdrPane)));
+          const hasAgent = own.some((pane) => pane.agent);
           const pickerOpen = picker?.tab.tab_id === tab.tab_id;
           const name = nameOf(tab);
           return (
@@ -403,6 +405,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                   className="tab-strip-tab"
                   data-tab-id={tab.tab_id}
                   aria-selected={active}
+                  aria-description={hasAgent ? status === "waiting" ? t("Agent waiting on background work") : t("Agent {status}", { status: t(STATUS_WORD[status]) }) : undefined}
                   aria-haspopup="menu"
                   aria-keyshortcuts="Shift+F10 Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
                   aria-controls={panePanel}
@@ -426,7 +429,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                   // the middle button closes a tab, as it does a browser's
                   onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); requestClose(tab); } }}
                 >
-                  {(status === "working" || status === "blocked" || status === "waiting" || status === "done") && (settings.statusIndicators === "classic"
+                  {touchMenu && hasAgent ? <span className="tab-strip-agent-status" aria-hidden="true"><StatusBadge status={status} compact /></span> : (status === "working" || status === "blocked" || status === "waiting" || status === "done") && (settings.statusIndicators === "classic"
                     ? <span className="tab-strip-dot" data-status={status} aria-hidden="true" />
                     : <span className="tab-strip-dot tab-strip-glyph" data-status={status} aria-hidden="true">{indicatorGlyph(status, settings.statusIndicators)}</span>)}
                   <span className="tab-strip-label">{name}</span>

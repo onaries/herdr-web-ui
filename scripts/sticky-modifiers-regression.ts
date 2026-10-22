@@ -28,7 +28,7 @@ async function until(check: () => boolean | Promise<boolean>, label: string) {
 try {
   const browser = launched = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   for (const mode of ["legacy", "kitty"] as const) {
-    const made = await workspaceCreate({ cwd: root, label: `herdr-web-ui-test-sticky-${mode}`, focus: false });
+    const made = await workspaceCreate({ cwd: root, label: `ovis-test-sticky-${mode}`, focus: false });
     owned.push(made.workspace.workspace_id);
     const pane = made.root_pane.pane_id;
     const log = join(root, `${mode}.hex`);
@@ -38,8 +38,8 @@ try {
     await until(async () => (await paneRead({ paneId: pane, source: "visible" })).text.includes(`PROBE READY ${mode}`), "raw probe ready");
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await context.addInitScript(({ pane }) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "direct", keyBarExtras: ["alt", "shift-tab", "home-end", "page-up-down", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"] }));
-      localStorage.setItem(`herdr-web-ui:view:${pane}`, "terminal");
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "direct", keyBarExtras: ["alt", "shift-tab", "home-end", "page-up-down", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"] }));
+      localStorage.setItem(`ovis:view:${pane}`, "terminal");
     }, { pane });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));

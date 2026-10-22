@@ -1,7 +1,8 @@
 /**
  * New tab with an agent's model, effort, skills and first message (#774, #1311) on the unmodified
- * app over the demo's fixture transport: the composer's button opens the dialog on the pane's
- * workspace; Codex shows its `$` skills before any process exists (GET /api/agent/commands), a chip
+ * app over the demo's fixture transport: the composer's button, absent until this device turns it
+ * on in Settings (Chat, Composer, New tab button), then opens the dialog on the pane's workspace;
+ * Codex shows its `$` skills before any process exists (GET /api/agent/commands), a chip
  * puts its token in the message, and Start sends exactly one tab/create with the agent's own
  * arguments however often it is pressed while the first is in flight (the prompt is Codex's
  * positional argument behind `--`, never queued as well); Claude Code, whose parser would run a
@@ -47,7 +48,7 @@ async function openChat(page: Page, url: string): Promise<void> {
 async function openDialog(page: Page, via: "composer" | "tab-menu" = "composer") {
   if (via === "composer") await page.locator(".pane-frame.is-current .composer-new-session").click();
   else {
-    assert.equal(await page.locator(".pane-frame.is-current .composer-new-session").count(), 0, "a phone's card carries no new-tab button");
+    assert.equal(await page.locator(".pane-frame.is-current .composer-new-session").count(), 0, "a phone's card carries no new-tab button, even with the setting on");
     await page.locator(".tab-strip-menu").tap();
     // the menu is a sheet on a phone (RowMenu): its items are buttons there
     await page.getByRole("button", { name: "New tab with agent…", exact: true }).tap();
@@ -122,13 +123,51 @@ try {
     return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
   } });
   const url = `http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.api)}`;
-  const settings = (theme: string): void => { localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme })); };
+  // the composer's button is off by default (the composer stays minimal): every context but the first turns it on as stored
+  const settings = (theme: string): void => { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme, composerNewTabButton: true })); };
+  const defaults = (theme: string): void => { localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme })); };
   const phone = (browser: Browser, theme: "dark" | "light") => browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3, locale: "en-US", colorScheme: theme });
   const desktop = (browser: Browser, theme: "dark" | "light") => browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US", colorScheme: theme });
   const log: string[] = [];
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      // a desk with nothing chosen: the composer carries no New tab button; Settings' Chat page offers the toggle in
+      // its Composer group, and once it is on the button is there and opens the dialog on the pane's workspace
+      const optIn = await desktop(browser, "dark");
+      try {
+        await optIn.addInitScript(defaults, "dark");
+        const page = await optIn.newPage();
+        page.setDefaultTimeout(10_000);
+        const errors: string[] = [];
+        page.on("pageerror", (error) => { errors.push(error.message); console.error(error.stack); });
+        await openChat(page, url);
+        await page.locator(".pane-frame.is-current .composer-attach").waitFor();
+        assert.equal(await page.locator(".pane-frame.is-current .composer-new-session").count(), 0, "the composer has no New tab button until this device turns it on");
+        await settled(page);
+        await page.screenshot({ path: join(evidence, "desktop-dark-composer-default.png") });
+        await page.goto(`${url}&settings=chat&section=composer`);
+        const toggle = page.getByRole("switch", { name: "New tab button", exact: true });
+        assert.equal(await toggle.getAttribute("aria-checked"), "false", "the toggle starts off");
+        await settled(page);
+        await page.screenshot({ path: join(evidence, "desktop-dark-settings-composer.png") });
+        await toggle.setChecked(true);
+        await page.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor({ state: "detached" });
+        await page.locator(".pane-frame.is-current .terminal-stack.is-chat").waitFor();
+        const button = page.locator(".pane-frame.is-current .composer-new-session");
+        await button.waitFor();
+        assert.equal(await button.getAttribute("aria-label"), "New tab with an agent\u2026");
+        await settled(page);
+        await page.screenshot({ path: join(evidence, "desktop-dark-composer-opted-in.png") });
+        const dialog = await openDialog(page);
+        await page.keyboard.press("Escape");
+        await dialog.waitFor({ state: "detached" });
+        assert.equal((await recorded(page)).length, 0, "opening and closing the dialog starts nothing");
+        assert.deepEqual(errors, []);
+        console.log("PASS the composer's New tab button is off by default, and Settings' Composer group turns it on for this device");
+      } finally { await optIn.close(); }
+
       // the plan's scenario: a phone, Codex, its $ skills, a prompt, Start; a double tap sends one create
       const dark = await phone(browser, "dark");
       try {

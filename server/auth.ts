@@ -1,5 +1,5 @@
 /**
- * Optional shared-token gate for herdr-web-ui.
+ * Optional shared-token gate for Ovis.
  *
  * There is no user database here: the token is the whole authorization decision,
  * and whoever holds it can type into live terminals. Hence constant-time compares
@@ -19,9 +19,30 @@ import { isLoopbackAddress } from "./access.ts";
 import { PAGE_MEDIA_ROUTE } from "./file-view.ts";
 import { badRequest, jsonResponse } from "./http.ts";
 
-export const TOKEN_COOKIE = "herdr_web_token";
+export const TOKEN_COOKIE = "ovis_token";
 /** a paired device's own credential; the same flags as the token cookie */
-export const DEVICE_COOKIE = "herdr_web_device";
+export const DEVICE_COOKIE = "ovis_device";
+/** their names before the rename: a browser signed in then keeps sending them for up to a year */
+const LEGACY_TOKEN_COOKIE = "herdr_web_token";
+const LEGACY_DEVICE_COOKIE = "herdr_web_device";
+
+/** The token cookie a request carries, under its name or the one before the rename. */
+export function tokenCookie(cookies: Map<string, string>): string | undefined {
+  return cookies.get(TOKEN_COOKIE) ?? cookies.get(LEGACY_TOKEN_COOKIE);
+}
+
+/** The paired device's cookie a request carries, under its name or the one before the rename. */
+export function deviceCookieValue(cookies: Map<string, string>): string | undefined {
+  return cookies.get(DEVICE_COOKIE) ?? cookies.get(LEGACY_DEVICE_COOKIE);
+}
+
+function clearCookie(name: string): string {
+  return `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
+}
+
+/** Set with a fresh credential, so the browser stops sending the old name beside the new one. */
+export const CLEAR_LEGACY_TOKEN_COOKIE = clearCookie(LEGACY_TOKEN_COOKIE);
+export const CLEAR_LEGACY_DEVICE_COOKIE = clearCookie(LEGACY_DEVICE_COOKIE);
 const COOKIE_MAX_AGE_SECONDS = 31536000;
 
 /**
@@ -72,7 +93,7 @@ function matches(candidate: string, token: string): boolean {
 
 export function isAuthenticated(request: Request, token: string): boolean {
   if (token === "") return true;
-  const cookie = parseCookies(request.headers.get("cookie")).get(TOKEN_COOKIE);
+  const cookie = tokenCookie(parseCookies(request.headers.get("cookie")));
   if (cookie !== undefined && matches(cookie, token)) return true;
   return bearerMatches(request, token);
 }
@@ -231,7 +252,7 @@ export function presentedToken(request: Request, token: string, client: string |
   if (token === "") return "none";
   const authorization = request.headers.get("authorization") ?? "";
   const bearer = authorization.slice(0, BEARER_PREFIX.length).toLowerCase() === BEARER_PREFIX;
-  if (!bearer && !parseCookies(request.headers.get("cookie")).has(TOKEN_COOKIE)) return "none";
+  if (!bearer && tokenCookie(parseCookies(request.headers.get("cookie"))) === undefined) return "none";
   if (waitLeft("presented", client) > 0) return "held";
   if (!isAuthenticated(request, token)) return "wrong";
   admit(client);
@@ -280,7 +301,7 @@ export function forgetAuthAttempts(): void {
 export async function handleAuthRequest(request: Request, token: string, client: string | null = null): Promise<Response> {
   if (request.method === "DELETE") {
     // signing out drops both credentials this browser may hold
-    return noContent(`${TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, `${DEVICE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+    return noContent(clearCookie(TOKEN_COOKIE), clearCookie(DEVICE_COOKIE), CLEAR_LEGACY_TOKEN_COOKIE, CLEAR_LEGACY_DEVICE_COOKIE);
   }
   if (request.method !== "POST") return badRequest("method_not_allowed", "use POST or DELETE");
   // Gate off: answering 204 without a cookie lets one client flow work either way.
@@ -308,5 +329,5 @@ export async function handleAuthRequest(request: Request, token: string, client:
   }
   // the right token, typed in: both waits are spent, a stale cookie's included
   admit(client);
-  return noContent(sessionCookie(token, isSecureRequest(request)));
+  return noContent(sessionCookie(token, isSecureRequest(request)), CLEAR_LEGACY_TOKEN_COOKIE);
 }

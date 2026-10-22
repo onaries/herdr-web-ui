@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, expect, it } from "bun:test";
+import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexOpenRollout, codexTranscriptPath, paneRunsCodex } from "./codex.ts";
-import { processStartedAt, processStartUpperBound } from "./process-start.ts";
+import * as processStart from "./process-start.ts";
+import { processStartedAt } from "./process-start.ts";
 
 // Native stores and the real RPC client; only herdr's foreground metadata is synthetic.
 // In particular, a real process supplies /proc/cmdline when that metadata omits argv.
@@ -16,12 +17,14 @@ let path: string;
 let screen: string;
 let peerScreens: Map<string, string | Error>;
 let foreground: { pid: number; name?: string; argv?: string[] }[];
+/** A pane's own foreground, where it is not [foreground]. */
+let foregrounds: Map<string, { pid: number; name?: string; argv?: string[] }[]>;
 let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;
 const children: ReturnType<typeof Bun.spawn>[] = [];
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-processes-"));
+  root = mkdtempSync(join(tmpdir(), "ovis-codex-processes-"));
   home = join(root, "codex");
   mkdirSync(join(home, "sessions"), { recursive: true });
   path = join(home, "sessions", `rollout-${thread}.jsonl`);
@@ -36,6 +39,7 @@ beforeEach(() => {
   screen = "";
   peerScreens = new Map();
   foreground = [];
+  foregrounds = new Map();
   socketBefore = process.env["HERDR_SOCKET"];
   const socket = join(root, "herdr.sock");
   process.env["HERDR_SOCKET"] = socket;
@@ -53,7 +57,7 @@ beforeEach(() => {
           return;
         }
         const result = request.method === "agent.get" ? { agent: {} }
-          : request.method === "pane.process_info" ? { process_info: { foreground_processes: foreground } }
+          : request.method === "pane.process_info" ? { process_info: { foreground_processes: foregrounds.get(request.params?.pane_id ?? "") ?? foreground } }
           : request.method === "pane.read" ? { read: { text: peerScreen ?? screen } }
           : null;
         if (result === null) throw new Error(`unexpected RPC ${request.method}`);
@@ -190,7 +194,7 @@ it("does not use an alias resume after a newer interactive thread starts", async
 const shortPrompt = "Check fixture";
 const shortAnswer = "The fixture is ready for inspection.";
 const shortScreen = `OpenAI Codex (v1.0)\n\n› ${shortPrompt}\n\n• ${shortAnswer}\n\n› `;
-const shortIt = it.skipIf(process.platform !== "linux");
+const shortIt = it.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
 function shortRollout(file: string, prompt = shortPrompt, reply = shortAnswer): void {
   writeFileSync(file, [
@@ -292,23 +296,148 @@ shortIt("resolves a seconds-only schema when creation is provably after process 
   expect(await resolve()).toBe(path);
 });
 
-shortIt("rejects a pre-start thread but accepts one 542 ms after its precise start bound", async () => {
+shortIt("rejects a thread made before its process could have started, and takes one made as it starts", async () => {
   await shortSession();
-  const startedAt = processStartedAt(foreground[0]!.pid)!;
-  const beforeThreshold = new Database(join(home, "state_5.sqlite"));
-  beforeThreshold.query("UPDATE threads SET created_at = ?, created_at_ms = ?")
-    .run(Math.floor((startedAt - 1) / 1000), startedAt - 1);
-  beforeThreshold.close();
-  expect(await resolve()).toBeNull();
+  // Put the start at a second boundary, independently of btime/ps rounding or fixture setup time.
+  const started = 1_001_000;
+  const bound = spyOn(processStart, "processStartLowerBound").mockReturnValue(started);
+  const setCreated = (created: number) => {
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.query("UPDATE threads SET created_at = ?, created_at_ms = ?").run(Math.floor(created / 1000), created);
+    db.close();
+  };
+  try {
+    setCreated(started - 1);
+    expect(await resolve()).toBeNull();
+    setCreated(started);
+    expect(await resolve()).toBe(path);
+  } finally { bound.mockRestore(); }
+});
 
-  const upper = processStartUpperBound(foreground[0]!.pid);
-  expect(upper).not.toBeNull();
-  const created = upper! + 542;
-  const atThreshold = new Database(join(home, "state_5.sqlite"));
-  atThreshold.query("UPDATE threads SET created_at = ?, created_at_ms = ?")
-    .run(Math.floor(created / 1000), created);
-  atThreshold.close();
-  expect(await resolve()).toBe(path);
+shortIt("takes a seconds-only thread made in its process's second", async () => {
+  await shortSession(false);
+  const bound = spyOn(processStart, "processStartLowerBound");
+  try {
+    // The same stored second must work at its first and last millisecond, but not the next second.
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.query("UPDATE threads SET created_at = 1000").run();
+    db.close();
+    for (const started of [1_000_000, 1_000_999]) {
+      bound.mockReturnValue(started);
+      expect(await resolve()).toBe(path);
+    }
+    bound.mockReturnValue(1_001_000);
+    expect(await resolve()).toBeNull();
+  } finally { bound.mockRestore(); }
+});
+
+// --- after another pane's /new, this pane's one-word exchange still tells ---
+
+const peerThread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc09";
+const peerPrompt = "explain the cache layer";
+const peerAnswer = "The cache layer keeps each rendered page for ten minutes, keyed by its route and the user's locale, and evicts the oldest first.";
+
+/** The other pane's thread, begun after this pane's Codex started (its /new), answered [reply]. */
+function peerNewThread(created: number, reply = peerAnswer): string {
+  const file = join(home, "sessions", `rollout-${peerThread}.jsonl`);
+  writeFileSync(file, [
+    { type: "session_meta", payload: { id: peerThread, cwd: root } },
+    { type: "event_msg", payload: { type: "user_message", message: peerPrompt } },
+    { type: "event_msg", payload: { type: "agent_message", message: reply } },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  addShortThread(peerThread, file, created, peerPrompt);
+  return file;
+}
+
+const peerScreenOf = (reply: string) => `OpenAI Codex (v1.0)\n\n› ${peerPrompt}\n\n• ${reply}\n\n› `;
+
+shortIt("leaves out a thread another pane shows a long answer of below its first prompt, and keeps it theirs", async () => {
+  const created = await shortSession();
+  peerNewThread(created + 1000);
+  peerScreens.set("peer", peerScreenOf(peerAnswer));
+  const panes = [fixturePane(root), fixturePane("peer")];
+  expect(await codexTranscriptPath(root, root, home, panes)).toBe(path);
+  // looked at again within seconds the other pane is not read again: it is bound to that thread now
+  expect(await codexTranscriptPath(root, root, home, panes)).toBe(path);
+});
+
+shortIt("leaves out the rollout herdr reports for another pane", async () => {
+  const created = await shortSession();
+  const theirs = peerNewThread(created + 1000, "ok");
+  peerScreens.set("peer", peerScreenOf("ok"));
+  const peer = { ...fixturePane("peer"), agent_session: { source: "herdr:codex", agent: "codex", kind: "path", value: theirs } };
+  expect(await codexTranscriptPath(root, root, home, [fixturePane(root), peer])).toBe(path);
+});
+
+shortIt("leaves out its only new thread when herdr reports it for another pane", async () => {
+  await shortSession();
+  // the other pane shows another exchange now; herdr says the thread is that pane's conversation
+  peerScreens.set("peer", "OpenAI Codex (v1.0)\n› Other fixture\n• A different short reply.\n› ");
+  const peer = { ...fixturePane("peer"), agent_session: { source: "herdr:codex", agent: "codex", kind: "path", value: path } };
+  expect(await codexTranscriptPath(root, root, home, [fixturePane(root), peer])).toBeNull();
+  // reported for nobody, the same screens tell it is this pane's
+  expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer")])).toBe(path);
+});
+
+shortIt("still cannot tell when nothing ties the other thread to another pane", async () => {
+  const created = await shortSession();
+  // a one-word answer there too, nothing reported: either pane might have begun it
+  peerNewThread(created + 1000, "ok");
+  peerScreens.set("peer", peerScreenOf("ok"));
+  expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer")])).toBeNull();
+});
+
+// --- the pane that started first, beside a later pane's short first exchange ---
+
+it("tells the first-started pane's thread once the later pane shows its own first exchange", async () => {
+  // A's Codex started at 1000 s and began its thread at 1001.3; B's started at 1005 and began
+  // its own at 1006.7: both began after A started, so A tells only once B shows its own
+  const starts = new Map([[900001, 1_000_000], [900002, 1_005_000]]);
+  const bound = spyOn(processStart, "processStartLowerBound").mockImplementation((pid) => starts.has(pid) ? starts.get(pid)! : null);
+  try {
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.exec("ALTER TABLE threads ADD COLUMN first_user_message TEXT");
+    db.exec("ALTER TABLE threads ADD COLUMN created_at_ms INTEGER");
+    db.query("UPDATE threads SET created_at = 1001, created_at_ms = 1001300, first_user_message = ?").run(shortPrompt);
+    db.close();
+    shortRollout(path);
+    const theirs = join(home, "sessions", "rollout-bravo.jsonl");
+    writeFileSync(theirs, [
+      { type: "session_meta", payload: { id: "bravo", cwd: root } },
+      { type: "event_msg", payload: { type: "user_message", message: "Reply with exactly one word: bravo" } },
+      { type: "event_msg", payload: { type: "agent_message", message: "bravo" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    addShortThread("bravo", theirs, 1_006_700, "Reply with exactly one word: bravo");
+    foregrounds.set(root, [{ pid: 900001, argv: [join(root, "codex")] }]);
+    foregrounds.set("peer", [{ pid: 900002, argv: [join(root, "codex")] }]);
+    screen = shortScreen;
+    const bravo = "OpenAI Codex (v1.0)\n\n› Reply with exactly one word: bravo\n\n• bravo\n\n› ";
+    peerScreens.set("peer", bravo);
+    const panes = [fixturePane(root), fixturePane("peer")];
+    expect(await codexTranscriptPath(root, root, home, panes)).toBe(path);
+    expect(await codexTranscriptPath("peer", root, home, panes)).toBe(theirs);
+
+    // unsure stays unavailable: B's start unknown, B scrolled past its header, or this
+    // pane showing B's exchange as well
+    starts.delete(900002);
+    expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+    starts.set(900002, 1_005_000);
+    peerScreens.set("peer", "› Reply with exactly one word: bravo\n\n• bravo\n\n› ");
+    expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+    peerScreens.set("peer", bravo);
+    screen = bravo;
+    expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+    // a later exchange of this pane's own is no claim on B's: its first exchange is still its own
+    screen = `${shortScreen}Reply with exactly one word: bravo\n\n• bravo\n\n› `;
+    expect(await codexTranscriptPath(root, root, home, panes)).toBe(path);
+  } finally { bound.mockRestore(); }
+});
+
+shortIt("claims nothing for a long answer another pane shows under some other prompt (pasted, quoted)", async () => {
+  const created = await shortSession();
+  peerNewThread(created + 1000);
+  peerScreens.set("peer", `OpenAI Codex (v1.0)\n\n› what did the other pane say?\n\n• ${peerAnswer}\n\n› `);
+  expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer")])).toBeNull();
 });
 
 shortIt("handles a Windows stored cwd prefix using a Linux fixture process", async () => {
@@ -485,11 +614,12 @@ shortIt("rejects a thread already bound to another pane outside this directory",
   expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
 });
 
-shortIt("rejects unavailable process starts and timestamps before the actual process", async () => {
+shortIt("rejects unavailable process starts and timestamps before the process could have started", async () => {
   const created = await shortSession();
   const started = processStartedAt(foreground[0]!.pid)!;
   const db = new Database(join(home, "state_5.sqlite"));
-  db.query("UPDATE threads SET created_at_ms = ?").run(started - 1);
+  // below the start's lower bound on every platform (a tick on Linux, ps's second on macOS)
+  db.query("UPDATE threads SET created_at_ms = ?").run(started - 2500);
   db.close();
   expect(await resolve()).toBeNull();
   const restored = new Database(join(home, "state_5.sqlite"));

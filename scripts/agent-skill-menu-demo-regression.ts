@@ -95,7 +95,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: touch ? 844 : 800 }, hasTouch: touch, isMobile: touch, colorScheme: scheme, locale: "en-US" });
     try {
       await context.addInitScript((patched) => {
-        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: patched.scheme }));
+        if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: patched.scheme }));
         const sentSubmits: string[] = [];
         Object.assign(window, { skillCase: patched, sentSubmits });
         // every socket the page opens, the demo's stand-in included, records the text of each submit frame it sends

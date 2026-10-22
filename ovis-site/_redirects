@@ -1,0 +1,6 @@
+# The one-line installers and the browser demo are built with the app into GitHub Pages
+# (site/, herdrweb.dev); ovis.sh hands them on, so every link can name ovis.sh.
+/install.sh https://herdrweb.dev/install.sh 302
+/install.ps1 https://herdrweb.dev/install.ps1 302
+/demo https://herdrweb.dev/demo/ 302
+/demo/* https://herdrweb.dev/demo/:splat 302

@@ -6,14 +6,16 @@ import type { Machine } from "../shared/machines.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker } from "./completion.ts";
 import { sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { handleMachineRequest } from "./machine-api.ts";
+import { createServer } from "./index.ts";
 import { MachineManager } from "./machines.ts";
 import { createPushService } from "./push.ts";
 
 describe("slow structural roster refreshes", () => {
   for (const remote of [false, true]) {
     it(`publishes each slow ${remote ? "remote" : "local"} roster while structural changes continue`, async () => {
-      const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-test-slow-roster-"));
-      const workspace = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-slow-roster" });
+      const root = mkdtempSync(join(tmpdir(), "ovis-test-slow-roster-"));
+      const workspace = await workspaceCreate({ cwd: root, label: "ovis-test-slow-roster" });
       let manager: MachineManager | undefined;
       let bridge: ReturnType<typeof Bun.serve> | undefined;
       let pending: { snapshot: SessionSnapshot; resolve: (snapshot: SessionSnapshot) => void } | undefined;
@@ -107,4 +109,63 @@ describe("slow structural roster refreshes", () => {
       }
     });
   }
+});
+
+describe("workspace order evidence across a real bridge", () => {
+  it("relays the source's own move receipt, and the roster carries the source's pairs untouched", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ovis-test-order-bridge-"));
+    const first = await workspaceCreate({ cwd: root, label: "ovis-test-order-bridge-first" });
+    const second = await workspaceCreate({ cwd: root, label: "ovis-test-order-bridge-second" });
+    const managedBoot = process.env["OVIS_BOOT_ID"];
+    delete process.env["OVIS_BOOT_ID"];
+    const token = "test-order-bridge-token";
+    const bridge = createServer({ port: 0, hostname: "127.0.0.1", token, machines: false, stateDir: join(root, "bridge"), tailscaleOwner: null });
+    let clock = 0;
+    const manager = new MachineManager(join(root, "manager"), createPushService({ stateDir: root }), new CompletionTracker(null), sessionSnapshot, { bootId: "manager-boot", now: () => clock });
+    try {
+      const url = `http://127.0.0.1:${bridge.port}`;
+      const sourceBoot = ((await (await fetch(`${url}/api/health`, { headers: { authorization: `Bearer ${token}` } })).json()) as { web_ui: { boot_id: string } }).web_ui.boot_id;
+      type TestRuntime = { machine: Machine; endpoint?: { url: string; token: string }; ssh?: { close(): void } };
+      const drive = manager as unknown as { machines: Map<string, TestRuntime>; runtime(machine: Machine): TestRuntime; observe(runtime: TestRuntime): Promise<void> };
+      const runtime = drive.runtime({ id: "remote", name: "Order fixture", kind: "ssh", enabled: true, state: "connected", error: null, snapshot: null });
+      runtime.endpoint = { url, token };
+      runtime.ssh = { close() {} };
+      drive.machines.set("remote", runtime);
+      const remoteWhere = (check: (machine: Machine) => boolean) => new Promise<Machine>((resolve) => {
+        const stop = manager.subscribe((event) => {
+          const machine = event.type === "machines" ? event.machines.find((item) => item.id === "remote") : undefined;
+          if (machine && check(machine)) { queueMicrotask(stop); resolve(machine); }
+        });
+      });
+      const proved = remoteWhere((machine) => machine.source_boot_id === sourceBoot && machine.snapshot?.order_epoch === sourceBoot);
+      await drive.observe(runtime);
+      // the proof is the bridge's own health over the manager's connection, never the manager's boot
+      expect(await proved).toMatchObject({ source_boot_id: sourceBoot, snapshot: { order_epoch: sourceBoot, read_seq: 0 } });
+      const after = remoteWhere((machine) => (machine.snapshot?.read_seq ?? 0) >= 1);
+      const moved = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/remote/workspace/move", {
+        method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" },
+        body: JSON.stringify({ workspace_id: second.workspace.workspace_id, insert_index: 0 }),
+      }), manager);
+      expect(moved.status).toBe(200);
+      expect(await moved.json()).toEqual({ ok: true, order_epoch: sourceBoot, moved_seq: 1 });
+      expect((await after).snapshot).toMatchObject({ order_epoch: sourceBoot, read_seq: 1 });
+      const local = manager.list()[0]!;
+      expect(local.source_boot_id).toBe("manager-boot");
+      // a fresh query asks the bridge again, past the start interval
+      clock = 10_000;
+      const verified = await handleMachineRequest(new Request("http://127.0.0.1/api/machines?verify_source_boot=remote"), manager);
+      expect(verified.status).toBe(200);
+      const body = await verified.json() as { machines: Machine[]; verified_source_boot: unknown };
+      expect(body.verified_source_boot).toEqual({ machine_id: "remote", boot_id: sourceBoot });
+      expect(JSON.stringify(body)).not.toContain(token);
+      expect(body.machines.find((machine) => machine.id === "remote")?.snapshot).toMatchObject({ order_epoch: sourceBoot });
+    } finally {
+      manager.stop();
+      bridge.stop();
+      if (managedBoot === undefined) delete process.env["OVIS_BOOT_ID"]; else process.env["OVIS_BOOT_ID"] = managedBoot;
+      await workspaceClose(first.workspace.workspace_id).catch(() => {});
+      await workspaceClose(second.workspace.workspace_id).catch(() => {});
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

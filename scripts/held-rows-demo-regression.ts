@@ -59,7 +59,7 @@ const select = async (page: Page, pane: string): Promise<void> => {
 const writeQueue = (page: Page, pane: string, value: string): Promise<void> => page.evaluate(([key, next]) => {
   localStorage.setItem(key, next);
   window.dispatchEvent(new StorageEvent("storage", { key, newValue: next, storageArea: localStorage }));
-}, [`herdr-web-ui:queue:${pane}`, value] as const);
+}, [`ovis:queue:${pane}`, value] as const);
 
 try {
   await buildDemoApp(app);
@@ -105,8 +105,8 @@ try {
       const open = async (seed: Record<string, string>, pane: string, touch = false): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> => {
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: touch });
         await context.addInitScript((queues) => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
-          for (const [owner, value] of Object.entries(queues)) localStorage.setItem(`herdr-web-ui:queue:${owner}`, value);
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+          for (const [owner, value] of Object.entries(queues)) localStorage.setItem(`ovis:queue:${owner}`, value);
         }, seed);
         const page = await context.newPage();
         const errors: string[] = [];
@@ -215,7 +215,7 @@ try {
             const next = JSON.stringify({ ...queue, messages: queue.messages.slice(1) });
             localStorage.setItem(key, next);
             window.dispatchEvent(new StorageEvent("storage", { key, newValue: next, storageArea: localStorage }));
-          }, `herdr-web-ui:queue:${panes.web}`);
+          }, `ovis:queue:${panes.web}`);
           await toggle.waitFor();
           const edited = await heldOf(page);
           assert.equal(edited.rows, 1);

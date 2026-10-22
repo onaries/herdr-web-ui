@@ -1,6 +1,6 @@
 /**
  * Tests talk to their own herdr: a headless server for the named session
- * `herdr-web-ui-test` (HERDR_TEST_SESSION overrides), started on first use and left
+ * `ovis-test` (HERDR_TEST_SESSION overrides), started on first use and left
  * running for the next run. The workspaces, panes and agents the tests create never
  * show in the herdr the user works in.
  *
@@ -20,7 +20,7 @@ import { testShellEnv } from "./test-shell.ts";
 // resolved, so a fixture made under the unresolved path never matches the pane it is for
 process.env["TMPDIR"] = realpathSync(tmpdir());
 
-export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "herdr-web-ui-test";
+export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "ovis-test";
 
 /**
  * Where herdr puts a named session's socket: under XDG_CONFIG_HOME when it is set, on Windows too
@@ -34,7 +34,7 @@ export function testSocketPath(env: Record<string, string | undefined> = process
 }
 
 function herdrBinary(): string | null {
-  const configured = process.env["HERDR_WEB_HERDR_BIN"];
+  const configured = process.env["OVIS_HERDR_BIN"];
   if (configured) return configured;
   const found = Bun.which("herdr");
   return found ?? null;
@@ -65,7 +65,7 @@ export async function useTestHerdr(): Promise<string | null> {
   // to the default socket: a bare `HERDR_TEST_MODE=unit bun test` also loads the contract files,
   // and those would open their workspaces and stand-in agents in the herdr the user works in.
   if (process.env["HERDR_TEST_MODE"] === "unit") {
-    process.env["HERDR_SOCKET"] = join(tmpdir(), "herdr-web-ui-unit-tests-have-no-herdr.sock");
+    process.env["HERDR_SOCKET"] = join(tmpdir(), "ovis-unit-tests-have-no-herdr.sock");
     return null;
   }
   if (process.env["HERDR_TEST_LIVE"] === "1") return null;
@@ -113,7 +113,7 @@ export async function useTestHerdr(): Promise<string | null> {
   // some tests read "a live workspace" without owning one: keep one resident, as a
   // session in use always has
   if ((await sessionSnapshot(socket)).workspaces.length === 0) {
-    await workspaceCreate({ cwd: homedir(), label: "herdr-web-ui-test-resident" }, socket);
+    await workspaceCreate({ cwd: homedir(), label: "ovis-test-resident" }, socket);
   }
   process.env["HERDR_SOCKET"] = socket;
   return socket;

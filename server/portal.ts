@@ -5,7 +5,7 @@
  * Whatever a request asks, the guide's rules for a public proxy hold (docs/guide.md, Behind a
  * reverse proxy):
  *
- * - no address without a token, and none while HERDR_WEB_TAILSCALE_SERVE_ONLY says tailscale serve
+ * - no address without a token, and none while OVIS_TAILSCALE_SERVE_ONLY says tailscale serve
  *   is the only way in, not even one an earlier server left running;
  * - routed mode, which keeps the browser's Host and sends X-Forwarded-For and
  *   X-Forwarded-Proto: https, and drops a visitor's Tailscale-User-Login;
@@ -16,8 +16,12 @@
  *
  * Portal keeps retrying a relay it cannot use and never exits for it (v2.6.1), so the relay's
  * version is asked first and readiness has a deadline of its own.
+ *
+ * A Portal that was serving and then ends on its own is started again once, on the same relay,
+ * port and identity, after this server's own guards and the saved state say it still may; a
+ * second exit, or one before it was ever ready, is an error the user acts on.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PortalStatus } from "../shared/protocol.ts";
@@ -48,15 +52,22 @@ const PORTAL_ENV = ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP
 type Phase = PortalStatus["phase"];
 type Child = ReturnType<typeof Bun.spawn>;
 interface Guards {
-  /** HERDR_WEB_TOKEN is set */
+  /** OVIS_TOKEN is set */
   tokenSet: boolean;
-  /** HERDR_WEB_TAILSCALE_SERVE_ONLY: tailscale serve is declared the only way in */
+  /** OVIS_TAILSCALE_SERVE_ONLY: tailscale serve is declared the only way in */
   serveOnly: boolean;
 }
 interface StartRequest extends Guards {
   relay: string;
   /** this server's port, Portal's upstream */
   port: number;
+}
+/** what a relaunch must find unchanged: the exited child's saved pid and the identity it served with */
+interface Recovery {
+  pid: number;
+  identity: string;
+  /** how the exited child ended, for the error a failed relaunch leaves */
+  stopped: string;
 }
 interface SavedState {
   enabled: boolean;
@@ -269,6 +280,13 @@ export class PortalService {
   private versionRead: { at: number; bin: string | null; value: Promise<string | null> } | null = null;
   /** the port this service represents; a service for another port must not change the owner's saved choice */
   private serverPort: number | null = null;
+  /** this server's own token and serve-only answer, bound by createServer; a relaunch asks it, never a request */
+  private guards: (() => Guards) | null = null;
+  /** the child that printed its address, and the identity file it served with */
+  private readyChild: Child | null = null;
+  private readyIdentity: string | null = null;
+  /** the one relaunch an explicit start, a stop or the boot's resume allows has been used */
+  private recovered = false;
   private readonly dir: string;
 
   constructor(private readonly options: PortalServiceOptions) {
@@ -277,6 +295,11 @@ export class PortalService {
 
   private get identityPath(): string { return join(this.dir, "identity.json"); }
   private get statePath(): string { return join(this.dir, "state.json"); }
+
+  /** Binds what this server allows now, which a relaunch checks before it does anything and again before it spawns. */
+  authorize(guards: () => Guards): void {
+    this.guards = guards;
+  }
 
   private bin(): string | null {
     return this.options.bin ?? Bun.which("portal");
@@ -338,13 +361,19 @@ export class PortalService {
     this.url = null;
     this.error = null;
     this.lines = [];
-    this.launching = true;
-    const operation = ++this.operation;
-    void this.launch(request, operation)
-      // a start stopped meanwhile failed for no one
-      .catch((error: unknown) => { if (this.isCurrentStart(operation)) this.fail(messageOf(error)); })
-      .finally(() => { this.launching = false; });
+    this.recovered = false;
+    this.run(request, ++this.operation, null);
     return "started";
+  }
+
+  private run(request: StartRequest, operation: number, recovery: Recovery | null): void {
+    this.launching = true;
+    void this.launch(request, operation, recovery)
+      // a start stopped meanwhile failed for no one
+      .catch((error: unknown) => {
+        if (this.isCurrentStart(operation)) this.fail(recovery === null ? messageOf(error) : `${recovery.stopped} It was not restarted: ${messageOf(error)}${lastWords(this.lines)}`);
+      })
+      .finally(() => { this.launching = false; });
   }
 
   /** Takes this server's address down and remembers that it is off when this server owns the saved state. */
@@ -352,10 +381,11 @@ export class PortalService {
     this.operation++;
     this.url = null;
     this.error = null;
+    this.recovered = false;
     if (this.child !== null) {
       this.phase = "stopping";
       this.end(this.child);
-    } else if (this.phase === "starting" || this.phase === "error") {
+    } else if (this.phase === "starting" || this.phase === "recovering" || this.phase === "error") {
       // a start still asking its relay ends there
       this.phase = "idle";
     }
@@ -373,7 +403,7 @@ export class PortalService {
     });
     const child = this.child;
     if (child === null) {
-      if (this.phase === "starting") this.phase = "idle";
+      if (this.phase === "starting" || this.phase === "recovering") this.phase = "idle";
       return cleanup ?? Promise.resolve();
     }
     this.end(child);
@@ -396,10 +426,29 @@ export class PortalService {
   }
 
   private isCurrentStart(operation: number): boolean {
-    return !this.shutdownRequested && this.operation === operation && this.phase === "starting";
+    return !this.shutdownRequested && this.operation === operation && (this.phase === "starting" || this.phase === "recovering");
   }
 
-  private async launch({ relay, port }: StartRequest, operation: number): Promise<void> {
+  /** The identity file's digest; null when it is missing or unreadable, which no relaunch accepts. */
+  private identityDigest(): string | null {
+    try { return createHash("sha256").update(readFileSync(this.identityPath)).digest("hex"); } catch { return null; }
+  }
+
+  /** A relaunch goes ahead only while this server may open the address and the saved state is still the exited child's. */
+  private checkRecovery(relay: string, port: number, recovery: Recovery): void {
+    const guards = this.guards?.() ?? null;
+    if (guards === null) throw new Error("this server gave no authority to restart it. Start it again.");
+    const blocked = blockedBy(guards);
+    if (blocked === "token_required") throw new Error("OVIS_TOKEN is not set. Set it and restart the app before you start Portal again.");
+    if (blocked === "serve_only") throw new Error("OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in. Turn it off and restart the app before you start Portal again.");
+    const saved = this.saved();
+    if (!saved.enabled || saved.relay !== relay || saved.port !== port || saved.pid !== recovery.pid) throw new Error("its saved state changed meanwhile. Start it again.");
+    if (this.identityDigest() !== recovery.identity) throw new Error("its identity file changed or is missing, so the address would not be the same. Start it again.");
+  }
+
+  private async launch(request: StartRequest, operation: number, recovery: Recovery | null): Promise<void> {
+    const { relay, port } = request;
+    if (recovery !== null) this.checkRecovery(relay, port, recovery);
     const bin = this.bin();
     const version = bin === null ? null : await this.version(true);
     if (!this.isCurrentStart(operation)) return;
@@ -407,9 +456,13 @@ export class PortalService {
     if (!atLeast(version, PORTAL_VERSION)) throw new Error(`This PC has Portal ${version}; the app needs ${PORTAL_VERSION} or later.`);
     await this.checkRelay(relay);
     if (!this.isCurrentStart(operation)) return;
+    // a relaunch must not stop a Portal that another server recorded meanwhile
+    if (recovery !== null) this.checkRecovery(relay, port, recovery);
     // another server of this app on this identity: two Portals keep taking the address from each other
     await this.cleanLeftover(this.saved().pid);
     if (!this.isCurrentStart(operation)) return;
+    // what was true before the awaits may not be now
+    if (recovery !== null) this.checkRecovery(relay, port, recovery);
     // Portal needs its identity parent before it starts; it contains the saved address.
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     const child = Bun.spawn([
@@ -423,27 +476,63 @@ export class PortalService {
       "--hide",
     ], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: portalEnv(), windowsHide: true });
     this.child = child;
+    // a Portal whose pid cannot be kept is one the next server could not stop: it ends before its address can show
+    try {
+      this.save({ enabled: true, relay, port, pid: child.pid });
+    } catch (error) {
+      this.end(child);
+      await child.exited;
+      if (this.child === child) this.child = null;
+      if (this.ending === child) this.ending = null;
+      if (this.phase === "stopping") this.phase = "idle";
+      throw new Error(`Portal could not record its process, so it was stopped (${messageOf(error)}).`);
+    }
     const readyTimeoutMs = this.options.readyTimeoutMs ?? READY_TIMEOUT_MS;
     const deadline = setTimeout(() => {
-      if (this.child === child && this.phase === "starting") this.fail(`${relay} did not take the tunnel within ${Math.round(readyTimeoutMs / 1000)} seconds.${lastWords(this.lines)}`);
+      if (this.child === child && (this.phase === "starting" || this.phase === "recovering")) this.fail(`${relay} did not take the tunnel within ${Math.round(readyTimeoutMs / 1000)} seconds.${lastWords(this.lines)}`);
     }, readyTimeoutMs);
     const output = Promise.all([this.follow(child.stdout as ReadableStream<Uint8Array>, child), this.follow(child.stderr as ReadableStream<Uint8Array>, child)]);
     void child.exited.then(async (code) => {
       clearTimeout(deadline);
       await Promise.race([output, Bun.sleep(PIPE_GRACE_MS)]);
-      if (this.child !== child) return;
-      this.child = null;
-      this.url = null;
-      if (this.ending === child) {
-        this.ending = null;
-        if (this.phase !== "error") this.phase = "idle";
-        return;
-      }
-      this.phase = "error";
-      this.error = `Portal stopped on its own (exit ${code}).${lastWords(this.lines)}`;
+      this.exited(child, code, request, operation);
     });
-    // a Portal whose pid cannot be kept is one the next server could not stop
-    this.save({ enabled: true, relay, port, pid: child.pid });
+  }
+
+  private exited(child: Child, code: number | null, request: StartRequest, operation: number): void {
+    if (this.child !== child) return;
+    this.child = null;
+    this.url = null;
+    const wasReady = this.readyChild === child;
+    const identity = this.readyIdentity;
+    this.readyChild = null;
+    this.readyIdentity = null;
+    if (this.ending === child) {
+      this.ending = null;
+      if (this.phase !== "error") this.phase = "idle";
+      return;
+    }
+    const stopped = `Portal stopped on its own (exit ${code}).`;
+    if (wasReady && this.recovered) {
+      this.phase = "error";
+      this.error = `Portal stopped on its own again after one restart (exit ${code}).${lastWords(this.lines)}`;
+      return;
+    }
+    if (!wasReady || this.shutdownRequested || this.operation !== operation) {
+      this.phase = "error";
+      this.error = `${stopped}${lastWords(this.lines)}`;
+      return;
+    }
+    if (identity === null) {
+      this.phase = "error";
+      this.error = `${stopped} It was not restarted: its identity file could not be read. Start it again.${lastWords(this.lines)}`;
+      return;
+    }
+    // the one relaunch is spent before anything is awaited, so no second exit can take another
+    this.recovered = true;
+    this.phase = "recovering";
+    this.error = null;
+    this.run(request, operation, { pid: child.pid, identity, stopped });
   }
 
   /** Portal writes one event a line: the address once a relay takes the tunnel, and why it gave up on one. */
@@ -469,14 +558,18 @@ export class PortalService {
     this.lines = [...this.lines, line].slice(-OUTPUT_LINES);
     const url = readyUrl(line);
     if (url !== null) {
-      if (this.phase === "starting" || this.phase === "running") {
+      if (this.phase === "starting" || this.phase === "recovering" || this.phase === "running") {
+        if (this.readyChild !== child) {
+          this.readyChild = child;
+          this.readyIdentity = this.identityDigest();
+        }
         this.url = url;
         this.phase = "running";
       }
       return;
     }
     // the relay refused for good (a name it will not take, an incompatible relay): the process would stay up serving nothing
-    if (line.includes("relay operation failed permanently") && (this.phase === "starting" || this.phase === "running")) this.fail(line);
+    if (line.includes("relay operation failed permanently") && (this.phase === "starting" || this.phase === "recovering" || this.phase === "running")) this.fail(line);
   }
 
   /** A relay Portal cannot use is retried for good and silently: ask the relay first. */
@@ -620,9 +713,9 @@ export async function handlePortalRequest(request: Request, pathname: string, po
   if (relay === null) return fail("invalid_relay", "Give the relay as an https address, such as https://relay.example.com.", 400);
   let started: ReturnType<PortalService["start"]>;
   try { started = portal.start({ ...context, relay }); } catch (error) { return errorResponse(error); }
-  if (started === "token_required") return fail("token_required", "Set HERDR_WEB_TOKEN and restart the app before you start Portal: anyone on the internet can open its address.", 409);
-  if (started === "serve_only") return fail("serve_only", "Turn off HERDR_WEB_TAILSCALE_SERVE_ONLY and restart the app before you start Portal: it says tailscale serve is the only way in.", 409);
+  if (started === "token_required") return fail("token_required", "Set OVIS_TOKEN and restart the app before you start Portal: anyone on the internet can open its address.", 409);
+  if (started === "serve_only") return fail("serve_only", "Turn off OVIS_TAILSCALE_SERVE_ONLY and restart the app before you start Portal: it says tailscale serve is the only way in.", 409);
   if (started === "busy") return fail("portal_busy", "Portal is busy; try again once it is idle.", 409);
-  if (started === "state_in_use") return fail("portal_state_in_use", "Another server owns this Portal state directory. Give this server its own HERDR_WEB_STATE_DIR.", 409);
+  if (started === "state_in_use") return fail("portal_state_in_use", "Another server owns this Portal state directory. Give this server its own OVIS_STATE_DIR.", 409);
   return reply({ accepted: true }, 202);
 }

@@ -9,18 +9,18 @@ const root = join(import.meta.dir, "..");
 const manifest = readFileSync(join(root, "public", "manifest.webmanifest"), "utf8");
 const shell = readFileSync(join(root, "index.html"), "utf8");
 
-describe("HERDR_WEB_APP_NAME", () => {
-  const previous = process.env["HERDR_WEB_APP_NAME"];
+describe("OVIS_APP_NAME", () => {
+  const previous = process.env["OVIS_APP_NAME"];
   afterEach(() => {
-    if (previous === undefined) delete process.env["HERDR_WEB_APP_NAME"]; else process.env["HERDR_WEB_APP_NAME"] = previous;
+    if (previous === undefined) delete process.env["OVIS_APP_NAME"]; else process.env["OVIS_APP_NAME"] = previous;
   });
 
   it("is off when unset or blank", () => {
-    delete process.env["HERDR_WEB_APP_NAME"];
+    delete process.env["OVIS_APP_NAME"];
     expect(appName()).toBeNull();
-    process.env["HERDR_WEB_APP_NAME"] = "   ";
+    process.env["OVIS_APP_NAME"] = "   ";
     expect(appName()).toBeNull();
-    process.env["HERDR_WEB_APP_NAME"] = "  work laptop ";
+    process.env["OVIS_APP_NAME"] = "  work laptop ";
     expect(appName()).toBe("work laptop");
   });
 
@@ -39,11 +39,11 @@ describe("HERDR_WEB_APP_NAME", () => {
   });
 
   it("relates the manifest after the rename, and without one", () => {
-    delete process.env["HERDR_WEB_APP_NAME"];
+    delete process.env["OVIS_APP_NAME"];
     const plain = JSON.parse(manifestBody(manifest, "https://pc.example")) as Record<string, unknown>;
     expect(plain["name"]).toBe((JSON.parse(manifest) as Record<string, unknown>)["name"]);
     expect(plain["related_applications"]).toEqual([{ platform: "webapp", id: "https://pc.example/" }]);
-    process.env["HERDR_WEB_APP_NAME"] = "laptop";
+    process.env["OVIS_APP_NAME"] = "laptop";
     const named = JSON.parse(manifestBody(manifest, "https://pc.example")) as Record<string, unknown>;
     expect(named).toMatchObject({ name: "laptop", short_name: "laptop", id: "/" });
     expect(named["related_applications"]).toEqual([{ platform: "webapp", id: "https://pc.example/" }]);

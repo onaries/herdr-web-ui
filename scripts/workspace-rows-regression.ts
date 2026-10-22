@@ -75,7 +75,7 @@ try {
   // any of those silently target the user's current socket.
   assert.notEqual(process.env.HERDR_TEST_LIVE, "1", "Live-session mode is forbidden");
   assert.notEqual(process.env.HERDR_TEST_MODE, "unit", "This regression requires isolated herdr");
-  process.env.HERDR_TEST_SESSION ||= "herdr-web-ui-test";
+  process.env.HERDR_TEST_SESSION ||= "ovis-test";
   const { testSocketPath } = await import("./test-herdr.ts");
   assert.equal(process.env.HERDR_SOCKET, testSocketPath(), "test-herdr must select its isolated socket");
 
@@ -102,7 +102,7 @@ try {
   const split = await herdrRpc<{ pane: { pane_id: string } }>("pane.split", {
     target_pane_id: other.paneId, direction: "down", focus: false, cwd: otherCwd,
   });
-  const workspaceFoldKey = `herdr-web-ui:workspace-collapsed:local:${other.workspaceId}`;
+  const workspaceFoldKey = `ovis:workspace-collapsed:local:${other.workspaceId}`;
   server = createServer({
     port: 0, hostname: "127.0.0.1", token: "", tailscaleOwner: null,
     stateDir: join(root, "state"), codexHome: join(root, "codex"),
@@ -119,13 +119,13 @@ try {
   await context.addInitScript(({ ids, legacyFoldKey }) => {
     // Browser locale alone does not override the app's remembered language.
     // Preserve a language changed through Settings across subsequent reloads.
-    if (!localStorage.getItem("herdr-web-ui:settings")) {
+    if (!localStorage.getItem("ovis:settings")) {
       // Two lines: the task row (pane title over its place) is what this script reads; One line,
       // the default, is ui-regression's sidebar-rows check
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, sidebarRows: "two" }));
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertsOn: false, sidebarRows: "two" }));
       localStorage.setItem(legacyFoldKey, "1");
     }
-    for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
   }, { ids: [...fixtures.map(({ paneId }) => paneId), split.pane.pane_id], legacyFoldKey: workspaceFoldKey });
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
@@ -170,7 +170,7 @@ try {
       "the workspace row itself supports dragging");
   }
   // A fold stored while a single pane had a heading (0.3.44) must not hide a row that has no toggle.
-  const singleFoldKey = `herdr-web-ui:workspace-collapsed:local:${alpha.workspaceId}`;
+  const singleFoldKey = `ovis:workspace-collapsed:local:${alpha.workspaceId}`;
   await page.evaluate((key) => localStorage.setItem(key, "1"), singleFoldKey);
   await navigate(() => page.reload(), lone.paneId);
   await page.locator(paneSelector(alpha.paneId)).waitFor({ state: "visible" });

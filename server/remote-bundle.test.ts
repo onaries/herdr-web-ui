@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import { bundleFile, bundleManifestSource } from "./remote-bundle.ts";
+import { RemoteResponseTooLarge } from "./remote-json.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -18,7 +19,45 @@ function fixture(platform: string) {
   return { directory, manifest, bytes, sha256 };
 }
 
+/** `value` as JSON of `total` bytes, pulled one 64 KiB chunk at a time, with a receipt of how far it was read */
+function served(value: unknown, total: number, status = 200) {
+  const json = JSON.stringify(value);
+  const receipt = { sent: 0, cancelled: false };
+  let left = total - json.length;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (receipt.sent === total) { controller.close(); return; }
+      const chunk = receipt.sent === 0 ? Buffer.from("{") : left > 0 ? Buffer.alloc(Math.min(left, 64 * 1024), 0x20) : Buffer.from(json.slice(1));
+      if (receipt.sent > 0 && left > 0) left -= chunk.byteLength;
+      receipt.sent += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    cancel() { receipt.cancelled = true; },
+  }, { highWaterMark: 0 });
+  return { response: new Response(stream, { status }), receipt };
+}
+
 describe("remote bundle sources", () => {
+  it("caps the release manifest and cancels an answer it will not read", async () => {
+    const { bytes, sha256, directory } = fixture("linux-x64");
+    const cacheDir = join(directory, "cache"); mkdirSync(cacheDir);
+    writeFileSync(join(cacheDir, `${sha256}.tgz`), bytes);
+    const manifest = { version: REMOTE_BUNDLE_VERSION, assets: { "linux-x64": { url: "https://bundles.invalid/bundle.tgz", sha256 } } };
+    const options = { manifest: "https://releases.invalid/manifest.json", cacheDir };
+    let next = served(manifest, 1024 * 1024);
+    const release = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => next.response, { preconnect: fetch.preconnect }));
+    try {
+      // exactly 1 MiB is a manifest; the cached bundle answers without a download
+      expect((await bundleFile("linux-x64", new AbortController().signal, options)).path).toBe(join(cacheDir, `${sha256}.tgz`));
+      next = served(manifest, 1024 * 1024 + 1);
+      await expect(bundleFile("linux-x64", new AbortController().signal, options)).rejects.toBeInstanceOf(RemoteResponseTooLarge);
+      expect(next.receipt).toEqual({ sent: 1024 * 1024 + 1, cancelled: true });
+      next = served({ error: "missing" }, 4 * 1024 * 1024, 404);
+      await expect(bundleFile("linux-x64", new AbortController().signal, options)).rejects.toThrow("unavailable (HTTP 404)");
+      expect(next.receipt).toEqual({ sent: 0, cancelled: true });
+    } finally { release.mockRestore(); }
+  });
+
   it("installs each Mac architecture from local manifests without a published release", async () => {
     for (const platform of ["darwin-arm64", "darwin-x64"]) {
       const { directory, manifest, bytes, sha256 } = fixture(platform);
@@ -40,7 +79,7 @@ describe("remote bundle sources", () => {
 
   it("uses the release only when the requested platform has no local manifest", async () => {
     const { directory } = fixture("linux-x64");
-    expect(await bundleManifestSource("darwin-arm64", { directory, manifest: "" })).toBe(`https://github.com/devswha/herdr-web-ui/releases/download/remote-v${REMOTE_BUNDLE_VERSION}/manifest.json`);
+    expect(await bundleManifestSource("darwin-arm64", { directory, manifest: "" })).toBe(`https://github.com/devswha/ovis/releases/download/remote-v${REMOTE_BUNDLE_VERSION}/manifest.json`);
     await expect(bundleManifestSource("../linux-x64", { directory })).rejects.toThrow("Unsupported bundle platform");
   });
 

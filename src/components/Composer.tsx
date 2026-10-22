@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, MessageSquarePlus, Minimize2, Package, Plus, Puzzle, Square, SquareTerminal, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, MessageSquarePlus, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 
 import "./Composer.css";
 
@@ -44,7 +44,6 @@ import {
   slashCommandReplacement,
   submitNote,
   terminalCommand,
-  terminalCommandActions,
   typedTerminalCommand,
 } from "../lib/compose.ts";
 import { compactCommandText } from "../lib/compactContext.ts";
@@ -61,9 +60,8 @@ import { quickReplyButtons, useSettings } from "../lib/settings.ts";
 import { composerUsage, formatPercent, formatResetIn, HIGH_PERCENT, meterPercent, meterText, providerForAgent, statusWindows, usageName, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { BackgroundTasks } from "./BackgroundTasks.tsx";
-import { ComposerNotices } from "./ComposerNotices.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
-import { cachedPaneCommands, onPaneCommandsInvalidated } from "../lib/paneCommandCache.ts";
+import { usePaneCommands } from "../lib/usePaneCommands.ts";
 import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { AttachmentTooLargeError } from "../lib/api.ts";
@@ -97,13 +95,11 @@ export interface ComposerProps {
   greeting?: ReactNode;
   /** the pane's notices over the input card (PaneTerminal builds them): rows of its own, above the replies */
   notices?: ReactNode;
-  /** the connection's confirmed role: one that only observes is never offered Run in Terminal (PaneTerminal
-   * mounts no composer for it at all; this keeps the rule where the actions are drawn) */
+  /** the connection's confirmed role; PaneTerminal mounts no composer for observers */
   role?: ClientRole;
-  /** switches the pane to its terminal lens, where a terminal command is followed; none: the pane has no terminal to show */
-  onOpenTerminal?: () => void;
-  /** opens the folder's earlier sessions (SessionHistory): picking `resume` from the menu opens them, and the
-   * terminal command's row offers them; none: the pane's PC cannot list them */
+  /** a terminal command's peek has the pane: the composer stays, with its draft, but takes no input */
+  inert?: boolean;
+  /** opens the folder's earlier sessions instead of submitting /resume */
   onOpenHistory?: () => void;
   /** opens the New tab dialog on this pane's workspace, to start another agent with its model, effort, skills
    * and first message (NewSessionDialog); none: the pane has no workspace to add a tab to */
@@ -131,7 +127,7 @@ const ATTACH_LIMIT = 100;
  * and the message mentions its path. These image types also get a thumbnail.
  */
 const PREVIEW_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] as const;
-const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
+const SLASH_USAGE_KEY = "ovis:slash-usage";
 /** How long a Send tapped mid-composition waits for the keyboard to commit the word (as in TerminalInput). */
 const COMMIT_WAIT_MS = 300;
 export const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
@@ -251,7 +247,7 @@ export function Composer({
   greeting = null,
   notices = null,
   role = "interact",
-  onOpenTerminal,
+  inert = false,
   onOpenHistory,
   onOpenNewSession,
   cwd = null,
@@ -265,7 +261,7 @@ export function Composer({
   const activeRef = useRef(active);
   activeRef.current = active;
   const machineId = useMachineId();
-  const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
+  const { fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
@@ -292,7 +288,7 @@ export function Composer({
   const attachmentsRef = useRef<Attachment[]>([]);
   const removedAttachments = useRef(new Set<number>());
   const fileRequest = useRef(0);
-  const draftKey = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
+  const draftKey = `ovis:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
   const mounted = useRef(true);
@@ -301,7 +297,7 @@ export function Composer({
   const caretRef = useRef(caret);
   /** the restored text the box was filled with: only that fill is ever cleared, never the user's own typing */
   const filledFrom = useRef<string | null>(null);
-  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const commands = usePaneCommands(paneId, agent);
   const [files, setFiles] = useState<string[]>([]);
   /** the file list could not be read: said in the menu, never drawn as "no matches" */
   const [filesFailed, setFilesFailed] = useState(false);
@@ -333,11 +329,8 @@ export function Composer({
   /** the pane's `@` skills (OpenCode v2), listed with the files; a pane without them keeps the file menu alone */
   const atSkills = useMemo(() => atSkillCommands(commands), [commands]);
   const trigger = useMemo(() => activeTrigger(text, caret, { skills: syntax.skillTriggers.includes("$"), namespaced: syntax.namespaced, atSkills: atSkills.length > 0 }), [atSkills, syntax, caret, text]);
-  /** the terminal command the box holds, as the catalog tells it: never sent on its own */
+  /** /resume retains the session picker instead of being sent to the terminal. */
   const terminalTyped = useMemo(() => typedTerminalCommand(commands, text), [commands, text]);
-  /** the terminal command whose two ways on are offered over the card (its name): picked from the menu, or typed and sent */
-  const [terminalOffer, setTerminalOffer] = useState<string | null>(null);
-  const terminalOffered = terminalTyped !== null && terminalOffer === terminalTyped.name ? terminalTyped : null;
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
   /** a finished upload whose path waits for the message to be shortened: Send waits with it */
   const roomless = attachments.find((attachment) => attachment.state === "no-room");
@@ -371,26 +364,6 @@ export function Composer({
     }
     filledFrom.current = null;
   }, [restored]);
-
-  // a command that changed the agent's catalog (an outcome's catalog_changed) forgets this pane's
-  // list (lib/paneCommandCache.ts): the menu reads it again
-  const [catalogVersion, setCatalogVersion] = useState(0);
-  useEffect(() => onPaneCommandsInvalidated((pane, machine) => {
-    if (pane === paneId && machine === machineId) setCatalogVersion((version) => version + 1);
-  }), [paneId, machineId]);
-  useEffect(() => {
-    let live = true;
-    void cachedPaneCommands(paneId, machineId, agent, fetchPaneCommands)
-      .then((next) => {
-        if (live) setCommands(next);
-      })
-      .catch(() => {
-        if (live) setCommands([]);
-      });
-    return () => {
-      live = false;
-    };
-  }, [paneId, agent, catalogVersion]);
 
   useEffect(() => {
     const request = ++fileRequest.current;
@@ -585,10 +558,12 @@ export function Composer({
     highlightedSearchKey.current = searchKey;
   }
 
-  // dictation lands at the caret without taking focus (a phone's keyboard stays as it was)
+  // dictation lands at the caret without taking focus (a phone's keyboard stays as it was). An inert
+  // box (under a peek) is no dictation target: Mod+Shift+Space and the Escape that cancels a
+  // recording stay the terminal's
   const dictation = useDictation({
     mode: "chat",
-    active,
+    active: active && !inert,
     connected,
     phone: mobile,
     polish: settings.voicePolishChat,
@@ -713,12 +688,7 @@ export function Composer({
       setTextAndCaret(completed.text, completed.caret);
       setMenuDismissed(true);
       if (typeof choice !== "string") {
-        // a terminal command picked keeps the draft and offers its two ways on; nothing is sent.
-        // resume has a third: the folder's earlier sessions open at once, with a Resume of their own
-        if (terminalCommand(choice)) {
-          setTerminalOffer(choice.name);
-          if (choice.name === "resume") onOpenHistory?.();
-        }
+        if (terminalCommand(choice) && choice.name === "resume") onOpenHistory?.();
         const name = choice.name;
         setSlashUsage((current) => {
           const next = { ...current, [name]: (current[name] ?? 0) + 1 };
@@ -830,15 +800,11 @@ export function Composer({
   }, [placeWaitingMentions]);
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
-   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it; `viaTerminal`: Run in
-   * Terminal, which sends a terminal command and then opens the terminal. False: nothing went out, and
-   * nothing was offered; true: sent, or a terminal command's ways on were offered instead of a send */
-  const send = useCallback((clearDraft?: string, sendAnyway = false, viaTerminal = false): boolean => {
+   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. */
+  const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
     if (composingRef.current) return false;
-    if (!connected || uploading || roomless || sending || text.trim().length === 0) return false;
-    // a terminal command is never sent on its own: the two ways on stand over the card instead, and the
-    // suggestions for the text just sent close as they would after a send
-    if (!viaTerminal && terminalTyped !== null) { setTerminalOffer(terminalTyped.name); setMenuDismissed(true); return true; }
+    if (role === "observe" || !connected || uploading || roomless || sending || text.trim().length === 0) return false;
+    if (terminalTyped?.name === "resume" && onOpenHistory) { setMenuDismissed(true); onOpenHistory(); return true; }
     const sent = text;
     const sentAttachments = attachments;
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -855,8 +821,6 @@ export function Composer({
       setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
       for (const attachment of sentAttachments) { URL.revokeObjectURL(attachment.previewUrl); placedMentions.current.delete(attachment.id); }
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
-      // the command is on its way to the terminal: that is where it goes on
-      if (viaTerminal) { setTerminalOffer(null); onOpenTerminal?.(); }
     };
     if (!composerDrafts.begin(draftKey, sent)) return false;
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
@@ -870,7 +834,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [attachments, connected, dictation.forget, draftKey, onOpenTerminal, onSend, roomless, sending, terminalTyped, text, uploading]);
+  }, [attachments, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, terminalTyped, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
@@ -942,7 +906,9 @@ export function Composer({
     setNote(null);
     // a quick reply is not the box's text, so its note offers no send over a draft
     const settle = (result: boolean | string | DraftRefusal): void => {
-      if (mounted.current && typeof result !== "boolean") setNote(typeof result === "string" ? result : submitNote("input_draft", result.note));
+      if (mounted.current && typeof result !== "boolean") {
+        setNote(typeof result === "string" ? result : "plain" in result && result.plain === true ? result.note : submitNote("input_draft", result.note));
+      }
     };
     if (!composerDrafts.begin(draftKey)) return;
     try {
@@ -985,12 +951,6 @@ export function Composer({
         setMenuDismissed(true);
         return;
       }
-      // the terminal command's ways on are put away; the text stays, and Send offers them again
-      if (event.key === "Escape" && terminalOffered !== null) {
-        event.preventDefault();
-        setTerminalOffer(null);
-        return;
-      }
       // a draft puts Send where Stop was: Escape is then the Stop the agent's own input has
       if (event.key === "Escape" && connected && agentStatus === "working" && textRef.current.trim().length > 0) {
         event.preventDefault();
@@ -1011,7 +971,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, terminalOffered, trigger],
+    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
@@ -1094,34 +1054,10 @@ export function Composer({
     if (menuOpen) document.getElementById(`${menuId}-${selectedIndex}`)?.scrollIntoView({ block: "nearest" });
   }, [menuOpen, menuId, selectedIndex, choices]);
 
-  // The terminal command the box holds, picked or typed and sent: its two ways on stand over the
-  // card in a notice's anatomy, and the text stays as it is. Open Terminal shows the terminal and
-  // sends nothing; Run in Terminal sends through the usual path, then shows it. A role that only
-  // observes would get the first alone (terminalCommandActions), though PaneTerminal mounts no
-  // composer for it. The X puts the row away; Send brings it back.
-  const terminalRow = (() => {
-    if (terminalOffered === null) return null;
-    const command = `${terminalOffered.trigger ?? "/"}${terminalOffered.name}`;
-    const [before = "", after = ""] = t("{command} runs in the terminal; the chat cannot show what it does.", { command: "\u0000" }).split("\u0000");
-    const offered = terminalCommandActions(role);
-    return <ComposerNotices label={t("Terminal command")} onDismiss={() => setTerminalOffer(null)} notices={[{
-      id: `terminal:${terminalOffered.name}`, priority: "notice", revision: command, warning: false, mark: <SquareTerminal />,
-      text: <>{before}<code>{command}</code>{after}</>,
-      actions: <>
-        {terminalOffered.name === "resume" && onOpenHistory !== undefined && <button type="button" className="composer-notice-action" title={t("List this folder's earlier sessions. Nothing is sent.")} onClick={onOpenHistory}>{t("Earlier sessions…")}</button>}
-        {onOpenTerminal !== undefined && <button type="button" className="composer-notice-action" title={t("Show the terminal. Nothing is sent.")} onClick={onOpenTerminal}>{t("Open Terminal")}</button>}
-        {offered.includes("run") && <button type="button" className="composer-notice-action" title={t("Send {command}, then show the terminal.", { command })}
-          disabled={!connected || uploading || roomless !== undefined || sending}
-          onClick={() => send(undefined, false, true)}>{t("Run in Terminal")}</button>}
-      </>,
-    }]} />;
-  })();
-
   return (
-    <div className={`composer${notices || terminalRow ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
+    <div className={`composer${notices ? " has-notices" : ""}`} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined} inert={inert || undefined}>
       {greeting}
       {notices}
-      {terminalRow}
       {/* no Tab key on a phone: the suggestion can be a chip there that fills the box, when Settings asks for it */}
       {settings.suggestionChip && offered !== null && text === "" && (
         <div className="composer-quick composer-suggestion-row">
@@ -1405,9 +1341,10 @@ export function Composer({
             <Plus aria-hidden="true" />
           </button>
           {dictation.shown && <MicButton dictation={dictation} />}
-          {/* a mouse-driven window only, like the usage glance: a phone's card has no row to spare beside
-              the mic and the tasks chip, and its tab menu carries New tab with agent… already */}
-          {onOpenNewSession && role !== "observe" && !mobile && (
+          {/* only once this device turned it on (Settings → Chat → Composer; the composer's row stays minimal, and
+              the tab menu opens the same dialog), and in a mouse-driven window only, like the usage glance: a phone's
+              card has no row to spare beside the mic and the tasks chip, and its tab menu carries New tab with agent… already */}
+          {onOpenNewSession && settings.composerNewTabButton && role !== "observe" && !mobile && (
             <button
               type="button"
               className="icon-button composer-new-session"

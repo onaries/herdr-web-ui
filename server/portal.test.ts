@@ -24,7 +24,10 @@ interface StandIn {
   pids: () => number[];
 }
 
-/** A portal whose `expose` prints `says`, then the ready line unless `ready` is false, and runs until stopped. */
+/**
+ * A portal whose `expose` writes its identity file as Portal does, prints `says`, then the ready
+ * line unless `ready` is false, and runs until stopped. SIGUSR1 makes it end on its own (exit 3).
+ */
 function standIn(options: { version?: string; ready?: boolean; says?: string; ignoreTerm?: boolean; exitAfter?: boolean } = {}): StandIn {
   const dir = mkdtempSync(join(root, "bin-"));
   const path = join(dir, "portal");
@@ -36,8 +39,11 @@ function standIn(options: { version?: string; ready?: boolean; says?: string; ig
     `  version) echo '${options.version ?? "v2.6.1"}' ;;`,
     "  expose)",
     `    echo $$ >> '${pids}'`,
-    `    { printf '%s\\n' "$@"; echo "token=\${HERDR_WEB_TOKEN-unset} identity=\${IDENTITY_PATH-unset}"; } > '${seen}'`,
+    `    { printf '%s\\n' "$@"; echo "token=\${OVIS_TOKEN-unset} identity=\${IDENTITY_PATH-unset}"; } > '${seen}'`,
+    "    id=''; previous=''; for arg in \"$@\"; do [ \"$previous\" = --identity-path ] && id=\"$arg\"; previous=\"$arg\"; done",
+    "    [ -z \"$id\" ] || [ -f \"$id\" ] || echo '{\"fixture\":true}' > \"$id\"",
     options.ignoreTerm ? "    trap '' TERM" : "    trap 'exit 0' TERM",
+    "    trap 'exit 3' USR1",
     options.says ? `    echo '${options.says}' >&2` : "    :",
     options.ready === false ? "    :" : `    echo '2026-10-11T00:00:00Z INF service ready at ${ADDRESS}:443'`,
     options.exitAfter ? "    exit 3 ;;" : "    while :; do sleep 0.05; done ;;",
@@ -114,7 +120,7 @@ function seedSavedPortal(stateDir: string, pid: number | null = process.pid): vo
 }
 
 // what a server started by the herdr plugin may carry: its own token, and Portal's own settings
-const inherited = { HERDR_WEB_TOKEN: "do-not-pass-this-on", IDENTITY_PATH: "/somewhere/else.json" };
+const inherited = { OVIS_TOKEN: "do-not-pass-this-on", IDENTITY_PATH: "/somewhere/else.json" };
 const previous: Record<string, string | undefined> = {};
 beforeEach(() => {
   for (const [name, value] of Object.entries(inherited)) { previous[name] = process.env[name]; process.env[name] = value; }
@@ -470,7 +476,7 @@ describe("running Portal", () => {
     );
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
-      error: { code: "portal_state_in_use", message: expect.stringContaining("HERDR_WEB_STATE_DIR") },
+      error: { code: "portal_state_in_use", message: expect.stringContaining("OVIS_STATE_DIR") },
     });
     expect(alive(pid)).toBe(true);
     expect(readFileSync(join(stateDir, "portal", "state.json"), "utf8")).toContain('"port":7317');
@@ -483,12 +489,18 @@ describe("running Portal", () => {
     const portalDir = join(stateDir, "portal");
     mkdirSync(portalDir, { recursive: true, mode: 0o700 });
     const identityPath = join(portalDir, "identity.json");
-    const unrelated = Bun.spawn(["sh", "-c", "while :; do sleep 0.1; done", "sh", "expose", "--identity-path", identityPath], {
-      stdin: "ignore", stdout: "ignore", stderr: "ignore",
+    const unrelated = Bun.spawn(["sh", "-c", "echo READY; while :; do sleep 0.1; done", "sh", "expose", "--identity-path", identityPath], {
+      stdin: "ignore", stdout: "pipe", stderr: "ignore",
     });
     writeFileSync(join(portalDir, "state.json"), JSON.stringify({ enabled: true, relay: RELAY, port: 7317, pid: unrelated.pid }));
     const service = new PortalService({ stateDir, fetch: relay() });
     try {
+      // until the shell runs its script, /proc/<pid>/cmdline can still show the parent's argv or be empty mid-exec
+      const reader = unrelated.stdout.getReader();
+      try {
+        const ready = await bounded(reader.read(), "unrelated shell executed its script");
+        expect(new TextDecoder().decode(ready.value)).toBe("READY\n");
+      } finally { reader.releaseLock(); }
       await service.resume({ port: 7317, tokenSet: false, serveOnly: false });
       expect(alive(unrelated.pid)).toBe(true);
     } finally {
@@ -638,14 +650,23 @@ describe("running Portal", () => {
     expect(status.error).toContain("name taken");
   });
 
-  it("tells of a Portal that ended on its own, in its last words", async () => {
+  it("tells of a Portal that ended on its own again after its one restart, in its last words", async () => {
     const portal = standIn({ exitAfter: true, says: "2026-10-11T00:00:00Z ERR listener closed" });
     const service = new PortalService({ stateDir: mkdtempSync(join(root, "state-")), bin: portal.path, fetch: relay() });
-    service.start({ relay: RELAY, port: 7317, ...open });
-    const status = await until(service, (s) => s.phase === "error", "Portal ended");
-    expect(status.error).toContain("exit 3");
-    expect(status.error).toContain("listener closed");
-    expect(status.url).toBeNull();
+    service.authorize(() => open);
+    const watch = observe(service);
+    try {
+      const ended = watch.when(() => watch.internals.phase === "error", "Portal ended twice");
+      service.start({ relay: RELAY, port: 7317, ...open });
+      await ended;
+      const status = await service.status(open);
+      expect(status.error).toContain("again after one restart (exit 3)");
+      expect(status.error).toContain("listener closed");
+      expect(status.url).toBeNull();
+      expect(portal.pids()).toHaveLength(2);
+    } finally {
+      watch.dispose();
+    }
   });
 
   it("kills a Portal that does not stop when asked", async () => {
@@ -656,6 +677,397 @@ describe("running Portal", () => {
     service.stop();
     await until(service, (s) => s.phase === "idle", "Portal was killed");
     expect(alive(portal.pids()[0]!)).toBe(false);
+  });
+});
+
+interface Internals {
+  phase: PortalStatus["phase"];
+  url: string | null;
+  child: { pid: number } | null;
+  line(raw: string, child: unknown): void;
+  exited(child: { pid: number }, code: number | null, request: unknown, operation: number): void;
+  fail(text: string): void;
+  save(change: { pid?: number | null }): void;
+  launch(request: unknown, operation: number, recovery: unknown): Promise<void>;
+  version(fresh?: boolean): Promise<string | null>;
+  stopLeftover(pid: number | null): Promise<void>;
+}
+
+/**
+ * Follows the service's own steps (a line read, an exit handled, a failure, a save, a launch, an
+ * `expose` spawned) so a test waits for the step itself: every wait is registered before the
+ * action that sets it off.
+ */
+function observe(service: PortalService, options: { refuseSave?: (pid: number) => boolean } = {}) {
+  const internals = service as unknown as Internals;
+  const waiters = new Set<() => void>();
+  const events: string[] = [];
+  const phases: string[] = [internals.phase];
+  const launches: Promise<void>[] = [];
+  const exposes: number[] = [];
+  /** whether every earlier `expose` had exited when the next one was spawned */
+  const earlierGone: boolean[] = [];
+  const notify = () => {
+    if (phases.at(-1) !== internals.phase) phases.push(internals.phase);
+    for (const waiter of [...waiters]) waiter();
+  };
+  const line = internals.line.bind(service);
+  const exited = internals.exited.bind(service);
+  const fail = internals.fail.bind(service);
+  const save = internals.save.bind(service);
+  const launch = internals.launch.bind(service);
+  const spawn = Bun.spawn;
+  const spies = [
+    spyOn(internals, "line").mockImplementation((raw, child) => {
+      const before = internals.url;
+      line(raw, child);
+      if (before === null && internals.url !== null) events.push(`url:${(child as { pid: number }).pid}`);
+      notify();
+    }),
+    spyOn(internals, "exited").mockImplementation((child, code, request, operation) => {
+      events.push(`exit:${child.pid}`);
+      exited(child, code, request, operation);
+      notify();
+    }),
+    spyOn(internals, "fail").mockImplementation((text) => { fail(text); notify(); }),
+    spyOn(internals, "save").mockImplementation((change) => {
+      if (typeof change.pid === "number" && options.refuseSave?.(change.pid)) throw new Error("fixture: the disk is full");
+      save(change);
+      if (typeof change.pid === "number") events.push(`save:${change.pid}`);
+    }),
+    spyOn(internals, "launch").mockImplementation((request, operation, recovery) => {
+      const launched = launch(request, operation, recovery);
+      launches.push(launched.catch(() => undefined));
+      return launched;
+    }),
+    spyOn(Bun, "spawn").mockImplementation(((command: string[], spawnOptions?: Parameters<typeof Bun.spawn>[1]) => {
+      const expose = Array.isArray(command) && command[1] === "expose";
+      if (expose) earlierGone.push(exposes.every((pid) => !alive(pid)));
+      const child = spawn(command, spawnOptions);
+      if (expose) {
+        exposes.push(child.pid);
+        events.push(`spawn:${child.pid}`);
+        notify();
+      }
+      return child;
+    }) as typeof Bun.spawn),
+  ];
+  const when = (check: () => boolean, what: string): Promise<void> => bounded(new Promise<void>((resolve) => {
+    const waiter = () => {
+      if (!check()) return;
+      waiters.delete(waiter);
+      resolve();
+    };
+    waiters.add(waiter);
+    waiter();
+  }), what, 10_000);
+  return { internals, events, phases, launches, exposes, earlierGone, when, dispose: () => { for (const spy of spies) spy.mockRestore(); } };
+}
+
+/** A relay whose `gated`th question waits until released. */
+function gatedRelay(gated: number) {
+  const asked = deferred();
+  const release = deferred();
+  const answer = relay();
+  let calls = 0;
+  const fetch = (async (input: string | URL | Request) => {
+    calls += 1;
+    if (calls === gated) {
+      asked.resolve();
+      await release.promise;
+    }
+    return answer(input);
+  }) as unknown as typeof globalThis.fetch;
+  return { fetch, asked, release };
+}
+
+function savedState(stateDir: string): unknown {
+  return JSON.parse(readFileSync(join(stateDir, "portal", "state.json"), "utf8"));
+}
+
+describe("recovering Portal", () => {
+  it("recovers exactly once after a ready child exits", async () => {
+    const stateDir = mkdtempSync(join(root, "state-"));
+    const identityPath = join(stateDir, "portal", "identity.json");
+    const portal = standIn();
+    const gate = gatedRelay(2);
+    const service = new PortalService({ stateDir, bin: portal.path, fetch: gate.fetch });
+    service.authorize(() => open);
+    const watch = observe(service);
+    try {
+      const ready = watch.when(() => watch.internals.url !== null, "the first Portal was ready");
+      expect(service.start({ relay: RELAY, port: 7317, ...open })).toBe("started");
+      await ready;
+      const [first] = watch.exposes;
+      const identity = readFileSync(identityPath, "utf8");
+      const recovering = watch.when(() => watch.internals.phase === "recovering", "the recovery began");
+      process.kill(first!, "SIGUSR1");
+      await recovering;
+      await bounded(gate.asked.promise, "the relay was asked again");
+      expect(await service.status(open)).toMatchObject({ phase: "recovering", url: null, error: null, relay: RELAY });
+      expect(watch.exposes).toEqual([first!]);
+
+      const replaced = watch.when(() => watch.internals.url !== null, "the replacement was ready");
+      gate.release.resolve();
+      await replaced;
+      const [, second] = watch.exposes;
+      expect(watch.exposes).toHaveLength(2);
+      // the old child was gone before the new one was spawned
+      expect(watch.earlierGone).toEqual([true, true]);
+      expect(alive(first!)).toBe(false);
+      expect(await service.status(open)).toMatchObject({ phase: "running", url: ADDRESS, relay: RELAY, error: null });
+      const seen = portal.seen();
+      const flag = (name: string) => seen[seen.indexOf(name) + 1];
+      expect(flag("--relays")).toBe(RELAY);
+      expect(flag("--http-route")).toBe("/=7317");
+      expect(flag("--identity-path")).toBe(identityPath);
+      expect(readFileSync(identityPath, "utf8")).toBe(identity);
+      expect(savedState(stateDir)).toEqual({ enabled: true, relay: RELAY, port: 7317, pid: second });
+      // the replacement's pid was saved before its address was shown
+      expect(watch.events.indexOf(`save:${second}`)).toBeGreaterThan(watch.events.indexOf(`spawn:${second}`));
+      expect(watch.events.indexOf(`save:${second}`)).toBeLessThan(watch.events.indexOf(`url:${second}`));
+      expect(watch.phases).toEqual(["idle", "starting", "running", "recovering", "running"]);
+
+      const failed = watch.when(() => watch.internals.phase === "error", "the replacement's exit was an error");
+      process.kill(second!, "SIGUSR1");
+      await failed;
+      const status = await service.status(open);
+      expect(status).toMatchObject({ phase: "error", url: null });
+      expect(status.error).toContain("again after one restart (exit 3)");
+      // no third launch was begun: two expose processes at most for one start
+      expect(watch.launches).toHaveLength(2);
+      expect(watch.exposes).toHaveLength(2);
+      expect(portal.pids()).toEqual(watch.exposes);
+    } finally {
+      gate.release.resolve();
+      watch.dispose();
+      await bounded(service.shutdown(), "Portal shutdown settled");
+    }
+  });
+
+  it("does not restart a child that never reached ready", async () => {
+    const portal = standIn({ ready: false, exitAfter: true, says: "2026-10-11T00:00:00Z ERR listener closed" });
+    const service = new PortalService({ stateDir: mkdtempSync(join(root, "state-")), bin: portal.path, fetch: relay() });
+    service.authorize(() => open);
+    const watch = observe(service);
+    try {
+      const failed = watch.when(() => watch.internals.phase === "error", "the start ended");
+      service.start({ relay: RELAY, port: 7317, ...open });
+      await failed;
+      const status = await service.status(open);
+      expect(status.error).toContain("Portal stopped on its own (exit 3).");
+      expect(status.error).toContain("listener closed");
+      expect(status.url).toBeNull();
+      expect(watch.launches).toHaveLength(1);
+      expect(portal.pids()).toHaveLength(1);
+    } finally {
+      watch.dispose();
+    }
+  });
+
+  it("cancels recovery when stopped during relay verification", async () => {
+    // the relaunch held at each of its waits: the relay, the version, the proof that no leftover runs
+    for (const hold of ["relay", "version", "proof"] as const) {
+      for (const action of ["stop", "shutdown"] as const) {
+        const stateDir = mkdtempSync(join(root, "state-"));
+        const portal = standIn();
+        const gate = gatedRelay(hold === "relay" ? 2 : 0);
+        const service = new PortalService({ stateDir, bin: portal.path, fetch: gate.fetch });
+        service.authorize(() => open);
+        const watch = observe(service);
+        const held = deferred();
+        const release = deferred();
+        const internals = service as unknown as Internals;
+        const version = internals.version.bind(service);
+        const stopLeftover = internals.stopLeftover.bind(service);
+        let fresh = 0;
+        let proofs = 0;
+        const versionSpy = spyOn(internals, "version").mockImplementation(async (isFresh) => {
+          if (isFresh && ++fresh === 2 && hold === "version") { held.resolve(); await release.promise; }
+          return version(isFresh);
+        });
+        const proofSpy = spyOn(internals, "stopLeftover").mockImplementation(async (pid) => {
+          if (++proofs === 2 && hold === "proof") { held.resolve(); await release.promise; }
+          return stopLeftover(pid);
+        });
+        try {
+          const ready = watch.when(() => watch.internals.url !== null, "Portal was ready");
+          service.start({ relay: RELAY, port: 7317, ...open });
+          await ready;
+          const [first] = watch.exposes;
+          process.kill(first!, "SIGUSR1");
+          await bounded(hold === "relay" ? gate.asked.promise : held.promise, `the relaunch held at the ${hold}`);
+          expect(watch.internals.phase).toBe("recovering");
+          const stopped = action === "stop" ? (service.stop(), Promise.resolve()) : service.shutdown();
+          gate.release.resolve();
+          release.resolve();
+          await bounded(stopped, `${action} settled`);
+          await bounded(watch.launches[1]!, "the cancelled relaunch settled");
+          expect(watch.exposes).toEqual([first!]);
+          expect(await service.status(open)).toMatchObject({ phase: "idle", url: null, error: null });
+          // a stop is remembered as off; a shutdown leaves the choice for the next server
+          expect(savedState(stateDir)).toEqual({ enabled: action === "shutdown", relay: RELAY, port: 7317, pid: first });
+        } finally {
+          gate.release.resolve();
+          release.resolve();
+          versionSpy.mockRestore();
+          proofSpy.mockRestore();
+          watch.dispose();
+          await bounded(service.shutdown(), "Portal shutdown settled");
+        }
+      }
+    }
+  });
+
+  it("rechecks exposure and saved identity before recovery", async () => {
+    interface Case { name: string; at: "exit" | "spawn"; change: (context: { guards: typeof open; stateDir: string; identityPath: string; authorize: boolean }) => void; says: string }
+    const rewrite = (stateDir: string, change: Record<string, unknown>) => {
+      const path = join(stateDir, "portal", "state.json");
+      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), ...change }));
+    };
+    const cases: Case[] = [
+      { name: "no recovery authority", at: "exit", change: (c) => { c.authorize = false; }, says: "no authority" },
+      { name: "token removed", at: "exit", change: (c) => { c.guards.tokenSet = false; }, says: "OVIS_TOKEN" },
+      { name: "token removed before the spawn", at: "spawn", change: (c) => { c.guards.tokenSet = false; }, says: "OVIS_TOKEN" },
+      { name: "serve-only", at: "exit", change: (c) => { c.guards.serveOnly = true; }, says: "OVIS_TAILSCALE_SERVE_ONLY" },
+      { name: "serve-only before the spawn", at: "spawn", change: (c) => { c.guards.serveOnly = true; }, says: "OVIS_TAILSCALE_SERVE_ONLY" },
+      { name: "saved port changed", at: "exit", change: (c) => rewrite(c.stateDir, { port: 7318 }), says: "saved state changed" },
+      { name: "saved relay changed before the spawn", at: "spawn", change: (c) => rewrite(c.stateDir, { relay: "https://other.example" }), says: "saved state changed" },
+      { name: "saved pid taken over before the spawn", at: "spawn", change: (c) => rewrite(c.stateDir, { pid: 987654321 }), says: "saved state changed" },
+      { name: "identity changed", at: "exit", change: (c) => writeFileSync(c.identityPath, '{"other":true}'), says: "identity file" },
+      { name: "identity removed before the spawn", at: "spawn", change: (c) => rmSync(c.identityPath), says: "identity file" },
+    ];
+    for (const testCase of cases) {
+      const stateDir = mkdtempSync(join(root, "state-"));
+      const context = { guards: { ...open }, stateDir, identityPath: join(stateDir, "portal", "identity.json"), authorize: true };
+      const portal = standIn();
+      const service = new PortalService({ stateDir, bin: portal.path, fetch: relay() });
+      const watch = observe(service);
+      const internals = service as unknown as Internals;
+      const stopLeftover = internals.stopLeftover.bind(service);
+      const held = deferred();
+      const release = deferred();
+      let proofs = 0;
+      // the last wait before a relaunch spawns: what changes during it is seen
+      const proofSpy = spyOn(internals, "stopLeftover").mockImplementation(async (pid) => {
+        if (++proofs === 2 && testCase.at === "spawn") { held.resolve(); await release.promise; }
+        return stopLeftover(pid);
+      });
+      service.authorize(() => context.authorize ? context.guards : (undefined as unknown as typeof open));
+      try {
+        const ready = watch.when(() => watch.internals.url !== null, `${testCase.name}: Portal was ready`);
+        service.start({ relay: RELAY, port: 7317, ...open });
+        await ready;
+        const [first] = watch.exposes;
+        const failed = watch.when(() => watch.internals.phase === "error", `${testCase.name}: the recovery was refused`);
+        if (testCase.at === "exit") testCase.change(context);
+        process.kill(first!, "SIGUSR1");
+        if (testCase.at === "spawn") {
+          await bounded(held.promise, `${testCase.name}: the relaunch reached its last wait`);
+          testCase.change(context);
+          release.resolve();
+        }
+        await failed;
+        const status = await service.status(open);
+        expect(status.url).toBeNull();
+        expect(status.error).toContain("Portal stopped on its own (exit 3). It was not restarted:");
+        expect(status.error).toContain(testCase.says);
+        expect(watch.exposes).toEqual([first!]);
+        expect(watch.events.filter((event) => event.startsWith("url:"))).toEqual([`url:${first}`]);
+      } finally {
+        release.resolve();
+        proofSpy.mockRestore();
+        watch.dispose();
+        await bounded(service.shutdown(), `${testCase.name}: Portal shutdown settled`);
+      }
+    }
+  });
+
+  it("kills a replacement whose PID cannot be recorded", async () => {
+    const stateDir = mkdtempSync(join(root, "state-"));
+    const portal = standIn();
+    const service = new PortalService({ stateDir, bin: portal.path, fetch: relay() });
+    service.authorize(() => open);
+    let refuse = false;
+    const watch = observe(service, { refuseSave: () => refuse });
+    try {
+      const ready = watch.when(() => watch.internals.url !== null, "Portal was ready");
+      service.start({ relay: RELAY, port: 7317, ...open });
+      await ready;
+      const [first] = watch.exposes;
+      refuse = true;
+      const failed = watch.when(() => watch.internals.phase === "error", "the unrecorded replacement failed");
+      process.kill(first!, "SIGUSR1");
+      await failed;
+      const [, second] = watch.exposes;
+      expect(second).toBeNumber();
+      // stopped and awaited before the failure was told; its address was never read, let alone shown
+      expect(alive(second!)).toBe(false);
+      expect(watch.events).not.toContain(`url:${second}`);
+      expect(watch.internals.child).toBeNull();
+      const status = await service.status(open);
+      expect(status).toMatchObject({ phase: "error", url: null });
+      expect(status.error).toContain("could not record its process");
+      // the saved record still names the pid it had, and no more were started
+      expect(savedState(stateDir)).toEqual({ enabled: true, relay: RELAY, port: 7317, pid: first });
+      expect(watch.exposes).toHaveLength(2);
+      expect(watch.launches).toHaveLength(2);
+    } finally {
+      watch.dispose();
+      await bounded(service.shutdown(), "Portal shutdown settled");
+    }
+  });
+
+  it("resets recovery on an explicit new start and boot resume", async () => {
+    const stateDir = mkdtempSync(join(root, "state-"));
+    const portal = standIn();
+    const service = new PortalService({ stateDir, bin: portal.path, fetch: relay() });
+    service.authorize(() => open);
+    const watch = observe(service);
+    const crashAndRecover = async (what: string) => {
+      const pid = watch.internals.child!.pid;
+      const back = watch.when(() => watch.internals.url !== null && watch.internals.child?.pid !== pid, `${what}: the replacement was ready`);
+      process.kill(pid, "SIGUSR1");
+      await back;
+    };
+    try {
+      let ready = watch.when(() => watch.internals.url !== null, "Portal was ready");
+      service.start({ relay: RELAY, port: 7317, ...open });
+      await ready;
+      await crashAndRecover("the first start");
+      const idle = watch.when(() => watch.internals.phase === "idle", "Portal stopped");
+      service.stop();
+      await idle;
+      ready = watch.when(() => watch.internals.url !== null, "Portal was ready again");
+      expect(service.start({ relay: RELAY, port: 7317, ...open })).toBe("started");
+      await ready;
+      await crashAndRecover("the explicit new start");
+      expect(watch.exposes).toHaveLength(4);
+      expect(watch.launches).toHaveLength(4);
+    } finally {
+      watch.dispose();
+      await bounded(service.shutdown(), "Portal shutdown settled");
+    }
+
+    // the shutdown kept the choice: the next server resumes it with a recovery of its own
+    const next = new PortalService({ stateDir, bin: portal.path, fetch: relay() });
+    next.authorize(() => open);
+    const nextWatch = observe(next);
+    try {
+      const ready = nextWatch.when(() => nextWatch.internals.url !== null, "the resumed Portal was ready");
+      await next.resume({ port: 7317, ...open });
+      await ready;
+      const pid = nextWatch.internals.child!.pid;
+      const back = nextWatch.when(() => nextWatch.internals.url !== null && nextWatch.internals.child?.pid !== pid, "the resumed Portal recovered");
+      process.kill(pid, "SIGUSR1");
+      await back;
+      expect(nextWatch.exposes).toHaveLength(2);
+      expect(await next.status(open)).toMatchObject({ phase: "running", url: ADDRESS });
+    } finally {
+      nextWatch.dispose();
+      await bounded(next.shutdown(), "the resumed Portal shutdown settled");
+    }
+    expect(portal.pids()).toHaveLength(6);
   });
 });
 
@@ -693,5 +1105,33 @@ describe("the Portal endpoint", () => {
     await until(service, (s) => s.phase === "idle", "Portal stopped");
     expect((await handlePortalRequest(new Request(url, { method: "DELETE" }), "/api/portal", service, server)).status).toBe(405);
     expect((await handlePortalRequest(post("install"), "/api/portal/install", service, server)).status).toBe(405);
+  });
+
+  it("answers recovering without an address, refuses a start meanwhile and lets Stop end it", async () => {
+    const portal = standIn();
+    const gate = gatedRelay(2);
+    const service = new PortalService({ stateDir: mkdtempSync(join(root, "state-")), bin: portal.path, fetch: gate.fetch });
+    service.authorize(() => open);
+    const watch = observe(service);
+    const status = async () => await (await handlePortalRequest(new Request(url), "/api/portal", service, server)).json() as PortalStatus;
+    try {
+      const ready = watch.when(() => watch.internals.url !== null, "Portal was ready");
+      expect((await handlePortalRequest(post("start"), "/api/portal/start", service, server)).status).toBe(202);
+      await ready;
+      expect(await status()).toMatchObject({ phase: "running", url: ADDRESS });
+      process.kill(watch.exposes[0]!, "SIGUSR1");
+      await bounded(gate.asked.promise, "the relaunch asked the relay");
+      expect(await status()).toMatchObject({ phase: "recovering", url: null, error: null, relay: RELAY });
+      expect(await code(await handlePortalRequest(post("start"), "/api/portal/start", service, server))).toBe("portal_busy");
+      expect((await handlePortalRequest(post("stop", {}), "/api/portal/stop", service, server)).status).toBe(202);
+      gate.release.resolve();
+      await bounded(watch.launches[1]!, "the cancelled relaunch settled");
+      expect(await status()).toMatchObject({ phase: "idle", url: null, error: null });
+      expect(watch.exposes).toHaveLength(1);
+    } finally {
+      gate.release.resolve();
+      watch.dispose();
+      await bounded(service.shutdown(), "Portal shutdown settled");
+    }
   });
 });

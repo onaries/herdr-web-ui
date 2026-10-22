@@ -1,6 +1,7 @@
 import { buildXtermSource } from "./scripts/build-xterm.ts";
 import { compressedAssets } from "./scripts/compressed-assets.ts";
 import { serviceWorkerBuild } from "./scripts/service-worker-build.ts";
+import { themeBootstrapBuild } from "./scripts/theme-bootstrap-build.ts";
 import { defineConfig, normalizePath, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -30,7 +31,8 @@ const buildRevision: Plugin = {
 };
 
 export default defineConfig({
-  plugins: [react(), thirdPartyNotices, buildRevision, compressedAssets(), serviceWorkerBuild()],
+  // the theme boot script is emitted before compressedAssets and serviceWorkerBuild read the bundle
+  plugins: [react(), thirdPartyNotices, buildRevision, themeBootstrapBuild(), compressedAssets(), serviceWorkerBuild()],
   define: {
     __APP_REVISION__: JSON.stringify(revision),
     __APP_VERSION__: JSON.stringify((JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version),

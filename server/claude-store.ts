@@ -32,7 +32,10 @@ function isClaudeExecutable(text = ""): boolean {
 /** A Claude Code process in herdr's process info. */
 export function isClaudeProcess(entry: { name?: string; argv0?: string; argv?: readonly string[] }): boolean {
   // macOS keeps the executable name "node" for npm installs; the process title is argv0.
-  return isClaudeExecutable(entry.name) || isClaudeExecutable(entry.argv0) || isClaudeExecutable(entry.argv?.[0]);
+  if (isClaudeExecutable(entry.name) || isClaudeExecutable(entry.argv0) || isClaudeExecutable(entry.argv?.[0])) return true;
+  // the native build runs under its version as the name and titles itself "Claude": both its
+  // argv0 and its argv[0] say so, which one field alone does not prove
+  return /^\d+\.\d+\.\d+$/.test(entry.name ?? "") && entry.argv0 === "Claude" && entry.argv?.[0] === "Claude";
 }
 
 /** Java's String.hashCode, which Claude Code uses for the suffix of a long name. */

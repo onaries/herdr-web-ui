@@ -34,7 +34,7 @@ export class MessageQueueStore {
   refresh(owner: string): void {
     if (this.unsaved.has(owner)) return;
     try {
-      const raw = this.storage().getItem(`herdr-web-ui:queue:${owner}`);
+      const raw = this.storage().getItem(`ovis:queue:${owner}`);
       if (this.saved.has(owner) && raw === this.saved.get(owner)) return;
       this.queues.delete(owner);
       this.read(owner);
@@ -46,7 +46,7 @@ export class MessageQueueStore {
     const cached = this.queues.get(owner);
     if (cached) return cached;
     let raw: string | null = null;
-    try { raw = this.storage().getItem(`herdr-web-ui:queue:${owner}`); } catch { /* private mode */ }
+    try { raw = this.storage().getItem(`ovis:queue:${owner}`); } catch { /* private mode */ }
     let messages: HeldMessage[] = raw ? [{ id: newId(), text: raw }] : [];
     try {
       const data = JSON.parse(raw ?? "null");
@@ -68,7 +68,7 @@ export class MessageQueueStore {
   private write(owner: string, messages: HeldMessage[]): void {
     this.queues.set(owner, messages);
     try {
-      const key = `herdr-web-ui:queue:${owner}`;
+      const key = `ovis:queue:${owner}`;
       const raw = messages.length ? JSON.stringify({ version: 1, messages }) : null;
       if (raw !== null) this.storage().setItem(key, raw);
       else this.storage().removeItem(key);
@@ -97,7 +97,7 @@ export const messageQueues = new MessageQueueStore();
 
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
-    const prefix = "herdr-web-ui:queue:";
+    const prefix = "ovis:queue:";
     if (event.key?.startsWith(prefix)) messageQueues.refresh(event.key.slice(prefix.length));
   });
 }

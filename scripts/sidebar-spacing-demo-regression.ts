@@ -55,7 +55,7 @@ try {
         hasTouch: mobile,
         locale: "en-US",
       });
-      await context.addInitScript(() => localStorage.removeItem("herdr-web-ui:pc-collapsed:local"));
+      await context.addInitScript(() => localStorage.removeItem("ovis:pc-collapsed:local"));
       const page = await context.newPage();
       await page.goto(`http://127.0.0.1:${server.port}/app/`);
       await page.locator(".conn-live").waitFor({ state: "attached" });

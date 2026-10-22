@@ -45,7 +45,7 @@ Recommended: use (1) for repeatable automation, do one manual pass on (2), and u
 
 ## Reaching the app from a remote device
 
-Remote devices cannot reach Tailscale 100.x addresses. `tailscale funnel <port>` publishes a public `https://<node>.<tailnet>.ts.net` address with a certificate (ports 443, 8443, 10000); HTTPS also makes the PWA installable. This exposes the app to the internet: set `HERDR_WEB_TOKEN`, and turn Funnel off after the session. For the local emulator, `adb reverse` to `localhost` avoids this, and `http://localhost` counts as a secure context.
+Remote devices cannot reach Tailscale 100.x addresses. `tailscale funnel <port>` publishes a public `https://<node>.<tailnet>.ts.net` address with a certificate (ports 443, 8443, 10000); HTTPS also makes the PWA installable. This exposes the app to the internet: set `OVIS_TOKEN`, and turn Funnel off after the session. For the local emulator, `adb reverse` to `localhost` avoids this, and `http://localhost` counts as a secure context.
 
 ## Recipe: local emulator
 

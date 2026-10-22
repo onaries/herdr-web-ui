@@ -1,0 +1,40 @@
+ [0m[38;2;111;71;67mUsage: /btw <question>[0m                                                                                                
+[0m[38;2;255;231;220m[48;2;42;21;21m [0m[38;2;255;106;61m[48;2;42;21;21m⬢ gpt-6-astra ⚡ · ◒ med · [0m[38;2;125;211;199m[48;2;42;21;21m5.4%[0m[48;2;42;21;21m [0m[38;2;111;71;67m[48;2;42;21;21m/[0m[38;2;255;231;220m[48;2;42;21;21m [0m[38;2;255;215;168m[48;2;42;21;21m⑂ main [0m[38;2;216;74;74m[48;2;42;21;21m?1[0m[48;2;42;21;21m [0m[38;2;111;71;67m[48;2;42;21;21m/[0m[38;2;255;231;220m[48;2;42;21;21m [0m[38;2;255;138;101m[48;2;42;21;21m🗑 claude-1000/pr2-rec/gjc/proj[0m[48;2;42;21;21m [0m[38;2;127;29;29m─────[0m[38;2;255;231;220m[48;2;42;21;21m ⏱ 7d [0m[38;2;255;77;94m[48;2;42;21;21m0%[0m[38;2;185;143;134m[48;2;42;21;21m (6d 2h)[0m[48;2;42;21;21m [0m[38;2;111;71;67m[48;2;42;21;21m/[0m[38;2;255;231;220m[48;2;42;21;21m [0m[38;2;255;106;61m[48;2;42;21;21m(sub)[0m[48;2;42;21;21m [0m[38;2;111;71;67m[48;2;42;21;21m/[0m[38;2;255;231;220m[48;2;42;21;21m [0m[38;2;111;71;67m[48;2;42;21;21mv0.18.12[0m[48;2;42;21;21m [0m
+[0m[38;2;127;29;29m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+                                                                                                                       
+[0m[38;2;245;184;75mAdd MiniMax/GLM presets with /provider add --preset <id>; custom API providers with /provider add --compat             [0m
+[0m[38;2;245;184;75m<openai|anthropic> --provider <id> --base-url <url> --api-key-env <ENV> (--model <model> | --discover) (or gjc setup   [0m
+[0m[38;2;245;184;75mprovider); OAuth/subscription with /provider login [provider-id] or /login [provider-id]; then run /model for DEFAULT, [0m
+[0m[38;2;245;184;75mEXECUTOR, ARCHITECT, PLANNER, and CRITIC.[0m                                                                              
+                                                                                                                       
+[0m[38;2;255;106;61mModel presets[0m                                                                                                          
+[0m[38;2;185;143;134mCurrent: preset [0m[38;2;255;106;61mASTRA-Default[0m · openai-codex/gpt-6-astra (medium)                                                      
+[0m[38;2;111;71;67m  DEFAULT: openai-codex/gpt-6-astra (medium)[0m                                                                           
+[0m[38;2;111;71;67m  EXECUTOR: openai-codex/gpt-6-luna (max)[0m                                                                              
+[0m[38;2;111;71;67m  PLANNER: openai-codex/gpt-6-astra (xhigh)[0m                                                                            
+[0m[38;2;111;71;67m  CRITIC: openai-codex/gpt-6.1-sol (xhigh)[0m                                                                             
+[0m[38;2;111;71;67m  ARCHITECT: openai-codex/gpt-6.1-sol (xhigh)[0m                                                                          
+                                                                                                                       
+> [0m[7m [0m                                                                                                                    
+                                                                                                                       
+[0m[38;2;255;106;61m❯ ✓ CODEX[0m[38;2;185;143;134m (current)[0m                                                                                                    
+  [0m[38;2;111;71;67m✗ OPENCODEGO[0m                                                                                                         
+  [0m[38;2;111;71;67m✗ COMMAND CODE GOAT[0m                                                                                                  
+  [0m[38;2;111;71;67m✗ macOS Local (oMLX)[0m                                                                                                 
+  ✓ OPEN WEIGHT MODELS (PROVIDER AGNOSTIC)                                                                             
+  ✓ CLAUDE                                                                                                             
+  ✓ GLM                                                                                                                
+  ✓ KIMI CODING PLAN                                                                                                   
+  [0m[38;2;111;71;67m✗ MIMO[0m                                                                                                               
+  ✓ GROK                                                                                                               
+  ✓ CURSOR                                                                                                             
+  [0m[38;2;111;71;67m✗ MINIMAX[0m                                                                                                            
+  ✓ ALIBABA TOKEN PLAN                                                                                                 
+  ✓ COMBOS                                                                                                             
+  ✓ CUSTOM                                                                                                             
+  [0m[38;2;111;71;67mAlready saved as ASTRA-Default[0m                                                                                       
+  Image Role: No image model set                                                                                       
+  Smart routing setup                                                                                                  
+  Browse all models                                                                                                    
+                                                                                                                       
+[0m[38;2;127;29;29m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m

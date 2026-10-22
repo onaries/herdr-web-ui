@@ -117,7 +117,7 @@ process.stdin.on("data", chunk => {
 
 /** One secret entered on a pane whose terminal is mirrored (a herdr that cannot attach), herdr behind the proxy. */
 async function mirroredSecret(refuse: boolean, screens?: { visible: string; detection: string }) {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-secret-mirror-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-secret-mirror-"));
   const { script, resultFile } = standIn(root);
   const herdr = herdrSocketPath();
   const proxy = herdrProxy(join(root, "herdr.sock"), herdr);
@@ -136,7 +136,7 @@ async function mirroredSecret(refuse: boolean, screens?: { visible: string; dete
   };
   try {
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
-      "workspace.create", { label: "herdr-web-ui-test-secret-mirror", cwd: root, focus: false }, herdr,
+      "workspace.create", { label: "ovis-test-secret-mirror", cwd: root, focus: false }, herdr,
     );
     workspace = created.workspace.workspace_id;
     const pane = created.root_pane.pane_id;
@@ -215,7 +215,7 @@ it("a secret's live prompt is validated even when the viewport is scrolled away 
 }, 15_000);
 
 it("secret frames validate prompts and authority, never queue, and type one no-echo line", async () => {
-  const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-secret-"));
+  const root = mkdtempSync(join(tmpdir(), "ovis-secret-"));
   const { script, resultFile } = standIn(root);
   const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
   let workspace: string | undefined;
@@ -226,7 +226,7 @@ it("secret frames validate prompts and authority, never queue, and type one no-e
     while (!(await predicate())) { if (Date.now() > deadline) throw new Error("Secret contract deadline"); await Bun.sleep(25); }
   };
   try {
-    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-secret" });
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-secret" });
     workspace = created.workspace.workspace_id;
     const pane = created.root_pane.pane_id;
     await paneSendText(pane, `exec '${Bun.which("node")}' '${script}'\n`);

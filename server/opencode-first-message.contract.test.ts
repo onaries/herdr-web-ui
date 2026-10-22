@@ -18,7 +18,7 @@ import { closeOpenCodeNative } from "./opencode-native.ts";
 import { forgetOpenCodeService, openCodeServiceOptions } from "./opencode-service.ts";
 import type { PanePromptResponse } from "../shared/protocol.ts";
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-opencode-first-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-opencode-first-"));
 const standIn = join(root, "bin", "opencode");
 const SESSION = "ses_firstMessage01";
 const workspaces: string[] = [];
@@ -76,7 +76,7 @@ afterAll(async () => {
 
 /** A new OpenCode pane (the stand-in), its session reported or not, and the create route's first message for it, typed when it is first ready. */
 async function firstMessage(label: string, session: string | null, cwd = root) {
-  const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-opencode-first-${label}` });
+  const created = await workspaceCreate({ cwd, label: `ovis-test-opencode-first-${label}` });
   workspaces.push(created.workspace.workspace_id);
   const pane = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: pane, text: `exec ${standIn} ${label}\n` });

@@ -88,7 +88,7 @@ function transcript(id: string, store = join(root, ".claude"), answer = `Answer 
 }
 
 async function pane(id: string, configDir?: string): Promise<{ pane: string; pid: number }> {
-  const created = await herdrRpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd: root, label: "herdr-web-ui-test-claude-session", focus: false });
+  const created = await herdrRpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd: root, label: "ovis-test-claude-session", focus: false });
   workspaces.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   let ready: (pid: number) => void = () => {};

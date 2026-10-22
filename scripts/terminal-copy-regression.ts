@@ -9,7 +9,7 @@ import { herdrRpc, paneSendText, workspaceCreate, workspaceClose } from "../serv
 /** A plain left drag in the desktop terminal selects and copies instead of reaching herdr. */
 export async function checkTerminalCopy(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-copy-ui-"));
-  const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-copy-ui" });
+  const created = await workspaceCreate({ cwd: root, label: "ovis-test-copy-ui" });
   const pane = created.root_pane.pane_id;
   const script = join(root, "show.cjs");
   writeFileSync(script, `
@@ -22,7 +22,7 @@ setInterval(() => {}, 1000);
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   try {
     await context.addInitScript((id) => {
-      localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
+      localStorage.setItem(`ovis:view:${id}`, "terminal");
       // WebKit requires the write to start in the gesture, even when its text is
       // fetched later. Record this boundary without granting Chromium a free pass
       // through its persistent clipboard-write permission.
@@ -226,7 +226,7 @@ setInterval(() => {}, 1000);
     const insecure = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     try {
       await insecure.addInitScript((id) => {
-        localStorage.setItem(`herdr-web-ui:view:${id}`, "terminal");
+        localStorage.setItem(`ovis:view:${id}`, "terminal");
         Object.defineProperty(Navigator.prototype, "clipboard", { get: () => undefined });
         document.addEventListener("copy", (event) => {
           (window as any).copied = event.clipboardData?.getData("text/plain");

@@ -86,7 +86,7 @@ try {
           ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US", colorScheme: theme }
           : { viewport: { width: 1280, height: 900 }, locale: "en-US", colorScheme: theme });
         try {
-          await context.addInitScript((value) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: value })), theme);
+          await context.addInitScript((value) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: value })), theme);
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
@@ -125,7 +125,7 @@ try {
       }
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
       try {
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", sidebarRows: "two" })));
+        await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", sidebarRows: "two" })));
         const page = await context.newPage();
         await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(panes.api)}`);
         await page.locator(".workspace-copy.is-two-line").first().waitFor();

@@ -8,7 +8,7 @@ interface FilePreview {
   machineId: string;
   presentation?: FilePresentation;
 }
-const HISTORY_KEY = "herdr-web-ui:file-preview";
+const HISTORY_KEY = "ovis:file-preview";
 
 function previewFromState(state: unknown): FilePreview | null {
   if (state === null || typeof state !== "object") return null;

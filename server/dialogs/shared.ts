@@ -67,7 +67,6 @@ type Responder =
   | "claude-confirm"
   | "claude-held"
   | "claude-goal"
-  | "claude-rewind"
   | "claude-model"
   | "claude-effort"
   | "codex-model"
@@ -123,11 +122,6 @@ export type ParsedPrompt = InteractivePrompt & {
   rejectWithEscapeIndex: number | null;
   /** each option's own steps, for a card whose options are not rows of a menu */
   optionSteps?: AnswerStep[][];
-  /**
-   * which of several same-looking dialogs the card is for, where its id leaves that out (a Claude rewind
-   * confirm step's age, which ticks): checked on the screen right before the card's key
-   */
-  occurrence?: string;
   /** the steps for a typed answer, for a card whose menu does not take one the usual way */
   customSteps?: (text: string) => AnswerStep[];
   /** the steps for a multiple choice, for a card whose menu does not toggle the usual way */

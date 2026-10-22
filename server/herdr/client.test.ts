@@ -70,7 +70,7 @@ describe("paneRead", () => {
           + "\\x1b]8;;https://example.invalid\\x07A saved link\\x1b]8;;\\x07\\r\\n"
           + "\\r\\n› ");
       `);
-      const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-passive-read" });
+      const created = await workspaceCreate({ cwd: root, label: "ovis-test-passive-read" });
       workspaceId = created.workspace.workspace_id;
       const paneId = created.root_pane.pane_id;
       const quote = (text: string) => `'${text.replaceAll("'", process.platform === "win32" ? "''" : "'\\''")}'`;
@@ -184,7 +184,7 @@ describe("subscribeEvents", () => {
           clearTimeout(timer);
           resolve(error);
         },
-      }, "/nonexistent/herdr-web-ui-test.sock");
+      }, "/nonexistent/ovis-test.sock");
     });
     expect(await closed).toBe("connect_failed");
   });

@@ -126,7 +126,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
     else attachment.process.resume();
   }
 
-  function sendOutput(client: Client, paneId: string, data: string): void {
+  function sendOutput(client: Client, paneId: string, data: string, replay = false): void {
     const window = client.data.output.get(paneId);
     const bytes = Buffer.byteLength(data);
     if ((window && window.pending + bytes > OUTPUT_HARD_BYTES) || client.getBufferedAmount() >= OUTPUT_HARD_BYTES) {
@@ -136,6 +136,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
     send(client, {
       type: "pty-data", pane_id: paneId, data,
       ...(window ? { flow: { stream_id: window.id, offset: window.write(bytes, wireBytes(data)) } } : {}),
+      ...(replay ? { replay: true as const } : {}),
     });
   }
 
@@ -238,6 +239,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
     attachment.clients.delete(client);
     attachment.stalled.delete(client);
     attachment.grids.delete(client);
+    if (attachment.kind === "mirror") attachment.unscreened.delete(client);
     if (attachment.driver === client) attachment.driver = undefined;
     if (attachment.clients.size === 0) closeAttachment(paneId);
     else reconcileOutput(paneId);
@@ -351,10 +353,13 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       if (!alreadyAttached && attachment.recovering) send(client, { type: "output-recovering", pane_id: message.pane_id });
       if (!alreadyAttached && replay) {
         client.data.output.get(message.pane_id)?.join(replay, client.getBufferedAmount());
-        sendOutput(client, message.pane_id, replay);
+        // marked as the screen from before: the client draws it but takes no new clipboard write from it
+        sendOutput(client, message.pane_id, replay, true);
         // a tail that lost the stream's start may miss what was drawn once: herdr draws it again
         if (attachment.kind !== "mirror" && attachment.ready && !attachment.held && attachment.replay.truncated) requestRepaint(message.pane_id);
       }
+      // a mirror not read yet has no screen from before to hand over: its first screen is this client's replay
+      if (!alreadyAttached && !replay && attachment.kind === "mirror") attachment.unscreened.add(client);
       // a pane waiting for another web bridge to let go says so to each newcomer, too
       if (!alreadyAttached && attachment.held) send(client, { type: "error", code: "attach_held", message: ATTACH_HELD_MESSAGE, pane_id: message.pane_id });
       reconcileOutput(message.pane_id);

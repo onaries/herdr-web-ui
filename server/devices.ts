@@ -3,17 +3,19 @@
  * instead of the shared token. The owner starts a pairing on the PC and gets a short code
  * that lives ten minutes; the device sends the code once and receives a token of its own
  * in an HttpOnly cookie. Only a hash of that token is stored, so devices.json in the state
- * dir (0600, written whole) reveals nothing if read. Revocation also closes that device's
+ * dir (0600, written whole, and flushed before it replaces the old list whenever access
+ * changes: private-state.ts) reveals nothing if read. Revocation also closes that device's
  * active streams. A device is either allowed to drive (type, answer, manage) or only to watch.
  */
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { DeviceRole, PairedDevice } from "../shared/protocol.ts";
 import type { Access } from "./access.ts";
-import { deviceCookie, isSecureRequest, noContent } from "./auth.ts";
+import { CLEAR_LEGACY_DEVICE_COOKIE, deviceCookie, isSecureRequest, noContent } from "./auth.ts";
 import { badRequest, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { sameOrigin } from "./machine-security.ts";
+import { writePrivateState } from "./private-state.ts";
 
 const CODE_TTL_MS = 10 * 60_000;
 const CODE_ATTEMPTS = 5;
@@ -61,14 +63,6 @@ export function normalizeLabel(value: unknown, fallback: string): string {
 
 export function isDeviceRole(value: unknown): value is DeviceRole {
   return value === "drive" || value === "watch";
-}
-
-/** Owner-only, and written whole: a crash mid-write must not leave half a device list. */
-function writeJsonPrivate(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
 }
 
 export class DeviceStore {
@@ -197,6 +191,7 @@ export class DeviceStore {
       if (now - seen >= LAST_SEEN_WRITE_MS) {
         try {
           const next = this.devices.map((d) => d === device ? { ...d, last_seen_at: new Date(now).toISOString() } : d);
+          // devices.json is also the authorization registry: a torn write here would lock every device out
           this.save(next);
           this.devices = next;
         } catch { /* last-seen telemetry must not deny an otherwise valid credential */ }
@@ -240,7 +235,7 @@ export class DeviceStore {
   }
 
   private save(devices = this.devices, gateClosedAt = this.gateClosedAt): void {
-    writeJsonPrivate(this.path, { gate_closed_at: gateClosedAt, devices });
+    writePrivateState(this.path, { gate_closed_at: gateClosedAt, devices });
   }
 }
 
@@ -265,7 +260,7 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     if (typeof body["code"] !== "string") return badRequest("missing_code", "code is required");
     const paired = store.pair(body["code"], normalizeLabel(body["label"], "Device"), "drive");
     if (paired === null) return jsonResponse({ error: { code: "invalid_code", message: "the code is wrong, spent or expired; start a new pairing on the PC" } }, 401);
-    return noContent(deviceCookie(paired.token, isSecureRequest(request)));
+    return noContent(deviceCookie(paired.token, isSecureRequest(request)), CLEAR_LEGACY_DEVICE_COOKIE);
   }
   if (pathname === "/api/devices") {
     setRequestRoute(pathname);

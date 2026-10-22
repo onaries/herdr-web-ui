@@ -15,7 +15,7 @@ import * as agentLaunchModule from "./agent-launch.ts";
 
 type PendingUpdate = Extract<ServerMessage, { type: "pending-messages" }>;
 
-const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pending-"));
+const root = mkdtempSync(join(tmpdir(), "ovis-pending-"));
 const active: Array<{ stop: () => void; sockets: Socket[]; workspace: string }> = [];
 let next = 0;
 const paste = (text: string) => `\u001b[200~${text}\u001b[201~`;
@@ -121,7 +121,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 async function setup(label: string, agent = "claude", screen = "› Message\n", options: Parameters<typeof createServer>[0] = {}, replaceable = false) {
   const id = ++next;
-  const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>("workspace.create", { label: `herdr-web-ui-test-pending-${label}`, cwd: root, focus: false });
+  const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>("workspace.create", { label: `ovis-test-pending-${label}`, cwd: root, focus: false });
   // registered before anything below can throw, so afterEach closes the workspace of a setup that failed
   const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
   const pane = created.root_pane.pane_id;
@@ -376,53 +376,16 @@ describe("connection-owned pending input", () => {
     await f.waitBytes("barrier\r");
     expect(f.bytes().split("held cross tab").length - 1).toBe(1);
   }, 30_000);
-  it("interrupts an explicit Codex Send now only after its native steering panel appears", async () => {
+  it("sends Codex Send now with Enter without interrupting its native steering panel", async () => {
     const f = await setup("codex-send-now", "codex"); const message = await f.queue(1, "send this now");
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
     await f.waitBytes("\r"); expect(f.bytes()).toBe(`${paste("send this now")}\r`);
     await f.showScreen(codexSteering());
-    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(message.id); await f.waitBytes("\u001b");
+    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(message.id);
     const received = f.socket.seen.length;
     f.socket.send({ type: "pending-action", id: 11, pane_id: f.pane, pending_id: message.id, action: "steer" });
     expect(await f.socket.action(11)).toMatchObject({ ok: true });
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.removed?.some((item: any) => item.id === message.id), received);
-    expect(f.bytes()).toBe(`${paste("send this now")}\r\u001b`);
-  }, 30_000);
-
-  it("withholds Codex Escape when its sender's lease lapses while the key RPC connects", async () => {
-    const f = await setup("codex-guard-escape", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r");
-    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
-    f.socket.send({ type: "role", mode: "observe" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
-    f.socket.send({ type: "role", mode: "interact" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact");
-    hold.release();
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-    expect((await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: any) => item.id === message.id && item.state === "uncertain"))).messages[0].state).toBe("uncertain");
-  }, 30_000);
-
-  it("withholds Codex Escape when its deadline passes while the key RPC connects", async () => {
-    const f = await setup("codex-guard-deadline", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r");
-    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
-    // the panel was read in time; by the time herdr is written to, Codex may have taken the steering itself
-    await Bun.sleep(1_600);
-    hold.release();
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
-    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-  }, 30_000);
-
-  it("withholds Codex Escape when the pane's status moves while the key RPC connects", async () => {
-    const f = await setup("codex-guard-status", "codex"); const message = await f.queue(1, "send this now");
-    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
-    await f.waitBytes("\r");
-    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
-    // the turn ended on its own: Escape would now cancel whatever Codex opened next
-    await f.state("idle");
-    hold.release();
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
     expect(f.bytes()).toBe(`${paste("send this now")}\r`);
   }, 30_000);
 
@@ -439,16 +402,15 @@ describe("connection-owned pending input", () => {
     const f = await setup("codex-menu-after-enter", "codex"); const message = await f.queue(1, "send this now");
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
     await f.waitBytes("\r"); await f.showScreen(approval);
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true });
     expect(f.bytes()).toBe(`${paste("send this now")}\r`);
-    expect((await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: any) => item.id === message.id && item.state === "uncertain"))).messages[0].state).toBe("uncertain");
   }, 30_000);
 
   it("does not send Escape after the pending message's pane was detached", async () => {
     const f = await setup("codex-detach-after-enter", "codex"); const message = await f.queue(1, "send this now");
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
     await f.waitBytes("\r"); f.socket.send({ type: "detach", pane_id: f.pane });
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: true });
     expect(f.bytes()).toBe(`${paste("send this now")}\r`);
   }, 30_000);
 
@@ -927,7 +889,7 @@ describe("connection-owned pending input", () => {
 
   // Claude Code queues what Enter commits during a turn; its Ctrl+Enter sends it at once (#737).
   // The stand-in asks for modifyOtherKeys as Claude Code does, so herdr types Ctrl+Enter as xterm does.
-  it("steers Claude with Ctrl+Enter and Codex with Enter then a confirmed interruption", async () => {
+  it("steers Claude with Ctrl+Enter and Codex with Enter without Escape", async () => {
     const ctrlEnter = "\u001b[27;5;13~";
     const f = await setup("steer-claude", "claude", "\\x1b[>4;2m› Message\n");
     const steer = await f.queue(1, "steer now"); const next = await f.queue(2, "next turn");
@@ -942,8 +904,8 @@ describe("connection-owned pending input", () => {
     codex.socket.send({ type: "pending-action", id: 10, pane_id: codex.pane, pending_id: other.id, action: "steer" });
     await codex.waitBytes("\r");
     await codex.showScreen(codexSteering("codex steer"));
-    expect(await codex.socket.action(10)).toMatchObject({ ok: true }); await codex.waitBytes("\u001b");
-    expect(codex.bytes()).toBe(`${paste("codex steer")}\r\u001b`);
+    expect(await codex.socket.action(10)).toMatchObject({ ok: true });
+    expect(codex.bytes()).toBe(`${paste("codex steer")}\r`);
   }, 45_000);
 
   // The paste and its key are written only once herdr's connect resolves; the sender's right is asked
@@ -1217,7 +1179,7 @@ describe("a create request's first message", () => {
    * recorder then starts in the pane under the name of the agent that comes up.
    */
   const launched = async (label: string, comesUp: string) => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: `herdr-web-ui-test-pending-${label}`, cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: `ovis-test-pending-${label}`, cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, `state-${label}`) });
     entry.stop = server.stop;
@@ -1270,7 +1232,7 @@ describe("a create request's first message", () => {
   }, 30_000);
 
   it("queued while the shell was still in front, is bound to the agent the launch brought up: a same-kind replacement before its page attaches gets it held, never typed", async () => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-launch-replaced", cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-launch-replaced", cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, "state-first-launch-replaced") });
     entry.stop = server.stop;
@@ -1312,7 +1274,7 @@ describe("a create request's first message", () => {
   }, 30_000);
 
   it("queued for a launched agent that came up and then quit before it went, is held for Send now or Discard, never left waiting and never typed", async () => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-launch-quit", cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-launch-quit", cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, "state-first-launch-quit") });
     entry.stop = server.stop;
@@ -1363,7 +1325,7 @@ describe("a create request's first message", () => {
   }, 30_000);
 
   it("held from the start, still learns its launched agent: once that agent came up and quit, Send now answers pending_target_changed, not that it is not up yet", async () => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-held-quit", cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-held-quit", cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, "state-first-held-quit") });
     entry.stop = server.stop;
@@ -1403,7 +1365,7 @@ describe("a create request's first message", () => {
   }, 30_000);
 
   it("held from the start, says pending_target_changed instead of the page being gone once its launched agent quit, and Send now answers the same", async () => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-held-reason", cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-held-reason", cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, "state-first-held-reason") });
     entry.stop = server.stop;
@@ -1446,7 +1408,7 @@ describe("a create request's first message", () => {
   }, 30_000);
 
   it("bound to a launch that runs behind a wrapper in front of the pane, is typed once into that agent, not held", async () => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-wrapped", cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-wrapped", cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, "state-first-wrapped") });
     entry.stop = server.stop;
@@ -1518,7 +1480,7 @@ describe("a create request's first message", () => {
   }, 30_000);
 
   it("queued for a launch that died before any event saw it, is held when an agent of the same kind the user starts comes up, never typed into it", async () => {
-    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "herdr-web-ui-test-pending-first-launch-died", cwd: root, focus: false });
+    const created = await herdrRpc<{ workspace: { workspace_id: string } }>("workspace.create", { label: "ovis-test-pending-first-launch-died", cwd: root, focus: false });
     const entry: (typeof active)[number] = { stop: () => {}, sockets: [], workspace: created.workspace.workspace_id }; active.push(entry);
     const server = createServer({ port: 0, stateDir: join(root, "state-first-launch-died") });
     entry.stop = server.stop;

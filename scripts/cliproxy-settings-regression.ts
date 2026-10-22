@@ -69,7 +69,7 @@ return (u.pathname==='/api/usage'||u.pathname==='/api/cliproxy'||u.pathname.star
   const origin = web.url.origin;
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: "en-US" });
-  await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ showUsage: true })));
+  await page.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ showUsage: true })));
   await page.goto(`${origin}/?settings=usage`);
   await openSettingsPage(page, "Subscription usage");
   await page.locator(".usage-accounts-row").first().waitFor();

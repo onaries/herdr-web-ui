@@ -9,7 +9,8 @@ type Handler = (message: ServerMessage) => void;
  * `box`: a refusal naming no draft, what the server read in the box, after which a send with sendAnyway may go */
 /** immediate: typed now; queue: waits for the next turn; hold: waits for the user's Send now */
 export type SubmitDelivery = "immediate" | "queue" | "hold" | "agent-queue";
-export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string; draft?: string; box?: string };
+/** `unconfirmed`: written to an older bridge that sends no receipt, so nothing says the pane took it */
+export type SubmitResult = { ok: true; pending?: PendingMessage; unconfirmed?: true } | { ok: false; code: string; message: string; draft?: string; box?: string };
 
 /** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
 const SNAPSHOT_WAIT_MS = 2000;
@@ -869,7 +870,7 @@ export class HerdrSocket {
       if (!this.features.has("submit")) {
         if (clearDraft !== undefined || sendAnyway) return { ok: false, code: "unsupported", message: "Update this PC to clear a terminal draft before sending. Nothing was sent." };
         this.rawSend({ type: "input", pane_id: paneId, text: `${payload}\r` });
-        return { ok: true };
+        return { ok: true, unconfirmed: true };
       }
       const id = this.nextSubmit++;
       return this.submitRequest({ type: "submit", id, pane_id: paneId, text, payload, ...(typed ? { typed: true } : {}), ...(delivery !== "immediate" ? { delivery } : {}),

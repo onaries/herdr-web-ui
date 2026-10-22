@@ -16,7 +16,13 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: validation-${{ github.workflow }}-${{ github.ref }}
+  # One group per ref, as oh-my-openagent's CI does. A running push run of main is never cancelled; a newer
+  # push cancels the one still waiting and takes its place, so a burst of merges runs main's checks at most
+  # twice instead of once per merge on the self-hosted PC, and the newest run covers the merges in between.
+  # Pages deploys only a successful push run of main (a cancelled one's Website run skips building), so a
+  # manual run gets a group of its own and never replaces a waiting push run. A pull request still cancels
+  # its superseded run.
+  group: validation-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && '-manual' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
@@ -131,6 +137,10 @@ jobs:
     env:
       CHECK_DIR: ${{ github.workspace }}/.ci
       UNIT_TEST_WORKERS: 4
+      # Fast takes no herdr slot, but its start still passes check.ts's admission port, which every
+      # runner on the self-hosted PC shares (scripts/self-hosted-runner/run.sh): a run that starts
+      # while another runner's run holds that port for a moment waits instead of failing.
+      CHECK_WAIT_SECONDS: 120
     steps:
       - uses: actions/checkout@v7
         with:

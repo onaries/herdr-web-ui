@@ -9,11 +9,11 @@ const bundle = join(root, "runtime");
 const home = join(root, "home");
 // herdr follows XDG_CONFIG_HOME; a value apart from ~/.config proves the bridge follows it too.
 // On Windows it follows APPDATA instead, and the bundle carries no herdr: the one herdr's own
-// installer left (the stable alias under %LOCALAPPDATA%), or HERDR_WEB_HERDR_BIN.
+// installer left (the stable alias under %LOCALAPPDATA%), or OVIS_HERDR_BIN.
 const xdg = join(home, "xdg");
 mkdirSync(bundle); mkdirSync(home);
 const bun = join(bundle, windows ? "bin/bun.exe" : "bin/bun");
-const herdr = windows ? process.env["HERDR_WEB_HERDR_BIN"] || join(process.env["LOCALAPPDATA"] ?? "", "Programs/Herdr/bin/herdr.exe") : join(bundle, "bin/herdr");
+const herdr = windows ? process.env["OVIS_HERDR_BIN"] || join(process.env["LOCALAPPDATA"] ?? "", "Programs/Herdr/bin/herdr.exe") : join(bundle, "bin/herdr");
 if (windows) assert.ok(existsSync(herdr), `herdr is not installed at ${herdr}`);
 // The PC this stands for has no Node of its own: the terminal attach must run on the Node the
 // bundle carries (#265: looked up on the launch PATH alone, such a PC mirrored instead). So every
@@ -21,7 +21,7 @@ if (windows) assert.ok(existsSync(herdr), `herdr is not installed at ${herdr}`);
 const delimiter = windows ? ";" : ":";
 const path = (process.env["PATH"] ?? "").split(delimiter).filter((dir) => dir && !existsSync(join(dir, windows ? "node.exe" : "node"))).join(delimiter);
 // the pane's shell is a plain one: a login shell with an empty HOME may stop to ask how it should be set up
-const env = { ...process.env, ...(windows ? {} : { SHELL: "/bin/sh" }), PATH: path, HOME: home, USERPROFILE: home, APPDATA: xdg, XDG_CONFIG_HOME: xdg, HERDR_REMOTE_SESSION: "smoke", HERDR_WEB_HERDR_BIN: herdr };
+const env = { ...process.env, ...(windows ? {} : { SHELL: "/bin/sh" }), PATH: path, HOME: home, USERPROFILE: home, APPDATA: xdg, XDG_CONFIG_HOME: xdg, HERDR_REMOTE_SESSION: "smoke", OVIS_HERDR_BIN: herdr };
 if (!windows) assert.equal(Bun.which("node", { PATH: path }), null, "the smoke runs with no Node on PATH");
 let child: ReturnType<typeof Bun.spawn> | undefined;
 try {

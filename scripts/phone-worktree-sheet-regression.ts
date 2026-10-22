@@ -14,11 +14,11 @@ import { chromePath } from "./chrome-path.ts";
 // and the sheet stays where it is. A checkout made with Shell opens its terminal: the sheet steps
 // off its history entry before the roster lists the new pane, and that step is not a Back to the
 // pane before (an agent's checkout returns only once it runs, by when the roster has it).
-const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-phone-worktree-")));
+const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-phone-worktree-")));
 // herdr keeps a checkout under ~/.herdr/worktrees/<repo name>: a name of the run's own shares it with no real repository
-const repo = join(root, `herdr-web-ui-test-phone-worktree-${process.pid.toString(36)}`);
+const repo = join(root, `ovis-test-phone-worktree-${process.pid.toString(36)}`);
 mkdirSync(repo);
-const git = (...args: string[]) => Bun.spawnSync(["git", "-c", "user.name=herdr-web-ui test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, stdout: "pipe", stderr: "pipe" });
+const git = (...args: string[]) => Bun.spawnSync(["git", "-c", "user.name=ovis test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, stdout: "pipe", stderr: "pipe" });
 assert.equal(git("init", "-q", "-b", "main").exitCode, 0, "git init");
 writeFileSync(join(repo, "README.md"), "worktree fixture\n");
 assert.equal(git("add", "README.md").exitCode, 0);
@@ -26,12 +26,12 @@ assert.equal(git("commit", "-q", "-m", "fixture").exitCode, 0, "git commit");
 const owned: string[] = [];
 const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), usage: new UsageService(undefined, []) });
 try {
-  const parent = await workspaceCreate({ cwd: repo, label: "herdr-web-ui-test-phone-worktree" });
+  const parent = await workspaceCreate({ cwd: repo, label: "ovis-test-phone-worktree" });
   owned.push(parent.workspace.workspace_id);
   const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   try {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+    await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

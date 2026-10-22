@@ -27,13 +27,13 @@ beforeEach(() => {
     return new Response(null, { status: 404 });
   } });
   mkdirSync(join(scratch, "config"));
-  writeFileSync(join(scratch, "config", ".env"), `PORT=${server.port}\nHERDR_WEB_TOKEN=test-token\n`);
+  writeFileSync(join(scratch, "config", ".env"), `PORT=${server.port}\nOVIS_TOKEN=test-token\n`);
 });
 afterEach(() => { server.stop(true); rmSync(scratch, { recursive: true, force: true }); });
 async function run() {
   const child = Bun.spawn([process.execPath, "scripts/plugin.ts", "phone-setup"], { cwd: ROOT, windowsHide: true, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: {
     ...process.env, HOST: "127.0.0.1", HERDR_PLUGIN_ROOT: ROOT,
-    HERDR_PLUGIN_CONFIG_DIR: join(scratch, "config"), HERDR_PLUGIN_STATE_DIR: join(scratch, "plugin-state"), HERDR_WEB_STATE_DIR: join(scratch, "app-state"),
+    HERDR_PLUGIN_CONFIG_DIR: join(scratch, "config"), HERDR_PLUGIN_STATE_DIR: join(scratch, "plugin-state"), OVIS_STATE_DIR: join(scratch, "app-state"),
   } });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { out, err, code };

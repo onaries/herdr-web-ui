@@ -77,7 +77,7 @@ interface Saved {
 type Env = Record<string, string | undefined>;
 
 export function telemetryBlocked(env: Env): boolean {
-  const own = env["HERDR_WEB_TELEMETRY"]?.trim().toLowerCase();
+  const own = env["OVIS_TELEMETRY"]?.trim().toLowerCase();
   if (own && ["0", "false", "off", "no"].includes(own)) return true;
   const dnt = env["DO_NOT_TRACK"]?.trim();
   if (dnt && dnt !== "0") return true;
@@ -86,7 +86,7 @@ export function telemetryBlocked(env: Env): boolean {
 
 export function installMethod(env: Env): InstallMethod {
   if (env["HERDR_PLUGIN_ROOT"]) return "plugin";
-  return env["HERDR_WEB_MANAGED"] === "1" ? "managed" : "source";
+  return env["OVIS_MANAGED"] === "1" ? "managed" : "source";
 }
 
 function telemetryChange(value: unknown): TelemetryChange | null {

@@ -1,0 +1,38 @@
+
+[0m[38;2;240;198;116m[Skills][0m                                
+[0m[38;2;102;102;102m  dori-mode, find-skills, herdr,        [0m
+[0m[38;2;102;102;102mreverse-engineer-anything[0m               
+
+[0m[38;2;240;198;116m[Extensions][0m                            
+[0m[38;2;102;102;102m  herdr-agent-state.ts[0m                  
+
+
+[0m[38;2;255;255;0m────────────────────────────────────────[0m
+ [0m[1m[38;2;255;255;0mUpdate Available[0m                       
+ [0m[38;2;128;128;128mNew version 1.4.0 is available. Run [0m[38;2;138;190;183mpi [0m
+ [0m[38;2;138;190;183mupdate[0m                                 
+ [0m[38;2;128;128;128mChangelog: [0m[38;2;138;190;183mhttps://pi.dev/changelog[0m    
+[0m[38;2;255;255;0m────────────────────────────────────────[0m
+
+[0m[38;2;95;135;255m────────────────────────────────────────[0m
+> [0m[7m [0m                                     
+
+[0m[38;2;138;190;183m→ Auto-compact                    [0m  [0m[38;2;138;190;183mtr[0m
+  Auto-resize images                [0m[38;2;128;128;128mtr[0m
+  Block images                      [0m[38;2;128;128;128mfa[0m
+  Skill commands                    [0m[38;2;128;128;128mtr[0m
+  Show hardware cursor              [0m[38;2;128;128;128mfa[0m
+  Editor padding                    [0m[38;2;128;128;128m0[0m
+  Output padding                    [0m[38;2;128;128;128m1[0m
+  Autocomplete max items            [0m[38;2;128;128;128m5[0m
+  Clear on shrink                   [0m[38;2;128;128;128mfa[0m
+  Terminal progress                 [0m[38;2;128;128;128mfa[0m
+[0m[38;2;102;102;102m  (1/31)[0m
+
+[0m[38;2;102;102;102m  Automatically compact context when[0m
+[0m[38;2;102;102;102m  it gets too large[0m
+
+[0m[38;2;102;102;102m  Type to search · Enter/Space to cha[0m...
+[0m[38;2;95;135;255m────────────────────────────────────────[0m
+[0m[38;2;102;102;102m/tmp/claude-1000/pr2-rec/pi/proj (main)[0m
+[0m[38;2;102;102;102m0.0%/1.0M (auto)  claude-opus-4-8 • medi[0m

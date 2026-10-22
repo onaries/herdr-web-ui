@@ -1,0 +1,97 @@
+/**
+ * The phone header's Chat/Terminal switch is a compact segmented control: its track sits inside the
+ * header bar with clear space above and below (never edge to edge), below a safe-area top inset and
+ * in the compact density's shorter bar too, and each option still offers a touch target at least
+ * 44px tall and wide through its invisible expander, which stays inside the bar. Folded (412) and
+ * unfolded (720) foldable widths, a short landscape phone, a notched screen and the compact density.
+ * On the isolated test herdr; UI_EVIDENCE_DIR=<dir> keeps the screenshots.
+ */
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Browser } from "playwright-core";
+import { workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { chromePath } from "./chrome-path.ts";
+
+const TOUCH_TARGET = 44;
+const CLEARANCE = 6;
+
+export async function checkHeaderLensSwitch(browser: Browser, origin: string, evidence?: string): Promise<void> {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-lens-switch-")));
+  let workspaceId: string | null = null;
+  try {
+    const created = await workspaceCreate({ cwd: root, label: "ovis-test-lens-switch" });
+    workspaceId = created.workspace.workspace_id;
+    for (const size of [
+      { label: "folded 412x915", width: 412, height: 915, inset: 0 },
+      { label: "notched 412x915", width: 412, height: 915, inset: 28 },
+      { label: "unfolded 720x870", width: 720, height: 870, inset: 0 },
+      { label: "landscape 740x360", width: 740, height: 360, inset: 0 },
+      { label: "compact density 412x915", width: 412, height: 915, inset: 0, density: "compact" },
+    ] as Array<{ label: string; width: number; height: number; inset: number; density?: string }>) {
+      const context = await browser.newContext({ viewport: { width: size.width, height: size.height }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, locale: "en-US" });
+      try {
+        await context.addInitScript((density) => {
+          if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", ...(density ? { density } : {}) }));
+        }, size.density ?? null);
+        const page = await context.newPage();
+        if (size.inset > 0) {
+          const cdp = await context.newCDPSession(page);
+          await cdp.send("Emulation.setSafeAreaInsetsOverride" as never, { insets: { top: size.inset, topMax: size.inset, left: 0, leftMax: 0, bottom: 0, bottomMax: 0, right: 0, rightMax: 0 } } as never);
+        }
+        await page.goto(`${origin}/?pane=${encodeURIComponent(created.root_pane.pane_id)}`);
+        await page.locator(".app-header .view-switch").waitFor();
+        const geometry = await page.evaluate(() => {
+          const box = (node: Element) => node.getBoundingClientRect();
+          const header = document.querySelector(".app-header")!;
+          const track = document.querySelector(".app-header .view-switch")!;
+          const options = [...track.querySelectorAll(":scope > button")].map((button) => {
+            const own = box(button);
+            const expander = getComputedStyle(button, "::before");
+            const grow = expander.content === "none" ? 0 : -parseFloat(expander.top);
+            return { top: own.top - grow, bottom: own.bottom + grow, width: own.width };
+          });
+          return { header: box(header), track: box(track), options, insetTop: parseFloat(getComputedStyle(header).paddingTop),
+            density: document.documentElement.dataset["density"] ?? null, controlH: parseFloat(getComputedStyle(track).getPropertyValue("--control-h")) };
+        });
+        assert.ok(Math.abs(geometry.insetTop - size.inset) <= 0.5, `${size.label}: the header's top padding is the emulated safe-area inset, ${size.inset}px (${geometry.insetTop}px)`);
+        assert.equal(geometry.density, size.density ?? "comfortable", `${size.label}: the page runs in the ${size.density ?? "comfortable"} density`);
+        const bar = { top: geometry.header.top + geometry.insetTop, bottom: geometry.header.bottom };
+        assert.ok(geometry.track.top - bar.top >= CLEARANCE && bar.bottom - geometry.track.bottom >= CLEARANCE,
+          `${size.label}: the switch leaves room above and below in the bar (${JSON.stringify({ bar, track: geometry.track })})`);
+        // the density's segmented track: as tall as the density's --control-h, as every .segmented is
+        assert.ok(Math.abs(geometry.track.height - geometry.controlH) <= 0.5, `${size.label}: the track is the density's --control-h, ${geometry.controlH}px (${geometry.track.height}px)`);
+        for (const option of geometry.options) {
+          assert.ok(option.bottom - option.top >= TOUCH_TARGET - 0.5, `${size.label}: an option's touch target is ${TOUCH_TARGET}px tall (${option.bottom - option.top})`);
+          assert.ok(option.width >= TOUCH_TARGET - 0.5, `${size.label}: an option is a finger wide (${option.width})`);
+          assert.ok(option.top >= bar.top - 0.5 && option.bottom <= bar.bottom + 0.5, `${size.label}: the touch target stays inside the bar`);
+        }
+        if (evidence) await page.screenshot({ path: join(evidence, `lens-switch-${size.label.replace(/\s+/g, "-")}.png`), clip: { x: 0, y: 0, width: size.width, height: 140 } });
+      } finally { await context.close(); }
+    }
+    console.log("PASS the phone header's Chat/Terminal switch is a compact track with room above and below, 44px touch targets inside the bar, folded, unfolded, landscape, under a notch and in the compact density");
+  } finally {
+    if (workspaceId) await workspaceClose(workspaceId).catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) {
+  await import("./test-herdr.ts");
+  const { chromium } = await import("playwright-core");
+  const { createServer } = await import("../server/index.ts");
+  const { UsageService } = await import("../server/usage.ts");
+  const state = mkdtempSync(join(tmpdir(), "ovis-lens-switch-state-"));
+  const evidence = process.env["UI_EVIDENCE_DIR"];
+  if (evidence) mkdirSync(evidence, { recursive: true });
+  const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, usage: new UsageService(undefined, []) });
+  const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
+  try {
+    await checkHeaderLensSwitch(browser, `http://127.0.0.1:${server.port}`, evidence);
+  } finally {
+    await browser.close();
+    server.stop();
+    rmSync(state, { recursive: true, force: true });
+  }
+}

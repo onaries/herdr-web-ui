@@ -39,7 +39,7 @@ try {
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await context.addInitScript(() => {
-          localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "always" }));
+          localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", alertDone: "always" }));
           const viewport = window.visualViewport!;
           let height = 795;
           Object.defineProperty(viewport, "height", { get: () => height });
@@ -65,7 +65,7 @@ try {
         const openedFinish = await page.evaluate(async (id) => {
           const { snapshot } = await (await fetch("/api/session")).json();
           const finishId = snapshot.panes.find((pane: { pane_id: string }) => pane.pane_id === id)?.finish_id;
-          const key = `herdr-web-ui:finish:local:${encodeURIComponent(snapshot.finish_epoch)}:${encodeURIComponent(id)}`;
+          const key = `ovis:finish:local:${encodeURIComponent(snapshot.finish_epoch)}:${encodeURIComponent(id)}`;
           return { finishId, seen: JSON.parse(localStorage.getItem(key) ?? "null")?.id };
         }, panes.api);
         assert.ok(openedFinish.finishId > 0);

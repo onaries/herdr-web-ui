@@ -248,7 +248,7 @@ describe("parseTailscale", () => {
 });
 
 describe("httpsPorts", () => {
-  it("offers the usual ports while HERDR_WEB_TAILSCALE_HTTPS_PORT is unset or blank", () => {
+  it("offers the usual ports while OVIS_TAILSCALE_HTTPS_PORT is unset or blank", () => {
     for (const value of [undefined, "", "  "]) expect(httpsPorts(value)).toEqual(HTTPS_PORTS);
   });
 

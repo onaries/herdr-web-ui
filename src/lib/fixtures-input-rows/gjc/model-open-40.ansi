@@ -1,0 +1,38 @@
+[0m[38;2;125;211;199m5.4%/272K[0m[38;2;111;71;67m·[0m[38;2;255;106;61mgpt-6-astra[0m                   
+[0m[38;2;185;143;134mCurrent: preset [0m[38;2;255;106;61mASTRA-Default[0m ·         
+openai-codex/gpt-6-astra (medium)       
+[0m[38;2;111;71;67m  DEFAULT: openai-codex/gpt-6-astra     [0m
+[0m[38;2;111;71;67m(medium)[0m                                
+[0m[38;2;111;71;67m  EXECUTOR: openai-codex/gpt-6-luna     [0m
+[0m[38;2;111;71;67m(max)[0m                                   
+[0m[38;2;111;71;67m  PLANNER: openai-codex/gpt-6-astra     [0m
+[0m[38;2;111;71;67m(xhigh)[0m                                 
+[0m[38;2;111;71;67m  CRITIC: openai-codex/gpt-6.1-sol      [0m
+[0m[38;2;111;71;67m(xhigh)[0m                                 
+[0m[38;2;111;71;67m  ARCHITECT: openai-codex/gpt-6.1-sol   [0m
+[0m[38;2;111;71;67m(xhigh)[0m                                 
+                                        
+> [0m[7m [0m                                     
+                                        
+[0m[38;2;255;106;61m❯ ✓ CODEX[0m[38;2;185;143;134m (current)[0m                     
+  [0m[38;2;111;71;67m✗ OPENCODEGO[0m                          
+  [0m[38;2;111;71;67m✗ COMMAND CODE GOAT[0m                   
+  [0m[38;2;111;71;67m✗ macOS Local (oMLX)[0m                  
+  ✓ OPEN WEIGHT MODELS (PROVIDER        
+AGNOSTIC)                               
+  ✓ CLAUDE                              
+  ✓ GLM                                 
+  ✓ KIMI CODING PLAN                    
+  [0m[38;2;111;71;67m✗ MIMO[0m                                
+  ✓ GROK                                
+  ✓ CURSOR                              
+  [0m[38;2;111;71;67m✗ MINIMAX[0m                             
+  ✓ ALIBABA TOKEN PLAN                  
+  ✓ COMBOS                              
+  ✓ CUSTOM                              
+  [0m[38;2;111;71;67mAlready saved as ASTRA-Default[0m        
+  Image Role: No image model set        
+  Smart routing setup                   
+  Browse all models                     
+                                        
+[0m[38;2;127;29;29m────────────────────────────────────────[0m

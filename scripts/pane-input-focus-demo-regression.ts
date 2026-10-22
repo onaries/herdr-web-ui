@@ -33,7 +33,7 @@ try {
         try {
           await context.addInitScript(() => {
             Object.defineProperty(navigator, "platform", { configurable: true, value: "iPad" });
-            if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", terminalInputMode: "line", alertsOn: false,
+            if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "chat", terminalInputMode: "line", alertsOn: false,
               shortcutOverrides: { "previous-pane": "1", "next-pane": "2" } }));
           });
           const page = await context.newPage();
@@ -85,8 +85,8 @@ try {
           assert.equal(await line.evaluate(node => node === document.activeElement), true, "terminal line input can be focused");
           await page.keyboard.type("line draft"); assert.equal(await line.inputValue(), "line draft");
           await page.evaluate(() => {
-            const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings")!);
-            localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, terminalInputMode: "direct" }));
+            const settings = JSON.parse(localStorage.getItem("ovis:settings")!);
+            localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, terminalInputMode: "direct" }));
           });
           await page.reload(); await page.locator(".conn-live").waitFor();
           await frame.focus(); await page.keyboard.press("Meta+Shift+G");

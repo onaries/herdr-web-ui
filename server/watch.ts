@@ -79,7 +79,7 @@ export class PaneWatch {
 
   constructor(private readonly options: PaneWatchOptions) {
     this.proc = Bun.spawn(
-      [process.env["HERDR_WEB_HERDR_BIN"] || "herdr", "terminal", "session", "observe", options.paneId,
+      [process.env["OVIS_HERDR_BIN"] || "herdr", "terminal", "session", "observe", options.paneId,
         "--cols", String(options.cols), "--rows", String(options.rows)],
       { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, HERDR_SOCKET_PATH: options.socketPath } },
     );

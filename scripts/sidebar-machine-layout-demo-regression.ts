@@ -159,8 +159,8 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
   const errors: string[] = [];
   try {
     await context.addInitScript((setting) => {
-      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: setting.language, theme: setting.theme, density: setting.density, defaultView: "chat" }));
-      if (setting.sidebarWidth !== null) localStorage.setItem("herdr-web-ui:sidebar-width", String(setting.sidebarWidth));
+      localStorage.setItem("ovis:settings", JSON.stringify({ language: setting.language, theme: setting.theme, density: setting.density, defaultView: "chat" }));
+      if (setting.sidebarWidth !== null) localStorage.setItem("ovis:sidebar-width", String(setting.sidebarWidth));
     }, { language: scenario.language, theme: scenario.theme, density: scenario.density, sidebarWidth: scenario.desktopSidebar ? scenario.sidebarWidth ?? 240 : null });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));

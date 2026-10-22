@@ -43,7 +43,7 @@ function argument(args: string[], name: string): string | undefined {
 
 const args = process.argv.slice(2);
 const out = argument(args, "--out");
-const repo = argument(args, "--repo") ?? "devswha/herdr-web-ui";
+const repo = argument(args, "--repo") ?? "devswha/ovis";
 if (!out || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
   console.error("Usage: bun scripts/growth-snapshot.ts --out <dir> [--repo owner/name]");
   process.exit(1);

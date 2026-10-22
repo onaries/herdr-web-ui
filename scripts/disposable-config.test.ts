@@ -10,7 +10,7 @@ const made: string[] = [];
 // the root and prefix `isolate` uses: its session socket path has to fit a unix socket address
 const scratch = (): string => { const dir = mkdtempSync(join(existsSync("/tmp") ? "/tmp" : tmpdir(), "hwc-")); made.push(dir); return dir; };
 afterAll(() => { for (const dir of made) rmSync(dir, { recursive: true, force: true }); });
-const socketIn = (config: string) => join(config, "herdr", "sessions", "herdr-web-ui-test", "herdr.sock");
+const socketIn = (config: string) => join(config, "herdr", "sessions", "ovis-test", "herdr.sock");
 
 describe("disposableConfig", () => {
   it("is the config directory of a check run, as `isolate` hands it to the tests", () => {

@@ -1,0 +1,29 @@
+
+⚙️  /tasks
+  Running processes: 0
+  Agent: idle
+
+⚙️  /undo
+(._.) No messages to undo.
+
+⚙️  /reload-mcp
+[0m[38;5;173m╭───────────────────────────────────────────────────────────────────────────╮[0m
+[0m[38;5;173m│ [0m[1m[38;5;214m⚠️  /reload-mcp — Prompt cache invalidation warning                      [0m[38;5;173m │[0m
+[0m[38;5;173m│                                                                           │[0m
+[0m[38;5;173m│ [0m[1m[38;5;230mReloading MCP servers rebuilds the tool set for this session and         [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[1m[38;5;230minvalidates the provider prompt cache. The next message will             [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[1m[38;5;230mre-send full input tokens (can be expensive on long-context or           [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[1m[38;5;230mhigh-reasoning models).                                                  [0m[38;5;173m │[0m
+[0m[38;5;173m│                                                                           │[0m
+[0m[38;5;173m│ [0m[1m[38;5;220m❯ [1] Approve Once — reload now                                          [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  [2] Always Approve — reload now and silence this prompt permanently    [0m[38;5;173m │[0m
+[0m[38;5;173m│ [0m[38;5;136m  [3] Cancel — leave MCP tools unchanged                                 [0m[38;5;173m │[0m
+[0m[38;5;173m│                                                                           │[0m
+[0m[38;5;173m│ [0m[3m[38;5;136mType 1/2/3 or use ↑/↓ then Enter. ESC/Ctrl+C cancels.                    [0m[38;5;173m │[0m
+[0m[38;5;173m╰───────────────────────────────────────────────────────────────────────────╯[0m
+ 
+[0m[3m[38;5;136m  type 1/2/3, or ↑/↓ to select, Enter to confirm[0m[38;5;173m  (119s)[0m
+[0m[38;5;250m[48;5;234m ☤ [0m[1m[38;5;220m[48;5;234mgpt-6-luna[0m[38;5;101m[48;5;234m │ ctx -- │ [░░░░░░░░░░] -- │ 4m │ ⏲ 0s[0m[38;5;250m[48;5;234m [0m
+[0m[38;5;173m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[3m[38;5;136m⚠ ❯ type 1/2/3, or use ↑/↓ then Enter[0m
+[0m[38;5;173m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m

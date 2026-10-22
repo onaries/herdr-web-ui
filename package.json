@@ -1,13 +1,13 @@
 {
-  "name": "herdr-web-ui",
+  "name": "ovis",
   "private": true,
-  "version": "0.4.12",
+  "version": "0.4.13",
   "type": "module",
-  "description": "Browser version of the herdr terminal - live herdr workspaces, panes and agents in a web UI",
+  "description": "Ovis, the browser and phone client for herdr - live herdr workspaces, panes and agents in a web UI",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/devswha/herdr-web-ui.git"
+    "url": "git+https://github.com/devswha/ovis.git"
   },
   "scripts": {
     "dev": "bun --bun vite",

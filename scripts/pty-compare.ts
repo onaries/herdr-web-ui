@@ -143,7 +143,7 @@ async function sustained(backend: Backend, seconds: number) {
 
 async function herdrCompatibility(backend: Backend) {
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string; terminal_id: string } }>(
-    "workspace.create", { label: `herdr-web-ui-test-pty-${backend}`, cwd: "/tmp", focus: false },
+    "workspace.create", { label: `ovis-test-pty-${backend}`, cwd: "/tmp", focus: false },
   );
   let session: Session | undefined;
   let output = "";

@@ -1,17 +1,22 @@
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, expect, it, jest } from "bun:test";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry.ts";
-import { AttachmentTooLargeError, ApiError, changeTelemetry, fetchTelemetry, uploadPaneImage } from "./api.ts";
+import { AttachmentTooLargeError, ApiError, changeTelemetry, fetchTelemetry, uploadPaneImage, verifySourceBoot } from "./api.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "./settings.ts";
 
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; });
+const abortSignalStatics = Object.getOwnPropertyDescriptors(AbortSignal);
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  Object.defineProperties(AbortSignal, { any: abortSignalStatics.any!, timeout: abortSignalStatics.timeout! });
+  jest.useRealTimers();
+});
 
 it("refuses a file over the attachment limit before any of it is sent, and sends one at the limit", async () => {
   const requests: string[] = [];
   globalThis.fetch = (async (url: string) => {
     requests.push(url);
-    return Response.json({ ok: true, path: "/work/.herdr-web-ui/site.zip" });
+    return Response.json({ ok: true, path: "/work/.ovis/site.zip" });
   }) as typeof fetch;
 
   const over = new File([new Uint8Array(MAX_ATTACHMENT_BYTES + 1)], "site.zip", { type: "application/zip" });
@@ -21,7 +26,7 @@ it("refuses a file over the attachment limit before any of it is sent, and sends
   expect(requests).toEqual([]);
 
   const atLimit = new File([new Uint8Array(MAX_ATTACHMENT_BYTES)], "site.zip", { type: "application/zip" });
-  expect(await uploadPaneImage("p1", atLimit)).toBe("/work/.herdr-web-ui/site.zip");
+  expect(await uploadPaneImage("p1", atLimit)).toBe("/work/.ovis/site.zip");
   expect(requests).toEqual(["/api/pane/image"]);
 });
 
@@ -86,4 +91,62 @@ it("treats a missing telemetry route as unavailable for reads and an API error f
   const error = await changeTelemetry({ enabled: true }).catch((failure: unknown) => failure);
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({ status: 404, code: "not_found" });
+});
+
+/**
+ * An older browser the build still targets (safari14): Safari 16.0 to 17.3 has AbortSignal.timeout
+ * but not AbortSignal.any, and Safari 14 and 15 have neither.
+ */
+function withoutAbortSignalStatics(...names: ("any" | "timeout")[]): void {
+  for (const name of names) Object.defineProperty(AbortSignal, name, { value: undefined, configurable: true });
+}
+
+/** a fetch that answers only when told, and fails as a browser does once its signal ends */
+function heldFetch() {
+  const requests: { url: string; signal: AbortSignal; answer: (response: Response) => void }[] = [];
+  globalThis.fetch = ((url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+    const signal = init!.signal!;
+    requests.push({ url, signal, answer: resolve });
+    const fail = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+    if (signal.aborted) fail();
+    else signal.addEventListener("abort", fail, { once: true });
+  })) as typeof fetch;
+  return requests;
+}
+
+it("proves a PC's source boot on a browser without AbortSignal.any, and lets go of the caller's signal after", async () => {
+  withoutAbortSignalStatics("any");
+  const requests = heldFetch();
+  const caller = new AbortController();
+
+  const proof = verifySourceBoot("pc 2", caller.signal);
+  expect(requests.map((request) => request.url)).toEqual(["/api/machines?verify_source_boot=pc%202"]);
+  requests[0]!.answer(Response.json({ machines: [], verified_source_boot: { machine_id: "pc 2", boot_id: "boot-b" } }));
+  expect(await proof).toEqual({ machines: [], boot_id: "boot-b" });
+
+  // the coordinator aborts a check it replaced; one that already answered must not be ended by it
+  caller.abort();
+  expect(requests[0]!.signal.aborted).toBe(false);
+});
+
+it("ends a source boot check when the caller aborts it or after 20 s, without AbortSignal.any or AbortSignal.timeout", async () => {
+  withoutAbortSignalStatics("any", "timeout");
+  jest.useFakeTimers();
+  const requests = heldFetch();
+
+  const caller = new AbortController();
+  const cancelled = verifySourceBoot("pc-2", caller.signal).catch((error: unknown) => error);
+  caller.abort();
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
+
+  const before = new AbortController();
+  before.abort();
+  expect(await verifySourceBoot("pc-2", before.signal).catch((error: unknown) => error)).toMatchObject({ name: "AbortError" });
+  expect(requests[1]!.signal.aborted).toBe(true);
+
+  const slow = verifySourceBoot("pc-2", new AbortController().signal).catch((error: unknown) => error);
+  jest.advanceTimersByTime(19_999);
+  expect(requests[2]!.signal.aborted).toBe(false);
+  jest.advanceTimersByTime(1);
+  expect(await slow).toMatchObject({ name: "AbortError" });
 });

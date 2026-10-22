@@ -18,13 +18,13 @@ import type { ApiError, PluginActionResult, PluginActionsResponse } from "../sha
  * (scripts/disposable-config.ts); anywhere else it is skipped and no registry is written to.
  */
 const disposable = disposableConfig(process.env, herdrSocketPath());
-const PLUGIN = "herdr-web-ui-test.actions";
+const PLUGIN = "ovis-test.actions";
 if (disposable === null) console.warn("server/plugins.contract.test.ts skipped: it links a plugin into herdr's per-user registry, so it runs only in a check run's disposable config: bun run check run bun test --timeout 15000 ./server/plugins.contract.test.ts");
 
 describe.skipIf(disposable === null || process.platform === "win32")("plugin actions API", () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-plugin-")));
-  const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-plugin-state-"));
-  const impatientStateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-plugin-state-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-plugin-")));
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-plugin-state-"));
+  const impatientStateDir = mkdtempSync(join(tmpdir(), "ovis-plugin-state-"));
   const marker = join(root, "marker.json");
   let server: { port: number; stop: () => void };
   /** answers `running` after 300 ms, as the real wait does after five seconds */
@@ -99,7 +99,7 @@ platforms = ["linux", "macos"]
 `);
     writeFileSync(join(root, "mark.sh"), `printf '%s' "$HERDR_PLUGIN_CONTEXT_JSON" > marker.json.tmp && mv marker.json.tmp marker.json\n`);
     await herdrRpc("plugin.link", { path: root });
-    created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-plugin-actions" });
+    created = await workspaceCreate({ cwd: root, label: "ovis-test-plugin-actions" });
     server = createServer({ port: 0, stateDir });
     impatient = createServer({ port: 0, stateDir: impatientStateDir, pluginActionWaitMs: 300 });
   });
@@ -146,29 +146,29 @@ platforms = ["linux", "macos"]
     const context = JSON.parse(readFileSync(marker, "utf8")) as Record<string, unknown>;
     expect(context).toMatchObject({
       workspace_id: created.workspace.workspace_id,
-      workspace_label: "herdr-web-ui-test-plugin-actions",
+      workspace_label: "ovis-test-plugin-actions",
       tab_id: created.tab.tab_id,
       tab_label: created.tab.label,
       focused_pane_id: paneId,
-      invocation_source: "herdr-web-ui",
+      invocation_source: "ovis",
     });
   });
 
   // herdr fills what a context leaves out from its own focus: the checkout and the agent of
   // another workspace would reach an action run against this shell pane
   it("hands a shell pane outside a repository none of the worktree and agent herdr focuses elsewhere", async () => {
-    const scratch = realpathSync(mkdtempSync(join(tmpdir(), "herdr-web-ui-plugin-repo-")));
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), "ovis-plugin-repo-")));
     const repo = join(scratch, "repo");
     const checkout = join(scratch, "checkout");
     for (const args of [["init", "-q", repo], ["-C", repo, "-c", "user.email=test@example.invalid", "-c", "user.name=test", "commit", "-q", "--allow-empty", "-m", "init"]]) {
       expect(Bun.spawnSync(["git", ...args]).exitCode).toBe(0);
     }
-    const source = await workspaceCreate({ cwd: repo, label: "herdr-web-ui-test-plugin-repo" });
+    const source = await workspaceCreate({ cwd: repo, label: "ovis-test-plugin-repo" });
     let elsewhere: WorktreeOpenResult | undefined;
     try {
       // focused on purpose: herdr's own focus is what this is about. A workspace only carries a
       // worktree once herdr made or opened one for its repository.
-      elsewhere = await herdrRpc<WorktreeOpenResult>("worktree.create", { workspace_id: source.workspace.workspace_id, branch: "herdr-web-ui-test-plugin", path: checkout, label: "herdr-web-ui-test-plugin-focus", focus: true }, undefined, 60_000);
+      elsewhere = await herdrRpc<WorktreeOpenResult>("worktree.create", { workspace_id: source.workspace.workspace_id, branch: "ovis-test-plugin", path: checkout, label: "ovis-test-plugin-focus", focus: true }, undefined, 60_000);
       const focused = elsewhere;
       await herdrRpc("pane.report_agent", { pane_id: focused.root_pane.pane_id, source: "manual", agent: "claude", state: "working" });
       await until(async () => {
@@ -185,7 +185,7 @@ platforms = ["linux", "macos"]
       const context = JSON.parse(readFileSync(marker, "utf8")) as Record<string, unknown>;
       expect(context).toMatchObject({
         workspace_id: created.workspace.workspace_id,
-        workspace_label: "herdr-web-ui-test-plugin-actions",
+        workspace_label: "ovis-test-plugin-actions",
         focused_pane_id: shell.pane_id,
         focused_pane_agent: "",
         focused_pane_status: shell.agent_status,
@@ -254,7 +254,7 @@ platforms = ["linux", "macos"]
   it("refuses what it cannot run with herdr's own code, and a pane that is not there", async () => {
     const cases: [unknown, number, string][] = [
       [{ plugin_id: PLUGIN, action_id: "nope" }, 404, "plugin_action_not_found"],
-      [{ plugin_id: "herdr-web-ui-test.none", action_id: "mark" }, 404, "plugin_not_found"],
+      [{ plugin_id: "ovis-test.none", action_id: "mark" }, 404, "plugin_not_found"],
       [{ plugin_id: PLUGIN, action_id: "elsewhere" }, 404, "platform_unsupported"],
       [{ plugin_id: PLUGIN, action_id: "mark", pane_id: "w0:p0-gone" }, 404, "pane_not_found"],
       [{ plugin_id: PLUGIN }, 400, "missing_action_id"],

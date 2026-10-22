@@ -7,19 +7,34 @@
  * back off its entry once whatever it ran has written its own history. A sheet closed by Back
  * leaves its entry ahead of the app; Forward onto it goes on to the next. A sheet opened while
  * that step back is on its way (the browser runs a traversal later) is not closed by the step's
- * popstate: its entry is made again over where the step landed.
+ * popstate: its entry is made again over where the step landed. So is a sheet made to stay up
+ * under what opens over it (a terminal peek under the ⋯ menu or Settings), whose entry another
+ * sheet or a navigation took: the traversal that leaves what covered it, a Back or that sheet's
+ * own close, does not close it. Any other sheet still up under a new one closes with it, as before.
  */
 import { useEffect, useRef } from "react";
 import { SHEET_QUERY } from "./sheets.ts";
 import { useMediaQuery } from "./useMediaQuery.ts";
 
-const KEY = "herdr-web-ui:sheet";
+const KEY = "ovis:sheet";
 
 /** what Back does to each open sheet: false refuses it (the sheet is busy), and the sheet keeps its entry */
 const open = new Map<string, () => boolean | void>();
 const leaving = new Map<string, ReturnType<typeof setTimeout>>();
 /** the address each sheet's entry was made on */
 const addresses = new Map<string, string>();
+/** the sheets that stay up under a sheet or a navigation opened over them (a terminal peek) */
+const staying = new Set<string>();
+/**
+ * The staying sheets whose entry another sheet or a navigation took over: the next traversal
+ * leaves what covered them, not them, so it makes their entry again instead of asking them to close.
+ */
+const covered = new Set<string>();
+/** the staying sheet whose entry `state` is, when it is still up: its entry is about to be taken over */
+function cover(state: unknown): void {
+  const id = sheetOf(state);
+  if (id !== null && open.has(id) && staying.has(id)) covered.add(id);
+}
 let pushing = false;
 /**
  * while a closed sheet's step back is on its way: the sheets that made their entry meanwhile, which
@@ -57,14 +72,18 @@ function owned(state: unknown): boolean {
   return id !== null && (open.has(id) || leaving.has(id));
 }
 
-/** Makes the sheet's entry (RowMenu's effect on mount; exported for its test). */
-export function enterSheet(onBack: () => boolean | void, reuse: string | null): string {
+/**
+ * Makes the sheet's entry (RowMenu's effect on mount; exported for its test). `stays`: the sheet
+ * stays up under a sheet or a navigation opened over it, and their going comes back to it.
+ */
+export function enterSheet(onBack: () => boolean | void, reuse: string | null, stays = false): string {
   // StrictMode's second mount, or a sheet reopened before its entry went: the same entry
   const timer = reuse === null ? undefined : leaving.get(reuse);
   if (reuse !== null && timer !== undefined && sheetOf(window.history.state) === reuse) {
     clearTimeout(timer);
     leaving.delete(reuse);
     open.set(reuse, onBack);
+    if (stays) staying.add(reuse);
     return reuse;
   }
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -72,11 +91,13 @@ export function enterSheet(onBack: () => boolean | void, reuse: string | null): 
   const state = { ...(base !== null && typeof base === "object" ? base : {}), [KEY]: id };
   pushing = true;
   try {
-    // a sheet opened from another sheet takes that sheet's entry: one Back closes it
-    if (owned(base)) window.history.replaceState(state, "");
+    // a sheet opened from another sheet takes that sheet's entry: one Back closes it. A staying
+    // sheet still up under it is covered, and comes back once the new sheet goes
+    if (owned(base)) { cover(base); window.history.replaceState(state, ""); }
     else window.history.pushState(state, "");
   } finally { pushing = false; }
   open.set(id, onBack);
+  if (stays) staying.add(id);
   addresses.set(id, window.location.href);
   stepping?.add(id);
   return id;
@@ -94,6 +115,8 @@ function remake(id: string, onBack: () => boolean | void): void {
 
 /** Steps off the sheet's entry once the closing click's effects are through (RowMenu's effect on unmount). */
 export function leaveSheet(id: string): void {
+  covered.delete(id);
+  staying.delete(id);
   if (!open.delete(id)) return;
   // after the closing click's commit and effects, which may write history of their own
   leaving.set(id, setTimeout(() => {
@@ -117,8 +140,9 @@ if (typeof window !== "undefined") {
   history.pushState = ((state: unknown, ...rest: [string, (string | URL | null)?]) => {
     if (pushing) return push(state, ...rest);
     // a navigation made from a sheet (an item that opened another pane, Settings, a file) takes the
-    // sheet's entry: Back from there goes to the pane before the sheet, and no entry is left between
-    if (owned(history.state)) return history.replaceState(without(state), ...rest);
+    // sheet's entry: Back from there goes to the pane before the sheet, and no entry is left between.
+    // A staying sheet still up under it is covered
+    if (owned(history.state)) { cover(history.state); return history.replaceState(without(state), ...rest); }
     // an entry pushed over a sheet's copies its state (the file viewer's does): only the sheet's own carries its mark
     return push(without(state), ...rest);
   }) as History["pushState"];
@@ -133,8 +157,9 @@ if (typeof window !== "undefined") {
     for (const [id, onBack] of [...open]) {
       if (id === landed) continue;
       open.delete(id);
-      // a sheet busy at Back refuses it and stays; one that opened during the step was never asked
-      if (step?.has(id) || onBack() === false) again.push([id, onBack]);
+      // a sheet busy at Back refuses it and stays; one that opened during the step was never asked,
+      // nor was one whose entry was taken over: the traversal left what covered it
+      if (covered.delete(id) || step?.has(id) || onBack() === false) again.push([id, onBack]);
     }
     // the entry of a sheet that Back closed lies ahead of the app: Forward lands on it and goes on,
     // and the entry is an ordinary one from here
@@ -147,14 +172,19 @@ if (typeof window !== "undefined") {
   if (sheetOf(window.history.state) !== null) window.history.replaceState(without(window.history.state), "");
 }
 
-/** While `active`, the sheet holds a history entry; Back calls `onBack`, which may return false to refuse (a busy sheet keeps its entry). */
-export function useSheetHistory(active: boolean, onBack: () => boolean | void): void {
+/**
+ * While `active`, the sheet holds a history entry; Back calls `onBack`, which may return false to
+ * refuse (a busy sheet keeps its entry). `stays`: the sheet stays up under what opens over it.
+ */
+export function useSheetHistory(active: boolean, onBack: () => boolean | void, stays = false): void {
   const latest = useRef(onBack);
   latest.current = onBack;
   const id = useRef<string | null>(null);
+  const staysRef = useRef(stays);
+  staysRef.current = stays;
   useEffect(() => {
     if (!active) return;
-    const entry = enterSheet(() => latest.current(), id.current);
+    const entry = enterSheet(() => latest.current(), id.current, staysRef.current);
     id.current = entry;
     return () => leaveSheet(entry);
   }, [active]);
@@ -165,7 +195,9 @@ export function useSheetHistory(active: boolean, onBack: () => boolean | void): 
  * it does a ⋯ menu; `onBack` returning false (the dialog is busy) keeps it and its entry. A wider
  * screen keeps Back for the panes, with the dialog over them. A dialog that mounts another over
  * itself (the file list under a file) passes `open` false meanwhile, so the one on top has the entry.
+ * One that stays up under whatever opens over it (a terminal peek under the ⋯ menu or Settings)
+ * passes `stays`: Back, or the other's own close, then comes back to it.
  */
-export function usePhoneSheetBack(onBack: () => boolean | void, open = true): void {
-  useSheetHistory(useMediaQuery(SHEET_QUERY) && open, onBack);
+export function usePhoneSheetBack(onBack: () => boolean | void, open = true, stays = false): void {
+  useSheetHistory(useMediaQuery(SHEET_QUERY) && open, onBack, stays);
 }
