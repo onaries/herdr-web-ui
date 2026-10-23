@@ -87,7 +87,9 @@ function verifyMachO(path: string): void {
 }
 
 try {
-  for (const dir of ["server", "shared", "dist", "node_modules"]) cpSync(join(root, dir), join(stage, dir), { recursive: true, dereference: false, filter: (path) => !path.endsWith(".test.ts") });
+  for (const dir of ["server", "shared", "integrations", "dist", "node_modules"]) cpSync(join(root, dir), join(stage, dir), { recursive: true, dereference: false, filter: (path) => !path.endsWith(".test.ts") });
+  mkdirSync(join(stage, "scripts"));
+  cpSync(join(root, "scripts", "install-gjc-integration.ts"), join(stage, "scripts", "install-gjc-integration.ts"));
   let bunVersion = Bun.version;
   if (windows) {
     const bunArchive = join(downloads, "bun.zip");

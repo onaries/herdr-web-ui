@@ -26,9 +26,28 @@ function routed(env: Record<string, string>): unknown {
 }
 
 describe.skipIf(process.platform === "win32")("CI runner route", () => {
-  it("stays on the GitHub-hosted image without the variable", () => {
-    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo })).toBe("ubuntu-24.04");
-    expect(routed({ EVENT_NAME: "push" })).toBe("ubuntu-24.04");
+  it("routes to the maintainer PC's runners without the variable", () => {
+    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo })).toEqual(["self-hosted", "self-hosted-ovis"]);
+    expect(routed({ EVENT_NAME: "push" })).toEqual(["self-hosted", "self-hosted-ovis"]);
+  });
+
+  it("keeps any other event hosted without the variable", () => {
+    for (const event of ["workflow_dispatch", "workflow_run", "merge_group", "schedule", ""]) {
+      expect(routed({ EVENT_NAME: event, HEAD_REPO: repo })).toBe("ubuntu-24.04");
+    }
+  });
+
+  it("keeps everything on the GitHub-hosted image when the variable names it", () => {
+    const hosted = '"ubuntu-24.04"';
+    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo, CONFIGURED_LABELS: hosted })).toBe("ubuntu-24.04");
+    expect(routed({ EVENT_NAME: "push", CONFIGURED_LABELS: hosted })).toBe("ubuntu-24.04");
+    expect(routed({ EVENT_NAME: "workflow_dispatch", REQUESTED_LABELS: labels, CONFIGURED_LABELS: hosted })).toEqual(JSON.parse(labels));
+  });
+
+  it("keeps a fork pull request hosted without the variable", () => {
+    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: "someone/fork" })).toBe("ubuntu-24.04");
+    expect(routed({ EVENT_NAME: "pull_request_target", HEAD_REPO: "someone/fork" })).toBe("ubuntu-24.04");
+    expect(routed({ EVENT_NAME: "pull_request" })).toBe("ubuntu-24.04");
   });
 
   it("routes a same-repository pull request to the configured labels", () => {

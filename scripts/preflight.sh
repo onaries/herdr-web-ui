@@ -10,7 +10,30 @@ fail=0
 if command -v bun >/dev/null 2>&1; then
   version=$(bun --version 2>/dev/null || echo unknown)
   case "$version" in
-    0.*|1.[0-3].*) echo "Ovis needs Bun 1.4 or newer; this is Bun $version. Update it with: bun upgrade"; fail=1 ;;
+    0.*|1.[0-3].*)
+      # a Homebrew bun is updated by Homebrew, not by `bun upgrade`: follow the bun on PATH link by
+      # link (plain readlink, or ls where there is none) and look at each path on the way
+      update="bun upgrade"
+      # Homebrew's default prefixes; tests point this at prefixes under a temporary root
+      brew_prefixes=${OVIS_TEST_BREW_PREFIXES:-/opt/homebrew /home/linuxbrew/.linuxbrew}
+      bun_path=$(command -v bun)
+      case "$bun_path" in */*) ;; *) bun_path=./$bun_path ;; esac
+      hops=0
+      while :; do
+        case "$bun_path" in */Cellar/*) update="brew upgrade bun"; break ;; esac
+        for prefix in $brew_prefixes; do
+          case "$bun_path" in "$prefix"/*) update="brew upgrade bun"; break 2 ;; esac
+        done
+        { [ -L "$bun_path" ] && [ "$hops" -lt 16 ]; } || break
+        target=$(readlink "$bun_path" 2>/dev/null) || {
+          # ls prints "path -> target"; a path that itself contains " -> " is misread (rare, falls back)
+          listing=$(ls -ld "$bun_path" 2>/dev/null) || break
+          case "$listing" in *" -> "*) target=${listing#* -> } ;; *) break ;; esac
+        }
+        case "$target" in /*) bun_path=$target ;; *) bun_path=${bun_path%/*}/$target ;; esac
+        hops=$((hops + 1))
+      done
+      echo "Ovis needs Bun 1.4 or newer; this is Bun $version. Update it with: $update"; fail=1 ;;
   esac
 else
   echo "Ovis needs Bun, and 'bun' is not on the PATH of the shell that started herdr."

@@ -1,0 +1,68 @@
+/** How a request got in, when it did. */
+export type AccessVia = "local" | "tailscale" | "device" | "token" | "open";
+/** Why a request did not. */
+export type AccessRefusal = "other_user" | "pairing_required" | "token_required";
+/** What a paired device may do: drive (type, answer, manage) or only watch. */
+export type DeviceRole = "drive" | "watch";
+
+/** GET /api/health `auth`: `authenticated` is whether this request got in; `required` is the opposite, kept for older clients. */
+export interface HealthAuth {
+  readonly required: boolean;
+  readonly authenticated: boolean;
+  readonly via?: AccessVia;
+  /** with `via: "token"`: the token came in an `Authorization` header (a proxy sends it), so signing out of this browser would change nothing */
+  readonly bearer?: true;
+  readonly role?: DeviceRole;
+  readonly reason?: AccessRefusal;
+}
+
+/**
+ * GET /api/health, authenticated requests only: this server answers on an address beyond this
+ * PC while no access token is set and no device has ever been paired, so anything that can
+ * reach that address is let in (`open` in `server/access.ts`). It is a warning, never a gate:
+ * nothing about who is let in changes because this field exists.
+ *
+ * Never sent to a request that did not get in. "This host runs Ovis with no token"
+ * is reconnaissance for whoever is asking, not help.
+ */
+export interface LanExposure {
+  /** the address the server is bound to, so the warning can name where it is reachable */
+  readonly host: string;
+}
+
+export interface PairedDevice {
+  readonly id: string;
+  readonly label: string;
+  readonly role: DeviceRole;
+  readonly created_at: string;
+  readonly last_seen_at: string | null;
+  /** the device this request came from */
+  readonly current: boolean;
+}
+
+/** POST /api/devices/pair/start */
+export interface PairingCode {
+  readonly code: string;
+  readonly expires_at: string;
+}
+
+/** GET /api/access: how a phone can reach this server, as far as the server can tell (Settings → Phone). */
+export interface RemoteAccess {
+  /** the port this server listens on; the tailscale command names it */
+  readonly port: number;
+  readonly tailscale: TailscaleAccess;
+}
+
+/** Read from `tailscale status --json` and `tailscale serve status --json`, never by changing anything. */
+export interface TailscaleAccess {
+  /** missing: no tailscale CLI on this PC; stopped: the CLI is there but the daemon is not running or not logged in */
+  readonly state: "missing" | "stopped" | "running";
+  /** this PC's MagicDNS name, without the trailing dot */
+  readonly dns_name: string | null;
+  /** the HTTPS address Tailscale already proxies to this server, when there is one */
+  readonly serving_url: string | null;
+  /** otherwise, the command that publishes it on the first free of the usual HTTPS ports, or on the one OVIS_TAILSCALE_HTTPS_PORT names while it is free ... */
+  readonly serve_command: string | null;
+  /** ... and the address that command gives, when the DNS name is known */
+  readonly serve_url: string | null;
+}

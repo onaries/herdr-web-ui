@@ -39,6 +39,5 @@
   "server/submit.contract.test.ts": 5,
   "server/tailscale.test.ts": 1,
   "server/updater.test.ts": 1,
-  "src/lib/pluginRun.ts": 1,
-  "src/lib/sheetHistory.test.ts": 1
+  "src/lib/pluginRun.ts": 1
 }

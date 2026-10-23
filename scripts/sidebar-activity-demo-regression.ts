@@ -396,7 +396,12 @@ try {
           await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
           const content = page.locator(".pane-frame.is-current .terminal-stack[data-pane-content]");
           await page.locator(".pane-frame.is-current .terminal-stack:not(.is-chat)").waitFor();
-          await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+          await page.waitForFunction(() => {
+            const host = document.querySelector(".pane-frame.is-current .pane-terminal");
+            if (!host || !("outputProbe" in host) || typeof host.outputProbe !== "function") return false;
+            const probe = host.outputProbe();
+            return probe.written.includes("previous answer\r\n") && probe.inFlight === 0 && probe.queued === 0;
+          });
           assert.equal(await content.count(), 0, "a recovering joiner's replay is not the current screen");
           await waitStatus(page, INFRA, "done");
           await page.evaluate((id) => window.sidebarFixture.frame({ type: "input-ready", pane_id: id }), panes.omp);

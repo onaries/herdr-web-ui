@@ -13,8 +13,10 @@
  * id is a UUID herdr reports, so at most one file answers to it.
  */
 
+import { dlopen, FFIType, ptr } from "bun:ffi";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, readlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import nodePath, { basename, dirname, isAbsolute, join, type PlatformPath } from "node:path";
 import { directoryKey, withoutVerbatimPrefix } from "./codex.ts";
@@ -56,9 +58,27 @@ export function defaultClaudeConfigDir(home: string): string {
   return process.env["CLAUDE_CONFIG_DIR"] || join(home, ".claude");
 }
 
-/** What readProcessConfigDir found, by pid and argv, and when: a process's environment does not change. */
-const processDirs = new Map<string, { dir: string | null; at: number }>();
+/**
+ * What a Claude process says of the store it writes: an exported CLAUDE_CONFIG_DIR (`dir` "" when
+ * it was exported empty, which Claude reads as its default, told apart from none exported), none
+ * exported (only a complete read of its environment proves that), an environment that could not be
+ * read in full, or several Windows stores holding its PID record. Windows lets no one read another
+ * process's environment: its PID record proves the store, not how it was chosen, so ~/.claude found
+ * that way is `store` (an override may or may not have named it), and another store is an override.
+ */
+export type ClaudeSource =
+  | { state: "override"; dir: string }
+  | { state: "absent" }
+  | { state: "store"; dir: string }
+  | { state: "unreadable" }
+  | { state: "ambiguous" };
+
+/** What readClaudeSource found, by pid and argv, and when: a process's environment does not change. */
+const processDirs = new Map<string, { read: SourceRead; at: number }>();
 const PROCESS_DIR_TTL_MS = 30_000;
+/** A read that told no store is kept only this long: a store folder made a moment later answers on the next try. */
+const PROCESS_MISS_TTL_MS = 2_000;
+const missed = (read: SourceRead) => read.source.state === "unreadable" || read.source.state === "ambiguous";
 
 /**
  * The CLAUDE_CONFIG_DIR in one `ps -E -o command=` line: the last assignment, to the next `NAME=`.
@@ -80,11 +100,16 @@ export function claudeStoreKey(store: string, id: { dev: bigint; ino: bigint } |
   return id !== null && id.ino !== 0n ? `${id.dev}:${id.ino}` : directoryKey(paths.resolve(withoutVerbatimPrefix(store)));
 }
 
+/** What one folder is known by (claudeStoreKey): its file id where it has one, else its spelling. */
+async function folderIdentity(path: string): Promise<string> {
+  try { return claudeStoreKey(path, await stat(path, { bigint: true })); } catch { return claudeStoreKey(path, null); }
+}
+
 /**
- * The stores a Claude on Windows may use: the default one and each `~/.claude-*` beside it (the
- * usual second account, as usage.ts finds its sign-in). One listing of home, nothing deeper.
+ * The stores a Claude may use: the default one and each `~/.claude-*` beside it (the usual second
+ * account, as usage.ts finds its sign-in). One listing of home, nothing deeper.
  */
-async function windowsClaudeStores(home: string): Promise<string[]> {
+async function knownClaudeStores(home: string): Promise<string[]> {
   let siblings: string[] = [];
   try {
     siblings = (await readdir(home, { withFileTypes: true }))
@@ -113,47 +138,315 @@ export class AmbiguousClaudeStore extends Error {
 /**
  * Windows lets no other process read Claude's environment, so the store is the one holding the
  * process's live PID record (claudeProcessSession checks its start); null when none does, and
- * AmbiguousClaudeStore when several do (a store copied while Claude ran), never the default store.
- * A store that cannot be read is not the process's.
+ * AmbiguousClaudeStore when several do (a store copied while Claude ran) or a record is there but
+ * cannot be read (it may be the live one), never the default store.
  */
 async function windowsProcessStore(home: string, pid: number, table: () => Promise<ProcessRow[]>): Promise<string | null> {
-  const stores = await windowsClaudeStores(home);
-  const checks = await Promise.allSettled(stores.map((store) => claudeProcessSession(home, pid, store, "win32", table)));
-  const owners = stores.filter((_, index) => { const check = checks[index]!; return check.status === "fulfilled" && check.value !== null; });
-  if (owners.length > 1) throw new AmbiguousClaudeStore(pid);
+  const stores = await knownClaudeStores(home);
+  const states = await Promise.all(stores.map((store) => recordState(home, pid, store, "win32", table)));
+  const owners = stores.filter((_, index) => states[index] === "holds");
+  if (owners.length > 1 || states.includes("unknown")) throw new AmbiguousClaudeStore(pid);
   return owners[0] ?? null;
 }
 
-async function readProcessConfigDir(pid: number, home: string, platform: string, table: () => Promise<ProcessRow[]>): Promise<string | null> {
-  let dir: string | null = null;
+/**
+ * What one store says of a live PID record of `pid`: it holds it, it holds none (no file, or one a
+ * finished process left), or unknown: a record file is there but cannot be read, which may be the
+ * live one, so it is never taken for none.
+ */
+async function recordState(home: string, pid: number, store: string, platform: string, table: () => Promise<ProcessRow[]>): Promise<"holds" | "absent" | "unknown"> {
   try {
-    if (platform === "win32") {
-      dir = await windowsProcessStore(home, pid, table);
-    } else if (platform === "linux") {
-      dir = (await readFile(`/proc/${pid}/environ`, "utf8")).split("\0").find((entry) => entry.startsWith("CLAUDE_CONFIG_DIR="))?.slice(18) || null;
-    } else if (platform === "darwin") {
-      const child = Bun.spawn(["/bin/ps", "-E", "-ww", "-p", String(pid), "-o", "command="], { stdout: "pipe", stderr: "ignore" });
-      const timer = setTimeout(() => child.kill(), 3000);
-      try {
-        const text = await new Response(child.stdout).text();
-        await child.exited;
-        dir = configDirInPsLine(text);
-      } finally { clearTimeout(timer); }
-    }
-  } catch (error) {
-    if (error instanceof AmbiguousClaudeStore) throw error;
-    dir = null;
+    return await claudeProcessSession(home, pid, store, platform, table, "throw") === null ? "absent" : "holds";
+  } catch { return "unknown"; }
+}
+
+/** A PID record file is there but cannot be read (claudeProcessSession with `unreadable: "throw"`). */
+class UnreadableClaudeRecord extends Error {
+  constructor(path: string, options: { cause: unknown }) {
+    super(`cannot read Claude's PID record ${path}`, options);
+    this.name = "UnreadableClaudeRecord";
   }
+}
+
+/**
+ * Whether `dir` is the only store holding a live PID record of `pid` among `dir` and the stores
+ * Claude may use (knownClaudeStores). A record names the process, not the store it writes: a store
+ * copied while Claude ran (`cp -r ~/.claude ~/.claude-work`) holds the same live record, so two
+ * holders prove neither. A record that is there but cannot be read leaves the answer unknown: false.
+ */
+export async function claudeRecordOnlyIn(
+  home: string,
+  pid: number,
+  dir: string,
+  platform: string = process.platform,
+  table: () => Promise<ProcessRow[]> = recentProcessTable,
+): Promise<boolean> {
+  const wanted = await folderIdentity(dir);
+  const stores = new Map<string, string>([[wanted, dir]]);
+  for (const store of await knownClaudeStores(home)) {
+    const key = await folderIdentity(store);
+    if (!stores.has(key)) stores.set(key, store);
+  }
+  const states = await Promise.all([...stores.values()].map((store) => recordState(home, pid, store, platform, table)));
+  if (states.includes("unknown")) return false;
+  const holders = [...stores.keys()].filter((_, index) => states[index] === "holds");
+  return holders.length === 1 && holders[0] === wanted;
+}
+
+/** sysctl(3) from libSystem, opened once, on macOS only. */
+let darwinSysctl: ((name: Int32Array, out: Uint8Array) => number | null) | undefined;
+
+function sysctlCall(): (name: Int32Array, out: Uint8Array) => number | null {
+  if (darwinSysctl) return darwinSysctl;
+  // a system library's C function: nothing native of node's is loaded into Bun
+  const lib = dlopen("/usr/lib/libSystem.B.dylib", { sysctl: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.i32 } });
+  darwinSysctl = (name, out) => {
+    const size = new BigUint64Array([BigInt(out.byteLength)]);
+    return lib.symbols.sysctl(ptr(name), name.length, ptr(out), ptr(size), null, 0) === 0 ? Number(size[0]) : null;
+  };
+  return darwinSysctl;
+}
+
+/**
+ * The environment in a `KERN_PROCARGS2` answer, one entry each: an int argc, the executable's path,
+ * its NUL padding, argc arguments, then the environment, each NUL-terminated, up to an empty one or
+ * the end. Null when the answer is cut short.
+ */
+export function procArgsEnvironment(answer: Uint8Array): string[] | null {
+  const bytes = Buffer.from(answer.buffer, answer.byteOffset, answer.byteLength);
+  if (bytes.length < 4) return null;
+  const argc = bytes.readInt32LE(0);
+  let at = bytes.indexOf(0, 4);
+  if (argc < 0 || at < 0) return null;
+  while (at < bytes.length && bytes[at] === 0) at++;
+  const words: string[] = [];
+  while (at < bytes.length) {
+    const end = bytes.indexOf(0, at);
+    if (end < 0) return null;
+    const word = bytes.toString("utf8", at, end);
+    at = end + 1;
+    if (words.length >= argc && word === "") break;
+    words.push(word);
+  }
+  return words.length < argc ? null : words.slice(argc);
+}
+
+/**
+ * A macOS process's environment as the kernel keeps it (sysctl KERN_PROCARGS2), NUL-joined as
+ * /proc/<pid>/environ: each entry whole, so NOTE="example CLAUDE_CONFIG_DIR=<dir>" stays NOTE's,
+ * which `ps -E`, joining them with spaces, cannot show. Null when it cannot be read (another
+ * user's process, one gone). Tests hand in their own through darwinProcess.
+ */
+function darwinEnvironment(pid: number): string | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  const call = sysctlCall();
+  const argmax = new Uint8Array(4);
+  if (call(new Int32Array([1, 8]), argmax) === null) return null; // CTL_KERN, KERN_ARGMAX
+  const answer = new Uint8Array(new DataView(argmax.buffer).getInt32(0, true));
+  const length = call(new Int32Array([1, 49, pid]), answer); // CTL_KERN, KERN_PROCARGS2
+  const entries = length === null ? null : procArgsEnvironment(answer.subarray(0, length));
+  return entries === null ? null : entries.join("\0");
+}
+
+export const darwinProcess = { environment: darwinEnvironment };
+
+/** A named store: an absolute path to a directory, else null. */
+async function namedDirectory(dir: string | null): Promise<string | null> {
   if (dir === null || !isAbsolute(dir)) return null;
   try { return (await stat(dir)).isDirectory() ? dir : null; } catch { return null; }
 }
 
+/** A read of one process: the strict source, and the directory the live chat has always taken from it (null: the default store). */
+interface SourceRead { source: ClaudeSource; legacy: string | null }
+
+/** An exported value as a source: empty is its own override; any other value must name a directory, or the store is not known. */
+async function overrideSource(value: string): Promise<ClaudeSource> {
+  if (value === "") return { state: "override", dir: "" };
+  const dir = await namedDirectory(value);
+  return dir === null ? { state: "unreadable" } : { state: "override", dir };
+}
+
+/** A Linux process's environment as /proc/<pid>/environ holds it, read in full, as a source. */
+async function environSource(environ: string): Promise<SourceRead> {
+  const entries = environ.split("\0").filter((entry) => entry !== "");
+  // an environment read empty is a process gone or not ours to read, not one without the variable
+  if (entries.length === 0) return { source: { state: "unreadable" }, legacy: null };
+  const named = entries.filter((entry) => entry.startsWith("CLAUDE_CONFIG_DIR=")).map((entry) => entry.slice(18));
+  const legacy = await namedDirectory(named[0] || null);
+  if (named.length > 1) return { source: { state: "unreadable" }, legacy };
+  return { source: named.length === 0 ? { state: "absent" } : await overrideSource(named[0]!), legacy };
+}
+
+async function readClaudeSource(pid: number, home: string, platform: string, table: () => Promise<ProcessRow[]>): Promise<SourceRead> {
+  const unreadable: SourceRead = { source: { state: "unreadable" }, legacy: null };
+  try {
+    if (platform === "win32") {
+      const owner = await windowsProcessStore(home, pid, table);
+      if (owner === null) return unreadable;
+      const implicit = claudeStoreKey(owner, null) === claudeStoreKey(join(home, ".claude"), null);
+      return { source: implicit ? { state: "store", dir: owner } : { state: "override", dir: owner }, legacy: await namedDirectory(owner) };
+    }
+    if (platform === "linux") return await environSource(await readFile(`/proc/${pid}/environ`, "utf8"));
+    if (platform === "darwin") {
+      // the strict source from the environment as the kernel keeps it; the live chat's reading stays ps's
+      const environ = darwinProcess.environment(pid);
+      const source: ClaudeSource = environ === null ? { state: "unreadable" } : (await environSource(environ)).source;
+      const child = Bun.spawn(["/bin/ps", "-E", "-ww", "-p", String(pid), "-o", "command="], { stdout: "pipe", stderr: "ignore" });
+      const timer = setTimeout(() => child.kill(), 3000);
+      let text: string;
+      try {
+        text = await new Response(child.stdout).text();
+        await child.exited;
+      } finally { clearTimeout(timer); }
+      return { source, legacy: await namedDirectory(configDirInPsLine(text)) };
+    }
+    return unreadable;
+  } catch (error) {
+    if (error instanceof AmbiguousClaudeStore) return { source: { state: "ambiguous" }, legacy: null };
+    return unreadable;
+  }
+}
+
+/**
+ * The source of a Claude process's store (ClaudeSource), kept for PROCESS_DIR_TTL_MS under the
+ * process's pid and argv: /proc on Linux, sysctl KERN_PROCARGS2 (same user only) on macOS, the
+ * store holding its PID record on Windows, where a process with no record yet is asked again on the
+ * next read.
+ */
+async function processRead(pid: number, argv: readonly string[], home: string, platform: string, table: () => Promise<ProcessRow[]>): Promise<SourceRead> {
+  const key = `${pid}\0${argv.join("\0")}`;
+  const known = processDirs.get(key);
+  if (known && Date.now() - known.at < (missed(known.read) ? PROCESS_MISS_TTL_MS : PROCESS_DIR_TTL_MS)) return known.read;
+  const read = await readClaudeSource(pid, home, platform, table);
+  processDirs.delete(key);
+  // Claude writes its PID record as it starts: on Windows a miss is asked again on the next read,
+  // and two stores holding it are remembered no more than a miss
+  if (platform === "win32" && missed(read)) return read;
+  processDirs.set(key, { read, at: Date.now() });
+  if (processDirs.size > 256) processDirs.delete(processDirs.keys().next().value!);
+  return read;
+}
+
+export async function processClaudeSource(
+  pid: number,
+  argv: readonly string[] = [],
+  home = process.env["HOME"] ?? "",
+  platform: string = process.platform,
+  table: () => Promise<ProcessRow[]> = recentProcessTable,
+): Promise<ClaudeSource> {
+  return (await processRead(pid, argv, home, platform, table)).source;
+}
+
+/** herdrLaunchSource's answer by proc root and socket, with the listening socket's inodes it was read for. */
+const launchSources = new Map<string, { inodes: string; source: ClaudeSource }>();
+
+/**
+ * The store source a new herdr tab inherits: the environment of the herdr server listening on
+ * `socket`, which every shell it starts is handed (a tab's own env aside). A pane's shell does not
+ * say it: it may have dropped or changed the variable herdr handed down. On Linux, the processes
+ * holding that listening socket, each read in full from /proc, all the same source (unreadable when
+ * none is found or they differ), kept while the socket's inode stays the same: a process's
+ * environment does not change, and a restarted herdr listens on a new socket. macOS and Windows let
+ * no one find herdr's environment, so the bridge server's own (`env`) stands in: both are
+ * usually started from the same login. The resume route checks the store the new Claude came up
+ * on either way, which also catches a shell startup file that exports the variable.
+ */
+export async function herdrLaunchSource(socket: string, platform: string = process.platform, proc = "/proc", env: Record<string, string | undefined> = process.env): Promise<ClaudeSource> {
+  const unreadable: ClaudeSource = { state: "unreadable" };
+  if (platform !== "linux") return env["CLAUDE_CONFIG_DIR"] === undefined ? { state: "absent" } : overrideSource(env["CLAUDE_CONFIG_DIR"]);
+  try {
+    // Num RefCount Protocol Flags Type St Inode Path; the listening one has __SO_ACCEPTCON
+    const inodes = new Set((await readFile(join(proc, "net", "unix"), "utf8")).split("\n").slice(1)
+      .map((line) => line.trim().split(/\s+/))
+      .filter((fields) => fields.length >= 8 && fields[3] === "00010000" && fields.slice(7).join(" ") === socket)
+      .map((fields) => `socket:[${fields[6]}]`));
+    if (inodes.size === 0) return unreadable;
+    const cacheKey = `${proc}\0${socket}`;
+    const inodeKey = [...inodes].sort().join(",");
+    const known = launchSources.get(cacheKey);
+    if (known?.inodes === inodeKey) return known.source;
+    const sources: ClaudeSource[] = [];
+    for (const entry of await readdir(proc)) {
+      if (!/^\d+$/.test(entry)) continue;
+      let fds: string[];
+      try { fds = await readdir(join(proc, entry, "fd")); } catch { continue; /* gone, or not ours */ }
+      for (const fd of fds) {
+        let target: string;
+        try { target = await readlink(join(proc, entry, "fd", fd)); } catch { continue; }
+        if (!inodes.has(target)) continue;
+        let environ = "";
+        try { environ = await readFile(join(proc, entry, "environ"), "utf8"); } catch { /* read as empty: unreadable */ }
+        sources.push((await environSource(environ)).source);
+        break;
+      }
+    }
+    const first = sources[0];
+    if (first === undefined || sources.some((source) => JSON.stringify(source) !== JSON.stringify(first))) return unreadable;
+    if (first.state !== "unreadable") launchSources.set(cacheKey, { inodes: inodeKey, source: first });
+    return first;
+  } catch {
+    return unreadable;
+  }
+}
+
+/** A pane's foreground processes, as herdr's `pane.process_info` lists them. */
+export type PaneProcess = { pid: number; name?: string | null; argv0?: string | null; argv?: readonly string[] | null };
+
+/**
+ * The store source of a pane's Claude, by its foreground processes: null when no Claude runs there,
+ * ambiguous when more than one does (which one a session belongs to cannot be told).
+ */
+export async function paneClaudeSource(
+  processes: readonly PaneProcess[],
+  home = process.env["HOME"] ?? "",
+  platform: string = process.platform,
+  table: () => Promise<ProcessRow[]> = recentProcessTable,
+): Promise<ClaudeSource | null> {
+  const claude = processes.filter((entry) => isClaudeProcess({ name: entry.name ?? undefined, argv0: entry.argv0 ?? undefined, argv: entry.argv ?? undefined }));
+  if (claude.length === 0) return null;
+  if (claude.length > 1) return { state: "ambiguous" };
+  const only = claude[0]!;
+  return processClaudeSource(only.pid, only.argv ?? [only.argv0 ?? only.name ?? ""], home, platform, table);
+}
+
+/**
+ * The store a source lists and resumes in: its directory, how a resumed Claude is told it (`env`:
+ * the variable to export; null: none, as the source had none), its key, a hash of the store's
+ * identity (claudeStoreKey) and of that choice, its place, a hash of the identity alone (neither
+ * says anything of the path), and whether the choice is known (`chosen`). An implicit ~/.claude
+ * and one exported by name are two keys, one place: Claude reads its settings and sign-in by the
+ * choice, and writes its transcripts to the place. A
+ * Windows ~/.claude found by its PID record (`store`: how it was chosen cannot be told there) is
+ * resumed with none exported, which reaches ~/.claude again. A pane with no Claude (`null`) has the
+ * server's default store. Null when the source cannot be told: never the default store in its place.
+ */
+export async function claudeStoreOf(
+  source: ClaudeSource | null,
+  home = process.env["HOME"] ?? "",
+  env: Record<string, string | undefined> = process.env,
+): Promise<{ dir: string; env: { CLAUDE_CONFIG_DIR: string } | null; key: string; place: string; chosen: boolean } | null> {
+  const chosen = source ?? (env["CLAUDE_CONFIG_DIR"] === undefined ? { state: "absent" as const } : { state: "override" as const, dir: env["CLAUDE_CONFIG_DIR"] });
+  let dir: string;
+  let launch: { CLAUDE_CONFIG_DIR: string } | null;
+  let how: string;
+  switch (chosen.state) {
+    case "override": dir = chosen.dir || join(home, ".claude"); launch = { CLAUDE_CONFIG_DIR: chosen.dir }; how = chosen.dir === "" ? "empty" : "explicit"; break;
+    case "absent": dir = join(home, ".claude"); launch = null; how = "implicit"; break;
+    case "store": dir = chosen.dir; launch = null; how = "unknown"; break;
+    default: return null;
+  }
+  let id: { dev: bigint; ino: bigint } | null = null;
+  try { id = await stat(dir, { bigint: true }); } catch { /* not there yet: its spelling stands for it */ }
+  const identity = claudeStoreKey(dir, id);
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 24);
+  return { dir, env: launch, key: hash(`${how}\0${identity}`), place: hash(`place\0${identity}`), chosen: how !== "unknown" };
+}
+
 /**
  * The CLAUDE_CONFIG_DIR a Claude process was started with (a launcher such as cac keeps one store
- * per environment), or null when it has none. /proc on Linux, `ps -E` (same user only) on macOS,
- * the store holding its PID record on Windows, kept for PROCESS_DIR_TTL_MS under the process's
- * pid and argv. Throws AmbiguousClaudeStore, remembered no more than a miss, when several Windows
- * stores hold it.
+ * per environment), or null when it has none, as the live chat reads it (processClaudeSource,
+ * read leniently: the first or last assignment seen, an unreadable environment as none). Throws
+ * AmbiguousClaudeStore, remembered no more than a miss, when several Windows stores hold it.
  */
 export async function processClaudeConfigDir(
   pid: number,
@@ -162,16 +455,9 @@ export async function processClaudeConfigDir(
   platform: string = process.platform,
   table: () => Promise<ProcessRow[]> = recentProcessTable,
 ): Promise<string | null> {
-  const key = `${pid}\0${argv.join("\0")}`;
-  const known = processDirs.get(key);
-  if (known && Date.now() - known.at < PROCESS_DIR_TTL_MS) return known.dir;
-  const dir = await readProcessConfigDir(pid, home, platform, table);
-  processDirs.delete(key);
-  // Claude writes its PID record as it starts: on Windows a miss is asked again on the next read
-  if (dir === null && platform === "win32") return null;
-  processDirs.set(key, { dir, at: Date.now() });
-  if (processDirs.size > 256) processDirs.delete(processDirs.keys().next().value!);
-  return dir;
+  const read = await processRead(pid, argv, home, platform, table);
+  if (read.source.state === "ambiguous") throw new AmbiguousClaudeStore(pid);
+  return read.legacy;
 }
 
 /** Only an absent path is a miss: an unreadable store is an error to report, not an empty one. */
@@ -271,6 +557,7 @@ async function backgroundJobTranscript(path: string, configDir: string): Promise
 export function forgetClaudeSessions(): void {
   found.clear();
   processDirs.clear();
+  launchSources.clear();
 }
 
 /**
@@ -310,25 +597,33 @@ export async function claudeProcessSession(
   configDir = join(home, ".claude"),
   platform: string = process.platform,
   table: () => Promise<ProcessRow[]> = recentProcessTable,
+  /** a record file that is there but cannot be read: no session (`none`), or UnreadableClaudeRecord (`throw`), for a caller that may not take it for none */
+  unreadable: "none" | "throw" = "none",
 ): Promise<string | null> {
   if ((platform !== "linux" && platform !== "darwin" && platform !== "win32") || !Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
-    // Non-blocking and no symlinks: a FIFO or a link in the record's place must not hang the read.
-    const file = await open(join(configDir, "sessions", `${pid}.json`), constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    const path = join(configDir, "sessions", `${pid}.json`);
     let text: string;
     try {
-      if (!(await file.stat()).isFile()) return null;
-      const bytes = Buffer.alloc(16 * 1024 + 1);
-      let length = 0;
-      // One read may return less than the file holds; only a read of nothing is its end.
-      for (;;) {
-        const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-        if (length === bytes.length) return null;
-      }
-      text = bytes.subarray(0, length).toString("utf8");
-    } finally { await file.close(); }
+      // Non-blocking and no symlinks: a FIFO or a link in the record's place must not hang the read.
+      const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+      try {
+        if (!(await file.stat()).isFile()) return null;
+        const bytes = Buffer.alloc(16 * 1024 + 1);
+        let length = 0;
+        // One read may return less than the file holds; only a read of nothing is its end.
+        for (;;) {
+          const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+          if (bytesRead === 0) break;
+          length += bytesRead;
+          if (length === bytes.length) return null;
+        }
+        text = bytes.subarray(0, length).toString("utf8");
+      } finally { await file.close(); }
+    } catch (error) {
+      if (unreadable === "throw" && !absent(error)) throw new UnreadableClaudeRecord(path, { cause: error });
+      throw error;
+    }
     const record: unknown = JSON.parse(text);
     if (record === null || typeof record !== "object" ||
       !("pid" in record) || record.pid !== pid ||
@@ -348,6 +643,7 @@ export async function claudeProcessSession(
     } else if (await darwinProcessStart(pid) !== record.procStart.replace(/\s+/g, " ").trim()) return null;
     return record.sessionId;
   } catch (error) {
+    if (error instanceof UnreadableClaudeRecord) throw error;
     // A closed process, absent/older native store or a torn write gives no identity.
     if (error instanceof SyntaxError || absent(error) ||
       (error !== null && typeof error === "object" && "code" in error && ["EACCES", "EPERM", "ESRCH", "ELOOP", "ENXIO"].includes(String(error.code)))) return null;

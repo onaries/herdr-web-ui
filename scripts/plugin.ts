@@ -223,9 +223,9 @@ function recordedPid(): number | null {
 
 /** the live process a pid file names, or null */
 /**
- * herdr keeps a plugin's state dir by its id too, and hands the plugin its new id's dir as soon as
- * `herdr plugin update` brings the new manifest. A server started under the old id keeps its pid
- * in the old id's dir until it stops, so `stop` and `status` read that dir while it runs.
+ * herdr keeps a plugin's state dir by its id too. A server started under the old id keeps its pid
+ * in the old id's dir until it stops (the installer stops it before moving the install to the new
+ * id; `herdr plugin update` never moves the id), so `stop` and `status` read that dir while it runs.
  */
 function runningStateDir(dir: string): string {
   if (basename(dir) !== PLUGIN_ID || pidIn(join(dir, "server.pid")) !== null) return dir;

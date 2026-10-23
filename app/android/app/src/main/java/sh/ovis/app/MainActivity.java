@@ -2,19 +2,30 @@ package sh.ovis.app;
 
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.res.Configuration;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
+import androidx.core.graphics.ColorUtils;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 import com.getcapacitor.CapConfig;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.WebViewListener;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Capacitor's activity with the chosen PC as the WebView's first page, as HerdrBridgeViewController
@@ -22,8 +33,29 @@ import java.util.Collections;
  * first load too.
  */
 public class MainActivity extends BridgeActivity {
+    /**
+     * Sends the page's theme-color (the client keeps it at its top bar's color, the app's own pages
+     * at theirs) to OvisBars, now and whenever it changes, so the system bars match the page.
+     */
+    private static final String BAR_COLOR_SCRIPT =
+        "(() => {" +
+        "  if (window !== window.top) return;" +
+        "  const apply = () => {" +
+        "  const meta = document.querySelector('meta[name=\"theme-color\"]');" +
+        "  if (!meta) return;" +
+        "  const send = () => { if (meta.content && window.OvisBars) OvisBars.postMessage(meta.content); };" +
+        "  new MutationObserver(send).observe(meta, { attributes: true, attributeFilter: ['content'] });" +
+        "  send();" +
+        "  };" +
+        "  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', apply, { once: true });" +
+        "  else apply();" +
+        "})();";
+
     /** Whether the page itself (not a picture or a frame in it) failed since it started. */
     private boolean pageFailed;
+
+    /** The page's theme-color the system bars took, put back after a configuration change. */
+    private Integer barColor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,17 +76,26 @@ public class MainActivity extends BridgeActivity {
                 // (https://host, or a host starting with "http" as is: invalid, which again drops the
                 // bridge's origin check). Other links go to the browser.
                 .setErrorPath("error.html")
+                .setBackgroundColor("#12100e")
                 .setWebContentsDebuggingEnabled(debuggable)
-                .setLoggingEnabled(debuggable)
+                // Capacitor's log has "Loading app at" with a pairing link's code, and every plugin
+                // call's arguments; logcat keeps them on the phone (capacitor.config.json turns it
+                // off for the connect screen)
+                .setLoggingEnabled(false)
+                // light icons on the app's dark background until a page gives its theme-color, as
+                // capacitor.config.json does for the connect screen: Capacitor's SystemBars would
+                // otherwise follow the phone's light mode with dark icons
+                .setPluginsConfiguration(new JSObject().put("SystemBars", new JSObject().put("style", "DARK")))
                 .create();
         }
         super.onCreate(savedInstanceState);
+        String appOrigin = bridge.getScheme() + "://" + bridge.getHost();
+        followThemeColor(host == null ? Collections.singleton(appOrigin) : new HashSet<>(Arrays.asList(appOrigin, origin)));
         if (host != null) {
             // Capacitor injects its bridge only into the PC's origin, so error.html (served from the
             // app while a PC is open) reaches the app through this listener instead. It answers only
             // the app's own origin in the main frame: a PC page or a frame it opens gets nothing.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                String appOrigin = bridge.getScheme() + "://" + bridge.getHost();
                 WebViewCompat.addWebMessageListener(
                     bridge.getWebView(),
                     "HerdrErrorPage",
@@ -62,26 +103,67 @@ public class MainActivity extends BridgeActivity {
                     (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
                         if (!isMainFrame) return;
                         String asked = message.getData();
-                        if ("last".equals(asked)) {
+                        if ("state".equals(asked)) {
                             String last = PCStore.last(this);
-                            replyProxy.postMessage(last == null ? "" : last);
+                            JSObject state = new JSObject();
+                            state.put("last", last == null ? "" : last);
+                            state.put("failure", PCStore.failure == null ? "" : PCStore.failure);
+                            replyProxy.postMessage(state.toString());
                         } else if ("retry".equals(asked)) {
-                            reopen();
+                            retry();
                         } else if ("changePc".equals(asked)) {
-                            PCStore.setCurrent(this, null);
-                            reopen();
+                            changePc();
                         }
                     }
                 );
             }
-            // Capacitor tells its listeners of every failed request, a picture or a frame included, and
-            // not which one: only a failure of the page itself keeps the PC out of the saved list.
             bridge.setWebViewClient(
                 new BridgeWebViewClient(bridge) {
                     @Override
+                    public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        // error.html on a WebView without HerdrErrorPage (no WEB_MESSAGE_LISTENER)
+                        // asks by navigating to one of these app addresses instead
+                        Uri url = request.getUrl();
+                        if (
+                            request.isForMainFrame() &&
+                            (appOrigin + "/error.html").equals(view.getUrl()) &&
+                            appOrigin.equals(url.getScheme() + "://" + url.getHost())
+                        ) {
+                            if ("/_ovis/retry".equals(url.getPath())) {
+                                retry();
+                                return true;
+                            }
+                            if ("/_ovis/change-pc".equals(url.getPath())) {
+                                changePc();
+                                return true;
+                            }
+                        }
+                        return super.shouldOverrideUrlLoading(view, request);
+                    }
+
+                    // Capacitor tells its listeners of every failed request, a picture or a frame
+                    // included, and not which one or why: only a failure of the page itself keeps the
+                    // PC out of the saved list, and its reason goes to error.html, which Capacitor
+                    // shows for both.
+                    @Override
                     public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                        if (request.isForMainFrame()) pageFailed = true;
+                        if (request.isForMainFrame()) {
+                            pageFailed = true;
+                            PCStore.failure = String.valueOf(error.getDescription());
+                        }
                         super.onReceivedError(view, request, error);
+                    }
+
+                    @Override
+                    public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                        // a PC that answers but not with Ovis, such as tailscale serve's 502 while Ovis
+                        // is stopped there
+                        if (request.isForMainFrame()) {
+                            pageFailed = true;
+                            String reason = response.getReasonPhrase();
+                            PCStore.failure = "HTTP " + response.getStatusCode() + (reason == null || reason.isEmpty() ? "" : " " + reason);
+                        }
+                        super.onReceivedHttpError(view, request, response);
                     }
                 }
             );
@@ -100,11 +182,61 @@ public class MainActivity extends BridgeActivity {
                         if (pageFailed || url == null || !origin.equals(PCStore.origin(url))) return;
                         // the PC's page is up: a pairing link has done its work, and the PC is one worth keeping
                         PCStore.pendingStart = null;
+                        PCStore.failure = null;
                         PCStore.remember(MainActivity.this, origin);
                     }
                 }
             );
         }
+    }
+
+    /**
+     * Lets the pages of `origins` color the status and navigation bars with their theme-color.
+     * Without it the bars keep the app's dark background and light icons.
+     */
+    private void followThemeColor(Set<String> origins) {
+        if (
+            !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        ) return;
+        try {
+            WebViewCompat.addWebMessageListener(
+                bridge.getWebView(),
+                "OvisBars",
+                origins,
+                (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
+                    if (!isMainFrame || message.getData() == null) return;
+                    String color = message.getData().trim();
+                    if (!color.matches("#[0-9a-fA-F]{6}")) return;
+                    paintBars(Color.parseColor(color));
+                }
+            );
+            WebViewCompat.addDocumentStartJavaScript(bridge.getWebView(), BAR_COLOR_SCRIPT, origins);
+        } catch (IllegalArgumentException rejectedOrigin) {
+            return; // Keep the default bars when WebView rejects an origin rule.
+        }
+        bridge.getWebView().evaluateJavascript(BAR_COLOR_SCRIPT, null);
+    }
+
+    /**
+     * The color behind the system bars (the strip Capacitor leaves when the page does not draw under
+     * them) and icons that stand out on it, light or dark.
+     */
+    private void paintBars(int color) {
+        barColor = color;
+        Window window = getWindow();
+        window.getDecorView().setBackgroundColor(color);
+        boolean lightBars = ColorUtils.calculateLuminance(color) > 0.18;
+        WindowInsetsControllerCompat bars = WindowCompat.getInsetsController(window, window.getDecorView());
+        bars.setAppearanceLightStatusBars(lightBars);
+        bars.setAppearanceLightNavigationBars(lightBars);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        // Capacitor's SystemBars puts the theme's bars back on a change (dark mode, rotation)
+        super.onConfigurationChanged(newConfig);
+        if (barColor != null) paintBars(barColor);
     }
 
     @Override
@@ -123,6 +255,18 @@ public class MainActivity extends BridgeActivity {
         String query = uri.getEncodedQuery();
         String fragment = uri.getEncodedFragment();
         return (path == null || path.isEmpty() ? "/" : path) + (query == null ? "" : "?" + query) + (fragment == null ? "" : "#" + fragment);
+    }
+
+    /** Opens the current PC again from its first page. */
+    void retry() {
+        PCStore.failure = null;
+        reopen();
+    }
+
+    /** Back to the connect screen; the PC stays in the list. */
+    void changePc() {
+        PCStore.setCurrent(this, null);
+        reopen();
     }
 
     /** Starts this activity again, so the next page (a PC, or the connect screen) is a first load. */

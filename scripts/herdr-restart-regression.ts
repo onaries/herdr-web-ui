@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type WebSocket as BrowserSocket } from "playwright-core";
 import type { ServerMessage } from "../shared/protocol.ts";
 import { chromePath } from "./chrome-path.ts";
+import { SOCKET_PATH_MAX } from "./check.ts";
 
 // This script stops its herdr, so it must not share even the browser lane's test session.
 const root = mkdtempSync(join(tmpdir(), "hwr-"));
@@ -20,6 +21,11 @@ const env = {
 };
 const binary = process.env.OVIS_HERDR_BIN || "herdr";
 const socketPath = join(config, "herdr", "sessions", session, "herdr.sock");
+const socketBytes = Buffer.byteLength(socketPath);
+if (socketBytes > SOCKET_PATH_MAX) {
+  rmSync(root, { recursive: true, force: true });
+  throw new Error(`${socketPath} is too long for a unix socket (${socketBytes} > ${SOCKET_PATH_MAX} bytes); set TMPDIR to a shorter path`);
+}
 process.env.HERDR_SOCKET = socketPath;
 const { createServer } = await import("../server/index.ts");
 const { workspaceCreate, sessionSnapshot, paneRead } = await import("../server/herdr/client.ts");

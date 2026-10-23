@@ -102,7 +102,7 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "history " + n + "\\r
       if (firstMetrics) { firstMetrics = false; await releaseMetrics.promise; }
       await route.continue();
     });
-    const metrics = page.waitForResponse(response => response.url().includes("/pane/scroll?"));
+    const metrics = delayed ? null : page.waitForResponse(response => response.url().includes("/pane/scroll?"));
     await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
     if (!delayed) await metrics;
     const body: { snapshot: SessionSnapshot } = await (await page.request.get(`http://127.0.0.1:${server.port}/api/session`)).json();
@@ -130,8 +130,13 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "history " + n + "\\r
     // The initial metrics read is deliberately held until the wheel has been handled.
     // Its intent must survive that read rather than disappearing on a fresh terminal.
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    // The held response cannot arrive until release: start its timeout here, not before
+    // navigation and terminal startup, and subscribe before allowing it to continue.
+    const releasedMetrics = delayed
+      ? page.waitForResponse(response => response.url().includes("/pane/scroll?"))
+      : metrics;
     releaseMetrics.resolve();
-    await metrics;
+    await releasedMetrics;
     await received;
     // Then: only a blocked OmO pane scrolls history instead of delivering mouse input.
     const after = await paneScrollInfo(pane);

@@ -1,0 +1,42 @@
+// Android push through Firebase Cloud Messaging (README.md). A module of its own, so the app's
+// build.gradle and manifest stay as they are: settings.gradle adds it to :app.
+apply plugin: 'com.android.library'
+
+// What the google-services Gradle plugin would generate from google-services.json, without the
+// plugin: Firebase's own start-up reads these resources and starts only when they exist, so a
+// build without the file runs with push unavailable.
+def googleServices = rootProject.file(System.getenv('OVIS_GOOGLE_SERVICES') ?: 'app/google-services.json')
+def firebaseValues = [:]
+if (googleServices.isFile()) {
+    def json = new groovy.json.JsonSlurper().parse(googleServices)
+    def client = json.client?.find { it.client_info?.android_client_info?.package_name == 'sh.ovis.app' }
+    if (client == null) throw new GradleException("${googleServices} has no Android app with the package name sh.ovis.app")
+    firebaseValues = [
+        google_app_id: client.client_info.mobilesdk_app_id,
+        gcm_defaultSenderId: json.project_info.project_number,
+        google_api_key: client.api_key[0].current_key,
+        project_id: json.project_info.project_id,
+    ]
+}
+
+android {
+    namespace = "sh.ovis.push"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+        firebaseValues.each { name, value -> resValue "string", name, String.valueOf(value) }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+    implementation "androidx.core:core:$androidxCoreVersion"
+    // BridgeActivity, which OvisPushInitializer registers the plugin with, is an AppCompatActivity
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "com.google.firebase:firebase-messaging:26.0.1"
+    testImplementation "junit:junit:$junitVersion"
+}

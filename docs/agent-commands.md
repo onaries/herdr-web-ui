@@ -42,11 +42,8 @@ provider 1.5 seconds and merges its answer over the scanned rows. A provider own
 commands and skills it answers with: those scanned rows are replaced and the new ones are marked
 `native` and verified. It can never remove or add a builtin. A timeout, an error or no answer
 leaves the scanned rows as they were. No provider starts an agent, a daemon or a broker, and none
-installs anything into the agent's configuration. The gjc provider is the one that runs a
-process: it asks the broker through the gjc CLI (`gjc sdk session raw query ... --attach-only`,
-with `GJC_SDK_BROKER_AUTOSTART=0`), so a broker that isn't running is never started. That query
-runs in a background refresh, at most every 30 seconds per pane and only while the chat holds a
-transcript binding for the pane; the commands request is answered from the last refresh.
+installs anything into the agent's configuration. GJC uses the scanned command and skill
+catalog; the bridge does not query its SDK broker.
 
 | Agent | Builtins pinned to | Folders scanned | Native source | Not listed (runtime only) |
 | --- | --- | --- | --- | --- |
@@ -56,7 +53,7 @@ transcript binding for the pane; the commands request is answered from the last 
 | pi | `earendil-works/pi` slash-commands at 5c1736f8 | agent dir, `~/.agents`, `settings.json` skills, project roots that pi's trust allows | none | extension and package commands |
 | omp | `oh-my-pi` builtin registry at 53a0377d (18.12.3) | omp's skill providers, namespaced on a clash, `disabledProviders` and `enabledProviders` | none | extension and plugin commands |
 | OmO | Senpi 46d15a1c and OmO b6230fcd tables | bundled skills minus the `disabled_skills` union of user, project and profile config | none | extension commands not in the pinned tables |
-| gjc | `builtin-registry.ts` v0.18.12 | bundled workflow skills, `.gjc/commands` of the project and the active profile | `skill.list/state` from the SDK broker the bridge is already bound to, when `runtime.capabilities` offers it, read through the gjc CLI attach-only, never on Windows ([`gjc-runtime.ts`](../server/gjc-runtime.ts)) | none known |
+| gjc | `builtin-registry.ts` v0.18.12 | bundled workflow skills, `.gjc/commands` of the project and the active profile | none | runtime-only skills not present in scanned roots |
 | Hermes | `CommandDef`s at 0.21.5 | skill roots and `quick_commands` | none | plugin slash commands, registered at run time |
 | Grok | `grok-build` 1.0.62 pager and shell tables | `.grok`, `.claude`, `.cursor` and `.agents` roots at every tier, bundled skills, collisions as `/local:x` and friends | none | none known |
 | Antigravity | the recorded agy 1.4.0 palette | `~/.gemini/config/skills` and the two loaded builtin skills | none | none known |

@@ -42,10 +42,10 @@ enum PCStore {
         if last == origin { last = nil }
     }
 
-    /// `scheme://host[:port]` of an http or https URL, or nil.
+    /// `scheme://host[:port]` of an http or https URL, the host in lowercase as WebKit reports it, or nil.
     static func origin(of url: URL) -> String? {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = url.host, !host.isEmpty else { return nil }
+              let host = url.host?.lowercased(), !host.isEmpty else { return nil }
         let shownHost = host.contains(":") ? "[\(host)]" : host
         return url.port.map { "\(scheme)://\(shownHost):\($0)" } ?? "\(scheme)://\(shownHost)"
     }
@@ -86,8 +86,8 @@ class HerdrBridgeViewController: CAPBridgeViewController {
     override func viewDidLoad() {
         // before super, which starts the first load
         if let webView = webView, PCStore.current != nil {
-            let proxy = NavigationFailureProxy(inner: webView.navigationDelegate) { [weak self] webView, error in
-                self?.showFailure(in: webView, error: error)
+            let proxy = NavigationFailureProxy(inner: webView.navigationDelegate) { [weak self] webView, reason in
+                self?.showFailure(in: webView, reason: reason)
             }
             failureProxy = proxy
             webView.navigationDelegate = proxy
@@ -95,38 +95,30 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         super.viewDidLoad()
     }
 
-    private func showFailure(in webView: WKWebView, error: Error) {
+    private func showFailure(in webView: WKWebView, reason: String) {
         guard let local = bridge?.config.localURL else { return }
-        PCStore.failure = error.localizedDescription
+        PCStore.failure = reason
         webView.load(URLRequest(url: local.appendingPathComponent("error.html")))
     }
 
     /// Replaces the app's view controller, so the next page (a PC, or the connect screen) is a
-    /// first load.
+    /// first load. The old one goes with its web view and the page in it (the barcode scanner
+    /// plugin, which kept it alive, is patched in app/patches).
     static func reopen() {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         guard let window = (scene?.delegate as? SceneDelegate)?.window else { return }
-        if let old = window.rootViewController as? HerdrBridgeViewController {
-            // the PC's page would otherwise live on unseen, its connections to the PC open: the
-            // bridge's message handler keeps the old web view alive
-            // without its delegate, Capacitor's policy would hand about:blank to Safari
-            old.webView?.navigationDelegate = nil
-            old.webView?.stopLoading()
-            old.webView?.load(URLRequest(url: URL(string: "about:blank")!))
-            (old.bridge as? CapacitorBridge)?.webViewDelegationHandler.cleanUp()
-        }
         window.rootViewController = HerdrBridgeViewController()
     }
 }
 
 /// Passes every navigation callback to Capacitor's own delegate and reports a main-frame load
-/// that failed, such as a PC that is off. A load cancelled on purpose (a link handed to Safari,
-/// a new navigation) is not a failure.
+/// that failed, such as a PC that is off or one that answers with an HTTP error, with its reason.
+/// A load cancelled on purpose (a link handed to Safari, a new navigation) is not a failure.
 final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     private weak var inner: WKNavigationDelegate?
-    private let onFailure: (WKWebView, Error) -> Void
+    private let onFailure: (WKWebView, String) -> Void
 
-    init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, Error) -> Void) {
+    init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, String) -> Void) {
         self.inner = inner
         self.onFailure = onFailure
     }
@@ -137,6 +129,20 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
 
     override func forwardingTarget(for aSelector: Selector!) -> Any? {
         inner?.responds(to: aSelector) == true ? inner : nil
+    }
+
+    /// A main-frame HTTP error (tailscale serve's 502 while Ovis is stopped on the PC, a 404) is
+    /// not a PC worth keeping, and its page would leave the app no way back: the error page shows
+    /// instead. Capacitor's delegate does not decide responses; WebKit allows all of them.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse,
+              response.statusCode >= 400 else {
+            decisionHandler(.allow)
+            return
+        }
+        // the cancelled load ends in WebKit's "frame load interrupted", which is not reported
+        decisionHandler(.cancel)
+        onFailure(webView, "HTTP \(response.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: response.statusCode).capitalized)")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -154,6 +160,6 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         let cancelled = nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
         // WebKit's "frame load interrupted" (102) and "plug-in handled load" (204)
         let handedOff = nsError.domain == "WebKitErrorDomain" && (nsError.code == 102 || nsError.code == 204)
-        if !cancelled && !handedOff { onFailure(webView, error) }
+        if !cancelled && !handedOff { onFailure(webView, error.localizedDescription) }
     }
 }

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { AgentInfo } from "../shared/herdr-api.generated.ts";
 import { cmdContextWindow, cmdSlug, cmdTranscriptInStore, unwrittenSession } from "./cmd.ts";
 import { transcriptPage } from "./conversation.ts";
 import { parseInteractivePrompt } from "./prompt.ts";
@@ -67,6 +68,64 @@ describe("Command Code's session store holds the transcript a pane reads", () =>
     expect(unwrittenSession(session("written"), project)).toBeNull();
     expect(unwrittenSession(join(root, "missing.jsonl"), project)).toBeNull();
     expect(unwrittenSession(join(project, "fresh.txt"), project)).toBeNull();
+  });
+});
+
+describe("Command Code session resolution", () => {
+  const shellCwd = join(root, "shell-project");
+  const agentCwd = join(root, "agent-project");
+  const helperCwd = join(root, "helper-project");
+  const store = join(root, ".commandcode", "projects", cmdSlug(agentCwd));
+  const shellStore = join(root, ".commandcode", "projects", cmdSlug(shellCwd));
+  mkdirSync(store, { recursive: true });
+  mkdirSync(shellStore, { recursive: true });
+  mkdirSync(join(root, ".commandcode", "projects", cmdSlug(helperCwd)), { recursive: true });
+  const path = join(store, "reported.jsonl");
+  const shellPath = join(shellStore, "shell.jsonl");
+  writeFileSync(path, "{}\n");
+  writeFileSync(shellPath, "{}\n");
+  const fresh = join(store, "fresh.jsonl");
+  const report = { agent: "cmd", source: "herdr:cmd", kind: "path", value: path };
+  const agent = {
+    agent: "cmd", cwd: shellCwd, foreground_cwd: agentCwd, agent_session: report,
+    agent_status: "idle", focused: false, pane_id: "cmd-pane", revision: 1,
+    tab_id: "tab", terminal_id: "terminal", workspace_id: "workspace",
+  } satisfies AgentInfo;
+
+  const cases: { name: string; changes: Partial<AgentInfo>; expected: unknown }[] = [
+    { name: "resolves the process project when the shell is elsewhere", changes: {}, expected: { path } },
+    { name: "resolves an unwritten session in the process project", changes: { agent_session: { ...report, value: fresh } }, expected: { unwritten: { id: "fresh", path: fresh } } },
+    { name: "falls back when the process cwd is absent", changes: { cwd: agentCwd, foreground_cwd: null }, expected: { path } },
+    { name: "falls back when the process cwd is empty", changes: { cwd: agentCwd, foreground_cwd: "" }, expected: { path } },
+    { name: "resolves the cwd store when foreground validation fails", changes: { agent_session: { ...report, value: shellPath } }, expected: { path: shellPath } },
+    { name: "resolves an unwritten session in the cwd store", changes: { agent_session: { ...report, value: join(shellStore, "fresh.jsonl") } }, expected: { unwritten: { id: "fresh", path: join(shellStore, "fresh.jsonl") } } },
+    { name: "resolves B when an unrelated foreground helper reports C", changes: { cwd: agentCwd, foreground_cwd: helperCwd }, expected: { path } },
+    { name: "rejects a session when neither reported cwd validates", changes: { foreground_cwd: helperCwd }, expected: null },
+    { name: "rejects an unwritten session when neither cwd validates", changes: { foreground_cwd: helperCwd, agent_session: { ...report, value: fresh } }, expected: null },
+    { name: "rejects another agent", changes: { agent: "pi" }, expected: null },
+    { name: "rejects another session agent", changes: { agent_session: { ...report, agent: "pi" } }, expected: null },
+    { name: "rejects an untrusted session source", changes: { agent_session: { ...report, source: "environment" } }, expected: null },
+    { name: "rejects an id instead of a path", changes: { agent_session: { ...report, kind: "id" } }, expected: null },
+    { name: "rejects a missing session report", changes: { agent_session: null }, expected: null },
+    { name: "rejects a missing cwd", changes: { cwd: null, foreground_cwd: null }, expected: null },
+  ];
+
+  it.each(cases)("$name", async ({ changes, expected }) => {
+    // Given an isolated home and herdr report, without a live herdr connection.
+    const script = `const { cmdTranscriptPath } = await import(${JSON.stringify(join(import.meta.dir, "cmd.ts"))});
+      console.log(JSON.stringify(await cmdTranscriptPath("cmd-pane", { agent: ${JSON.stringify({ ...agent, ...changes })} })));`;
+    // When resolving the reported session through the real filesystem validation.
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      env: { ...process.env, HOME: root, USERPROFILE: root },
+      stdout: "pipe", stderr: "pipe", timeout: 5_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    // Then the resolver returns only the session justified by the report and store.
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual(expected);
   });
 });
 

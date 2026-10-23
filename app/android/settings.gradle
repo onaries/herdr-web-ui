@@ -3,3 +3,14 @@ include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 
 apply from: 'capacitor.settings.gradle'
+
+// Android push through FCM (ovis-push/README.md): a module of its own, added to :app here so the
+// app's build.gradle stays as it is
+include ':ovis-push'
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.plugins.withId('com.android.application') {
+            project.dependencies.add('implementation', project.project(':ovis-push'))
+        }
+    }
+}

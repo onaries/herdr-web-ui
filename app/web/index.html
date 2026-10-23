@@ -4,17 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Ovis</title>
+  <meta name="theme-color" content="#12100e">
   <link rel="stylesheet" href="shell.css">
 </head>
 <body>
-  <!-- data-ko: the Korean text of the element, put in by localize() (shell.js) on a Korean phone -->
+  <!-- data-ko: the Korean text of the element, put in as text by localize() (shell.js) on a Korean
+       phone, so markup inside a sentence gets its own element -->
   <main>
     <h1><img class="logo" src="ovis-logo.png" alt="Ovis" width="152" height="54"></h1>
     <p data-ko="PC에서 실행 중인 Ovis를 엽니다. 주소는 PC에서 연 Ovis의 설정 → 폰 및 기기에 있습니다.">Open Ovis on your PC. Its address is under Settings → Phone &amp; devices in Ovis on the PC.</p>
     <form id="connect" novalidate>
       <label for="address" data-ko="PC 주소">PC address</label>
       <input id="address" name="address" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://my-pc.tailnet.ts.net" autocomplete="url">
-      <p class="hint" data-ko="https 주소(PC에서 &lt;code&gt;tailscale serve&lt;/code&gt;)가 일반 http 주소보다 앱에서 더 빨리 열립니다.">An https address (<code>tailscale serve</code> on the PC) opens faster in the app than a plain http one.</p>
+      <p class="hint"><span data-ko="https 주소(PC에서 ">An https address (</span><code>tailscale serve</code><span data-ko=")가 일반 http 주소보다 앱에서 더 빨리 열립니다."> on the PC) opens faster in the app than a plain http one.</span></p>
       <p class="error" id="error" role="alert"></p>
       <div class="row">
         <button type="submit" class="primary" id="open" data-ko="열기">Open</button>
@@ -26,7 +28,7 @@
       <ul id="saved"></ul>
     </section>
     <h2 data-ko="아직 PC가 없나요?">No PC yet?</h2>
-    <p data-ko="가상의 에이전트와 터미널로 둘러보세요. 이 휴대폰 밖으로는 아무것도 나가지 않습니다. &lt;a href=&quot;demo/index.html&quot; id=&quot;demo&quot;&gt;데모 보기&lt;/a&gt;">Look around with made-up agents and terminals: nothing leaves this phone. <a href="demo/index.html" id="demo">Try the demo</a></p>
+    <p><span data-ko="가상의 에이전트와 터미널로 둘러보세요. 이 휴대폰 밖으로는 아무것도 나가지 않습니다.">Look around with made-up agents and terminals: nothing leaves this phone.</span> <a href="demo/index.html" id="demo" data-ko="데모 보기">Try the demo</a></p>
   </main>
   <script type="module" src="connect.js"></script>
 </body>

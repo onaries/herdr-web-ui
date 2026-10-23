@@ -71,9 +71,9 @@ import { typedTerminalCommand } from "../lib/compose.ts";
 import { usePaneCommands } from "../lib/usePaneCommands.ts";
 import { commandScreenClosed, sentOutcome, type TerminalPeek } from "../lib/terminalPeek.ts";
 
-/** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 // How long after scroll input an upward move still counts as the reader's own.
 const SCROLL_INPUT_MS = 500;
+/** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 const ChatPaneContext = createContext<string | null>(null);
 const ChatHistoryContext = createContext("");
 /**
@@ -1042,8 +1042,9 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   // Explicit paging stays away even inside the ordinary near-bottom tolerance.
   const pagingAway = useRef(false);
   const lastScrollTop = useRef(0);
-  // When the reader last used input that can scroll the transcript (wheel, touch, pointer, keys).
+  // When the reader last used upward scroll input.
   const scrollInputAt = useRef(-Infinity);
+  const pointerDragAt = useRef(-Infinity);
   const signature = useRef("");
   // Older pages sit above the newest one. Once any shows, the newest page is
   // polled from its start at that moment, so the two always meet.
@@ -1447,6 +1448,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       : null);
     if (atEnd) {
       pagingAway.current = false; stickToBottom.current = true;
+      scrollInputAt.current = -Infinity; pointerDragAt.current = -Infinity;
       setAway(false); setNewMessages(false);
     }
   };
@@ -1517,15 +1519,43 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   }, [state.source, ChatTimeline]);
 
   useEffect(() => {
+    if (!visible) return;
+    let pointer: { x: number; y: number } | null = null;
+    let touchY: number | undefined;
     const mark = (event: Event): void => {
       const node = scroller.current;
-      if (node !== null && event.target instanceof Node && node.contains(event.target)) scrollInputAt.current = performance.now();
+      if (event instanceof KeyboardEvent) {
+        if (!active || event.isComposing || event.keyCode === 229) return;
+        if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]")) return;
+        if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home" || (event.key === " " && event.shiftKey)) scrollInputAt.current = performance.now();
+        return;
+      }
+      if (event instanceof PointerEvent && (event.type === "pointerup" || event.type === "pointercancel")) {
+        if (node !== null && node.scrollTop < lastScrollTop.current) scrollInputAt.current = Math.max(scrollInputAt.current, pointerDragAt.current);
+        pointer = null; pointerDragAt.current = -Infinity; return;
+      }
+      if (node === null || !(event.target instanceof Node) || !node.contains(event.target)) return;
+      if (event instanceof WheelEvent && event.deltaY < 0) scrollInputAt.current = performance.now();
+      if (event instanceof PointerEvent) {
+        if (event.type === "pointerdown") {
+          pointer = { x: event.clientX, y: event.clientY };
+          pointerDragAt.current = -Infinity;
+          // A scrollbar press may scroll before the browser delivers any pointermove.
+          if (event.target === node && event.clientX >= node.getBoundingClientRect().left + node.clientWidth) pointerDragAt.current = performance.now();
+        }
+        else if (pointer !== null && event.buttons !== 0 && (event.clientX !== pointer.x || event.clientY !== pointer.y)) pointerDragAt.current = performance.now();
+      }
+      if ((event.type === "touchstart" || event.type === "touchmove") && event instanceof TouchEvent) {
+        const y = event.touches[0]?.clientY;
+        if (event.type === "touchmove" && y !== undefined && touchY !== undefined && y > touchY) scrollInputAt.current = performance.now();
+        touchY = y;
+      }
     };
     const options = { capture: true, passive: true } as const;
-    const types = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+    const types = ["wheel", "touchstart", "touchmove", "pointerdown", "pointermove", "pointerup", "pointercancel", "keydown"] as const;
     for (const type of types) document.addEventListener(type, mark, options);
     return () => { for (const type of types) document.removeEventListener(type, mark, options); };
-  }, []);
+  }, [active, visible]);
   const onScroll = (): void => {
     const node = scroller.current;
     if (node === null) return;
@@ -1533,11 +1563,13 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     const scrollingDown = node.scrollTop > lastScrollTop.current;
     const scrollingUp = node.scrollTop < lastScrollTop.current;
     lastScrollTop.current = node.scrollTop;
-    // An upward move right after the reader's own input is reading intent from the first pixel; one
+    // A pointer press alone is not intent: a drag must also move the transcript up.
+    if (scrollingUp) scrollInputAt.current = Math.max(scrollInputAt.current, pointerDragAt.current);
+    // An upward move right after upward input is reading intent beyond the 1 px rounding tolerance; one
     // without it (a growing composer shrinking the viewport before the bottom correction) keeps
-    // following within main's 48 px allowance. The end presentation stays exact in measureEnd.
+    // following within 48 px. The end presentation stays exact in measureEnd.
     const allowance = performance.now() - scrollInputAt.current < SCROLL_INPUT_MS ? 1 : 48;
-    // DOM heights are rounded; only downward intent may use the endpoint rounding allowance.
+    // Reaching the rounded endpoint clears reading intent unless still paging upward.
     if ((!pagingAway.current || scrollingDown) && distanceFromBottom <= 1) pagingAway.current = false;
     if (scrollingUp && distanceFromBottom > allowance && stickToBottom.current) {
       pagingAway.current = true;

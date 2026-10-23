@@ -42,7 +42,8 @@ export async function runManaged(root = resolve(import.meta.dir, "..")) {
     let ready = false;
     child = Bun.spawn([process.execPath, file], {
       cwd: root, windowsHide: true, stdin: "ignore", stdout: "inherit", stderr: "inherit",
-      env: { ...process.env, OVIS_SOURCE_ROOT: root, ...(fallback ? { OVIS_SUPERVISOR_FALLBACK: "1" } : {}) },
+      // OVIS_LAUNCHER: started by a launcher of this version, not by one from before the rename
+      env: { ...process.env, OVIS_SOURCE_ROOT: root, OVIS_LAUNCHER: "1", ...(fallback ? { OVIS_SUPERVISOR_FALLBACK: "1" } : {}) },
       ipc(message) { if (message?.type === "supervisor-ready") ready = true; },
     });
     const code = await child.exited;

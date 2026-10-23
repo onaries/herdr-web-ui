@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants as fsConstants, copyFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, readdirSync, realpathSync, openSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, watch, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { ConversationMonitor } from "./conversation-monitor.ts";
@@ -16,15 +17,18 @@ import { Telemetry } from "./telemetry.ts";
 import { NOTICE_VERSION, telemetryHarnesses, type TelemetryActive, type TelemetryEvent, type TelemetryStatus } from "../shared/telemetry.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "../src/lib/settings.ts";
 import { HerdrSocket } from "../src/lib/ws.ts";
-import { HerdrError, herdrRpc, paneRead, ping, sessionSnapshot, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
+import { HerdrError, herdrRpc, paneRead, ping, sessionSnapshot, subscribeEvents, tabCreate, workspaceCreate, workspaceClose } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 import { descriptorPath, type BridgeDescriptor } from "./bridge.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
 import { forgetTranscriptState } from "./conversation.ts";
-import type { RepoDiffFileList, RepoDiffFilePatch, SessionHistoryResponse } from "../shared/protocol.ts";
+import type { RepoDiffFileList, RepoDiffFilePatch, SessionHistoryResponse, SessionResumeResponse } from "../shared/protocol.ts";
+import { claudeProjectDir } from "./claude-store.ts";
+import { testShellEnv } from "../scripts/test-shell.ts";
 import { PendingInputError, PendingInputs } from "./pending-input.ts";
+import { loginPathProbe, ShellAgentLocator, type LoginPathProbe } from "./shell-agent.ts";
 
 /**
  * Contract test for Ovis's HTTP + WS surface.
@@ -1336,6 +1340,104 @@ describe("workspace and discovery endpoints", () => {
       rmSync(bin, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")("offers a shell agent found only on its login shell's PATH, starts that same executable, and keeps hits and misses until the next run", async () => {
+    // a service PATH without gjc, and a test-owned login shell whose -l run puts it on PATH: no dotfile is read
+    const root = mkdtempSync(join(tmpdir(), "ovis-login-path-"));
+    const home = join(root, "home"), serviceBin = join(root, "service bin"), loginBin = join(root, "login bin");
+    for (const dir of [home, serviceBin, loginBin]) mkdirSync(dir);
+    const gjc = join(loginBin, "gjc");
+    const alive = join(root, "alive"), release = join(root, "release");
+    await Bun.$`mkfifo ${alive} ${release}`;
+    // the fixture agent says who it is on `alive`, then stays in front of the pane under its own path,
+    // reading `release` until the test closes it; it holds `alive` open, so that ends when it does
+    const writeGjc = () => writeFileSync(gjc, `#!/bin/bash\nexec 3>'${alive}'\necho "$$" >&3\nexec -a "$0" cat '${release}'\n`, { mode: 0o755 });
+    writeGjc();
+    const shell = join(root, "login-shell");
+    writeFileSync(shell, `#!/bin/sh\nif [ "$1" = "-l" ]; then PATH='${loginBin}:/usr/bin:/bin'; export PATH; shift; echo 'fixture motd'; fi\n[ "$1" = "-c" ] && exec /bin/sh -c "$2"\nexit 64\n`, { mode: 0o755 });
+    const real = loginPathProbe({ shell, env: { HOME: home, PATH: serviceBin } });
+    let runs = 0;
+    const probe: LoginPathProbe = (signal) => { runs += 1; return real(signal); };
+    // the answer's age is read from this clock: a minute passes only when the test says
+    let clock = 0;
+    const shellAgents = new ShellAgentLocator({ servicePath: () => serviceBin, probe, now: () => clock });
+    const state = mkdtempSync(join(tmpdir(), "ovis-login-path-state-"));
+    const app = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state, shellAgents });
+    const url = `http://127.0.0.1:${app.port}`;
+    const kinds = async () => ((await (await fetch(`${url}/api/agents`)).json()) as { agents: AgentKind[] }).agents;
+    const owned = await workspaceCreate({ cwd: tmpdir(), label: "ovis-test-login-path" });
+    const within = <T,>(promise: Promise<T>, ms: number, what: string): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(what)), ms); })]).finally(() => clearTimeout(timer));
+    };
+    // subscribed before the launch: the fixture's pid line says it is up, the end of the stream that it is gone
+    const watcher = Bun.spawn(["cat", alive], { stdout: "pipe" });
+    const fixtureExited = watcher.exited;
+    const firstLine = (async () => {
+      const reader = watcher.stdout.getReader(), decoder = new TextDecoder();
+      let text = "";
+      while (!text.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("the fixture ended before it said it was up");
+        text += decoder.decode(value, { stream: true });
+      }
+      return text.split("\n")[0]!;
+    })();
+    // closing the only writer of `release` ends the fixture's read, and its exit ends `alive`
+    const releaseFixture = () => { try { closeSync(openSync(release, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK)); } catch { /* no reader: it never started or is gone */ } };
+    let launchedPid: number | null = null;
+    try {
+      // no login shell runs until something asks
+      expect(runs).toBe(0);
+      // concurrent first reads share one run
+      const reads = await Promise.all(Array.from({ length: 6 }, kinds));
+      for (const agents of reads) {
+        expect(agents).toContainEqual({ kind: "gjc", label: "Gajae Code", installed: true });
+        expect(agents.map((agent) => agent.kind)).not.toContain("omo");
+        // the wire shape is unchanged: kind, label and installed, nothing of where it was found
+        for (const agent of agents) expect(Object.keys(agent).sort()).toEqual(["installed", "kind", "label"]);
+      }
+      expect(JSON.stringify(reads)).not.toContain(root);
+      expect(runs).toBe(1);
+
+      // the start types the absolute path the offer found, quoted: the fixture runs under it
+      const res = await fetch(`${url}/api/tab/create`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspace_id: owned.workspace.workspace_id, agent: { kind: "gjc" } }) });
+      expect(res.status).toBe(200);
+      const tab = await res.json() as WorkspaceCreated;
+      expect(tab).toMatchObject({ agent_started: true });
+      launchedPid = Number(await within(firstLine, 10_000, "the fixture never said it was up"));
+      const info = await herdrRpc<{ process_info: { foreground_processes: { pid: number; argv?: string[] }[] } }>("pane.process_info", { pane_id: tab.pane_id });
+      expect(info.process_info.foreground_processes).toContainEqual(expect.objectContaining({ pid: launchedPid, argv: [gjc, release] }));
+      // neither the reads nor the start ran a login shell of their own
+      expect(runs).toBe(1);
+
+      // a removed executable is offered no more, and nothing else takes its place before the next run
+      rmSync(gjc);
+      expect((await kinds()).map((agent) => agent.kind)).not.toContain("gjc");
+      clock += 60_000;
+      expect((await kinds()).map((agent) => agent.kind)).not.toContain("gjc");
+      // back again: the kept miss holds until a read after the answer is a minute old runs the next one
+      writeGjc();
+      expect((await kinds()).map((agent) => agent.kind)).not.toContain("gjc");
+      clock += 60_000;
+      expect(await kinds()).toContainEqual({ kind: "gjc", label: "Gajae Code", installed: true });
+      expect(runs).toBe(3);
+
+      // released, the fixture agent ends: nothing of it outlives the test
+      releaseFixture();
+      expect(await within(fixtureExited, 10_000, "the released fixture kept running")).toBe(0);
+    } finally {
+      releaseFixture();
+      const released = await within(fixtureExited, 5000, "fixture still running").then(() => true, () => false);
+      if (!released && launchedPid !== null) try { process.kill(launchedPid, "SIGKILL"); } catch { /* gone with its pane */ }
+      watcher.kill();
+      await fixtureExited;
+      app.stop();
+      await workspaceClose(owned.workspace.workspace_id);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(state, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("makes one folder for the folder browser, and refuses names, folders and origins it must not", async () => {
     const root = mkdtempSync(join(tmpdir(), "ovis-mkdir-"));
@@ -4113,6 +4215,363 @@ describe("workspace order evidence", () => {
       await workspaceClose(first.workspace.workspace_id).catch(() => {});
       await workspaceClose(second.workspace.workspace_id).catch(() => {});
       rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+
+/**
+ * POST /api/sessions/resume end to end: herdr's real tab.create and agent.start, which types
+ * `claude --resume <id>` into the new tab's shell. The `claude` that shell finds is a native stand-in
+ * (a copy of Node renamed `claude`) that reports, over a loopback socket, whether CLAUDE_CONFIG_DIR
+ * reached it and with what value, and appends to the transcript of the session in the store it
+ * inherited; no real Claude runs. The stand-in has to come first on the PATH of herdr's own shells,
+ * so this runs on a herdr session of its own, as reattach.contract.test.ts does, under a HOME of
+ * its own: the default store (~/.claude) is the test's, never the user's.
+ */
+describe("POST /api/sessions/resume", () => {
+  const NATIVE = process.platform === "linux" && Bun.which("node") !== null && process.env["HERDR_TEST_MODE"] !== "unit";
+  const SESSION = "resume";
+  // made in beforeAll, so a run whose filter leaves these tests out leaves no directory behind
+  let config = "";
+  let root = "";
+  let home = "";
+  let alternate = "";
+  let project = "";
+  let socket = "";
+  const herdr = process.env["OVIS_HERDR_BIN"] || Bun.which("herdr") || "herdr";
+  const ID = "00000000-0000-4000-8000-0000000000c1";
+  const OTHER = "00000000-0000-4000-8000-0000000000c2";
+  const WATCH_TOKEN = "f".repeat(64);
+  type Report = { pid: number; resumed: string | null; has: boolean; value: string | null };
+  const queued: Report[] = [];
+  const waiting: ((report: Report) => void)[] = [];
+  let listener: { port: number; stop: (closeActive?: boolean) => void } | undefined;
+  let daemon: ReturnType<typeof Bun.spawn> | undefined;
+  let app: ReturnType<typeof createServer> | undefined;
+  let cwd = "";
+  let workspaceId = "";
+  let foreignWorkspace = "";
+  const saved = { HERDR_SOCKET: process.env["HERDR_SOCKET"], HOME: process.env["HOME"], CLAUDE_CONFIG_DIR: process.env["CLAUDE_CONFIG_DIR"], PATH: process.env["PATH"] };
+  const restore = (name: keyof typeof saved) => { if (saved[name] === undefined) delete process.env[name]; else process.env[name] = saved[name]; };
+  const rpc = <T,>(method: string, params: Record<string, unknown>) => herdrRpc<T>(method, params, socket);
+  const snapshotNow = async () => (await rpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
+  const tabsOf = async (workspace: string) => (await snapshotNow()).tabs.filter((tab) => tab.workspace_id === workspace).length;
+  /** the next stand-in's report, in the order they started; bounded */
+  const nextReport = (): Promise<Report> => {
+    const ready = queued.shift();
+    if (ready) return Promise.resolve(ready);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no Claude stand-in reported within 20 s")), 20_000);
+      waiting.push((report) => { clearTimeout(timer); resolve(report); });
+    });
+  };
+  const transcript = (store: string, id: string) => join(store, "projects", claudeProjectDir(cwd), `${id}.jsonl`);
+  const writeSession = (store: string, id: string, prompt: string) => {
+    mkdirSync(join(transcript(store, id), ".."), { recursive: true });
+    writeFileSync(transcript(store, id), `${JSON.stringify({ type: "user", cwd, sessionId: id, timestamp: "2026-10-01T09:00:00.000Z", message: { role: "user", content: prompt } })}\n`);
+  };
+  /** A tab of the workspace running a stand-in Claude with `store` exported (null: none exported); the tab's own env, if given, is its shell's. */
+  const sourcePane = async (store: string | null, tabEnv?: Record<string, string>, command = "claude") => {
+    const tab = await rpc<{ root_pane: { pane_id: string } }>("tab.create", { workspace_id: workspaceId, cwd, focus: false, ...(tabEnv ? { env: tabEnv } : {}) });
+    const pane = tab.root_pane.pane_id;
+    await rpc("pane.send_text", { pane_id: pane, text: `${store === null ? "env -u CLAUDE_CONFIG_DIR" : `env CLAUDE_CONFIG_DIR='${store}'`} ${command}\n` });
+    return { pane, report: await nextReport() };
+  };
+  const list = async (pane: string) => {
+    const response = await fetch(`http://127.0.0.1:${app!.port}/api/sessions/history?workspace_id=${encodeURIComponent(workspaceId)}&agent=claude&pane_id=${encodeURIComponent(pane)}`);
+    return [response.status, await response.json()] as [number, SessionHistoryResponse & { error?: { code: string } }];
+  };
+  const guard = { "content-type": "application/json", "x-herdr-machine": "1" };
+  const resume = async (body: Record<string, unknown>, headers: Record<string, string> = {}) => {
+    const response = await fetch(`http://127.0.0.1:${app!.port}/api/sessions/resume`, { method: "POST", headers: { ...guard, ...headers }, body: JSON.stringify(body) });
+    return [response.status, await response.json()] as [number, SessionResumeResponse & { error?: { code: string; message: string } }];
+  };
+  /** herdr up on `path`: tried when its folder changes, and at once again while it refuses (between bind and listen); bounded */
+  const herdrUp = (path: string) => new Promise<void>((resolve, reject) => {
+    let over = false;
+    let trying = false;
+    const finish = (error?: Error) => { if (over) return; over = true; clearTimeout(timer); watcher.close(); if (error) reject(error); else resolve(); };
+    const attempt = async (): Promise<void> => {
+      if (over || trying || !existsSync(path)) return;
+      trying = true;
+      try { await herdrRpc("ping", {}, path, 2_000); finish(); } catch { setImmediate(() => void attempt()); } finally { trying = false; }
+    };
+    const watcher = watch(dirname(path), () => void attempt());
+    const timer = setTimeout(() => finish(new Error("the resume test's herdr did not start")), 15_000);
+    void attempt();
+  });
+  /** A herdr session of its own on `path`, its shells handed `env` over the stand-in PATH and this HOME. */
+  const startHerdr = async (session: string, configDir: string, path: string, env: Record<string, string>) => {
+    mkdirSync(dirname(path), { recursive: true });
+    const started = Bun.spawn([herdr, "--session", session, "server"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: {
+      ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_") && name !== "CLAUDE_CONFIG_DIR")),
+      ...testShellEnv(configDir), XDG_CONFIG_HOME: configDir, HOME: home, PATH: `${join(root, "bin")}:${saved.PATH ?? ""}`, ...env,
+    } });
+    await herdrUp(path);
+    return started;
+  };
+  const stopHerdr = async (session: string, configDir: string, started: ReturnType<typeof Bun.spawn>) => {
+    await Bun.spawn([herdr, "--session", session, "server", "stop"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: { ...process.env, XDG_CONFIG_HOME: configDir } }).exited;
+    started.kill();
+    await started.exited;
+  };
+  /** Reads `check` until it holds: once herdr's subscription starts, and again on each event of the pane; bounded */
+  const untilPane = (pane: string, check: () => Promise<boolean>, what: string, start: () => Promise<unknown>) => new Promise<void>((resolve, reject) => {
+    let over = false;
+    let reading = false;
+    let again = false;
+    const finish = (error?: Error) => { if (over) return; over = true; clearTimeout(timer); subscription.close(); if (error) reject(error); else resolve(); };
+    const read = async (): Promise<void> => {
+      if (over) return;
+      if (reading) { again = true; return; }
+      reading = true;
+      try { if (await check()) finish(); } catch (error) { finish(error as Error); } finally {
+        reading = false;
+        if (again && !over) { again = false; void read(); }
+      }
+    };
+    const subscription = subscribeEvents([{ type: "pane.updated", pane_id: pane }, { type: "pane.agent_status_changed", pane_id: pane }], {
+      onStarted: () => { start().then(() => read(), (error: Error) => finish(error)); },
+      onEvent: () => void read(),
+      onError: (error) => finish(error),
+    }, socket);
+    const timer = setTimeout(() => finish(new Error(`herdr never ${what}`)), 10_000);
+  });
+
+  beforeAll(async () => {
+    if (!NATIVE) return;
+    config = mkdtempSync("/tmp/hwr-");
+    root = mkdtempSync(join(tmpdir(), "ovis-claude-resume-"));
+    home = join(root, "home");
+    alternate = join(root, "alternate-store");
+    project = join(root, "project");
+    socket = join(config, "herdr", "sessions", SESSION, "herdr.sock");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    mkdirSync(alternate, { recursive: true });
+    mkdirSync(project, { recursive: true });
+    cwd = realpathSync(project);
+    const reports = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(peer, data) {
+      const report = JSON.parse(data.toString()) as Report;
+      peer.end();
+      const waiter = waiting.shift();
+      if (waiter) waiter(report); else queued.push(report);
+    } } });
+    listener = reports;
+    const bin = join(root, "bin");
+    mkdirSync(join(root, "native"), { recursive: true });
+    mkdirSync(bin);
+    copyFileSync(Bun.which("node")!, join(root, "native", "claude"));
+    writeFileSync(join(root, "claude.cjs"), `
+process.title = "claude";
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const at = args.indexOf("--resume");
+const has = Object.prototype.hasOwnProperty.call(process.env, "CLAUDE_CONFIG_DIR");
+const store = process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME, ".claude");
+const resumed = at >= 0 ? args[at + 1] : null;
+if (resumed) fs.appendFileSync(path.join(store, "projects", ${JSON.stringify(claudeProjectDir(cwd))}, resumed + ".jsonl"), JSON.stringify({ type: "user", sessionId: resumed, message: { role: "user", content: "written by the resumed stand-in" } }) + "\\n");
+require("node:net").connect(${reports.port}, "127.0.0.1", function () { this.end(JSON.stringify({ pid: process.pid, resumed, has, value: has ? process.env.CLAUDE_CONFIG_DIR : null })); });
+// alive until its pane or herdr ends it, with or without a terminal on stdin (a background job has none)
+setInterval(() => {}, 1 << 30);
+`);
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\nexec ${JSON.stringify(join(root, "native", "claude"))} ${JSON.stringify(join(root, "claude.cjs"))} "$@"\n`);
+    chmodSync(join(bin, "claude"), 0o755);
+    writeSession(join(home, ".claude"), ID, "default store prompt");
+    writeSession(alternate, ID, "alternate store prompt");
+    // herdr's shells: the stand-in first on PATH, this HOME, and no CLAUDE_CONFIG_DIR of their own
+    daemon = await startHerdr(SESSION, config, socket, {});
+    // the server under test reads herdr, the default store and the variable from its own environment
+    process.env["HERDR_SOCKET"] = socket;
+    process.env["HOME"] = home;
+    delete process.env["CLAUDE_CONFIG_DIR"];
+    const appState = join(root, "app-state");
+    mkdirSync(appState);
+    writeFileSync(join(appState, "devices.json"), JSON.stringify({ gate_closed_at: new Date().toISOString(), devices: [{ id: "0123456789abcdef", label: "Watch fixture", role: "watch", token_hash: createHash("sha256").update(WATCH_TOKEN).digest("hex"), created_at: new Date().toISOString(), last_seen_at: null }] }), { mode: 0o600 });
+    app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: appState });
+    workspaceId = (await rpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd, label: "ovis-test-claude-resume", focus: false })).workspace.workspace_id;
+    foreignWorkspace = (await rpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd, label: "ovis-test-claude-resume-other", focus: false })).workspace.workspace_id;
+  }, 30_000);
+
+  afterAll(async () => {
+    app?.stop();
+    restore("HERDR_SOCKET");
+    restore("HOME");
+    restore("CLAUDE_CONFIG_DIR");
+    if (daemon) await stopHerdr(SESSION, config, daemon);
+    listener?.stop(true);
+    if (config !== "") rmSync(config, { recursive: true, force: true });
+    if (root !== "") rmSync(root, { recursive: true, force: true });
+  });
+
+  it.skipIf(!NATIVE)("real tab.create plus agent.start preserve Claude override presence and store", async () => {
+    const before = readFileSync(transcript(join(home, ".claude"), ID), "utf8");
+    // a pane whose processes herdr reports, none of them Claude: the server's default store, bound to it
+    const shellOnly = (await rpc<{ root_pane: { pane_id: string } }>("tab.create", { workspace_id: workspaceId, cwd, focus: false })).root_pane.pane_id;
+    const [shellStatus, shellList] = await list(shellOnly);
+    expect([shellStatus, shellList.sessions.map((row) => [row.firstMessage, row.resume?.source?.pane_id])]).toEqual([200, [["default store prompt", shellOnly]]]);
+    // an exported alternate store: listed from it, resumed in it, the variable still exported
+    const exported = await sourcePane(alternate);
+    const [status, listed] = await list(exported.pane);
+    expect(status).toBe(200);
+    expect(listed.sessions.map((row) => [row.id, row.firstMessage, row.resume?.source?.pane_id])).toEqual([[ID, "alternate store prompt", exported.pane]]);
+    expect(JSON.stringify(listed)).not.toContain(alternate);
+    const alternateKey = listed.sessions[0]!.resume!.source!.store_key;
+    const tabs = await tabsOf(workspaceId);
+    const [made, created] = await resume({ workspace_id: workspaceId, pane_id: exported.pane, agent: "claude", session_id: ID, store_key: alternateKey });
+    expect([made, created.action, created.action === "created" && created.agent_started]).toEqual([200, "created", true]);
+    expect(await nextReport()).toMatchObject({ resumed: ID, has: true, value: alternate });
+    expect(readFileSync(transcript(alternate, ID), "utf8")).toContain("written by the resumed stand-in");
+    expect(readFileSync(transcript(join(home, ".claude"), ID), "utf8")).toBe(before);
+    expect(await tabsOf(workspaceId)).toBe(tabs + 1);
+
+    // none exported, by herdr's shells either: the variable stays absent, not set to ~/.claude
+    const implicit = await sourcePane(null);
+    const [, implicitList] = await list(implicit.pane);
+    expect(implicitList.sessions.map((row) => row.firstMessage)).toEqual(["default store prompt"]);
+    const implicitKey = implicitList.sessions[0]!.resume!.source!.store_key;
+    const [, second] = await resume({ workspace_id: workspaceId, pane_id: implicit.pane, agent: "claude", session_id: ID, store_key: implicitKey });
+    expect(second.action).toBe("created");
+    expect(await nextReport()).toMatchObject({ resumed: ID, has: false, value: null });
+    expect(readFileSync(transcript(join(home, ".claude"), ID), "utf8")).toContain("written by the resumed stand-in");
+
+    // ~/.claude exported by name: the same directory, another key, and the variable stays exported
+    const named = await sourcePane(join(home, ".claude"));
+    const [, namedList] = await list(named.pane);
+    const namedKey = namedList.sessions[0]!.resume!.source!.store_key;
+    expect(namedKey).not.toBe(implicitKey);
+    const [, third] = await resume({ workspace_id: workspaceId, pane_id: named.pane, agent: "claude", session_id: ID, store_key: namedKey });
+    expect(third.action).toBe("created");
+    expect(await nextReport()).toMatchObject({ resumed: ID, has: true, value: join(home, ".claude") });
+
+    // a pane herdr reports on the session, on the same store: Open, nothing made, herdr's focus unmoved
+    await rpc("pane.report_agent_session", { pane_id: exported.pane, agent: "claude", source: "herdr:claude", seq: 1, agent_session_id: ID, session_start_source: "resume" });
+    const focused = (await snapshotNow()).panes.find((pane) => pane.focused)?.pane_id;
+    const counted = await tabsOf(workspaceId);
+    const [, opened] = await resume({ workspace_id: workspaceId, pane_id: exported.pane, agent: "claude", session_id: ID, store_key: alternateKey });
+    expect(opened).toEqual({ action: "opened", workspace_id: workspaceId, pane_id: exported.pane });
+    expect(await tabsOf(workspaceId)).toBe(counted);
+    expect((await snapshotNow()).panes.find((pane) => pane.focused)?.pane_id).toBe(focused);
+    // the same id reported by that pane is not Open for a list read from another store: a new tab in that one
+    const [, elsewhere] = await resume({ workspace_id: workspaceId, pane_id: implicit.pane, agent: "claude", session_id: ID, store_key: implicitKey });
+    expect(elsewhere.action).toBe("created");
+    expect(await nextReport()).toMatchObject({ resumed: ID, has: false });
+  }, 90_000);
+
+  it.skipIf(!NATIVE)("refuses a changed, foreign, forged, watch-only, unreadable or ambiguous source before any tab is made", async () => {
+    const source = await sourcePane(alternate);
+    const [, listed] = await list(source.pane);
+    const key = listed.sessions[0]!.resume!.source!.store_key;
+    const valid = { workspace_id: workspaceId, pane_id: source.pane, agent: "claude", session_id: ID, store_key: key };
+    const foreignPane = (await snapshotNow()).panes.find((pane) => pane.workspace_id === foreignWorkspace)!.pane_id;
+    const defaultBefore = readFileSync(transcript(join(home, ".claude"), ID), "utf8");
+    const refusals: [number, unknown][] = [];
+    // each refusal is answered before any tab is made
+    const refused = async (body: Record<string, unknown>, expected: [number, string], headers: Record<string, string> = {}) => {
+      const tabs = await tabsOf(workspaceId);
+      const [status, answer] = await resume(body, headers);
+      refusals.push([status, answer]);
+      expect([status, answer.error?.code]).toEqual(expected);
+      expect(await tabsOf(workspaceId)).toBe(tabs);
+    };
+    await refused(valid, [403, "read_only"], { "x-forwarded-for": "100.64.0.9", cookie: `ovis_device=${WATCH_TOKEN}` });
+    await refused({ ...valid, pane_id: foreignPane }, [400, "pane_not_in_workspace"]);
+    await refused({ ...valid, session_id: "../../outside" }, [400, "invalid_session_id"]);
+    await refused({ ...valid, store_key: alternate }, [400, "invalid_store_key"]);
+    await refused({ ...valid, store_key: "0".repeat(24) }, [409, "stale_source"]);
+    await refused({ ...valid, session_id: OTHER }, [404, "session_not_found"]);
+    await refused({ ...valid, agent: "codex" }, [400, "invalid_agent"]);
+    // the listing pane's Claude restarted on the default store: the key no longer matches
+    process.kill(source.report.pid);
+    await rpc("pane.send_text", { pane_id: source.pane, text: "env -u CLAUDE_CONFIG_DIR claude\n" });
+    await nextReport();
+    await refused(valid, [409, "stale_source"]);
+    // the listing pane gone
+    const gone = await sourcePane(alternate);
+    const [, goneList] = await list(gone.pane);
+    await rpc("pane.close", { pane_id: gone.pane });
+    await refused({ ...valid, pane_id: gone.pane, store_key: goneList.sessions[0]!.resume!.source!.store_key }, [409, "stale_source"]);
+    // a named store that is not there: unreadable, never the default store in its place
+    const unreadable = await sourcePane(join(root, "missing-store"));
+    expect((await list(unreadable.pane))[0]).toBe(409);
+    await refused({ ...valid, pane_id: unreadable.pane }, [409, "claude_store_unknown"]);
+    // two Claudes in front of one pane: which one a session belongs to cannot be told
+    const tab = await rpc<{ root_pane: { pane_id: string } }>("tab.create", { workspace_id: workspaceId, cwd, focus: false });
+    // herdr's own process list catches up with the two a moment after they start: read it again on each of the pane's events until it does
+    const claudes = async () => ((await rpc<{ process_info: { foreground_processes?: { name?: string }[] } }>("pane.process_info", { pane_id: tab.root_pane.pane_id })).process_info.foreground_processes ?? []).filter((entry) => entry.name === "claude").length;
+    await untilPane(tab.root_pane.pane_id, async () => await claudes() >= 2, "listed both Claude processes", async () => {
+      await rpc("pane.send_text", { pane_id: tab.root_pane.pane_id, text: `sh -c 'claude & CLAUDE_CONFIG_DIR=${alternate} claude; wait'\n` });
+      await nextReport(); await nextReport();
+    });
+    expect((await list(tab.root_pane.pane_id))[0]).toBe(409);
+    await refused({ ...valid, pane_id: tab.root_pane.pane_id }, [409, "claude_store_unknown"]);
+    // nothing was started in the default store, and no refusal names a store or a prompt
+    expect(readFileSync(transcript(join(home, ".claude"), ID), "utf8")).toBe(defaultBefore);
+    expect(JSON.stringify(refusals)).not.toMatch(/alternate|prompt|missing-store/);
+  }, 90_000);
+
+  it.skipIf(!NATIVE)("a source shell without the override is no proof: herdr exporting one withholds Resume before any tab", async () => {
+    // the implicit store's key, as a list from a pane with none exported gives it
+    const implicitKey = (await list((await sourcePane(null)).pane))[1].sessions[0]!.resume!.source!.store_key;
+    const exportedSession = "resume-exported";
+    const exportedConfig = mkdtempSync("/tmp/hwr-");
+    const exportedSocket = join(exportedConfig, "herdr", "sessions", exportedSession, "herdr.sock");
+    const exportedRpc = <T,>(method: string, params: Record<string, unknown>) => herdrRpc<T>(method, params, exportedSocket);
+    const defaultBefore = readFileSync(transcript(join(home, ".claude"), ID), "utf8");
+    const alternateBefore = readFileSync(transcript(alternate, ID), "utf8");
+    let exported: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      // a herdr whose own environment exports the alternate store: every new tab of it inherits that
+      exported = await startHerdr(exportedSession, exportedConfig, exportedSocket, { CLAUDE_CONFIG_DIR: alternate });
+      process.env["HERDR_SOCKET"] = exportedSocket;
+      const workspace = (await exportedRpc<Awaited<ReturnType<typeof workspaceCreate>>>("workspace.create", { cwd, label: "ovis-test-claude-resume-exported", focus: false })).workspace.workspace_id;
+      const pane = (await exportedRpc<{ root_pane: { pane_id: string } }>("tab.create", { workspace_id: workspace, cwd, focus: false })).root_pane.pane_id;
+      // the pane's shell drops it before Claude starts: the pane alone says none exported
+      await exportedRpc("pane.send_text", { pane_id: pane, text: "exec env -u CLAUDE_CONFIG_DIR /bin/sh -c 'claude; exec /bin/sh'\n" });
+      expect(await nextReport()).toMatchObject({ has: false });
+      const listed = await fetch(`http://127.0.0.1:${app!.port}/api/sessions/history?workspace_id=${encodeURIComponent(workspace)}&agent=claude&pane_id=${encodeURIComponent(pane)}`);
+      const rows = ((await listed.json()) as SessionHistoryResponse).sessions;
+      // the pane's own store is listed, but a new tab would start in herdr's: no Resume for it
+      expect([listed.status, rows.map((row) => [row.firstMessage, row.resume?.source])]).toEqual([200, [["default store prompt", undefined]]]);
+      const tabs = (await exportedRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot.tabs.filter((tab) => tab.workspace_id === workspace).length;
+      const [status, refused] = await resume({ workspace_id: workspace, pane_id: pane, agent: "claude", session_id: ID, store_key: implicitKey });
+      expect([status, refused.error?.code]).toEqual([409, "launch_unsupported"]);
+      expect((await exportedRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot.tabs.filter((tab) => tab.workspace_id === workspace).length).toBe(tabs);
+      expect(readFileSync(transcript(join(home, ".claude"), ID), "utf8")).toBe(defaultBefore);
+      expect(readFileSync(transcript(alternate, ID), "utf8")).toBe(alternateBefore);
+    } finally {
+      process.env["HERDR_SOCKET"] = socket;
+      if (exported) await stopHerdr(exportedSession, exportedConfig, exported);
+      rmSync(exportedConfig, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it.skipIf(!NATIVE)("answers another PC's Resume through the PC proxy, refusing a stale key there too", async () => {
+    // a session no pane shows yet (the first test left one showing ID): Resume makes a tab for it
+    const REMOTE = "00000000-0000-4000-8000-0000000000c3";
+    writeSession(alternate, REMOTE, "remote store prompt");
+    const source = await sourcePane(alternate);
+    const bridgeState = mkdtempSync(join(tmpdir(), "ovis-claude-resume-bridge-"));
+    const bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "test-browser-token", machines: false, registerBridge: true, stateDir: bridgeState, tailscaleOwner: null });
+    try {
+      const registered = JSON.parse(readFileSync(descriptorPath(), "utf8")) as BridgeDescriptor;
+      const manager = { endpoint: (id: string) => id === "resume-remote" ? { url: `http://127.0.0.1:${bridge.port}`, token: registered.token } : null, trackTerminal: () => () => {} } as unknown as MachineManager;
+      const listing = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/resume-remote/sessions/history?workspace_id=${encodeURIComponent(workspaceId)}&agent=claude&pane_id=${encodeURIComponent(source.pane)}`), manager);
+      expect(listing.status).toBe(200);
+      const key = ((await listing.json()) as SessionHistoryResponse).sessions.find((row) => row.id === REMOTE)!.resume!.source!.store_key;
+      const tabs = await tabsOf(workspaceId);
+      const post = (body: Record<string, unknown>) => handleMachineRequest(new Request("http://127.0.0.1/api/machines/resume-remote/sessions/resume", { method: "POST", headers: guard, body: JSON.stringify(body) }), manager);
+      const stale = await post({ workspace_id: workspaceId, pane_id: source.pane, agent: "claude", session_id: REMOTE, store_key: "0".repeat(24) });
+      expect([stale.status, ((await stale.json()) as ApiError).error.code]).toEqual([409, "stale_source"]);
+      expect(await tabsOf(workspaceId)).toBe(tabs);
+      const made = await post({ workspace_id: workspaceId, pane_id: source.pane, agent: "claude", session_id: REMOTE, store_key: key });
+      expect(((await made.json()) as SessionResumeResponse).action).toBe("created");
+      expect(await nextReport()).toMatchObject({ resumed: REMOTE, has: true, value: alternate });
+      expect(await tabsOf(workspaceId)).toBe(tabs + 1);
+    } finally {
+      bridge.stop();
+      rmSync(bridgeState, { recursive: true, force: true });
     }
   }, 60_000);
 });

@@ -5,7 +5,7 @@
  */
 import { freeAgentName } from "./agent-name.ts";
 import { launchedAgents } from "./launched-agents.ts";
-import { isShellAgentKind, startShellAgent } from "./shell-agent.ts";
+import { isShellAgentKind, startShellAgent, type ShellAgentLocator } from "./shell-agent.ts";
 import { agentStart, HerdrError, sessionSnapshot } from "./herdr/client.ts";
 import { launchArgsFault } from "../shared/launch-rules.ts";
 
@@ -26,14 +26,15 @@ export function agentFault(agent: AgentPayload | undefined): string | null {
 /**
  * Starts a checked `agent` in a pane herdr just made. A failure is answered, not thrown: the
  * workspace, tab or worktree around the pane is there either way. `launched` is told the pid of
- * the process a shell-started agent came up as, when one is seen in front of the pane.
+ * the process a shell-started agent came up as, when one is seen in front of the pane; `locator`
+ * is the one `/api/agents` offered it from.
  */
-export async function agentLaunch(paneId: string, agent: AgentPayload, launched?: (pid: number) => void): Promise<{ agent_started: true } | { agent_started: false; error: { code: string; message: string } }> {
+export async function agentLaunch(paneId: string, agent: AgentPayload, launched?: (pid: number) => void, locator?: ShellAgentLocator): Promise<{ agent_started: true } | { agent_started: false; error: { code: string; message: string } }> {
   try {
     const kind = agent.kind as string;
     const args = agent.args as string[] | undefined;
     if (isShellAgentKind(kind)) {
-      const pid = await startShellAgent(kind, paneId, args);
+      const pid = await startShellAgent(kind, paneId, args, locator ? { locator } : {});
       if (pid !== null) launched?.(pid);
     }
     else {

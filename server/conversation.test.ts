@@ -292,7 +292,9 @@ describe("Devin pane identity", () => {
       // more turns than one page holds, so the newest page carries a cursor
       db.query("INSERT INTO sessions VALUES ('one', ?, 120, 0, NULL)").run(cwd);
       const insert = db.query("INSERT INTO message_nodes VALUES ('one', ?, ?, ?, 1700000000)");
-      for (let node = 1; node <= 120; node++) insert.run(node, node === 1 ? null : node - 1, JSON.stringify({ role: "user", content: `synthetic ${node}` }));
+      db.transaction(() => {
+        for (let node = 1; node <= 120; node++) insert.run(node, node === 1 ? null : node - 1, JSON.stringify({ role: "user", content: `synthetic ${node}` }));
+      })();
       mockedPanes = [pane];
       mockedProcesses = [{ argv: ["/usr/local/bin/devin", "--resume", "one"] }];
       // the store never changes below, so only a forgotten cache can move the identity
@@ -315,7 +317,7 @@ describe("Devin pane identity", () => {
       mockedProcesses = [];
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 15_000); // Seven awaited pane reads, including three complete ancestry/cache builds.
 });
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
@@ -1943,15 +1945,15 @@ describe("Agy native ledger through shared paging", () => {
     expect(turns[2]!.role).toBe("user");
   });
   it("keeps paging and refs stable on append, then rejects them on a DB-only idle rewind", () => {
-    // one commit: 160 separate ones each wait for the disk, seconds under load
-    db.transaction(() => { for (let i = 0; i < 80; i++) { add(i * 2, "USER_INPUT", `prompt ${i}`); add(i * 2 + 1, "GENERIC", "x".repeat(5000)); } })();
+    // One prompt beyond the 50-prompt page boundary, committed as one fixture batch.
+    db.transaction(() => { for (let i = 0; i < 51; i++) { add(i * 2, "USER_INPUT", `prompt ${i}`); add(i * 2 + 1, "GENERIC", "x".repeat(5000)); } })();
     const first = page();
     expect(first.cursor).not.toBeNull();
     const older = transcriptPage("agy-transcript", path, { before: first.cursor! });
     const tool = first.turns.flatMap((t) => t.parts).find((p) => p.kind === "tool")!;
     if (tool.kind !== "tool") throw new Error("missing result");
     expect(transcriptToolOutput("agy-transcript", path, tool.output_ref!)).toBe("x".repeat(5000));
-    add(160, "USER_INPUT", "append");
+    add(102, "USER_INPUT", "append");
     expect(page().history_id).toBe(first.history_id);
     expect(transcriptPage("agy-transcript", path, { before: first.cursor! })).toEqual(older);
     db.exec("DELETE FROM steps WHERE idx >= 4");

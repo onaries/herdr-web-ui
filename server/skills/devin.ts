@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { basename, dirname, join, relative, sep } from "node:path";
 import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
 import type { AgentCommandSource } from "./index.ts";
-import { customCommands, environValue, parseJsonc, plainObject, readFrontmatter, walkSkills } from "./walk.ts";
+import { createWalkBudget, customCommands, environValue, parseJsonc, plainObject, walkSkills } from "./walk.ts";
 
 /**
  * Devin CLI 3000.11.92, cross-checked against https://cli.devin.ai/docs/changelog: imported
@@ -105,6 +105,7 @@ export const source: AgentCommandSource = {
   terminalBound,
   forms,
   discover({ home, cwd, repoRoot, env }) {
+    const budget = createWalkBudget();
     const configHome = environValue(env, "XDG_CONFIG_HOME") ?? join(home, ".config");
     const dataHome = environValue(env, "XDG_DATA_HOME") ?? join(home, ".local", "share");
     const project = repoRoot ?? cwd;
@@ -119,7 +120,7 @@ export const source: AgentCommandSource = {
     }
     const found: { namespace: string; command: SlashCommand }[] = [];
     const add = (root: string, namespace: string, origin: SlashCommand["origin"], recursive = false, plugin = false): void => {
-      for (const skill of walkSkills(root, { depth: recursive ? "recursive" : "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: false })) {
+      for (const skill of walkSkills(root, { depth: recursive ? "recursive" : "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: false, budget })) {
         if (Array.isArray(skill.fields.triggers) && !skill.fields.triggers.includes("user")) continue;
         const name = basename(dirname(skill.path));
         found.push({ namespace, command: { name: plugin ? `${namespace}:${name}` : name, description: skill.description, source: "skill", origin, id: skill.id } });
@@ -146,9 +147,8 @@ export const source: AgentCommandSource = {
         add(join(base, ".claude", "skills"), "claude", origin, true);
         if (origin === "project") {
           const root = join(base, ".claude", "commands");
-          for (const command of customCommands(root, "skill")) {
-            const fields = readFrontmatter(join(root, ...command.name.split(":")) + ".md");
-            if (Array.isArray(fields?.triggers) && !fields.triggers.includes("user")) continue;
+          for (const command of customCommands(root, "skill", budget,
+            (fields) => !Array.isArray(fields.triggers) || fields.triggers.includes("user"))) {
             found.push({ namespace: "claude", command: { ...command, origin } });
           }
         }

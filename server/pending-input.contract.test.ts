@@ -112,7 +112,7 @@ beforeAll(() => {
   // The recorder polls its screen file: fs.watch can drop the change that follows writeFileSync's
   // truncation, leaving the cleared screen it read in between up for good.
   writeFileSync(join(root, "record.cjs"), `const fs=require("node:fs");const out=process.argv[2];process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write("\\x1b[?2004h"+(process.argv[3]||"").replace(/\\\\x1b/g,"\\x1b"),()=>fs.writeFileSync(out,""));process.stdin.on("data",c=>fs.appendFileSync(out,JSON.stringify(c.toString("utf8"))+"\\n"));let shown="";setInterval(()=>{const next=fs.readFileSync(process.argv[4],"utf8");if(next!==shown){shown=next;process.stdout.write("\\x1b[2J\\x1b[H"+next);}},20);`);
-  for (const name of ["claude", "codex", "plain"]) { copyFileSync(process.execPath, join(root, name)); chmodSync(join(root, name), 0o755); }
+  for (const name of ["claude", "codex", "omp", "plain"]) { copyFileSync(process.execPath, join(root, name)); chmodSync(join(root, name), 0o755); }
 });
 afterEach(async () => {
   for (const item of active.splice(0)) { for (const socket of item.sockets) socket.close(); item.stop(); await herdrRpc("workspace.close", { workspace_id: item.workspace }).catch(() => undefined); }
@@ -174,6 +174,29 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
 }
 
 describe("connection-owned pending input", () => {
+  it.each([
+    { agent: "omp", text: "/model", expected: "/switch" },
+    { agent: "codex", text: "/model", expected: "/model" },
+    { agent: "omp", text: "/model x", expected: "/model x" },
+  ])("delivers queued $text as $expected to $agent", async ({ agent, text, expected }) => {
+    // Given a command queued while the agent is working.
+    const f = await setup("queued-model", agent, "");
+    const message = await f.queue(1476, text);
+    const delivered = f.socket.event((frame) => frame.removed?.some((entry) => entry.id === message.id && entry.outcome === "sent") === true);
+    const recorded = new Promise<void>((resolve, reject) => {
+      const watcher = watch(root, () => {
+        if (!f.bytes().endsWith("\r")) return;
+        clearTimeout(timeout); watcher.close(); resolve();
+      });
+      const timeout = setTimeout(() => { watcher.close(); reject(new Error("queued command was not recorded")); }, 8_000);
+    });
+    // When the agent finishes its turn.
+    await f.state("idle");
+    await Promise.all([delivered, recorded]);
+    // Then the terminal receives the same command the immediate path would send.
+    expect(f.bytes()).toBe(`${paste(expected)}\r`);
+  });
+
   it("holds a queued message when a hookless agent process is replaced in the same terminal (regression #540)", async () => {
     const f = await setup("process-replaced", "claude", "SESSION1", {}, true);
     const before = await herdrClient.paneGet(f.pane);

@@ -1,6 +1,6 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from "bun:test";
 
-const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+let originalWindow: PropertyDescriptor | undefined;
 
 /** A browser's history as the module uses it: entries with a state and an address, a cursor, popstate after a traversal. */
 function fakeWindow() {
@@ -37,17 +37,29 @@ function fakeWindow() {
   return { window, entries, at: () => index, defer: (on: boolean) => { deferred = on; }, pending: () => pending, marks: () => entries.map((entry) => typeof (entry.state as Record<string, unknown> | null)?.["ovis:sheet"] === "string") };
 }
 const fake = fakeWindow();
-(globalThis as unknown as { window: unknown }).window = fake.window;
-// after the window: the module wraps and listens to its history as it loads
-const settled = async () => { await new Promise((resolve) => setTimeout(resolve, 5)); for (let i = 0; i < 4; i++) await new Promise((resolve) => queueMicrotask(() => resolve(undefined))); };
+const settled = async () => {
+  jest.advanceTimersByTime(1);
+  for (let i = 0; i < 4; i++) await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+};
 
 const h = fake.window.history;
 /** RowMenu's effect, without React: the hook's enter on mount and leave on unmount (sheetHistory exports them for this) */
-const { enterSheet, leaveSheet, sheetSteppedOff } = await import("./sheetHistory.ts");
-const hooks = { enter: (onBack: () => void, stays = false): (() => void) => { const id = enterSheet(onBack, null, stays); return () => leaveSheet(id); } };
+let sheetHistory: typeof import("./sheetHistory.ts");
+const hooks = { enter: (onBack: () => void, stays = false): (() => void) => { const id = sheetHistory.enterSheet(onBack, null, stays); return () => sheetHistory.leaveSheet(id); } };
+
+beforeAll(async () => {
+  originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: fake.window });
+  // Markdown's lightbox may have loaded the normal module before this window existed.
+  // A test-only instance installs its history wrapper and listener on our own browser.
+  const modulePath = "./sheetHistory.ts?sheet-history-test";
+  sheetHistory = await import(modulePath);
+});
+beforeEach(() => { jest.useFakeTimers(); });
+afterEach(() => { jest.useRealTimers(); });
 
 afterAll(() => {
-  if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else delete (globalThis as { window?: unknown }).window;
+  if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
 });
 
 describe("a phone's sheet in the history", () => {
@@ -141,7 +153,7 @@ describe("a phone's sheet in the history", () => {
     fake.defer(true);
     leaveFirst();
     // the leave's step back is called, and the browser has not run it yet
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    jest.advanceTimersByTime(0);
     expect(fake.pending()).toBe(true);
     const leaveSecond = hooks.enter(() => { closed += 1; });
     await settled();
@@ -213,7 +225,7 @@ describe("a phone's sheet in the history", () => {
   it("tells the app a closed sheet's own step off its entry from a Back", async () => {
     // the app's Back listens after this module, as App's effect does
     const seen: boolean[] = [];
-    fake.window.addEventListener("popstate", () => { seen.push(sheetSteppedOff()); });
+    fake.window.addEventListener("popstate", () => { seen.push(sheetHistory.sheetSteppedOff()); });
     // an item that opened a pane the roster does not list yet: nothing wrote the address, so the sheet steps back
     const leave = hooks.enter(() => {});
     leave(); await settled();

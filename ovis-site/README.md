@@ -46,6 +46,9 @@ preview address. Cloudflare serves `404.html` for a missing page and `/privacy` 
 - The home page's title and description are translated in `#i18n-data` like the rest of the
   page, under their English text. `sitemap.xml` lists every indexable page with its language
   pair.
+- `_redirects` hands the addresses people guess for the docs (`/docs`, `/guide`, `/install`,
+  `/changelog`, `/faq`) to the guide, the README's install section, the changelog and the FAQ,
+  and `/ja/` and `/zh/` to the home page in that language, so none of them ends on the 404 page.
 - `scripts/ovis-site.test.ts` (Fast checks) keeps all of this true: canonicals, hreflang pairs,
   the sitemap, title and description lengths, the JSON-LD against the FAQ, the translations,
   llms.txt's links and the noindex rules. Each failure says what to change.

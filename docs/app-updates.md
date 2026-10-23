@@ -4,7 +4,7 @@ The previous app had network-first PWA navigation and immutable frontend assets,
 
 ## Reference and choices
 
-Inspected `devswha/chatmux` at commit `3b1f3b49216157399e3fb9666a49c942908c3e32` in `/home/devswha/workspace/chatmux`. Its [version check hook](https://github.com/devswha/chatmux/blob/3b1f3b49216157399e3fb9666a49c942908c3e32/src/hooks/useVersionCheck.ts) periodically checks for updates; its [self-update service](https://github.com/devswha/chatmux/blob/3b1f3b49216157399e3fb9666a49c942908c3e32/server/self-update.ts) handles source/release installation. Chatmux is AGPL-3.0; herdr-web-ui is MIT. This implementation adopts behavior and contains no copied chatmux code.
+Inspected `devswha/chatmux` at commit `3b1f3b49216157399e3fb9666a49c942908c3e32` in `/home/devswha/workspace/chatmux`. Its [version check hook](https://github.com/devswha/chatmux/blob/3b1f3b49216157399e3fb9666a49c942908c3e32/src/hooks/useVersionCheck.ts) periodically checks for updates; its [self-update service](https://github.com/devswha/chatmux/blob/3b1f3b49216157399e3fb9666a49c942908c3e32/server/self-update.ts) handles source/release installation. Chatmux is AGPL-3.0; Ovis is MIT. This implementation adopts behavior and contains no copied chatmux code.
 
 | Priority | Adopted behavior | Implementation |
 | --- | --- | --- |

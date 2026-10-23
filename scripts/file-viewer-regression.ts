@@ -176,7 +176,11 @@ try {
     for (const [index, source] of fidelitySources.entries()) {
       const block = page.locator(".markdown-code").nth(3 + index);
       assert.equal(await block.locator("code").textContent(), source, `${mode}: source whitespace`);
-      const selections = await block.locator("pre").evaluate((pre, source) => {
+      // found and selected in one task: an answer's Markdown is drawn again once the pane's skill
+      // list arrives (Markdown.tsx), which can fall between a locator's element handle and a later
+      // call on it and leave that handle on a detached <pre>
+      const selections = await page.evaluate(({ nth, source }) => {
+        const pre = document.querySelectorAll(".markdown-code")[nth]!.querySelector("pre")!;
         const selection = window.getSelection()!;
         const select = (node: Node) => {
           const range = document.createRange(); range.selectNodeContents(node);
@@ -190,12 +194,19 @@ try {
         const expected = select(baseline);
         baseline.remove(); selection.removeAllRanges();
         return { actual, expected };
-      }, source);
+      }, { nth: 3 + index, source });
       assert.equal(selections.actual, selections.expected, `${mode}: selection matches native pre/code`);
     }
     if (process.env.UI_EVIDENCE_DIR) {
       mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
-      await page.locator(".markdown-code").nth(3).screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `code-fidelity-${mode}.png`) });
+      // the block's box read in one task too, for the same redraw; the page is shot within it
+      const clip = await page.evaluate(() => {
+        const block = document.querySelectorAll(".markdown-code")[3]!;
+        block.scrollIntoView({ block: "nearest" });
+        const { x, y, width, height } = block.getBoundingClientRect();
+        return { x, y, width, height };
+      });
+      await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `code-fidelity-${mode}.png`), clip });
     }
     console.log(`PASS ${mode}: trailing and interior blank lines match source and native selection`);
   };
@@ -1182,14 +1193,34 @@ try {
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(join(root, "long.md"))}`);
       const readerBody = readerPage.locator(".file-reader-body");
       await readerBody.locator(".file-viewer-markdown p").first().waitFor();
+      // the whole loaded prefix drawn, not just its first progressive chunk: the keys and the wheel
+      // then act on a settled document, not one still growing by a chunk of blocks per task
+      await readerBody.locator(".file-viewer-markdown .markdown-h1").nth(longPreviewHeadings - 1).waitFor();
       const geometry = await readerBody.evaluate((element) => ({ height: element.clientHeight, scrollHeight: element.scrollHeight, viewport: innerHeight }));
       assert.ok(geometry.height < geometry.viewport, `${width}px: standalone reader body is bounded by the viewport`);
       assert.ok(geometry.scrollHeight > geometry.height, `${width}px: long document has an internal scroll range`);
       assert.equal(await readerBody.evaluate((element) => element === document.activeElement), true, `${width}px: the opened document holds the focus`);
+      // One scroll of the body at a time, each awaited to its end. Page Down scrolls smoothly, and a
+      // reset or a wheel sent while that animation still runs on the compositor races it, so the
+      // first scroll frame is not the end. The listener is armed before the key, reset or wheel.
+      const nextScrollEnd = async () => {
+        const ended = await readerBody.evaluateHandle((element) => {
+          const state: { top: number | null } = { top: null };
+          element.addEventListener("scrollend", () => { state.top = element.scrollTop; }, { once: true });
+          return state;
+        });
+        return async () => {
+          await readerPage.waitForFunction((state) => state.top !== null, ended);
+          return ended.evaluate((state) => state.top ?? 0);
+        };
+      };
+      const pagedDown = await nextScrollEnd();
       await readerPage.keyboard.press("PageDown");
-      await readerPage.waitForFunction(() => (document.querySelector(".file-reader-body")?.scrollTop ?? 0) > 0);
+      assert.ok(await pagedDown() > 0, `${width}px: Page Down scrolls the document body`);
       assert.equal(await readerPage.evaluate(() => window.scrollY), 0, `${width}px: Page Down scrolls the document body, not the page`);
+      const reset = await nextScrollEnd();
       await readerBody.evaluate((element) => { element.scrollTop = 0; });
+      await reset();
       if (width === 1280) {
         // the print layout is the paper's, not the window's: one width is enough
         const pdf = (await readerPage.pdf({ format: "A4" })).toString("latin1");
@@ -1197,8 +1228,9 @@ try {
         assert.ok(printed > 10, `the printed document runs over its pages, not one screen cut off (${printed} pages)`);
       }
       await readerPage.mouse.move(width / 2, 400);
+      const wheeled = await nextScrollEnd();
       await readerPage.mouse.wheel(0, 600);
-      await readerPage.waitForFunction(() => (document.querySelector(".file-reader-body")?.scrollTop ?? 0) > 0);
+      assert.ok(await wheeled() > 0, `${width}px: the wheel scrolls the document body`);
       assert.equal(await readerPage.evaluate(() => window.scrollY), 0, `${width}px: wheel scroll belongs to the document body, not the page`);
       console.log(`PASS standalone Markdown reader scroll ownership and keys${width === 1280 ? ", print" : ""}: ${width}px`);
     } finally {

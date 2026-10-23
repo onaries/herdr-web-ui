@@ -31,7 +31,7 @@ try {
     // the chat's skill matcher asks for the pane's commands
     if (url.pathname === "/api/pane/commands") return Response.json({ commands: [] });
     if (url.pathname === "/api/pane/conversation") {
-      if (lookupTimeout && pane === "agent") return Response.json({ error: { code: "gjc_sdk_timeout", message: "GJC SDK lookup timed out." } }, { status: 504 });
+      if (lookupTimeout && pane === "agent") return Response.json({ error: { code: "read_timeout", message: "Conversation read timed out." } }, { status: 504 });
       return Response.json({ source: (structured && pane === "agent") || pane === "empty" ? source : "scrollback", cursor: null, turns: structured && pane === "agent" ? turns : [] });
     }
     if (url.pathname === "/api/pane/read") {

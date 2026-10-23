@@ -51,21 +51,43 @@ async function within(event: Promise<void>, what = "the remote answer was not ca
 }
 
 describe("machine settings recovery", () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("logs the cause when settings are unreadable", () => {
+    // Given a settings file this user cannot read.
+    const dir = mkdtempSync(join(tmpdir(), "herdr-machine-settings-"));
+    const path = join(dir, "machine-settings.json");
+    writeFileSync(path, "{}", { mode: 0o000 });
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // When the manager loads its settings.
+      const manager = new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
+      manager.stop();
+      // Then only the filesystem code accompanies the recovery diagnostic.
+      expect(errors.mock.calls).toEqual([[expect.any(String), "EACCES"]]);
+    } finally {
+      errors.mockRestore();
+      chmodSync(path, 0o600);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("logs damaged settings but stays quiet for valid or missing settings", () => {
     const dir = mkdtempSync(join(tmpdir(), "herdr-machine-settings-"));
     const originalError = console.error;
-    const errors: string[] = [];
-    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    const errors: unknown[][] = [];
+    console.error = (...args: unknown[]) => errors.push(args);
     const createManager = () => new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("local offline"); });
     try {
       const valid = createManager();
       valid.stop();
       expect(errors).toEqual([]);
 
-      writeFileSync(join(dir, "machine-settings.json"), "{");
+      const secret = "GATE_SECRET_1731";
+      writeFileSync(join(dir, "machine-settings.json"), `{"token":${secret}}`);
       const damaged = createManager();
       damaged.stop();
-      expect(errors).toEqual([`Cannot read ${join(dir, "machine-settings.json")}; remote PC settings start empty`]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.[1]).toBe("not valid JSON");
+      expect(errors.flat().map(String).join(" ")).not.toContain(secret);
 
       errors.length = 0;
       writeFileSync(join(dir, "machine-settings.json"), JSON.stringify({ auto_update_bridges: true }));

@@ -115,7 +115,7 @@ export function sanitizeCommand(command: readonly string[]): string[] {
 const ACTIONLINT = { version: "1.7.12", sha256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8" };
 
 /** A unix socket's path holds about 104 bytes on macOS and 108 on Linux. */
-const SOCKET_PATH_MAX = 100;
+export const SOCKET_PATH_MAX = 100;
 
 /** What a shell inside a herdr pane carries of that herdr: nothing in a run may reach it by these. */
 const LIVE_HERDR = ["HERDR_SOCKET", "HERDR_SOCKET_PATH", "HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID"];

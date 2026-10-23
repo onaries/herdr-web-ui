@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import * as fs from "node:fs";
 import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -234,6 +235,8 @@ describe("exact store lookup", () => {
     { name: "held sessions have tied write times", otherGroup: "group", otherSession: "tied-session", otherMtime: 200, binds: false },
     { name: "the newest held events file is unlinked", otherGroup: "group", otherSession: "resumed-session", otherMtime: 300, binds: false, change: "unlink" },
     { name: "the newest held events file is renamed", otherGroup: "group", otherSession: "resumed-session", otherMtime: 300, binds: false, change: "rename" },
+    { name: "a replacement reported file has a newer timestamp", otherGroup: "group", otherSession: "resumed-session", otherMtime: 300, binds: false, replacement: "current" },
+    { name: "a replacement competing file has an older timestamp", otherGroup: "group", otherSession: "resumed-session", otherMtime: 300, binds: false, replacement: "other" },
   ]) {
     test.skipIf(process.platform !== "linux" || !existsSync("/proc/self/fd"))(`resolves Herdr's session safely when ${scenario.name}`, async () => {
       const home = realpathSync(root);
@@ -267,6 +270,22 @@ describe("exact store lookup", () => {
       const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
         pane_id: pane.pane_id, foreground_processes: [{ pid: child.pid!, name: "grok", argv: [executable] }],
       });
+      const nativeStat = fs.statSync;
+      let replaced = false;
+      const stats = spyOn(fs, "statSync").mockImplementation(new Proxy(nativeStat, {
+        apply(target, receiver, args) {
+          const replacement = "replacement" in scenario ? scenario.replacement : null;
+          const file = replacement === "current" ? current : other;
+          // Replace after /proc's link was read, before the path's stat is sampled.
+          if (replacement && !replaced && args[0] === file) {
+            replaced = true;
+            unlinkSync(file);
+            writeFileSync(file, "");
+            utimesSync(file, replacement === "current" ? 400 : 100, replacement === "current" ? 400 : 100);
+          }
+          return Reflect.apply(target, receiver, args);
+        },
+      }));
       try {
         await once(child, "spawn", { signal: AbortSignal.timeout(2000) });
         if ("change" in scenario) {
@@ -275,6 +294,7 @@ describe("exact store lookup", () => {
         }
         expect(await resolveGrokStore(pane, home)).toBe(scenario.binds ? transcript : null);
       } finally {
+        stats.mockRestore();
         info.mockRestore();
         const exited = once(child, "exit", { signal: AbortSignal.timeout(2000) });
         child.kill();

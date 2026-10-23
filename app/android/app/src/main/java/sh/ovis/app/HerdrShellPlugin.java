@@ -21,8 +21,7 @@ public class HerdrShellPlugin extends Plugin {
         String last = PCStore.last(getContext());
         state.put("current", current == null ? "" : current);
         state.put("last", last == null ? "" : last);
-        // Android's error callback carries no reason the page could show
-        state.put("failure", "");
+        state.put("failure", PCStore.failure == null ? "" : PCStore.failure);
         call.resolve(state);
     }
 
@@ -36,6 +35,7 @@ public class HerdrShellPlugin extends Plugin {
             return;
         }
         PCStore.open(getContext(), origin, text);
+        PCStore.failure = null;
         call.resolve();
         reopen();
     }
@@ -58,6 +58,7 @@ public class HerdrShellPlugin extends Plugin {
     /** Opens the current PC again from its first page. */
     @PluginMethod
     public void retry(PluginCall call) {
+        PCStore.failure = null;
         call.resolve();
         reopen();
     }

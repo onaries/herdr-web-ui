@@ -62,6 +62,9 @@ export const closeMention = (text: string): string => {
   return /(?:^|\s)@\S+$/.test(body) ? `${open}${body} ${close}` : text;
 };
 
+export const modelSwitchText = (agent: string | null, text: string): string =>
+  agent === "omp" && text.trim() === "/model" ? "/switch" : text;
+
 /** How long after its process starts an omp that has not reported is waited for: from cold it takes up to about 20 s. */
 const OMP_STARTUP_MS = 30_000;
 
@@ -261,6 +264,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
   async function submitText(paneId: string, text: string, payload: string, arrivedAt: number, fromTerminal = false, authorize: () => void = () => {},
     clearDraft?: string, confirmation?: { draft: string | null; identity: PendingIdentity; box?: string | null }, sendAnyway = false): Promise<void> {
     let clearedDraft = false;
+    let sentText = text;
     let command: ReturnType<typeof prepareCommandSend>;
     let beforeScreen: string | undefined;
     // herdr's foreground answer read before this send, which the outcome's process binding uses again
@@ -407,7 +411,8 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
           seen ??= roots.processes;
           agent = resolveAgent(pane, typingRoots(roots)).agent;
         }
-        const sent = agent === "omp" && text.trim() === "/model" ? "/switch" : text;
+        const sent = modelSwitchText(agent, text);
+        sentText = sent;
         if (pane && agent === "omp") {
           pane = await untilOmpReported(paneId, pane, inTime, options.ompReportPollMs ?? OMP_REPORT_POLL_MS, options.ompStartupMs ?? OMP_STARTUP_MS);
           // the last look waited on herdr: the device may have lost its access meanwhile
@@ -495,14 +500,14 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
       // a mirrored pane's browser never learned the program's paste mode, so `payload` came as bare
       // lines: several of them are shaped here as the same block typed into the mirror is. herdr is
       // asked only for such a block, so a one-line message never waits on it.
-      const shaped = await mirrorInput(closeMention(payload), async () => await terminalAttach() ? null : await paneAgentOf(paneId));
+      const shaped = await mirrorInput(closeMention(sentText === text ? payload : sentText), async () => await terminalAttach() ? null : await paneAgentOf(paneId));
       inTime();
       await paneSendText(paneId, shaped);
       // fixed wait: a TUI busy with the paste takes an Enter in the same chunk for a newline (SUBMIT_DELAY_MS)
       await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
       authorize();
       await paneSendKeys(paneId, ["Enter"]);
-      noteSubmitted(paneId, text, recorded(command));
+      noteSubmitted(paneId, sentText, recorded(command));
     } catch (error) {
       if (clearedDraft) {
         throw new HerdrError("submit_partial", "Claude Code's terminal draft was cleared or may have changed, but sending was not confirmed. Your chat text stayed here. Check the terminal before sending again.");

@@ -174,86 +174,45 @@ still read the native file on demand. This change does not alter the input path.
 
 ### GJC pane binding
 
-GJC identity comes from its public broker-bound SDK CLI, not terminal content.
-`server/gjc-sdk.ts` asks `gjc sdk session raw global --op session.list --page`
-with attach-only mode and the SDK's workspace scope. A bounded Git root probe
-supplies the scope's worktree identity; the broker validates it. Discovery matches
-the requested pane's GJC process to a unique live SDK session, then resolves that exact session ID to the broker's
-`savedSession` path. The two responses must agree on process and session identity.
-Discovery is limited to eight pages of 100 rows in that workspace, with at most 1 MiB
-of command output. Chat reads allow a 10-second total deadline and five seconds per
-command; status discovery keeps the previous eight-second total and two seconds per command.
-The SDK budget reserves five seconds of the 15-second local chat read for the work before
-and after it; those other operations have their own timeouts, not a shared end-to-end bound.
-An incomplete or ambiguous answer is not used; unrelated workspaces' retired
-sessions do not consume the page budget.
+GJC identity comes from the web UI's native GJC extension, not terminal content
+or SDK discovery. Install it explicitly with
+`bun scripts/install-gjc-integration.ts`, then restart GJC. The bridge never
+installs an extension into a running session.
 
-Overlapping reads of the same pane and purpose share one lookup. A proven binding found by
-either status discovery or chat serves both purposes; changing the SDK budget never evicts it.
-It is kept for at most 30 seconds while the pane's process identity and transcript header still
-match. The shared SDK index normally invalidates it, except for bounded,
-checksum-valid, sequential version-4 heartbeat appends belonging to other
-processes and sessions. The guard includes every session the SDK listed for the
-pane's PIDs, including retired rows and generation-zero fences: a heartbeat can
-revive a stale session even when the heartbeat's PID differs from its registered
-PID. Ignoring an unrelated heartbeat never renews the binding's age.
+`integrations/gjc.ts` reads the active session ID, file path and cwd from GJC's
+readonly session manager on native lifecycle events. It publishes an atomic,
+short-lived record under `~/.gjc/agent/herdr-web-ui/<pid>.json`, with the process
+birth, extension instance and sequence. Heartbeats refresh identity rather than
+conversation contents. Shutdown removes only the publishing instance's record.
+The installer bundles the extension into a standalone file; it does not replace
+settings or unrelated extensions.
 
-This narrow exception follows GJC 0.18.9's `session-index.ts` reducer: heartbeats
-change only their own identity's liveness, activity and heartbeat time, not its
-registered ownership, location or ambiguity. A changed snapshot, replaced or
-truncated log, incomplete row, invalid checksum or sequence, unrecognized record,
-or append over 256 KiB requires another SDK lookup. The bridge does not select a
-session from index records. Chat reads leave null results uncached, so the first saved
-message after `/new` is discoverable without another index change.
+`server/gjc-runtime.ts` identifies the pane's foreground GJC process.
+`server/gjc-native.ts` validates the bounded identity record, its lease and process
+birth, then the canonical native transcript path and first-line session header.
+Only main-session files under the default `~/.gjc/agent/sessions/` store qualify.
+The process and published identity are checked again before returning a path;
+a replaced process or changed session cannot publish the earlier lookup's result.
+There is no SDK CLI, Git scope probe, broker index or retained SDK binding.
 
-Session snapshots retain the shorter status budget, including the worktree probe,
-so `/api/session`, WebSocket connect snapshots and collector resyncs do not inherit
-the longer cold-chat SDK wait. An unresolved transcript keeps herdr's status.
-Only an actual SDK lookup's execution failure or unresolved result is kept for up to 30
-seconds for status discovery. A failed herdr RPC, missing foreground GJC process or rejected
-transcript is not a cached SDK failure. A status retry reads the pane's process identity
-(fresh on Windows) and index stamp before reusing a failure; a changed PID, process birth,
-index, pane or cwd invalidates it. Any index change invalidates a failed lookup, unlike the
-narrow unrelated-heartbeat exception for a proven binding above.
-Chat reads bypass the failure cache and may retry. Status and chat use separate single
-flights, so neither inherits the other's SDK deadline. Successful reads clear the recent
-failure, and an older overlapping flight cannot reinstate a failure after that success,
-even when no readable index lets the successful binding be kept.
+Missing, expired, ambiguous or invalid identity returns `no_session_path` and
+leaves Terminal available. A new session without a saved transcript has no native
+chat yet. Custom transcript stores remain unsupported. Session titles, visible
+answers, newest files, open descriptors and old terminal breadcrumbs never
+select GJC chat; shared descriptor helpers remain only for other agents.
 
-The native transcript must remain inside the canonical `~/.gjc/agent/sessions/`
-store and its header must identify the selected session and workspace. The pane's
-process is checked again after discovery. Session titles, visible answers, file
-recency, open descriptors and terminal breadcrumbs no longer select a GJC chat.
-The descriptor and breadcrumb helpers remain for omp, which still uses them.
-GJC can retain a generation-zero direct-session GC fence after `/new`. Only the
-known non-endpoint shape at the canonical agent root is excluded from candidate
-selection; foreign-root or uncertain zero-generation rows still refuse a binding.
+Chat rendering, message submission and prompt handling retain their existing
+contracts. GJC command menus use the filesystem catalog instead of querying its
+SDK for runtime skills. Sessions started without the extension need a restart;
+the old SDK path is removed, not retained as a fallback.
 
-This requires GJC 0.18.9 or later, for its public SDK session CLI,
-on the server PC's PATH and an already running broker. The bridge does not start
-or restart that broker, attach to private SDK endpoints, or register a live
-session observer. Missing, stale or unavailable identity returns `no_session_path`
-and leaves Terminal available. A new session without a saved transcript has no
-native chat yet. Custom transcript stores remain unsupported.
-
-The first migration changes session identity only: herdr still owns terminals
-and agent status; chat rendering, message submission and prompt answers retain
-their existing contracts. Real Windows and macOS SDK integration require separate
-validation.
-
-`server/gjc.contract.test.ts` reproduces the copied-neighbor-answer failure and
-checks exact-PID binding, same-process session switches and fail-closed SDK errors
-on isolated herdr panes. `server/gjc-sdk.test.ts` covers the broker contract and
-bounded pagination; `server/gjc-runtime.test.ts` covers path/header and process
-race checks, including Windows process-table fixtures.
-
-The opt-in `server/gjc-sdk-live.contract.test.ts` was run on Linux with real GJC
-0.18.9, disposable HOME and herdr state, and no model requests. It resumes seeded
-history, resolves the exact SDK-selected file despite an identical neighboring
-answer, reads its chat, and refuses to fall back when the SDK CLI becomes
-unavailable. It also runs `/new` in the real TUI and checks the new session's
-SDK-selected history without sending a model request. Run it with:
+Focused native-binding tests cover record validation and session/process races.
+`server/gjc.contract.test.ts` covers isolated herdr panes; the opt-in real-runtime
+test uses a disposable HOME and no model requests:
 
 ```sh
-HERDR_GJC_SDK_TEST_BIN=/absolute/path/to/gjc bun run check run bun test --timeout 90000 ./server/gjc-sdk-live.contract.test.ts
+HERDR_GJC_NATIVE_TEST_BIN=/absolute/path/to/gjc bun run check run bun test --timeout 90000 ./server/gjc-native-live.contract.test.ts
 ```
+
+Native macOS and Windows runtime behavior requires separate platform validation;
+Linux runtime evidence does not establish it.

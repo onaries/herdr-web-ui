@@ -78,6 +78,11 @@ RUN mkdir /w && chown runner:runner /w
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 
+# Runs before every job, outside the workflow's control: fork code never runs here (job-started.sh).
+COPY job-started.sh /opt/runner-hooks/job-started.sh
+RUN chmod 0755 /opt/runner-hooks/job-started.sh
+ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hooks/job-started.sh
+
 USER runner
 WORKDIR /home/runner/actions-runner
 ENTRYPOINT ["tini", "--", "/entrypoint.sh"]

@@ -209,7 +209,9 @@ export class MachineManager {
       const saved: unknown = JSON.parse(readFileSync(this.settingsPath, "utf8"));
       if (saved && typeof saved === "object" && typeof (saved as MachineSettings).auto_update_bridges === "boolean") this.preferences.auto_update_bridges = (saved as MachineSettings).auto_update_bridges;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Cannot read ${this.settingsPath}; remote PC settings start empty`);
+      const cause = error instanceof SyntaxError ? "not valid JSON"
+        : error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "read failed";
+      if (cause !== "ENOENT") console.error(`Cannot read ${this.settingsPath}; remote PC settings start empty`, cause);
     }
     if (existsSync(this.statePath)) {
       const saved: unknown = JSON.parse(readFileSync(this.statePath, "utf8"));

@@ -1,5 +1,7 @@
 # Ovis
 
+Ovis，herdr 的浏览器和手机客户端。
+
 <p align="center">
   <img src="public/icons/icon-192.png" alt="Ovis" width="100">
 </p>
@@ -132,7 +134,7 @@ herdr plugin install devswha/ovis
 
 **聊天视图支持哪些智能体？**
 
-Claude Code、Codex、omp、omo、gjc、pi 和 Hermes 从各自的会话存储读取记录。GJC 聊天需要 GJC 0.18.9+、服务器电脑 PATH 中的 `gjc` 和 Git，以及已运行的 SDK broker；无法明确识别会话时显示终端。OpenCode 从支持的 2.x 和 1.x SQLite 表结构中读取 herdr 报告的会话；开始界面、缺少会话 ID，以及不支持、无法读取或超出大小限制的存储则显示终端。Devin CLI 在 herdr 或运行中的进程明确指出其会话时（例如 `devin --resume <id>`）显示为聊天，直接运行 `devin` 则显示终端。
+Claude Code、Codex、omp、omo、gjc、pi 和 Hermes 从各自的会话存储读取记录。GJC 聊天和完成提醒通过 Web UI 的原生 GJC 扩展识别当前会话，不依赖 SDK broker 或 CLI 查询。[安装该扩展](docs/guide.md#supported-agents)并重启 GJC 即可启用；无法明确识别会话时显示终端，并使用 herdr 自身的状态。OpenCode 从支持的 2.x 和 1.x SQLite 表结构中读取 herdr 报告的会话；开始界面、缺少会话 ID，以及不支持、无法读取或超出大小限制的存储则显示终端。Devin CLI 在 herdr 或运行中的进程明确指出其会话时（例如 `devin --resume <id>`）显示为聊天，直接运行 `devin` 则显示终端。
 
 Grok 聊天仅支持 Linux，并要求进程只持有一个会话，且与 herdr 报告的会话一致；macOS、Windows 或身份不明确时显示终端。Antigravity（agy）是实验性支持，通过运行中进程持有的会话锁定位记录，而非猜测会话。Linux 已通过原生环境验证，macOS 尚未验证，Windows 仅显示终端。对于不支持或无法读取的记录，也会显示终端。[支持的智能体 →](docs/guide.md#supported-agents)
 

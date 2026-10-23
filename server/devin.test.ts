@@ -294,12 +294,15 @@ function realSession() {
   const db = new Database(dbPath);
   databases.push(db);
   db.exec("PRAGMA journal_mode=WAL");
-  for (const table of ["sessions", "message_nodes", "tool_call_state"] as const) {
-    const columns = Object.keys(rows[table][0]!);
-    db.exec(`CREATE TABLE ${table}(${columns.join(",")})`);
-    const insert = db.query(`INSERT INTO ${table} VALUES (${columns.map(() => "?").join(",")})`);
-    for (const row of rows[table]) insert.run(...columns.map((column) => row[column] as string | number | null));
-  }
+  // The captured save is one snapshot; only its committed rows matter to the reader.
+  db.transaction(() => {
+    for (const table of ["sessions", "message_nodes", "tool_call_state"] as const) {
+      const columns = Object.keys(rows[table][0]!);
+      db.exec(`CREATE TABLE ${table}(${columns.join(",")})`);
+      const insert = db.query(`INSERT INTO ${table} VALUES (${columns.map(() => "?").join(",")})`);
+      for (const row of rows[table]) insert.run(...columns.map((column) => row[column] as string | number | null));
+    }
+  })();
   return devinConversation("rift-gallimimus", "/work/project", {}, dbPath);
 }
 

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,10 +19,16 @@ const configFile = (text?: string): string => {
   return path;
 };
 const parse = (text: string): AgentRowTokens | null => agentRowTokens(Bun.TOML.parse(text));
-const until = async (done: () => boolean, what: string): Promise<void> => {
-  for (const deadline = Date.now() + 5_000; !done();) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await Bun.sleep(5);
+const changed = async (config: HerdrSidebarConfig, edit: () => void): Promise<void> => {
+  const next = Promise.withResolvers<void>();
+  const stop = config.subscribe(() => next.resolve());
+  const timeout = setTimeout(() => next.reject(new Error("timed out waiting for sidebar config change")), 5_000);
+  try {
+    edit();
+    await next.promise;
+  } finally {
+    clearTimeout(timeout);
+    stop();
   }
 };
 
@@ -108,12 +114,12 @@ describe("HerdrSidebarConfig", () => {
       expect(config.get()).toEqual({ rows: [{ name: "quota" }, { name: "summary" }], by_agent: {} });
       expect(told).toEqual([{ rows: [{ name: "quota" }, { name: "summary" }], by_agent: {} }]);
       // being edited, or gone: no rows, so the agent rows draw every token
-      writeFileSync(path, `[ui.sidebar.agents\nrows = [[`);
-      await until(() => told.length === 2, "the broken file");
+      await changed(config, () => writeFileSync(path, `[ui.sidebar.agents\nrows = [[`));
       expect(told[1]).toBeNull();
-      rmSync(path);
-      writeFileSync(path, `[ui.sidebar.agents]\nrows = [["$eta"]]`);
-      await until(() => told.length === 3, "the file written again");
+      await changed(config, () => {
+        rmSync(path);
+        writeFileSync(path, `[ui.sidebar.agents]\nrows = [["$eta"]]`);
+      });
       expect(told[2]).toEqual({ rows: [{ name: "eta" }], by_agent: {} });
     } finally { stop(); }
     // nobody listens: a read tells no one
@@ -124,6 +130,78 @@ describe("HerdrSidebarConfig", () => {
 
   test("a missing config names no token", () => {
     expect(new HerdrSidebarConfig(configFile()).get()).toBeNull();
+  });
+
+  test.each(["\n", "\r\n"])("keeps custom rows with line-start BOMs using %j line endings", (newline) => {
+    const path = configFile([
+      "\uFEFF# herdr config",
+      "\uFEFF[ui.sidebar.agents]",
+      '\uFEFFrows = [["$quota", { token = "$summary", rules = [{ equals = "a\uFEFFb", hide = true }] }]]',
+      "\uFEFF[ui.sidebar.agents.rows_by_agent]",
+      '\uFEFFcodex = [["$progress"]]',
+    ].join(newline));
+    expect(new HerdrSidebarConfig(path).get()).toEqual({
+      rows: [{ name: "quota" }, { name: "summary", rules: [{ equals: "a\uFEFFb", hide: true }] }],
+      by_agent: { codex: [{ name: "progress" }] },
+    });
+  });
+
+  test("falls back when a config becomes a directory", () => {
+    const path = configFile(`[ui.sidebar.agents]\nrows = [["$quota"]]`);
+    const config = new HerdrSidebarConfig(path);
+    expect(config.get()).toEqual({ rows: [{ name: "quota" }], by_agent: {} });
+    rmSync(path);
+    mkdirSync(path);
+    expect(config.get()).toBeNull();
+  });
+
+  test.each(['"""', "'''"])("preserves line-start BOMs inside %s multiline rule values", (quote) => {
+    const path = configFile([
+      "# Delimiters in comments do not open strings: \"\"\" '''",
+      `literal = '"""'`,
+      `basic = "''' and \\"quoted\\""`,
+      "\uFEFF[ui.sidebar.agents]",
+      `rows = [[{ token = "$summary", rules = [{ equals = ${quote}first`,
+      "\uFEFFsecond",
+      `${quote}, hide = true }] }]]`,
+      "\uFEFF[ui.sidebar.agents.rows_by_agent]",
+      'codex = [["$progress"]]',
+    ].join("\n"));
+    expect(new HerdrSidebarConfig(path).get()).toEqual({
+      rows: [{ name: "summary", rules: [{ equals: "first\n\uFEFFsecond\n", hide: true }] }],
+      by_agent: { codex: [{ name: "progress" }] },
+    });
+  });
+
+  test("honours escaped quotes and quote runs in multiline basic strings", () => {
+    const path = configFile([
+      "[ui.sidebar.agents]",
+      'rows = [[{ token = "$summary", rules = [{ equals = """first\\"""',
+      "\uFEFFsecond",
+      'last""""", hide = true }] }]]',
+      '\uFEFFrows_by_agent = { codex = [["$progress"]] }',
+    ].join("\r\n"));
+    expect(new HerdrSidebarConfig(path).get()).toEqual({
+      rows: [{ name: "summary", rules: [{ equals: 'first"""\n\uFEFFsecond\nlast""', hide: true }] }],
+      by_agent: { codex: [{ name: "progress" }] },
+    });
+  });
+
+  test("falls back for a config larger than the size cap", () => {
+    const path = configFile(`[ui.sidebar.agents]\nrows = [["$quota"]]\n#${"x".repeat(1024 * 1024)}`);
+    expect(new HerdrSidebarConfig(path).get()).toBeNull();
+  });
+
+  test.skipIf(process.platform === "win32")("does not wait for a writer when the config is a FIFO", async () => {
+    const path = configFile();
+    expect(await Bun.spawn(["mkfifo", path]).exited).toBe(0);
+    // A separate process bounds the regression even if get() blocks its event loop.
+    const child = Bun.spawn([process.execPath, "-e", `
+      import { HerdrSidebarConfig } from ${JSON.stringify(new URL("./herdr-sidebar.ts", import.meta.url).href)};
+      console.log(JSON.stringify(new HerdrSidebarConfig(${JSON.stringify(path)}).get()));
+    `], { stdout: "pipe", stderr: "pipe", timeout: 2_000 });
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stdout).text()).toBe("null\n");
   });
 });
 

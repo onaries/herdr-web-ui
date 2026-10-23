@@ -84,6 +84,10 @@
 .session-empty {
   margin: 0;
 }
+/* Resuming, the list read again and why: one line kept under the rows, empty or not, so no row moves when it speaks */
+.session-status {
+  min-height: calc(var(--fs-xs) * var(--lh-base));
+}
 .session-error {
   color: var(--status-blocked);
   overflow-wrap: anywhere;

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's own pages' background (the bg variable in app/web/shell.css) and the splash images' -->
+    <color name="ovis_background">#12100E</color>
+</resources>

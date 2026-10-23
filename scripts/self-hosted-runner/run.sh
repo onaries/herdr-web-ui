@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host launcher: keeps N ephemeral runner containers alive, one job per container.
 #
-# Usage: scripts/self-hosted-runner/run.sh [--repo OWNER/NAME] [--count N] [--labels herdr-ci]
+# Usage: scripts/self-hosted-runner/run.sh [--repo OWNER/NAME] [--count N] [--labels self-hosted-ovis]
 #                                          [--build] [--once]
 set -euo pipefail
 
@@ -10,7 +10,7 @@ IMAGE="herdr-ci-runner:local"
 
 REPO=""
 COUNT=1
-LABELS="herdr-ci"
+LABELS="self-hosted-ovis"
 BUILD=0
 ONCE=0
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { HerdrPane, SessionHistoryRow } from "../../shared/protocol.ts";
 import { formatChatTimestamp } from "./chatTimestamp.ts";
 import type { Translate } from "./i18n.ts";
-import { inFlightGuard, observeRecentResume, paneShowingSession, RECENT_RESUME_MS, recentlyResumedPane, recentResumeEnded, resumeTabRequest, sessionHistoryAgent, sessionHistoryListAgent, sessionRowTime, standingResume, type RecentResume } from "./sessionHistory.ts";
+import { claudeResumeRequest, inFlightGuard, observeRecentResume, paneShowingRow, paneShowingSession, RECENT_RESUME_MS, recentlyResumedPane, recentResumeEnded, resumeTabRequest, rowKey, sessionHistoryAgent, sessionHistoryListAgent, sessionHistorySourcePane, sessionRowTime, standingResume, type RecentResume } from "./sessionHistory.ts";
 
 const pane = (overrides: Partial<HerdrPane>): HerdrPane => ({
   pane_id: "p1", tab_id: "t1", terminal_id: "term1", workspace_id: "w1", agent: "codex", agent_status: "idle", focused: false, revision: 1, ...overrides,
@@ -24,6 +24,41 @@ describe("sessionHistoryListAgent", () => {
     expect(sessionHistoryListAgent({ agent: "copilot" }, "codex", ["claude"])).toBe("codex");
     expect(sessionHistoryListAgent({ agent: null }, null, ["copilot", null, "pi"])).toBe("pi");
     expect(sessionHistoryListAgent(undefined, undefined, [])).toBe("claude");
+  });
+});
+
+describe("sessionHistorySourcePane", () => {
+  const shell = pane({ pane_id: "shell", agent: null });
+  const codex = pane({ pane_id: "codex" });
+  const claude = pane({ pane_id: "claude", agent: "claude" });
+  const another = pane({ pane_id: "another", agent: "claude" });
+  const panes = [shell, codex, claude, another];
+
+  it.each(["shell", "codex"])("prefers a Claude pane when the selected pane is %s", (selectedPaneId) => {
+    expect(sessionHistorySourcePane("claude", panes, { workspaceId: "w1", selectedPaneId })).toBe("claude");
+  });
+  it("prefers Claude when a Codex pane asks with the picker on Claude", () => {
+    expect(sessionHistorySourcePane("claude", panes, { workspaceId: "w1", askingPaneId: "codex", selectedPaneId: "shell" })).toBe("claude");
+  });
+  it.each([
+    { askingPaneId: "another", selectedPaneId: "claude", expected: "another" },
+    { askingPaneId: "codex", selectedPaneId: "another", expected: "another" },
+  ])("prefers the asking Claude, then the selected Claude: $expected", ({ expected, ...request }) => {
+    expect(sessionHistorySourcePane("claude", panes, { workspaceId: "w1", ...request })).toBe(expected);
+  });
+  it.each([
+    { askingPaneId: "codex", selectedPaneId: "shell", expected: "codex" },
+    { askingPaneId: "closed", selectedPaneId: "codex", expected: "codex" },
+    { askingPaneId: "closed", selectedPaneId: "elsewhere", expected: "shell" },
+  ])("falls back within the workspace when no Claude runs: $expected", ({ expected, ...request }) => {
+    const roster = [pane({ pane_id: "elsewhere", workspace_id: "w2", agent: "claude" }), shell, codex];
+    expect(sessionHistorySourcePane("claude", roster, { workspaceId: "w1", ...request })).toBe(expected);
+  });
+  it("has no source when the workspace has no panes", () => {
+    expect(sessionHistorySourcePane("claude", panes, { workspaceId: "empty", askingPaneId: "claude" })).toBeNull();
+  });
+  it("keeps the asking pane for other agents even when Claude runs", () => {
+    expect(sessionHistorySourcePane("codex", panes, { workspaceId: "w1", askingPaneId: "shell", selectedPaneId: "claude" })).toBe("shell");
   });
 });
 
@@ -85,6 +120,50 @@ describe("resumeTabRequest", () => {
   it("has nothing to start for a row without a verified resume, or with an empty argv", () => {
     expect(resumeTabRequest(row({ resume: null }), "w1", "/home/u/work")).toBeNull();
     expect(resumeTabRequest(row({ resume: { argv: [] } }), "w1", "/home/u/work")).toBeNull();
+  });
+});
+
+describe("a Claude row bound to its store", () => {
+  const id = "00000000-0000-4000-8000-000000000002";
+  const ALTERNATE = "a".repeat(24);
+  const DEFAULT = "d".repeat(24);
+  const claudeRow = (store: string | null, paneId = "p1") => row({ resume: { argv: ["claude", "--resume", id], ...(store === null ? {} : { source: { pane_id: paneId, store_key: store } }) } });
+  const reporting = (paneId: string) => pane({ pane_id: paneId, agent: "claude", agent_session: { agent: "claude", kind: "id", source: "herdr:claude", value: id } });
+
+  it("same UUID in another store is not Open", () => {
+    // p2 reports the id, but the list was read from p1's store: p2 may be another account's session
+    const panes = [pane({ pane_id: "p1", agent: "claude" }), reporting("p2")];
+    expect(paneShowingSession(panes, "w1", "claude", id)?.pane_id).toBe("p2");
+    expect(paneShowingRow(panes, "w1", "claude", claudeRow(ALTERNATE, "p1"))).toBeUndefined();
+    // the source pane itself reporting it is the same store by construction
+    expect(paneShowingRow([reporting("p1")], "w1", "claude", claudeRow(ALTERNATE, "p1"))?.pane_id).toBe("p1");
+    // wherever the roster lists it: another pane reporting the id before it does not hide it
+    expect(paneShowingRow([reporting("p2"), reporting("p1")], "w1", "claude", claudeRow(ALTERNATE, "p1"))?.pane_id).toBe("p1");
+    // a row from a bridge that gave no source is shown by no pane, and other agents keep the UUID match
+    expect(paneShowingRow([reporting("p1")], "w1", "claude", claudeRow(null))).toBeUndefined();
+    expect(paneShowingRow([pane({ agent_session: { agent: "codex", kind: "id", source: "herdr:codex", value: id } })], "w1", "codex", row())?.pane_id).toBe("p1");
+  });
+
+  it("resumes through the store-bound route only, never the argv-only tab request", () => {
+    expect(claudeResumeRequest(claudeRow(ALTERNATE), "w1")).toEqual({ workspace_id: "w1", pane_id: "p1", agent: "claude", session_id: id, store_key: ALTERNATE });
+    // an older bridge's row (no source) has no Resume at all: neither route
+    expect(claudeResumeRequest(claudeRow(null), "w1")).toBeNull();
+    expect(resumeTabRequest(claudeRow(null), "w1", "/home/u/work")).toBeNull();
+    expect(resumeTabRequest(claudeRow(ALTERNATE), "w1", "/home/u/work")).toBeNull();
+    expect(claudeResumeRequest(row(), "w1")).toBeNull();
+  });
+
+  it("recent resumes include store identity", () => {
+    const record: RecentResume = { machineId: "local", workspaceId: "w1", agent: "claude", id, store: ALTERNATE, paneId: "p-new", at: 1_000, seen: true };
+    const panes = [pane({ pane_id: "p-new", agent: "claude", agent_session: null })];
+    expect(standingResume([record], panes, "local", "w1", "claude", id, 2_000, ALTERNATE)).toBe(record);
+    // the same id listed from the default store is another session: its Resume stays offered
+    expect(standingResume([record], panes, "local", "w1", "claude", id, 2_000, DEFAULT)).toBeUndefined();
+    expect(recentlyResumedPane([record], panes, "local", "w1", "claude", id, 2_000, DEFAULT)).toBeUndefined();
+    expect(recentlyResumedPane([record], panes, "local", "w1", "claude", id, 2_000, ALTERNATE)?.pane_id).toBe("p-new");
+    // rows of one id in two stores are two rows, each with its own pending key
+    expect(rowKey(claudeRow(ALTERNATE))).not.toBe(rowKey(claudeRow(DEFAULT)));
+    expect(rowKey(row())).toBe(`:${row().id}`);
   });
 });
 

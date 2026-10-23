@@ -4,6 +4,10 @@
     "noEmit": true
   },
   "files": [
+    "integrations/gjc.ts",
+    "integrations/gjc.test.ts",
+    "scripts/install-gjc-integration.ts",
+    "scripts/install-gjc-integration.test.ts",
     "scripts/herdr-themes.ts",
     "scripts/herdr-theme-proposal.ts",
     "scripts/herdr-theme-overrides.ts",

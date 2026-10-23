@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import type { AgentCommandContext, AgentCommandSource } from "./index.ts";
-import { ancestorsToRepoRoot, customCommands, MAX_WALK_FOLDERS, readSkillText, walkSkills } from "./walk.ts";
+import { ancestorsToRepoRoot, createWalkBudget, customCommands, readSkillText, walkSkills } from "./walk.ts";
+import type { WalkBudget } from "./walk.ts";
 import type { SlashCommand } from "../../shared/protocol.ts";
 
 const descriptions: Readonly<Record<string, string>> = {
@@ -155,7 +156,7 @@ const bundledDescriptions: Readonly<Record<string, string>> = {
   "skill-builder": "Author a new Agent Skill for Command Code end to end — scaffold the directory, write valid SKILL.md frontmatter, structure the instructions for progressive disclosure, and verify the skill loads.",
 };
 
-const recursiveSkills = (root: string, budget?: { folders: number }): ReturnType<typeof walkSkills> =>
+const recursiveSkills = (root: string, budget?: WalkBudget): ReturnType<typeof walkSkills> =>
   walkSkills(root, { depth: "recursive", looseMarkdown: "root", ignoreFiles: false, requireDescription: true, budget });
 
 const readSettings = (path: string): Record<string, unknown> => {
@@ -167,7 +168,7 @@ const readSettings = (path: string): Record<string, unknown> => {
 };
 const stringArray = (value: unknown): string[] => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
-function skillsAt(root: string, origin: NonNullable<SlashCommand["origin"]>, shadowed: ReadonlySet<string>, disabled: ReadonlySet<string>, budget?: { folders: number }): SlashCommand[] {
+function skillsAt(root: string, origin: NonNullable<SlashCommand["origin"]>, shadowed: ReadonlySet<string>, disabled: ReadonlySet<string>, budget?: WalkBudget): SlashCommand[] {
   return recursiveSkills(root, budget)
     .filter((skill) => skill.fields["user-invocable"] !== false && !disabled.has(skill.name))
     .map((skill) => ({
@@ -179,7 +180,7 @@ function skillsAt(root: string, origin: NonNullable<SlashCommand["origin"]>, sha
     }));
 }
 
-function commandsAt(root: string, origin: SlashCommand["source"], budget: { folders: number }): SlashCommand[] {
+function commandsAt(root: string, origin: SlashCommand["source"], budget: WalkBudget): SlashCommand[] {
   return customCommands(root, origin, budget).map((command) => {
     const folder = command.name.includes(":") ? command.name.slice(0, command.name.lastIndexOf(":")).split(":").at(-1) : "";
     return {
@@ -194,7 +195,7 @@ function commandsAt(root: string, origin: SlashCommand["source"], budget: { fold
  * The skill folders a settings file names: each walked once, all of them within one shared folder
  * budget, since a repository can commit the settings and list a folder any number of times.
  */
-function extraSkills(paths: readonly string[], base: string, home: string, origin: "user" | "project", shadowed: ReadonlySet<string>, disabled: ReadonlySet<string>, budget: { folders: number }): SlashCommand[] {
+function extraSkills(paths: readonly string[], base: string, home: string, origin: "user" | "project", shadowed: ReadonlySet<string>, disabled: ReadonlySet<string>, budget: WalkBudget): SlashCommand[] {
   const roots = new Set(paths.map((path) => resolve(base, path === "~" || path.startsWith("~/") ? join(home, path.slice(2)) : path)));
   return [...roots].flatMap((root) => {
     // a configured path that is no folder lists nothing, and hides nothing else
@@ -202,7 +203,7 @@ function extraSkills(paths: readonly string[], base: string, home: string, origi
   });
 }
 
-function discoverSkills(ctx: AgentCommandContext, shadowed: ReadonlySet<string>, budget: { folders: number }): SlashCommand[] {
+function discoverSkills(ctx: AgentCommandContext, shadowed: ReadonlySet<string>, budget: WalkBudget): SlashCommand[] {
   const { home, cwd } = ctx;
   const agentDir = join(home, ".commandcode");
   const directories = cwd ? ancestorsToRepoRoot(cwd) : [];
@@ -275,7 +276,7 @@ export const source: AgentCommandSource = {
     const agentDir = join(home, ".commandcode");
     // One walk budget for the whole discovery: a repository can commit settings, nest projects under
     // its root and link folders, and every root it adds would otherwise bring a budget of its own.
-    const budget = { folders: MAX_WALK_FOLDERS };
+    const budget = createWalkBudget();
     const commands = [
       ...(cwd ? ancestorsToRepoRoot(cwd).flatMap((directory) => commandsAt(join(directory, ".commandcode", "commands"), "project", budget)) : []),
       ...commandsAt(join(agentDir, "commands"), "user", budget),

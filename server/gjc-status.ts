@@ -3,7 +3,7 @@
  *
  * herdr follows the pane's provider child, not the gjc parent: a turn gjc finished keeps
  * reading `working` for what the child does, and the sidebar holds RUN with no done alert.
- * The transcript the pane's gjc process holds (gjc-runtime.ts finds exactly that file, never a
+ * The transcript the pane's gjc extension reports (gjc-runtime.ts finds exactly that file, never a
  * newest file by cwd) tells the parent turn instead: a user prompt, a tool result or an
  * assistant message that stopped for a tool means work; one that stopped for good (`stop`,
  * `length`) is rest, and one that errored or was aborted is rest after a failure — READY, not
@@ -116,7 +116,7 @@ export interface GjcDiscovery {
  */
 export async function gjcPanes(panes: HerdrPane[], deps: GjcDiscovery = {}): Promise<Map<string, OmoPane>> {
   const processInfo = deps.processInfo ?? ((paneId: string) => herdrRpc<NonNullable<ProcessInfo>>("pane.process_info", { pane_id: paneId }).catch(() => null));
-  const transcript = deps.transcript ?? ((paneId: string, cwd: string) => gjcTranscriptForPane(paneId, cwd, undefined, { purpose: "status" }).catch(() => null));
+  const transcript = deps.transcript ?? ((paneId: string, cwd: string) => gjcTranscriptForPane(paneId, cwd).catch(() => null));
   const startedAt = deps.startedAt ?? processStartedAt;
   const underShell = deps.underShell ?? ((shellPid: unknown) => gjcPidUnderShell(shellPid, deps.platform));
   const found = new Map<string, OmoPane>();

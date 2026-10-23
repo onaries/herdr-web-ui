@@ -95,7 +95,7 @@ running terminals: see [development](docs/development.md#checks).
   Settings dialog; each file's header lists its feature's files). Any other string goes in
   `src/lib/i18n.ko.ts`, `i18n.ja.ts` and `i18n.zh.ts`, and so does a feature's string once another
   feature uses it too. `bun run test:unit` fails on a missing, unused or untranslated entry, and on one
-  the three languages keep in different files.
+  kept in the wrong file or in different files across the three languages.
 - **UI languages:** the app keeps English, Korean, Japanese and Simplified Chinese and does not take
   new ones. Every language has to translate each later string, so a PR that adds a language is
   closed.

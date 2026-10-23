@@ -1,5 +1,7 @@
 # Ovis
 
+Ovis는 herdr를 위한 브라우저·휴대폰 클라이언트입니다.
+
 <p align="center">
   <img src="public/icons/icon-192.png" alt="Ovis" width="100">
 </p>
@@ -132,7 +134,7 @@ herdr가 실행 중이면 설치 스크립트가 출력하거나 열어 준 주�
 
 **채팅 화면은 어떤 에이전트를 지원하나요?**
 
-Claude Code, Codex, omp, omo, gjc, pi, Hermes는 각자의 세션 저장소에서 읽습니다. GJC 채팅에는 GJC 0.18.9 이상, 서버 PC의 PATH에 있는 `gjc`와 Git, 이미 실행 중인 SDK 브로커가 필요하며, 세션을 확실히 식별할 수 없으면 터미널로 보입니다. OpenCode는 지원되는 2.x와 1.x SQLite 구조에서 herdr가 보고한 세션을 읽습니다. 시작 화면, 세션 식별자가 없는 경우, 지원하지 않거나 읽을 수 없거나 크기 제한을 넘긴 저장소에서는 터미널로 보입니다. Devin CLI는 `devin --resume <id>`처럼 herdr나 실행 중인 프로세스가 세션을 명시할 때 채팅으로 보이고, 그냥 `devin`으로 띄우면 터미널로 보입니다.
+Claude Code, Codex, omp, omo, gjc, pi, Hermes는 각자의 세션 저장소에서 읽습니다. GJC 채팅과 완료 알림은 웹 UI의 네이티브 GJC 확장으로 활성 세션을 식별하며, SDK 브로커나 CLI 조회를 쓰지 않습니다. [확장을 설치](docs/guide.md#supported-agents)하고 GJC를 다시 시작하면 켜집니다. 세션을 확실히 식별할 수 없으면 터미널과 herdr 자체 상태로 보입니다. OpenCode는 지원되는 2.x와 1.x SQLite 구조에서 herdr가 보고한 세션을 읽습니다. 시작 화면, 세션 식별자가 없는 경우, 지원하지 않거나 읽을 수 없거나 크기 제한을 넘긴 저장소에서는 터미널로 보입니다. Devin CLI는 `devin --resume <id>`처럼 herdr나 실행 중인 프로세스가 세션을 명시할 때 채팅으로 보이고, 그냥 `devin`으로 띄우면 터미널로 보입니다.
 
 Grok 채팅은 Linux에서 프로세스가 보유한 세션이 하나뿐이고 herdr가 보고한 세션과 일치할 때 지원됩니다. macOS와 Windows, 세션이 불명확한 경우에는 터미널로 보입니다. Antigravity(agy)는 실행 중인 프로세스의 대화 잠금을 따라 기록을 읽는 실험적 지원입니다. Linux에서 실제 동작을 확인했으며 macOS는 미검증, Windows는 터미널 전용입니다. 지원하지 않거나 읽을 수 있는 기록이 없는 경우에는 터미널로 보입니다. [지원 에이전트 →](docs/guide.md#supported-agents)
 

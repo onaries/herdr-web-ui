@@ -2,10 +2,16 @@
 # Picks the runner for ci.yml's Linux jobs and prints `linux=<json>` for $GITHUB_OUTPUT.
 # A fork pull request always gets the GitHub-hosted image: its code must never reach the
 # self-hosted runner. Otherwise the workflow_dispatch input wins over the repository variable
-# CI_SELF_HOSTED_LABELS, and with neither the job stays on ubuntu-24.04.
+# CI_SELF_HOSTED_LABELS. With neither, a push or a same-repository pull request goes to the
+# maintainer PC's runners (scripts/self-hosted-runner/, label self-hosted-ovis) and any other event
+# stays on ubuntu-24.04. The variable value "ubuntu-24.04" (a JSON string, which pages.yml and
+# release.yml also accept) keeps every job hosted while that PC is offline. This script runs from the
+# checked-out revision, which a fork pull request controls; the runner itself refuses fork code
+# (scripts/self-hosted-runner/job-started.sh).
 set -euo pipefail
 
 hosted='"ubuntu-24.04"'
+default_labels='["self-hosted","self-hosted-ovis"]'
 event="${EVENT_NAME:-}"
 requested="${REQUESTED_LABELS:-}"
 configured="${CONFIGURED_LABELS:-}"
@@ -25,9 +31,14 @@ if [[ ("$event" == "pull_request" || "$event" == "pull_request_target") && "${HE
   echo "linux=$hosted"
 elif [[ -n "${requested//[[:space:]]/}" ]]; then
   choose_labels "workflow_dispatch input self_hosted_labels" "$requested"
+elif [[ "${configured//[[:space:]]/}" == "$hosted" ]]; then
+  echo "Runner: ubuntu-24.04 (from repository variable CI_SELF_HOSTED_LABELS)" >&2
+  echo "linux=$hosted"
 elif [[ -n "${configured//[[:space:]]/}" ]]; then
   choose_labels "repository variable CI_SELF_HOSTED_LABELS" "$configured"
+elif [[ "$event" == push || "$event" == pull_request ]]; then
+  choose_labels "default for $event (CI_SELF_HOSTED_LABELS unset)" "$default_labels"
 else
-  echo "Runner: ubuntu-24.04 (CI_SELF_HOSTED_LABELS unset)" >&2
+  echo "Runner: ubuntu-24.04 ($event, CI_SELF_HOSTED_LABELS unset)" >&2
   echo "linux=$hosted"
 fi

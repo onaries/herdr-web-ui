@@ -2,7 +2,8 @@
 
 Status: Phase 1 step 2 built for iOS (checked in a simulator) and Android (checked in an emulator),
 2026-10-19. To run them, see [The app (app/)](#the-app-app) and
-[The Android app](#the-android-app).
+[The Android app](#the-android-app). Step 3, the push relay, is built in
+[`push-relay/`](../push-relay/README.md) with its tests, 2026-10-23, and not deployed yet.
 
 Ovis ships as a store app for iOS first, Android later. The goal is reach: the app is
 found in the App Store and installs in one tap, where the web app needs "Add to Home Screen". It
@@ -43,23 +44,29 @@ whole alert policy (the wait before an alert, no alert while a window is in use,
 choices) and changes little:
 
 1. The app registers with APNs and gets a device token.
-2. The app sends the token to the relay, which returns an endpoint URL holding an opaque ID for
-   that token (`https://<relay>/v1/push/<id>`). The token itself never leaves the relay.
+2. For each PC, the app sends the token and that PC's VAPID public key (`GET /api/push`, the key
+   a browser passes to `pushManager.subscribe`) to the relay, which returns an endpoint URL
+   holding an opaque ID for them (`https://push.ovis.sh/v1/push/<id>`). The token itself never
+   leaves the relay. The app keeps that endpoint for the PC rather than registering again at
+   every launch.
 3. The app makes a P-256 key pair and an auth secret, keeps the private half in the keychain
    shared with its Notification Service Extension, and hands `{ endpoint, keys }` to the web
    client, which subscribes with it in place of `pushManager.subscribe`.
 4. The PC encrypts each alert for those keys (RFC 8291, as today) and signs it with its VAPID key
-   (RFC 8292). The relay pins the first VAPID key that pushes to an endpoint and refuses others,
-   so knowing an endpoint is not enough to send to a phone. It also rate-limits per endpoint.
+   (RFC 8292). The relay pins the key given at registration to the endpoint and refuses any
+   other, so knowing an endpoint is not enough to send to a phone. It also rate-limits per
+   endpoint and per phone, and limits registrations.
 5. The relay wraps the ciphertext in a `mutable-content` APNs push. The Notification Service
    Extension (a small Swift target) decrypts it and shows the title and body. A push it cannot
    decrypt shows a generic "herdr needs you" line.
 6. APNs telling the relay a token is gone becomes a 410 to the PC, which already deletes a gone
    subscription.
 
-The relay's code lives in this repo next to `telemetry/`, open so anyone can run their own, and
-keeps no logs, like the telemetry Worker. Its APNs key is a secret of the project's Cloudflare
-account. Android (FCM) gets a second route in the same Worker later.
+The relay's code lives in this repo next to `telemetry/`, in
+[`push-relay/`](../push-relay/README.md), open so anyone can run their own, and keeps no logs,
+like the telemetry Worker. It answers at `push.ovis.sh`. Its APNs key is a secret of the
+project's Cloudflare account (`APNS_KEY`). Android (FCM) gets a second route in the same Worker
+later.
 
 ## Phase 1: first store release
 
@@ -69,7 +76,9 @@ account. Android (FCM) gets a second route in the same Worker later.
 2. `app/`: Capacitor project, connect screen, QR scan, demo mode. Built 2026-10-19, see
    [The app (app/)](#the-app-app). QR scanning still needs a physical iPhone (the simulator
    has no camera).
-3. Relay Worker with tests (VAPID pinning, rate limit, gone tokens).
+3. Relay Worker with tests (VAPID pinning, rate limit, gone tokens). Built 2026-10-23 in
+   [`push-relay/`](../push-relay/README.md), at `push.ovis.sh`; deploying it needs the D1
+   database and the APNs secrets its README lists, then one real push (`push-relay/test-push.ts`).
 4. `src/lib/push.ts`: subscribe through the native bridge inside the app.
 5. Notification Service Extension that decrypts.
 6. App Store listing, privacy answers, review notes pointing at the demo mode.
@@ -149,20 +158,33 @@ What is there:
 
 - `app/web`: the app's own pages. `index.html` is the connect screen: an address field, Scan QR
   code, the PCs opened before, and Try the demo. `error.html` is shown when a PC cannot be
-  reached, with Try again and Change PC. Both are in English and Korean: an element's
+  reached or answers with an HTTP error (a 502 from `tailscale serve` while Ovis is stopped), with the
+  reason, Try again and Change PC. Both are in English and Korean: an element's
   `data-ko` attribute holds its Korean text, put in when the phone's first language is Korean
   (`localize()` in `shell.js`; `error.html` carries its own copy, as it stands alone on Android).
   The iOS app lists `ko` in `CFBundleLocalizations`, without which its web view reports English
   to every page, the client included.
 - A PC joins the list of PCs only once a page of it has loaded, so an address that never
-  answered is not kept.
+  answered, or answered with an HTTP error, is not kept.
+- Both apps allow plain http to any host, as Android cannot limit cleartext to address ranges.
+  Before opening plain http to an address outside a tailnet, a home network and the phone (one not
+  in the list of PCs yet), the connect screen warns that the pairing code and everything typed
+  would cross the internet unencrypted, and opens it on a second try (`publicHttp()` in
+  `shell.js`).
+- Capacitor's own log is off (`loggingBehavior` in `capacitor.config.json`, and
+  `setLoggingEnabled(false)` on Android): it writes the first page's address, a pairing link's
+  code included, and on Android every plugin call's arguments. Debug builds keep the web
+  inspector.
 - `app/scripts/build-web.ts` (`bun run build:web` in `app/`) puts those pages and the demo,
   built from this checkout's client, into `app/www` for Capacitor to copy.
 - `app/ios/App/App/HerdrBridgeViewController.swift`: a Capacitor view controller that opens the
   chosen PC as the WebView's first page (`instanceDescriptor().serverURL`). It also lets the
   PC's whole host stay in the app and shows `error.html` when the first load fails. The
   `HerdrShell` plugin (`HerdrShellPlugin.swift`) opens, forgets and leaves PCs. Opening or
-  leaving one builds a fresh view controller, so the next page is again a first load.
+  leaving one builds a fresh view controller, so the next page is again a first load, and the old
+  one goes with its web view. `@capacitor/barcode-scanner` kept every old one alive (its scanner
+  manager holds the view controller, which holds the bridge and the plugin), so
+  `app/patches` makes that manager for each scan instead of keeping it.
 - In the client, `src/lib/nativeApp.ts` notices the app through `window.Capacitor`, as the app
   injects it; the browser build carries no Capacitor code. Inside the app:
   - Settings → Phone & devices has a Change PC row, and so does the pairing screen (a PC that
@@ -230,11 +252,6 @@ Still open:
   (no TLS attempt reached the port, and serving 443 changed nothing), and not Safe Browsing
   (`isFraudulentWebsiteWarningEnabled = false` changed nothing). The connect screen suggests
   https, on iOS only: Android has no such delay.
-- Each Change PC leaves one blank web view behind: the old page is unloaded, so nothing stays
-  connected to the PC, but the old view controller and its `WKWebView` stay in memory. Taking
-  away the content controller's handlers and user scripts, the first responder and the view
-  from its superview did not free them (checked with `leaks --traceTree` on the simulator);
-  what holds them is inside Capacitor or UIKit and is not found yet.
 - Not tried: QR scanning (needs a camera), keyboard and IME in the app, a physical iPhone,
   Release signing.
 
@@ -257,8 +274,27 @@ pieces are the Java twins of the iOS ones, in `app/android/app/src/main/java/sh/
   alone, gets none. `MainActivity` hands that page a small `HerdrErrorPage` JavaScript interface
   for Try again and Change PC. For the same reason `error.html` carries its own style and
   script, which `app/scripts/build-web.ts` inlines.
-- The manifest allows cleartext http (a tailnet or LAN IP). `minSdkVersion` is 26 (Android 8),
-  which the QR scanner's library needs.
+- The manifest allows cleartext http to any host (see the connect screen's warning above).
+  `minSdkVersion` is 26 (Android 8), which the QR scanner's library needs. The merged manifest
+  asks for INTERNET, ACCESS_NETWORK_STATE, CAMERA (the QR scanner) and androidx's own
+  `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`.
+- Backups are off (`allowBackup="false"`, and `data_extraction_rules.xml` for a move to a new
+  phone on Android 12 and later): the WebView's store holds each PC's device cookie, so a restored
+  copy would be signed in without pairing.
+- `error.html` shows the reason: WebView's (`net::ERR_CONNECTION_REFUSED`) or the HTTP status.
+  `MainActivity` takes it from its own `BridgeWebViewClient`, as Capacitor's listeners get none.
+  On a WebView without `WEB_MESSAGE_LISTENER` there is no `HerdrErrorPage`, so the page's
+  buttons go to `/_ovis/retry` and `/_ovis/change-pc` on the app's origin, which `MainActivity`
+  catches; the page then does not name the PC.
+- The status and navigation bars take the page's `theme-color` (the client keeps it at its top
+  bar's color), with icons that stand out on it: a document-start script sends it to an
+  `OvisBars` listener open to the app's and the PC's origins. Until then, and on a WebView without
+  those features, they sit on the app's dark background (`colors.xml`), as does Android 12's own
+  launch screen (`windowSplashScreenBackground`).
+- A link to the PC's host over the other scheme (http for an https PC) opens in the browser: it is
+  another origin, which gets no bridge.
+- `file_paths.xml` shares only the app's external Pictures folder, where Capacitor puts a photo
+  taken for a file input.
 - `build-web.ts` leaves out the client build's `.gz` and `.br` sidecars. The app reads files
   itself, and Android's asset merger takes `x.js` and `x.js.gz` for one asset.
 
@@ -273,7 +309,9 @@ cd android && ANDROID_HOME=~/Android/Sdk ./gradlew assembleDebug
 
 For Google Play, `./gradlew bundleRelease` makes `app/build/outputs/bundle/release/app-release.aab`.
 It is signed with the upload key when `OVIS_UPLOAD_PROPERTIES` names a properties file holding
-`storeFile`, `storePassword`, `keyAlias` and `keyPassword`; the key and that file stay outside
+`storeFile`, `storePassword`, `keyAlias` and `keyPassword` (a relative `storeFile` is taken from
+`app/android/app`; a file that is missing or lacks one of them fails a release build, naming
+what is wrong, and never a debug build); the key and that file stay outside
 the repository (the maintainer's are in `~/.config/ovis-android`, mode 700). Without it the bundle
 is unsigned. Raise `versionCode` in `app/build.gradle` for every upload.
 
@@ -301,11 +339,6 @@ were read through the WebView's DevTools socket (`webview_devtools_remote_<pid>`
 
 Still open on Android:
 
-- The emulator showed the status bar as a white strip above the dark app. On a Galaxy Z Flip6 it
-  looks right.
-- On Android 12 and later, the system's launch screen shows the icon on a light background
-  before the dark app.
-- `error.html` shows no reason, as Android's error callback gives Capacitor's listeners none.
 - QR scanning and IME were not tried in the emulator; a physical phone should check them.
 
 ## Risks and open questions
@@ -321,6 +354,7 @@ Still open on Android:
   Transport Security exception that review must accept. `https` through `tailscale serve` needs
   none.
 - Several PCs: the app should list them, as the remote PCs feature does in the browser.
-- Not decided: the relay's domain. The app is Ovis, with the ID `sh.ovis.app`.
+- The relay's domain is `push.ovis.sh` (decided 2026-10-23). The app is Ovis, with the ID
+  `sh.ovis.app`.
 - The macbook is shared with other sessions (a ChatGPT CUA was running on 2026-10-18): check it
   is free before booting a simulator there.

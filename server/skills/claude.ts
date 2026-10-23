@@ -1,7 +1,8 @@
 import { basename, dirname, join, resolve } from "node:path";
 import type { AgentCommandSource } from "./index.ts";
 import { readFileSync, realpathSync } from "node:fs";
-import { ancestorsToRepoRoot, customCommands, environValue, plainObject, readFrontmatter, walkSkills } from "./walk.ts";
+import { ancestorsToRepoRoot, createWalkBudget, customCommands, environValue, plainObject, walkSkills } from "./walk.ts";
+import type { WalkBudget } from "./walk.ts";
 import type { CommandForm, SlashCommand } from "../../shared/protocol.ts";
 
 /**
@@ -131,8 +132,8 @@ function reservedName(name: string): boolean {
 /** Skills docs: `synced` holds the claude.ai skills, in any capitalization, so a skill folder of that name is skipped. */
 const notSynced = (directory: string): boolean => directory.toLowerCase() === "synced";
 
-function claudeSkills(root: string, origin: SlashCommand["origin"], prefix?: string): SlashCommand[] {
-  return walkSkills(root, { depth: "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: false, skipNames: origin === "plugin" ? undefined : notSynced })
+function claudeSkills(root: string, origin: SlashCommand["origin"], budget: WalkBudget, prefix?: string): SlashCommand[] {
+  return walkSkills(root, { depth: "one", looseMarkdown: "none", ignoreFiles: false, requireDescription: false, skipNames: origin === "plugin" ? undefined : notSynced, budget })
     .filter(({ fields }) => !isOff(fields["user-invocable"]))
     // the folder name is reserved whatever the frontmatter `name` says (a plugin's names are namespaced)
     .filter(({ path }) => origin === "plugin" || !reservedName(basename(dirname(path))))
@@ -140,11 +141,10 @@ function claudeSkills(root: string, origin: SlashCommand["origin"], prefix?: str
 }
 
 /** A command file's name is its path under the root with `/` as `:`, so the path follows from the name. */
-function claudeCommands(root: string, source: SlashCommand["source"], prefix?: string): SlashCommand[] {
-  return customCommands(root, source)
+function claudeCommands(root: string, source: SlashCommand["source"], budget: WalkBudget, prefix?: string): SlashCommand[] {
+  // Command files take the same visibility metadata as skills, checked from the original read.
+  return customCommands(root, source, budget, (fields) => !isOff(fields["user-invocable"]))
     .map((command) => ({ command, path: join(root, `${command.name.split(":").join("/")}.md`) }))
-    // command files take the same frontmatter as skills, so `user-invocable: false` hides them too
-    .filter(({ path }) => !isOff(readFrontmatter(path)?.["user-invocable"]))
     .map(({ command, path }) => ({ ...command, id: canonical(path), name: prefix ? `${prefix}:${command.name}` : command.name }));
 }
 
@@ -187,7 +187,7 @@ function managedSettingsDir(): string {
  * The skills and commands of the Claude plugins turned on in settings.json, as Claude
  * offers them: `/<plugin>:<name>`.
  */
-function pluginCommands(config: string): SlashCommand[] {
+function pluginCommands(config: string, budget: WalkBudget): SlashCommand[] {
   const read = (path: string): unknown => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; } };
   const enabled = (read(join(config, "settings.json")) as { enabledPlugins?: Record<string, unknown> } | null)?.enabledPlugins ?? {};
   const installed = (read(join(config, "plugins", "installed_plugins.json")) as { plugins?: Record<string, Array<{ installPath?: unknown }>> } | null)?.plugins ?? {};
@@ -197,8 +197,8 @@ function pluginCommands(config: string): SlashCommand[] {
     const installPath = installed[id]?.[0]?.installPath;
     if (typeof installPath !== "string") continue;
     const plugin = id.split("@")[0]!;
-    result.push(...claudeSkills(join(installPath, "skills"), "plugin", plugin));
-    result.push(...claudeCommands(join(installPath, "commands"), "plugin", plugin));
+    result.push(...claudeSkills(join(installPath, "skills"), "plugin", budget, plugin));
+    result.push(...claudeCommands(join(installPath, "commands"), "plugin", budget, plugin));
   }
   return result;
 }
@@ -264,13 +264,14 @@ export const source: AgentCommandSource = {
     voice: "Toggle voice mode", "web-setup": "Set up cloud sessions with GitHub", workflows: "Browse workflows",
   },
   discover({ home, cwd, env, version }) {
+    const budget = createWalkBudget();
     const config = environValue(env, "CLAUDE_CONFIG_DIR") || join(home, ".claude");
     const ancestors = cwd ? ancestorsToRepoRoot(cwd) : [];
-    const projectSkills = ancestors.flatMap((directory) => claudeSkills(join(directory, ".claude", "skills"), "project"));
+    const projectSkills = ancestors.flatMap((directory) => claudeSkills(join(directory, ".claude", "skills"), "project", budget));
     const repo = ancestors.at(-1);
     if (repo && projectSkills.length === 0) {
       const main = mainCheckout(repo);
-      if (main) projectSkills.push(...claudeSkills(join(main, ".claude", "skills"), "project"));
+      if (main) projectSkills.push(...claudeSkills(join(main, ".claude", "skills"), "project", budget));
     }
     const overrides = skillOverrides(config, ancestors);
     const shown = ({ name }: SlashCommand): boolean => !reservedName(name);
@@ -278,18 +279,18 @@ export const source: AgentCommandSource = {
     // Skills beat legacy command files; within each kind enterprise > personal > nearest project.
     // Plugin rows are namespaced, and skillOverrides never applies to them.
     const candidates = [
-      ...claudeSkills(join(managedSettingsDir(), ".claude", "skills"), "user").filter(visible),
-      ...claudeSkills(join(config, "skills"), "user").filter(visible),
+      ...claudeSkills(join(managedSettingsDir(), ".claude", "skills"), "user", budget).filter(visible),
+      ...claudeSkills(join(config, "skills"), "user", budget).filter(visible),
       ...projectSkills.filter(visible),
-      ...claudeCommands(join(config, "commands"), "user").filter(visible),
-      ...ancestors.flatMap((directory) => claudeCommands(join(directory, ".claude", "commands"), "project")).filter(visible),
-      ...pluginCommands(config),
+      ...claudeCommands(join(config, "commands"), "user", budget).filter(visible),
+      ...ancestors.flatMap((directory) => claudeCommands(join(directory, ".claude", "commands"), "project", budget)).filter(visible),
+      ...pluginCommands(config, budget),
     ];
     const local = new Set<string>(candidates.map(({ name }) => name));
     const seen = new Set<string>([...local, ...REFERENCE].map(comparableName));
     // Skills docs, "When a synced skill name matches another command": the short name, or the full
     // `anthropic-skills:<name>` form while another command, builtin or skill has the short one.
-    for (const command of claudeSkills(join(config, "skills", "synced"), "user").filter(({ name }) => overrides.get(name) !== "off")) {
+    for (const command of claudeSkills(join(config, "skills", "synced"), "user", budget).filter(({ name }) => overrides.get(name) !== "off")) {
       candidates.push(seen.has(comparableName(command.name)) ? { ...command, name: `anthropic-skills:${command.name}` } : command);
       seen.add(comparableName(command.name));
     }

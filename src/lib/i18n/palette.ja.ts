@@ -1,0 +1,31 @@
+/**
+ * Japanese for the keys only the palette files use:
+ * components/CommandPalette.tsx.
+ * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
+ */
+export const PALETTE_JA: Record<string, string> = {
+  "Enable notifications": "通知を有効にする",
+  "Switch to terminal": "ターミナルに切り替え",
+  "Switch to chat": "チャットに切り替え",
+  "Toggle theme": "テーマを切り替え",
+  "Search panes and actions…": "ペインと操作を検索…",
+  "Close command palette": "コマンドパレットを閉じる",
+  "Filter panes by status": "状態でペインを絞り込む",
+  "All": "すべて",
+  "Recent": "最近",
+  "Workspace": "ワークスペース",
+  "Selected": "選択中",
+  "Unknown workspace": "不明なワークスペース",
+  "Actions": "操作",
+  "Plugin actions": "プラグインの操作",
+  "Running…": "実行中…",
+  "{action} failed: {detail}": "{action} に失敗しました: {detail}",
+  "{action} failed (exit code {code})": "{action} に失敗しました (終了コード {code})",
+  "No matching panes or actions": "一致するペインや操作はありません",
+  "Split pane right and open it": "ペインを右に分割して開く",
+  "Split pane down and open it": "ペインを下に分割して開く",
+  "Browse folders": "フォルダを参照",
+  "Folders": "フォルダ",
+  "Open in Files": "ファイルで開く",
+  "Pinned folders": "固定したフォルダ",
+};

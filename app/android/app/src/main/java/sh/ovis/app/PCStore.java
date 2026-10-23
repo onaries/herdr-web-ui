@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.json.JSONArray;
 
 /**
@@ -17,6 +18,9 @@ final class PCStore {
 
     /** The address to open instead of the bare origin until a PC page loads: a pairing link keeps its code through Try again. In memory only, as it can hold that code. */
     static String pendingStart;
+
+    /** Why the PC's page failed, for the error page: WebView's reason, or the HTTP status it answered. */
+    static volatile String failure;
 
     private PCStore() {}
 
@@ -78,7 +82,7 @@ final class PCStore {
         edit.apply();
     }
 
-    /** scheme://host[:port] of a well-formed http or https address, or null: `http://pc:abc/` is refused, not saved for Capacitor to fail on at the next start. */
+    /** scheme://host[:port] of a well-formed http or https address, the host in lowercase, or null: `http://pc:abc/` is refused, not saved for Capacitor to fail on at the next start. */
     static String origin(String text) {
         URI uri;
         try {
@@ -87,7 +91,7 @@ final class PCStore {
             return null;
         }
         String scheme = uri.getScheme() == null ? null : uri.getScheme().toLowerCase();
-        String host = uri.getHost();
+        String host = uri.getHost() == null ? null : uri.getHost().toLowerCase(Locale.ROOT);
         if (scheme == null || !(scheme.equals("http") || scheme.equals("https")) || host == null || host.isEmpty()) return null;
         return uri.getPort() == -1 ? scheme + "://" + host : scheme + "://" + host + ":" + uri.getPort();
     }

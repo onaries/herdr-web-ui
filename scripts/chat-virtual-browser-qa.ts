@@ -175,6 +175,45 @@ try {
     await shot(page, `latest-${width}-${theme}`);
     console.log(`PASS ${width} ${theme}: 1000 logical rows initially mount ${initial.mounted}, at latest`);
 
+    // Given: a following transcript. A controlled 20 px upward correction stays inside the
+    // layout allowance but outside endpoint rounding, distinguishing input from layout.
+    for (const input of ["down-wheel", "horizontal-wheel", "click", "typing", "down-key", "body-composing-up-key", "body-composing-home", "body-229-up-key", "body-229-home", "up-wheel", "body-up-key", "body-page-up", "body-home", "body-shift-space", "drag"] as const) {
+      const upward = ["up-wheel", "body-up-key", "body-page-up", "body-home", "body-shift-space", "drag"].includes(input);
+      // When: input and the correction happen in one task, always inside the input window.
+      await page.locator(".chat-view").evaluate(async (node, input) => {
+        if (!(node instanceof HTMLElement)) throw new Error("Missing chat scroller");
+        const text = node.querySelector("p");
+        if (!text) throw new Error("Missing transcript text");
+        // Deliver the preceding return-to-end scroll before testing a new upward move.
+        node.dispatchEvent(new Event("scroll"));
+        if (input.endsWith("wheel")) text.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: input === "up-wheel" ? -20 : input === "down-wheel" ? 20 : 0, deltaX: input === "horizontal-wheel" ? 20 : 0 }));
+        else if (input === "click" || input === "drag") {
+          text.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, buttons: 1, clientY: 100 }));
+          if (input === "drag") text.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, buttons: 1, clientY: 110 }));
+          if (input === "click") text.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+        } else {
+          const key = input.endsWith("up-key") ? "ArrowUp" : input === "body-page-up" ? "PageUp" : input.endsWith("home") ? "Home" : input === "body-shift-space" ? " " : input === "down-key" ? "ArrowDown" : "a";
+          const target = input.startsWith("body-") ? document.body : text;
+          target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key, shiftKey: input === "body-shift-space", isComposing: input.includes("composing"), keyCode: input.includes("229") ? 229 : 0 }));
+        }
+        node.scrollTop -= 20;
+        node.dispatchEvent(new Event("scroll"));
+        if (input === "drag") text.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }, input);
+      // Then: only upward intent leaves follow mode; new output must otherwise reach the end.
+      revision++;
+      await update(page);
+      await page.getByText(`REVISION-${revision}`, { exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "New messages" }).count(), upward ? 1 : 0, `${input}: only upward input stops following`);
+      if (upward) {
+        assert.ok((await metrics(page)).bottom > 1, `${input}: output leaves the reader away from the end`);
+        await page.getByRole("button", { name: "New messages" }).click();
+      }
+      await settleBottom(page);
+    }
+    console.log(`PASS ${width} ${theme}: upward wheel, document navigation and dragging stop follow; downward input and clicks do not`);
+
     for (revision = 1; revision <= 100; revision++) {
       await update(page);
       await page.getByText(`REVISION-${revision}`, { exact: true }).waitFor();

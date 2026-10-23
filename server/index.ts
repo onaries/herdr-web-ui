@@ -4,45 +4,33 @@ import { connectionData, createCore, type SocketData } from "./core/index.ts";
 import { ClientConnectionLog } from "./client-connection-log.ts";
 import { RequestLog } from "./request-log.ts";
 import { handlePaneRequest } from "./pane-routes.ts";
-import { paneContext, resolveAgent } from "./pane-context.ts";
+import { handleIntegrationsRequest } from "./integrations-routes.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { OrderSequence } from "./order-sequence.ts";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { AgentKind, HealthAuth, HerdrPane, IntegrationsResponse, PanePlan, PendingMessage, PluginActionsResponse, ProjectFavicon } from "../shared/protocol.ts";
+import type { HealthAuth, PendingMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isServeOwnerRequest, lanExposed } from "./access.ts";
 import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, SeenStore } from "./seen.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
-import { badRequest, errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
+import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
-import { claudePaneSession } from "./conversation.ts";
-import { processAlive } from "./omo-status.ts";
-import { omoRuns, omoTasks } from "./omo-tasks.ts";
-import { claudeSubagents, within } from "./claude-subagents.ts";
-import { SHELL_AGENTS, shellAgentExecutable } from "./shell-agent.ts";
-import { claudeSessionTempDir } from "./claude-store.ts";
-import { fileResponse, findFile, crossSiteFileRead, forgetPageMedia, pageMediaResponse, pageMediaSource, PAGE_MEDIA_PATH } from "./file-view.ts";
-import { findProjectFavicon } from "./project-favicon.ts";
+import { handleTasksRequest } from "./tasks-routes.ts";
+import { handlePlanRequest } from "./plan-routes.ts";
+import { ShellAgentLocator } from "./shell-agent.ts";
+import { handleAgentsRequest } from "./agents-routes.ts";
+import { forgetPageMedia } from "./file-view.ts";
+import { handleFileRequest } from "./file-routes.ts";
 import {
-  agentManifests,
-  HerdrError,
   herdrSocketPath,
-  integrationList,
-  paneGet,
   ping,
-  pluginActionInvoke,
-  pluginActionList,
-  pluginList,
-  pluginLogList,
-  type PluginInvocationContext,
-  sessionSnapshot,
 } from "./herdr/client.ts";
 import { type AlertTiming, defaultStateDir, handlePushRequest } from "./push.ts";
 import { moveLegacyStateDir } from "./update-state.ts";
@@ -60,19 +48,14 @@ import { handleVoiceRequest, VoiceService } from "./voice.ts";
 
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity, registerBridge } from "./bridge.ts";
-import { handleMachineRequest, nonCanonicalPath } from "./machine-api.ts";
-import { handleSessionHistoryRequest, SESSION_HISTORY_PATH } from "./session-history-routes.ts";
+import { handleMachineRequest, nonCanonicalPath, slowMachinePath } from "./machine-api.ts";
+import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
-import { PLUGIN_LOG_LIMIT, pluginActionResult, pluginLogEntry, pluginPaneContext, waitForPluginAction } from "./plugin-actions.ts";
+import { handlePluginRequest } from "./plugin-routes.ts";
 
-/** How herdr's plugin manifests name the platform this server (and so its herdr) runs on. */
-const PLUGIN_PLATFORM = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
-/** How long POST /api/plugin/action waits for the command herdr started to end before it answers `running`. */
-const PLUGIN_ACTION_WAIT_MS = 5_000;
-const livePaneIds = async (timeoutMs?: number): Promise<string[]> => (await sessionSnapshot(undefined, timeoutMs)).panes.map((pane) => pane.pane_id);
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
 /**
@@ -100,36 +83,6 @@ export const SUBMIT_DEADLINE_MS = 45_000;
 const DRAFT_CLEAR_WAIT_MS = 1_500;
 const DRAFT_CLEAR_POLL_MS = 50;
 
-
-const AGENT_LABELS: Record<string, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  omp: "Oh My Pi",
-  omo: "OmO",
-  gjc: "Gajae Code",
-  pi: "pi",
-  gemini: "Gemini CLI",
-  cursor: "Cursor",
-  opencode: "OpenCode",
-  copilot: "GitHub Copilot",
-  kimi: "Kimi",
-  amp: "Amp",
-  hermes: "Hermes",
-  grok: "Grok",
-  agy: "Antigravity",
-  devin: "Devin",
-  cmd: "Command Code",
-};
-
-/** The temp folder of the Claude Code session in a pane, or null when the pane runs none or it has none. */
-async function claudeTempFolder(paneId: string): Promise<string | null> {
-  try {
-    const pane = await paneGet(paneId);
-    if (resolveAgent(pane).agent !== "claude") return null;
-    const session = await claudePaneSession(pane);
-    return session === null ? null : await claudeSessionTempDir(session.path);
-  } catch { return null; /* herdr busy or the pane gone: the path stays not found */ }
-}
 
 /**
  * What Bun.serve admits before a route runs (64 MiB). The ~55.9 MB body of a 40 MiB file is under it,
@@ -197,7 +150,7 @@ export function createServer(
     /** herdr's config.toml, for its sidebar rows (server/herdr-sidebar.ts); unset, where herdr itself reads it. Tests pass a temp file. */
     herdrConfigPath?: string;
     registerBridge?: boolean;
-    /** PLUGIN_ACTION_WAIT_MS; a test shortens it to see a run that outlasts the wait */
+    /** PLUGIN_ACTION_WAIT_MS in server/plugin-routes.ts; a test shortens it to see a run that outlasts the wait */
     pluginActionWaitMs?: number;
     /** SUBMIT_DEADLINE_MS; tests shorten it */
     submitDeadlineMs?: number;
@@ -225,6 +178,8 @@ export function createServer(
     terminalAttach?: boolean | (() => Promise<boolean>);
     /** whether this runtime can run the PTY sidecar; unset, server/pty/sidecar.ts says. Tests give a runtime without Node or node-pty, while herdr keeps its own answer, or a probe to run in place of that one. */
     sidecar?: boolean | (() => boolean);
+    /** where omo and gjc are found for the offer and the start (server/shell-agent.ts); unset, this server's PATH alone. The real entrypoints (this file's and remote-entry.ts) add their user's login shell; tests pass a fixture one. */
+    shellAgents?: ShellAgentLocator;
   } = {},
 ): ServerInstance {
   /**
@@ -257,6 +212,7 @@ export function createServer(
   /** what lets Portal open an address: this server's own values, never a request's */
   const portalGuards = () => ({ tokenSet: token !== "", serveOnly });
 
+  const shellAgents = options.shellAgents ?? new ShellAgentLocator({ probe: null });
   const openCodeState = new OpenCodePromptState();
   const draftTimer = setInterval(() => openCodeState.prune(), 60_000);
   draftTimer.unref();
@@ -297,7 +253,7 @@ export function createServer(
       const url = new URL(request.url);
       let { pathname } = url;
       const bridgeAuthorized = isAuthenticated(request, bridgeToken);
-      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws";
+      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws";
       const ip = bunServer.requestIP(request);
       const loopback = ip !== null && isLoopbackAddress(ip.address);
       const forwarded = cameThroughProxy(request.headers);
@@ -393,11 +349,12 @@ export function createServer(
         if (pathname.startsWith("/api/machines/local/")) {
           if (!sameOrigin(request) || (request.method !== "GET" && request.headers.get("x-herdr-machine") !== "1")) return jsonResponse({ error: { code: "invalid_origin", message: "Use PC controls from this app" } }, 403);
           pathname = pathname.replace("/api/machines/local/", "/api/");
-          if (!/^\/api\/(session|agents|integrations|pane\/|workspace\/|worktree\/|tab\/|layout\/ratio$|agent\/(?:rename|commands)$|plugins\/actions$|plugin\/action$|sessions\/history$)/.test(pathname)) return badRequest("invalid_route", "Unknown PC endpoint");
+          if (!/^\/api\/(session|agents|integrations|pane\/|workspace\/|worktree\/|tab\/|layout\/ratio$|agent\/(?:rename|commands)$|plugins\/actions$|plugin\/action$|sessions\/(?:history|resume)$)/.test(pathname)) return badRequest("invalid_route", "Unknown PC endpoint");
           url.pathname = pathname;
         } else {
-          // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC
-          bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : pathname.endsWith("/worktree/create") ? 180 : 80);
+          // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC, and a
+          // resume on agent.start and then its store check (machine-api.ts slowMachinePath)
+          bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : slowMachinePath(pathname.split("/").slice(4).join("/")) ? 180 : 80);
           const deviceId = access.level === "full" ? access.device?.id : undefined;
           const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : undefined, preferences, readOnly, herdrSidebar, seen);
           response.headers.set("cache-control", "no-store");
@@ -521,200 +478,44 @@ export function createServer(
         }
       }
 
-      if (pathname === "/api/agents") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        try {
-          const kinds = new Set((await agentManifests()).manifests.map((manifest) => manifest.agent));
-          kinds.add("omp");
-          kinds.add("claude");
-          // not herdr kinds: offered where this server can run them (see shell-agent.ts)
-          for (const kind of Object.keys(SHELL_AGENTS)) if (shellAgentExecutable(kind)) kinds.add(kind);
-          const agents: AgentKind[] = [...kinds]
-            // an agent's command is its kind; the pane's shell may carry another PATH, as for omo and gjc above
-            .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
-            .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
-          return jsonResponse({ agents });
-        } catch (error) {
-          return errorResponse(error);
-        }
-      }
+      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents);
+      if (agentsResponse) return agentsResponse;
 
-      // read only: installing one changes an agent's own hooks, which stays the user's call in a terminal
-      if (pathname === "/api/integrations") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        try {
-          return jsonResponse({ integrations: await integrationList() } satisfies IntegrationsResponse);
-        } catch (error) {
-          return errorResponse(error);
-        }
-      }
+      const integrationsResponse = await handleIntegrationsRequest(request, pathname);
+      if (integrationsResponse) return integrationsResponse;
 
-      if (pathname === "/api/fs/stat" || pathname === "/api/fs/file" || pathname === "/api/fs/favicon") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
-        if (crossSiteFileRead(request)) return jsonResponse({ error: { code: "cross_site", message: "A file is read from this app or opened in a tab, not loaded by another page" } }, 403);
-        // a folder's project icon: every place it may be kept, in one answer that a miss is part of
-        if (pathname === "/api/fs/favicon") {
-          const root = url.searchParams.get("root") ?? "";
-          if (root.trim() === "") return badRequest("missing_root", "root is required");
-          return jsonResponse({ icon: await findProjectFavicon(root) } satisfies ProjectFavicon);
-        }
-        const paneId = url.searchParams.get("pane_id");
-        let cwd: string | null = null;
-        if (paneId) {
-          try { cwd = (await paneContext(paneId)).cwd; } catch { /* an absolute path still opens */ }
-        }
-        const path = url.searchParams.get("path") ?? "";
-        const found = await findFile(path, cwd, () => paneId ? claudeTempFolder(paneId) : Promise.resolve(null));
-        if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
-        // several files end in that name: the viewer lists them to choose from
-        if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
-        // a page another PC's server asks for through its bridge is played from that server's address, which this one cannot name: it is drawn as before
-        const mediaSource = bridgeAuthorized ? null : pageMediaSource(requestHost, isSecureRequest(request), forwarded ? request.headers.get("x-forwarded-host") : null);
-        // its media plays only for the client address that rendered it, and ends with that device (file-view.ts)
-        const media = mediaSource === null ? null : { source: mediaSource, client, device: access.level === "full" ? access.device?.id ?? null : null };
-        return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1", url.searchParams.get("render") === "1", media);
-      }
-
-      // a rendered page's own video, by the address its render gave it: the page has no origin and
-      // no cookie, so the address is all it holds (requiresAuth lets this path through)
-      if (pathname.startsWith(PAGE_MEDIA_PATH)) {
-        setRequestRoute("/api/fs/page-media/:media_id");
-        if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
-        const media = pageMediaResponse(pathname.slice(PAGE_MEDIA_PATH.length), client);
-        return media ?? jsonResponse({ error: { code: "not_found", message: "no such page media" } }, 404);
-      }
+      const filesResponse = await handleFileRequest(request, url, pathname, { bridgeAuthorized, requestHost, forwarded, client, access });
+      if (filesResponse) return filesResponse;
 
       const workspaceResponse = await handleWorkspaceRequest(request, url, pathname, bunServer, broadcastAll, queueFirstMessage, () => {
         // the receipt first, then the roster read that can show it: not waited for, and its failure changes no answer
         const receipt = orderSequence.moved();
         void machines?.refreshLocal();
         return receipt;
-      });
+      }, shellAgents);
       if (workspaceResponse) return workspaceResponse;
 
-      if (pathname === "/api/plugins/actions") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        try {
-          const [plugins, actions] = await Promise.all([pluginList(), pluginActionList()]);
-          const body: PluginActionsResponse = {
-            plugins: plugins.map((plugin) => ({
-              plugin_id: plugin.plugin_id,
-              name: plugin.name,
-              version: plugin.version,
-              description: plugin.description ?? null,
-              enabled: plugin.enabled,
-              // herdr lists another platform's actions too and refuses them: platform_unsupported
-              actions: actions
-                .filter((action) => action.plugin_id === plugin.plugin_id && (!action.platforms || action.platforms.includes(PLUGIN_PLATFORM)))
-                .map((action) => ({ action_id: action.action_id, title: action.title, description: action.description ?? null, contexts: action.contexts ?? [] })),
-            })),
-          };
-          return jsonResponse(body);
-        } catch (error) {
-          return errorResponse(error);
-        }
-      }
-
-      if (pathname === "/api/plugin/action" && request.method === "GET") {
-        setRequestRoute(pathname);
-        const pluginId = url.searchParams.get("plugin_id");
-        const logId = url.searchParams.get("log_id");
-        if (!pluginId) return badRequest("missing_plugin_id", "plugin_id is required");
-        if (!logId) return badRequest("missing_log_id", "log_id is required");
-        try {
-          const log = await pluginLogEntry(logId, (limit) => pluginLogList(pluginId, limit));
-          return jsonResponse(await pluginActionResult(log, () => livePaneIds()));
-        } catch (error) {
-          return errorResponse(error);
-        }
-      }
-
-      if (pathname === "/api/plugin/action") {
-        setRequestRoute(pathname);
-        if (request.method !== "POST") return badRequest("method_not_allowed", "use GET or POST");
-        const payload = await readJsonObject<{ plugin_id?: unknown; action_id?: unknown; pane_id?: unknown }>(request);
-        if (payload instanceof Response) return payload;
-        if (typeof payload.plugin_id !== "string" || payload.plugin_id.length === 0) return badRequest("missing_plugin_id", "plugin_id is required");
-        if (typeof payload.action_id !== "string" || payload.action_id.length === 0) return badRequest("missing_action_id", "action_id is required");
-        if (payload.pane_id !== undefined && (typeof payload.pane_id !== "string" || payload.pane_id.length === 0)) return badRequest("invalid_pane_id", "pane_id must be a pane's ID");
-        try {
-          let context: PluginInvocationContext | undefined;
-          if (payload.pane_id !== undefined) {
-            const snapshot = await sessionSnapshot();
-            const pane = snapshot.panes.find((entry) => entry.pane_id === payload.pane_id);
-            // herdr would run the action with whatever ID it was handed
-            if (!pane) throw new HerdrError("pane_not_found", `pane ${payload.pane_id} not found`);
-            context = pluginPaneContext(snapshot, pane);
-          }
-          const pluginId = payload.plugin_id;
-          const invoked = await pluginActionInvoke(pluginId, payload.action_id, context);
-          return jsonResponse(await waitForPluginAction(
-            invoked.log,
-            options.pluginActionWaitMs ?? PLUGIN_ACTION_WAIT_MS,
-            (timeoutMs) => pluginLogList(pluginId, PLUGIN_LOG_LIMIT, undefined, timeoutMs),
-            livePaneIds,
-          ));
-        } catch (error) {
-          return errorResponse(error);
-        }
-      }
+      const pluginResponse = await handlePluginRequest(request, url, pathname, options);
+      if (pluginResponse) return pluginResponse;
 
       const paneResponse = await handlePaneRequest(request, url, pathname, options);
       if (paneResponse) return paneResponse;
 
-      if (pathname === "/api/pane/omo-tasks") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        const paneId = url.searchParams.get("pane_id");
-        if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
-        const session = omo.sessionOf(paneId);
-        // server_time: the browser's clock can differ from this PC's, and the list says how long tasks ran
-        const server_time = new Date().toISOString();
-        if (session === null) {
-          // a Claude pane's subagents, read from its session's files; nothing for any other pane.
-          // Its transcript is found here if the background lookup has not got to it yet
-          // (for a second at most: a slow herdr answers with what is known, and the next ask has the rest)
-          // An unknown pane costs a fresh herdr lookup too; the client bounds its discovery retries.
-          if (claudeAgents.sessionOf(paneId) === null) {
-            await within(1000, (async () => {
-              await claudeAgents.ensure(await paneGet(paneId));
-            })());
-          }
-          const claude = claudeAgents.sessionOf(paneId);
-          return jsonResponse({ tasks: claude === null ? [] : claudeSubagents(claude.path, claude.live, Date.now(), claude.startedAt), runs: [], server_time });
-        }
-        return jsonResponse({ tasks: omoTasks(session.cwd, session.sessionId, processAlive), runs: omoRuns(session.cwd, session.sessionId), server_time });
-      }
+      const tasksResponse = await handleTasksRequest(request, url, pathname, { omo, claudeAgents });
+      if (tasksResponse) return tasksResponse;
 
-      if (pathname === "/api/pane/plan") {
-        setRequestRoute(pathname);
-        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        const paneId = url.searchParams.get("pane_id");
-        if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
-        // the pane as herdr has it now, for a second at most: one the background lookup has not got to yet is looked
-        // up here, and so is one that runs another session than the one its transcript was found for.
-        // Herdr may name an OmO pane `claude`: use its resolved identity before looking up a plan.
-        const seen: { pane?: HerdrPane } = {};
-        await within(1000, (async () => {
-          const pane = seen.pane = omo.apply(await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
-          if (pane === undefined || plans.known(pane)) return;
-          if (pane.agent === "claude") await claudeAgents.ensure(pane);
-          await plans.ensure(pane, true);
-        })());
-        // only the pane as herdr has it now is told its plan: one herdr did not answer for in time, no longer has, or has
-        // in a session not looked up yet is told none, never the plan read before (session-plan.ts planOf)
-        const steps = plans.planOf(seen.pane);
-        const answer: PanePlan = { plan: steps === null ? null : { steps }, server_time: new Date().toISOString() };
-        return jsonResponse(answer);
-      }
+      const planResponse = await handlePlanRequest(request, url, pathname, { omo, claudeAgents, plans });
+      if (planResponse) return planResponse;
 
       if (pathname === SESSION_HISTORY_PATH) {
         setRequestRoute(SESSION_HISTORY_PATH);
         return handleSessionHistoryRequest(request, url, { readOnly, stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome } });
+      }
+
+      if (pathname === SESSION_RESUME_PATH) {
+        setRequestRoute(SESSION_RESUME_PATH);
+        // agent.start can legitimately take a minute; Bun's default idle timeout is shorter
+        return handleSessionResumeRequest(request, { readOnly, stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome }, holdOpen: (seconds) => bunServer.timeout(request, seconds) });
       }
 
       if (pathname.startsWith("/api/pane/prompt")) {
@@ -779,6 +580,7 @@ export function createServer(
         registration?.close();
         closeCodexDaemonSources();
       });
+      void shellAgents.stop();
       server.stop(true);
       requestLog.close();
     },
@@ -793,7 +595,7 @@ if (import.meta.main) {
   const portal = new PortalService({ stateDir: defaultStateDir() });
   let instance: ReturnType<typeof createServer>;
   try {
-    instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), portal, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles });
+    instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), portal, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator() });
   } catch (err) {
     const { code, syscall } = err as { code?: string; syscall?: string };
     // only the bind itself: a permission error reading a state file keeps its own message and path

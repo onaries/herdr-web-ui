@@ -69,7 +69,6 @@ describe("startScreenMetadata", () => {
 
   it("reads only the agents whose screen it knows", () => {
     expect(readsStartScreen("codex-transcript")).toBeTrue();
-    expect(readsStartScreen("omp-transcript")).toBeFalse();
     expect(readsStartScreen("opencode-transcript")).toBeFalse();
     expect(startScreenMetadata("omo-transcript", CODEX)).toEqual({ model: null, reasoning_effort: null });
     expect(startScreenMetadata("claude-transcript", CODEX)).toEqual({ model: null, reasoning_effort: null });

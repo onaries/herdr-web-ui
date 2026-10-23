@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
 import { createElement } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { Machine } from "../../shared/machines.ts";
@@ -8,6 +8,7 @@ import { useSidebarActivityState, type SidebarActivity } from "./sidebarActivity
 import { cleanSeen, loadSeen, receiveSeen, saveSeen, seenKey, SEEN_LIMIT } from "./seenFinishes.ts";
 import type { SeenFinish } from "../../shared/seen.ts";
 import { conversationFinishEvidence } from "./panePresentation.ts";
+import { shareSeen } from "./api.ts";
 
 const fixture: Machine[] = JSON.parse(JSON.stringify(machinesFixture.machines));
 function roster(finishes: Record<string, number>, statuses: Record<string, AgentStatus> = {}, epoch: string | undefined = "server-a"): Machine[] {
@@ -60,6 +61,7 @@ describe("sidebar finish acknowledgement through React effects", () => {
   });
   afterEach(async () => {
     await act(async () => { for (const renderer of renderers) renderer.unmount(); });
+    jest.useRealTimers();
     for (const [key, descriptor] of descriptors) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
@@ -289,6 +291,7 @@ describe("sidebar finish acknowledgement through React effects", () => {
   });
 
   it("tells the other browsers of a presented finish once, and again after a failed attempt", async () => {
+    jest.useFakeTimers();
     const told: SeenFinish[] = [];
     let reachable = false;
     const share = async (finish: SeenFinish) => { told.push(finish); if (!reachable) throw new Error("offline"); };
@@ -302,12 +305,141 @@ describe("sidebar finish acknowledgement through React effects", () => {
       reachable = true;
       await client.update(roster({ a: 1 }), "a");
       await client.update(roster({ a: 1 }), "a");
+      expect(told).toHaveLength(1);
+      await act(async () => { jest.advanceTimersByTime(1_000); });
       await client.update(roster({ a: 1, b: 1 }), "b");
       const a = { pc: "local", epoch: "server-a", pane: "a", id: 1 };
       expect(told).toEqual([a, a, { ...a, pane: "b" }]);
     } finally {
       console.warn = warn;
     }
+  });
+
+  for (const failure of [502, 503, "network"] as const) {
+    it(`delivers once after backoff despite 20 roster updates when sharing fails with ${failure}`, async () => {
+      // Given a transient failure followed by a successful delivery.
+      jest.useFakeTimers();
+      const delivered: unknown[] = [];
+      let attempts = 0;
+      const post = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        attempts++;
+        if (attempts === 1) {
+          if (failure === "network") throw new TypeError("offline");
+          return new Response("restart", { status: failure });
+        }
+        delivered.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: 200 });
+      }, { preconnect: fetch.preconnect }));
+      try {
+        const client = await open(roster({ a: 1 }), "a", false, shareSeen);
+
+        // When roster updates arrive before the retry deadline.
+        for (let index = 0; index < 20; index++) await client.update(roster({ a: 1 }), "a");
+        await act(async () => { jest.advanceTimersByTime(999); });
+        expect(attempts).toBe(1);
+        await act(async () => { jest.advanceTimersByTime(1); });
+
+        // Then exactly one retry delivers, without another request after success.
+        await client.update(roster({ a: 1 }), "a");
+        await act(async () => { jest.advanceTimersByTime(60_000); });
+        expect(post.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+          ["/api/seen", "POST"], ["/api/seen", "POST"],
+        ]);
+        expect(delivered).toEqual([{ pc: "local", epoch: "server-a", pane: "a", id: 1 }]);
+      } finally { post.mockRestore(); }
+    });
+  }
+
+  it("does not retry a bad request even after backoff and roster updates", async () => {
+    // Given a finish refused as invalid.
+    jest.useFakeTimers();
+    const told: SeenFinish[] = [];
+    const client = await open(roster({ a: 1 }), "a", false, async (finish) => {
+      told.push(finish);
+      throw Object.assign(new Error("invalid_finish"), { status: 400 });
+    });
+
+    // When time passes and the roster changes.
+    for (let index = 0; index < 20; index++) await client.update(roster({ a: 1 }), "a");
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+
+    // Then the refused finish remains local without another send.
+    expect(told).toHaveLength(1);
+    expect(client.status("a")).toBe("idle");
+  });
+
+  it("doubles retry delays up to 30 seconds without roster-driven sends", async () => {
+    // Given a server that remains unavailable.
+    jest.useFakeTimers();
+    let attempts = 0;
+    const client = await open(roster({ a: 1 }), "a", false, async () => {
+      attempts++;
+      throw Object.assign(new Error("restart"), { status: 503 });
+    });
+
+    // When each retry deadline is approached and then reached.
+    let expected = 1;
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+      await client.update(roster({ a: 1 }), "a");
+      await act(async () => { jest.advanceTimersByTime(delay - 1); });
+      expect(attempts).toBe(expected);
+      await act(async () => { jest.advanceTimersByTime(1); });
+      expected++;
+      // Then only that chain's scheduled request has been sent.
+      expect(attempts).toBe(expected);
+    }
+  });
+
+  for (const retirement of ["unmount", "epoch", "new finish"] as const) {
+    it(`cancels a pending retry on ${retirement}`, async () => {
+      // Given a finish waiting to retry.
+      jest.useFakeTimers();
+      const told: SeenFinish[] = [];
+      const client = await open(roster({ a: 1 }), "a", false, async (finish) => {
+        told.push(finish);
+        throw Object.assign(new Error("restart"), { status: 502 });
+      });
+
+      // When the owner or finish is retired before the timer fires.
+      await {
+        unmount: () => client.unmount(),
+        epoch: () => client.update(roster({ a: 1 }, {}, "server-b")),
+        "new finish": () => client.update(roster({ a: 2 }), "a"),
+      }[retirement]();
+      await act(async () => { jest.advanceTimersByTime(1_000); });
+
+      // Then the retired finish is never sent again.
+      expect(told.filter(({ id }) => id === 1)).toHaveLength(1);
+    });
+  }
+
+  it("resumes a 401 only after authentication succeeds without reloading", async () => {
+    // Given an unauthorized share and a browser still signed out.
+    jest.useFakeTimers();
+    let authenticated = false;
+    const health = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () =>
+      Response.json({ auth: { authenticated } }), { preconnect: fetch.preconnect }));
+    const told: SeenFinish[] = [];
+    try {
+      const client = await open(roster({ a: 1 }), "a", false, async (finish) => {
+        told.push(finish);
+        if (!authenticated) throw Object.assign(new Error("unauthorized"), { status: 401 });
+      });
+      await act(async () => { jest.advanceTimersByTime(1_000); });
+      await client.update(roster({ a: 1 }), "a");
+      expect(told).toHaveLength(1);
+
+      // When a later health response confirms sign-in.
+      authenticated = true;
+      await act(async () => { jest.advanceTimersByTime(2_000); });
+
+      // Then the existing finish is shared once and its chain stops.
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+      expect(told).toHaveLength(2);
+      expect(health.mock.calls.map(([url]) => url)).toEqual([
+        "/api/health?scope=bridge", "/api/health?scope=bridge",
+      ]);
+    } finally { health.mockRestore(); }
   });
 
   it("does not send again a finish the server answered with an error", async () => {
@@ -324,6 +456,127 @@ describe("sidebar finish acknowledgement through React effects", () => {
     } finally {
       console.warn = warn;
     }
+  });
+
+  it("uses one health request per backoff window for 100 unauthorized finishes", async () => {
+    // Given 100 finishes read while signed out.
+    jest.useFakeTimers();
+    const health = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () =>
+      Response.json({ auth: { authenticated: false } }), { preconnect: fetch.preconnect }));
+    const share = async () => { throw Object.assign(new Error("unauthorized"), { status: 401 }); };
+    try {
+      const client = await open(roster({ p0: 1 }), "p0", false, share);
+      for (let index = 1; index < 100; index++) await client.update(roster({ [`p${index}`]: 1 }), `p${index}`);
+
+      // When each shared backoff window expires, including at the delay cap.
+      let windows = 0;
+      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+        await act(async () => { jest.advanceTimersByTime(delay); });
+        windows++;
+
+        // Then pending finish count does not multiply authentication probes.
+        expect(health.mock.calls.map(([url]) => url)).toEqual(
+          Array.from({ length: windows }, () => "/api/health?scope=bridge"),
+        );
+      }
+    } finally { health.mockRestore(); }
+  });
+
+  it("sends each of 100 paused finishes once after one successful auth observation", async () => {
+    // Given 100 pending finishes behind the same authentication gate.
+    jest.useFakeTimers();
+    let authenticated = false;
+    const delivered: SeenFinish[] = [];
+    const health = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () =>
+      Response.json({ auth: { authenticated } }), { preconnect: fetch.preconnect }));
+    const share = async (finish: SeenFinish) => {
+      if (!authenticated) throw Object.assign(new Error("unauthorized"), { status: 401 });
+      delivered.push(finish);
+    };
+    try {
+      const client = await open(roster({ p0: 1 }), "p0", false, share);
+      for (let index = 1; index < 100; index++) await client.update(roster({ [`p${index}`]: 1 }), `p${index}`);
+      await act(async () => { jest.advanceTimersByTime(1_000); });
+
+      // When one later health response confirms sign-in.
+      authenticated = true;
+      await act(async () => { jest.advanceTimersByTime(2_000); });
+      for (let index = 0; index < 100; index++) await client.update(roster({ [`p${index}`]: 1 }), `p${index}`);
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+
+      // Then every finish is delivered exactly once, and health polling stops.
+      expect(delivered).toHaveLength(100);
+      expect(delivered.map(({ pane }) => pane).sort()).toEqual(
+        Array.from({ length: 100 }, (_, index) => `p${index}`).sort(),
+      );
+      expect(health).toHaveBeenCalledTimes(2);
+    } finally { health.mockRestore(); }
+  });
+
+  for (const failure of [503, "network"] as const) {
+    it(`bounds ${failure} outage retries independently of 100 pending finishes and drains on recovery`, async () => {
+      // Given 100 finishes presented during a transient outage.
+      jest.useFakeTimers();
+      let available = false;
+      let attempts = 0;
+      const delivered: SeenFinish[] = [];
+      const share = async (finish: SeenFinish) => {
+        attempts++;
+        if (!available) throw failure === "network" ? new TypeError("offline")
+          : Object.assign(new Error("restart"), { status: failure });
+        delivered.push(finish);
+      };
+      const client = await open(roster({ p0: 1 }), "p0", false, share);
+      for (let index = 1; index < 100; index++) await client.update(roster({ [`p${index}`]: 1 }), `p${index}`);
+      const initial = attempts;
+      expect(initial).toBe(1);
+
+      // When the outage continues across retry deadlines and roster traffic.
+      let windows = 0;
+      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]) {
+        for (let index = 0; index < 20; index++) await client.update(roster({ p99: 1 }), "p99");
+        await act(async () => { jest.advanceTimersByTime(delay); });
+        windows++;
+        expect(attempts - initial).toBe(windows);
+      }
+      available = true;
+      await act(async () => { jest.advanceTimersByTime(30_000); });
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+
+      // Then the aggregate outage sends were bounded, but no pending finish was lost.
+      expect(delivered).toHaveLength(100);
+      expect(new Set(delivered.map(({ pane }) => pane)).size).toBe(100);
+      expect(attempts).toBe(initial + windows + 100);
+    });
+  }
+
+  it("does not duplicate an in-flight auth probe or resume shares after unmount", async () => {
+    // Given 100 paused finishes and one unanswered authentication probe.
+    jest.useFakeTimers();
+    const reply = Promise.withResolvers<Response>();
+    const health = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
+      () => reply.promise, { preconnect: fetch.preconnect },
+    ));
+    let attempts = 0;
+    try {
+      const client = await open(roster({ p0: 1 }), "p0", false, async () => {
+        attempts++;
+        throw Object.assign(new Error("unauthorized"), { status: 401 });
+      });
+      for (let index = 1; index < 100; index++) await client.update(roster({ [`p${index}`]: 1 }), `p${index}`);
+      await act(async () => { jest.advanceTimersByTime(1_000); });
+
+      // When time and roster updates pass, then the owner unmounts before the reply.
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+      await client.update(roster({ p99: 1 }), "p99");
+      await client.unmount();
+      await act(async () => { reply.resolve(Response.json({ auth: { authenticated: true } })); });
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+
+      // Then no overlapping health poll or stale resumed share was sent.
+      expect(health).toHaveBeenCalledTimes(1);
+      expect(attempts).toBe(1);
+    } finally { health.mockRestore(); }
   });
 
   it("upgrades a shared finish when its same-ID answer fingerprint becomes available", async () => {

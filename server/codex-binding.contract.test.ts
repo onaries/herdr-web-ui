@@ -59,9 +59,9 @@ const codexRunning = async (paneId: string, not?: string): Promise<string> => {
   throw new Error(`no codex process in ${paneId}`);
 };
 
-const pane = async (label: string, command: string, cwd = root): Promise<string> => {
+const pane = async (label: string, command: string, cwd = root, owned = workspaces): Promise<string> => {
   const created = await workspaceCreate({ cwd, label: `ovis-test-codex-binding-${label}` });
-  workspaces.push(created.workspace.workspace_id);
+  owned.push(created.workspace.workspace_id);
   const paneId = created.root_pane.pane_id;
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${command}\n` });
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "working" });
@@ -296,9 +296,9 @@ it("reads a thread whose answers are all short by its newest answers on screen, 
   const db = new Database(join(codexHome, "state_5.sqlite"));
   db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(threads.short, path, root, "question for short");
   db.close();
-  const opened = workspaces.length;
+  const owned: string[] = [];
   try {
-    const shortPane = await pane("short", `${join(root, "bin", "codex")} --quote short`);
+    const shortPane = await pane("short", `${join(root, "bin", "codex")} --quote short`, root, owned);
     await onScreen(shortPane, shortAnswers[1]!);
     // both answers are one turn's
     expect(lastAnswer(await read(shortPane))).toBe(shortAnswers.join(""));
@@ -327,7 +327,7 @@ it("reads a thread whose answers are all short by its newest answers on screen, 
     try { expect((await read(shortPane)).source).toBe("scrollback"); } finally { forked(); }
     expect((await read(shortPane)).source).toBe("codex-transcript");
     // a pane a long answer bound keeps that rollout when another thread's short answers show later
-    const bound = await pane("bound-short", `FLOOD_ON_ENTER=1 THEN=short ${join(root, "bin", "codex")} --say`);
+    const bound = await pane("bound-short", `FLOOD_ON_ENTER=1 THEN=short ${join(root, "bin", "codex")} --say`, root, owned);
     for (let attempt = 0; attempt < 30 && lastAnswer(await read(bound)) !== answers.matched; attempt++) await Bun.sleep(100);
     expect(lastAnswer(await read(bound))).toBe(answers.matched);
     await flood(bound);
@@ -337,23 +337,29 @@ it("reads a thread whose answers are all short by its newest answers on screen, 
     // 32 threads updated since push the pane's own out of the ones looked at, and one of them
     // ends with the same short lines: the chat cannot tell, rather than show that one
     const db = new Database(join(codexHome, "state_5.sqlite"));
-    for (let index = 0; index < 32; index++) {
-      const id = `01a0c7a1-56d9-7e20-9f08-f7a2d973c${String(index).padStart(3, "0")}`;
-      const later = join(codexHome, "sessions", `rollout-2026-09-25T00-00-00-${id}.jsonl`);
-      writeFileSync(later, [
-        { type: "session_meta", payload: { id, cwd: root } },
-        ...(index === 0 ? shortAnswers : [`Unrelated answer number ${index}.`]).map((text) => ({ type: "response_item", timestamp: "2026-09-25T00:00:05Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] } })),
-      ].map((entry) => JSON.stringify(entry)).join("\n"));
-      db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 9999999999, 'cli', 'later')").run(id, later, root);
-    }
-    db.close();
+    try {
+      // One fixture, one commit: autocommitting every row makes 128 synchronous fsyncs,
+      // blocking the test's event loop past its deadline on a busy disk.
+      db.transaction(() => {
+        for (let index = 0; index < 32; index++) {
+          const id = `01a0c7a1-56d9-7e20-9f08-f7a2d973c${String(index).padStart(3, "0")}`;
+          const later = join(codexHome, "sessions", `rollout-2026-09-25T00-00-00-${id}.jsonl`);
+          writeFileSync(later, [
+            { type: "session_meta", payload: { id, cwd: root } },
+            ...(index === 0 ? shortAnswers : [`Unrelated answer number ${index}.`]).map((text) => ({ type: "response_item", timestamp: "2026-09-25T00:00:05Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] } })),
+          ].map((entry) => JSON.stringify(entry)).join("\n"));
+          db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 9999999999, 'cli', 'later')").run(id, later, root);
+        }
+      })();
+    } finally { db.close(); }
     expect((await read(shortPane)).source).toBe("scrollback");
   } finally {
     const db = new Database(join(codexHome, "state_5.sqlite"));
     db.query("DELETE FROM threads WHERE id = ? OR first_user_message = 'later'").run(threads.short);
     db.close();
-    // the claim check looks at 8 other Codex panes in the cwd: leave the later tests theirs
-    for (const id of workspaces.splice(opened)) await workspaceClose(id);
+    // A timed-out async test can finish after the next test starts. Close only this
+    // test's panes, never a slice of the shared list that now includes the next one's.
+    for (const id of owned) await workspaceClose(id);
   }
 }, 30_000);
 

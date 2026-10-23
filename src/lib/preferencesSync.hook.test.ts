@@ -310,21 +310,24 @@ describe("preferences sync real send path", () => {
     expect(revisions).toEqual([1]);
   });
 
-  it("clears a save error when the server stops accepting saves", async () => {
+  it.each([
+    [403, "forbidden"],
+    [404, "not_found"],
+  ] as const)("clears a save error when the server stops accepting saves with %s", async (status, code) => {
+    // Given a client with an unconfirmed save error.
     const client = await open();
     refuse = Response.json({ error: { code: "preferences_unwritable" } }, { status: 500 });
     await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
     await send();
     expect(client.saveError).not.toBeNull();
 
-    refuse = Response.json({ error: { code: "forbidden" } }, { status: 403 });
+    // When its next save receives this terminal refusal.
+    refuse = Response.json({ error: { code } }, { status });
     await act(async () => { jest.advanceTimersByTime(5_000); });
     await send();
-    expect(client.saveError).toBeNull();
-
-    refuse = Response.json({ error: { code: "not_found" } }, { status: 404 });
-    await act(async () => { client.update({ darkTheme: "gruvbox" }); });
-    await windows();
+    // Then the refusal was sent and the previous error clears.
+    expect(refusals).toBe(2);
+    expect(refuse).toBeNull();
     expect(client.saveError).toBeNull();
   });
 

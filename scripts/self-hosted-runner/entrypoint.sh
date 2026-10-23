@@ -8,7 +8,7 @@ set -euo pipefail
 IFS= read -r RUNNER_TOKEN || true
 : "${RUNNER_TOKEN:?a registration token is required on stdin}"
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
-RUNNER_LABELS="${RUNNER_LABELS:-herdr-ci}"
+RUNNER_LABELS="${RUNNER_LABELS:-self-hosted-ovis}"
 
 ./config.sh --unattended --ephemeral \
   --url "$RUNNER_URL" \

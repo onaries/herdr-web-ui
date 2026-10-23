@@ -222,7 +222,6 @@ describe("OpenCode v1 catalog", () => {
     expect(source.pin).toBe("1.19.3");
   });
 
-  // PENDING_TODO5: needs paneCommands to emit visibility and provenance
   it("lists every former exclusion with visibility terminal and rows from a scan unverified", () => {
     const { home, config } = fixture();
     skill(join(config, "skills", "plain"), "plain");

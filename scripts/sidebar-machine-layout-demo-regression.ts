@@ -35,12 +35,15 @@ interface Scenario {
   desktopSidebar: boolean;
   sidebarWidth?: number;
   renameRow?: "shared" | "stacked";
+  wrappedRow?: boolean;
   screenshots?: boolean;
 }
 
 const scenarios: Scenario[] = [
   { name: "en-desktop-240-dark", language: "en", theme: "dark", density: "comfortable", viewport: { width: 1280, height: 900 }, touch: false, desktopSidebar: true, renameRow: "stacked", screenshots: true },
+  { name: "en-desktop-240-wrapped", language: "en", theme: "dark", density: "comfortable", viewport: { width: 1280, height: 900 }, touch: false, desktopSidebar: true, wrappedRow: true },
   { name: "en-desktop-240-light", language: "en", theme: "light", density: "compact", viewport: { width: 1280, height: 900 }, touch: false, desktopSidebar: true, screenshots: true },
+  // Verify a shared Rename row with room to spare, not a 300px threshold that varies with text, scale and scrollbars.
   { name: "en-desktop-520-light", language: "en", theme: "light", density: "comfortable", viewport: { width: 1280, height: 900 }, touch: false, desktopSidebar: true, sidebarWidth: 520, renameRow: "shared", screenshots: true },
   { name: "en-phone-320-dark", language: "en", theme: "dark", density: "compact", viewport: { width: 320, height: 844 }, touch: true, desktopSidebar: false, screenshots: true },
   { name: "en-phone-320-light", language: "en", theme: "light", density: "comfortable", viewport: { width: 320, height: 844 }, touch: true, desktopSidebar: false, screenshots: true },
@@ -131,16 +134,27 @@ async function fitGeometry(page: Page, name: string, scenario: Scenario): Promis
   const oneLine = scenario.touch ? metrics.touchTarget : metrics.controlHeight;
   const buttons = metrics.elements!.filter((element) => element.name.includes("btn"));
   for (const button of buttons) {
-    if (button.lines === 1) assert.ok(Math.abs(button.height - oneLine) <= 1, `${scenario.name} one-line button is the standard control's height (${oneLine}px): ${JSON.stringify(button)}`);
+    if (!button.inRow && button.lines === 1) assert.ok(Math.abs(button.height - oneLine) <= 1, `${scenario.name} one-line button is the standard control's height (${oneLine}px): ${JSON.stringify(button)}`);
   }
   const rename = buttons.find((button) => !button.inRow);
   assert.ok(rename && metrics.input, `${scenario.name} rename form has its field and button`);
   const renameRow = rename.left >= metrics.input.right - 1 && Math.abs(rename.bottom - metrics.input.bottom) <= 1 ? "shared" : rename.top >= metrics.input.bottom - 1 ? "stacked" : "overlapping";
   assert.notEqual(renameRow, "overlapping", `${scenario.name} Rename shares the name field's row or sits under it: ${JSON.stringify({ rename, input: metrics.input })}`);
   if (scenario.renameRow) assert.equal(renameRow, scenario.renameRow, `${scenario.name} Rename is ${scenario.renameRow === "shared" ? "on the name field's row" : "under the name field"} in a ${sidebarWidth}px sidebar: ${JSON.stringify({ rename, input: metrics.input })}`);
-  const rows = new Map<number, typeof buttons>();
-  for (const button of buttons.filter((button) => button.inRow)) rows.set(Math.round(button.top), [...(rows.get(Math.round(button.top)) ?? []), button]);
-  for (const row of rows.values()) assert.ok(row.every((button) => Math.abs(button.bottom - row[0]!.bottom) <= 1), `${scenario.name} buttons that share a row share its height: ${JSON.stringify(row)}`);
+  const rows: (typeof buttons)[] = [];
+  for (const button of buttons.filter((button) => button.inRow)) {
+    // Bottom-aligned buttons still share a flex row when one label wraps and its neighbour does not.
+    const row = rows.find((row) => row.every((peer) => Math.min(button.bottom, peer.bottom) - Math.max(button.top, peer.top) > 1));
+    if (row) row.push(button);
+    else rows.push([button]);
+  }
+  for (const row of rows) {
+    const [first] = row;
+    assert.ok(first);
+    assert.ok(row.every((button) => Math.abs(button.top - first.top) <= 1 && Math.abs(button.height - first.height) <= 1), `${scenario.name} buttons that share a row share its top and height: ${JSON.stringify(row)}`);
+    if (row.every((button) => button.lines === 1)) assert.ok(Math.abs(first.height - oneLine) <= 1, `${scenario.name} one-line row is the standard control's height (${oneLine}px): ${JSON.stringify(row)}`);
+  }
+  if (scenario.wrappedRow) assert.ok(rows.some((row) => row.some((button) => button.lines === 1) && row.some((button) => button.lines > 1)), `${scenario.name} exercises a one-line button beside a wrapped label: ${JSON.stringify(rows)}`);
 }
 
 async function capture(page: Page, scenario: Scenario, state: "initial" | "armed"): Promise<void> {
@@ -213,6 +227,8 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
     else await remoteManage.click();
     const controls = remoteGroup.locator(".machine-controls");
     await controls.waitFor({ state: "visible" });
+    // Make wrapping deterministic while retaining the real flex row and its alignment rules.
+    if (scenario.wrappedRow) await controls.getByRole("button", { name: "Reconnect / setup", exact: true }).evaluate((button) => { button.style.maxWidth = "80px"; });
     await capture(page, scenario, "initial");
     await controls.locator("input").fill("x".repeat(100));
     await fitGeometry(page, "initial", scenario);

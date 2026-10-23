@@ -1,4 +1,6 @@
-/** Native Windows/PowerShell regression, in the isolated test session. Run after `bun run build`:
+/** Manual native Windows/PowerShell regression (not run by CI), in the isolated test session.
+ * Requires Bun, herdr on PATH and Chromium (`bun node_modules/playwright-core/cli.js install chromium`).
+ * Run after `bun install --frozen-lockfile` and `bun run build`:
  *   bun scripts/windows-terminal-browser-qa.ts
  * CHROME_PATH selects an installed browser; otherwise uses Playwright's Chromium.
  * Never run with HERDR_TEST_LIVE=1. */
@@ -6,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium } from "playwright-core";
+import { chromium, type Request } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
 
 assert.equal(process.platform, "win32", "this regression requires native Windows");
@@ -37,11 +39,14 @@ try {
   await until(async () => (await paneRead({ paneId: pane, source: "visible", format: "text" })).text.includes("WIN-HISTORY-120"), "PowerShell output");
   browser = await chromium.launch({ executablePath: chromePath(), headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, hasTouch: true });
+  await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ terminalWheelSpeed: 1 })));
   const page = await context.newPage();
   const errors: string[] = [];
   let scrollWrites = 0;
+  const requestStarts = new Map<Request, number>();
   page.on("pageerror", (error) => { errors.push(error.message); console.error(error); });
   page.on("request", (request) => {
+    requestStarts.set(request, requestStarts.size + 1);
     if (request.method() === "POST" && new URL(request.url()).pathname === "/api/pane/scroll") scrollWrites++;
   });
   await page.goto(`http://127.0.0.1:${server.port}/?pane=${encodeURIComponent(pane)}`);
@@ -77,8 +82,34 @@ try {
   const writesBeforeTap = scrollWrites;
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  assert.equal(scrollWrites, writesBeforeTap, "an unmoved tap does not write shared native history");
+  // A real wheel request is the positive control: the same history writer must run before
+  // checking the tap's absence of writes, rather than passing after an arbitrary frame count.
+  await host.hover();
+  const scrollUrl = new URL("/api/pane/scroll", page.url()).href;
+  const beforeWheelRequest = requestStarts.size;
+  // Speed 1 moves three native history lines. A tap's earlier request cannot be the control,
+  // even when its response arrives after the wheel; the pane and changed target must also match.
+  const wheelWritten = page.waitForEvent("requestfinished", {
+    predicate: (request) => (requestStarts.get(request) ?? 0) > beforeWheelRequest
+      && request.method() === "POST" && request.url() === scrollUrl
+      && request.postData() === JSON.stringify({ pane_id: pane, offset_from_bottom: 3 }),
+    timeout: 15_000,
+  });
+  await page.mouse.wheel(0, -1);
+  const wheelRequest = await wheelWritten;
+  assert.ok((await wheelRequest.response())?.ok(), "the positive-control wheel writes native history");
+  // Only a reader started after the control's entire response completed can fence the writer.
+  // requestfinished bounds body completion too; an old in-flight GET cannot satisfy this wait.
+  const afterWheelRequest = requestStarts.size;
+  const metricsRead = await page.waitForEvent("requestfinished", {
+    predicate: (request) => (requestStarts.get(request) ?? 0) > afterWheelRequest
+      && request.method() === "GET" && request.url() === `${scrollUrl}?pane_id=${encodeURIComponent(pane)}`,
+    timeout: 15_000,
+  });
+  assert.ok((await metricsRead.response())?.ok(), "fresh native history metrics complete after the control");
+  assert.equal(scrollWrites, writesBeforeTap + 1, "only the wheel, not the unmoved tap, writes shared native history");
+  await paneScroll(pane, 0);
+  await until(async () => (await text()).includes("P".repeat(100)), "return to prompt after the control wheel");
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
   for (let step = 1; step <= 8; step++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + step * 12 }] });
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
@@ -88,9 +119,17 @@ try {
   await until(async () => (await text()).includes("P".repeat(100)), "return to prompt");
   await page.locator(".xterm-helper-textarea").focus();
   const pan = async (left: number) => {
-    await host.evaluate((element, value) => { element.scrollLeft = value; }, left);
-    // The viewport publisher settles on the browser's frame, not an arbitrary delay.
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await host.evaluate((element, value) => new Promise<void>((resolve, reject) => {
+      if (element.scrollLeft === value) { resolve(); return; }
+      // Registered after the app's scroll listener: resolving proves bounds were published.
+      const onScroll = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        element.removeEventListener("scroll", onScroll);
+        reject(new Error("Timed out waiting for horizontal pan scroll event"));
+      }, 15_000);
+      element.addEventListener("scroll", onScroll, { once: true });
+      element.scrollLeft = value;
+    }), left);
     return host.evaluate((element) => element.scrollLeft);
   };
   for (const left of [0, 70, 0]) {

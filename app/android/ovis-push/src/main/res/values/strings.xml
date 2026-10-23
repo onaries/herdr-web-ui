@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- the push relay (push-relay/ in the repository); a self-hosted relay goes here -->
+    <string name="ovis_push_relay" translatable="false">https://push.ovis.sh</string>
+    <string name="ovis_push_channel">Agent alerts</string>
+    <!-- what a push shows when it cannot be decrypted, as the relay's fallback for iOS -->
+    <string name="ovis_push_fallback">herdr needs you</string>
+</resources>

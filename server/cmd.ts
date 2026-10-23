@@ -85,11 +85,6 @@ export async function cmdTranscriptPath(
   const agent = options.agent === undefined ? await agentGet(paneId).catch(() => null) : options.agent;
   if (agent?.agent !== "cmd") return null;
 
-  const cwd = (typeof agent.cwd === "string" && agent.cwd.length > 0 ? agent.cwd : null)
-    ?? (typeof agent.foreground_cwd === "string" ? agent.foreground_cwd : null);
-  if (!cwd) return null;
-  const projectDir = defaultCmdProjectDir(cwd);
-
   // Only herdr's report names the session, as for pi. The process environment's
   // COMMANDCODE_SESSION_ID is set at start-up or inherited, so after /clear, /resume or in a child it
   // names another session: shown as this pane's, another conversation would be read as this one.
@@ -97,10 +92,17 @@ export async function cmdTranscriptPath(
   const candidate = (session?.agent === "cmd" && session.source === "herdr:cmd" && session.kind === "path"
     && typeof session.value === "string") ? session.value : null;
   if (candidate === null) return null;
-  const path = cmdTranscriptInStore(candidate, projectDir);
-  if (path !== null) return { path };
-  const unwritten = unwrittenSession(candidate, projectDir);
-  return unwritten === null ? null : { unwritten };
+  // foreground_cwd can belong to a helper when herdr cannot read the group leader's cwd.
+  // Each cwd is only a store candidate; the reported session must validate inside it.
+  for (const cwd of new Set([agent.foreground_cwd, agent.cwd])) {
+    if (typeof cwd !== "string" || cwd.length === 0) continue;
+    const projectDir = defaultCmdProjectDir(cwd);
+    const path = cmdTranscriptInStore(candidate, projectDir);
+    if (path !== null) return { path };
+    const unwritten = unwrittenSession(candidate, projectDir);
+    if (unwritten !== null) return { unwritten };
+  }
+  return null;
 }
 
 /**

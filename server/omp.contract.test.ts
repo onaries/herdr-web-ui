@@ -70,9 +70,8 @@ beforeAll(async () => {
   handoffPaneId = split.pane.pane_id;
   const screens = ["generating-narrow.txt", "cancelled-narrow.txt"].map((name) => fileURLToPath(new URL(`./fixtures/omp-handoff-18.8.7-${name}`, import.meta.url)));
   await herdrRpc("pane.send_text", { pane_id: handoffPaneId, text: `exec '${join(handoffBin, "omp")}' '${join(root, "handoff.js")}' '${screens[0]}' '${screens[1]}' '${handoffMarker}'\n` });
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === handoffPaneId);
-    if (pane?.agent === "omp") break;
+  for (const deadline = Date.now() + 5_000; (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === handoffPaneId)?.agent !== "omp";) {
+    if (Date.now() > deadline) throw new Error("the stand-in omp did not start in the handoff pane");
     await Bun.sleep(50);
   }
   await herdrRpc("pane.report_agent", { pane_id: handoffPaneId, source: "herdr:omp", agent: "omp", state: "idle", seq: ++seq });

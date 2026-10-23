@@ -13,7 +13,6 @@ import { conversationImage, ConversationUnavailable, forgetPaneTranscriptState, 
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { openCodeInstalledVersion } from "./opencode-service.ts";
 import { DevinHistoryChanged } from "./devin.ts";
-import { GjcSdkLookupError } from "./gjc-sdk.ts";
 import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
 import { paneContext, resolveAgent, versionSourceOf } from "./pane-context.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
@@ -267,9 +266,6 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       return jsonResponse(conversation, 200, headers);
     } catch (error) {
       if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
-      if (error instanceof GjcSdkLookupError) {
-        return jsonResponse({ error: { code: `gjc_sdk_${error.reason}`, message: error.message } }, error.reason === "timeout" ? 504 : 503, { "cache-control": "no-store" });
-      }
       // an unrecognized pane is not an error: the client falls back to the
       // scrollback transcript, exactly like chatmux's terminal fallback. Its metadata is only
       // ever what the agent's own status line states

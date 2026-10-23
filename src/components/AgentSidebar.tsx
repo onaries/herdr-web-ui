@@ -121,10 +121,11 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   }, [pinned]);
   const [menu, setMenu] = useState<PinMenu | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
-  // a row that left the list (its pane closed) takes its menu with it
+  const menuRow = menu === null ? undefined : rows.find(({ machine, entry }) => machine.state !== "disconnected" && machine.state !== "error" && sidebarPinKey(machine.id, entry.pane.pane_id) === menu.key);
+  // a row that left the list or whose PC stopped connecting takes its menu with it; a retry keeps it
   useEffect(() => {
-    if (menu && !menu.anchor.isConnected) setMenu(null);
-  }, [menu, split]);
+    if (menu && (menuRow === undefined || !menu.anchor.isConnected)) setMenu(null);
+  }, [menu, menuRow]);
   // herdr names a PC only beside another: the rows' line does the same
   const machineName = (machine: Machine): string | null => machines.length > 1 ? machine.name : null;
 
@@ -188,7 +189,6 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
   const shownEmpty = useAnnouncedText(rows.length === 0 ? (loading ? t("Loading agents…") : t("No agents running")) : null);
   const menuPinned = menu !== null && pinned.includes(menu.key);
-  const menuRow = menu === null ? undefined : rows.find(({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id) === menu.key);
   const menuShown = menuRow === undefined ? null : describe(menuRow);
   const runPin = (state: PinMenu): void => {
     // where the menu hands the focus back (lib RowMenu): the ⋯ itself unless the right-click said otherwise

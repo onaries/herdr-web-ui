@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,10 +8,10 @@ import { createServer } from "./index.ts";
 import { forgetTranscriptState } from "./conversation.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { CommandOutcome, ConversationPart, ConversationResponse, SlashCommand } from "../shared/protocol.ts";
-import { mergeCatalogSources } from "./catalog-sources.ts";
+import { CATALOG_SOURCE_BUDGET_MS, mergeCatalogSources } from "./catalog-sources.ts";
 import { paneContext } from "./pane-context.ts";
 import { closeOpenCodeNative, openCodeNativeState } from "./opencode-native.ts";
-import { forgetOpenCodeService, openCodeServiceOptions } from "./opencode-service.ts";
+import { forgetOpenCodeService, openCodeServiceOptions, OPENCODE_HTTP_TIMEOUT_MS } from "./opencode-service.ts";
 
 // Real herdr metadata + HTTP + an OpenCode store of the test's own, handed to the server (opencodeDb).
 const root = mkdtempSync(join(tmpdir(), "ovis-opencode-contract-"));
@@ -246,6 +246,7 @@ describe("OpenCode v2 native service", () => {
   let withholdLookups = false;
   /** while set, every request but /api/info gets no answer: a service that hangs */
   let hangAll = false;
+  let onHungRequest: (() => void) | undefined;
   /** other sessions the fake service holds besides NATIVE_SESSION */
   const extraSessions = new Set<string>();
   const withheld = new Set<() => void>();
@@ -313,7 +314,10 @@ process.stdin.on("data", (chunk) => {
         lastRequestAt = performance.now();
         if (url.pathname === "/api/event" && eventMode === "slow") return new Promise<Response>((resolve) => withheld.add(() => resolve(new Response(null, { status: 503 }))));
         if (url.pathname === "/api/event" && eventMode !== "ok") return new Response(null, { status: eventMode === "absent" ? 404 : 503 });
-        if (hangAll && url.pathname !== "/api/info") return new Promise<Response>((resolve) => withheld.add(() => resolve(new Response(null, { status: 503 }))));
+        if (hangAll && url.pathname !== "/api/info") {
+          onHungRequest?.();
+          return new Promise<Response>((resolve) => withheld.add(() => resolve(new Response(null, { status: 503 }))));
+        }
         const held = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
         if (url.pathname.startsWith("/api/session/") && extraSessions.has(held)) return Response.json({ data: { id: held } });
         if (url.pathname === `/api/session/${NATIVE_SESSION}` && withholdLookups) {
@@ -661,22 +665,45 @@ process.stdin.on("data", (chunk) => {
   it("types within the attach budget and records terminal-required with the note when the service hangs", async () => {
     const { ws, frame } = await socket();
     const before = typed().length;
-    const first = Promise.withResolvers<number>();
-    let sentAt = 0;
+    const first = Promise.withResolvers<boolean>();
+    const hung = Promise.withResolvers<void>();
+    const budget = Promise.withResolvers<() => void>();
+    let expired = false;
+    const realSetTimeout = globalThis.setTimeout;
+    const realTimeout = AbortSignal.timeout;
+    const deadline = Promise.withResolvers<never>();
+    const deadlineTimer = realSetTimeout(() => {
+      deadline.reject(new Error("OpenCode attach budget or hung request was not observed"));
+    }, 10_000);
+    const ready = Promise.race([Promise.all([budget.promise, hung.promise]), deadline.promise]);
+    // Hold only the aggregate attach timer; all delivery and test deadlines remain real.
+    const timers = spyOn(globalThis, "setTimeout").mockImplementation(Object.assign((...[callback, delay, ...args]: Parameters<typeof setTimeout>) => {
+      if (delay !== CATALOG_SOURCE_BUDGET_MS) return realSetTimeout(callback, delay, ...args);
+      const handle = realSetTimeout(callback, delay, ...args);
+      clearTimeout(handle);
+      budget.resolve(() => { expired = true; callback(...args); });
+      return handle;
+    }, realSetTimeout));
+    // The individual HTTP timeout must not rescue a missing aggregate budget.
+    const httpTimeout = spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+      ms === OPENCODE_HTTP_TIMEOUT_MS ? new AbortController().signal : realTimeout(ms));
     try {
       closeOpenCodeNative();
       forgetOpenCodeService();
       extraSessions.add("ses_contractHang01");
       await reportSession("ses_contractHang01", nativePane);
       hangAll = true;
-      onTyped = () => first.resolve(performance.now() - sentAt);
-      sentAt = performance.now();
+      onHungRequest = () => hung.resolve();
+      // Reports can arrive out of order; only this send's first byte counts.
+      onTyped = (_chunk, start) => { if (start === before) first.resolve(expired); };
       ws.send(JSON.stringify({ type: "submit", id: 9, pane_id: nativePane, text: "@effect while hung", payload: "@effect while hung" }));
+      const [expire] = await ready;
+      expect(typed().length).toBe(before);
+      expire();
+      timers.mockRestore();
+      httpTimeout.mockRestore();
       expect(await frame((message) => message.type === "submit-result" && message.id === 9)).toMatchObject({ ok: true });
-      const gap = await first.promise;
-      console.log(`hung service: first key ${Math.round(gap)} ms after the send`);
-      // the 1.5 s attach budget, plus delivery on a loaded host
-      expect(gap).toBeLessThan(2_000);
+      expect(await Promise.race([first.promise, deadline.promise])).toBe(true);
       const sent = await typedSince(before);
       expect(sent.startsWith("@effect\t")).toBe(false);
       expect(sent).toContain("@effect while hung");
@@ -684,7 +711,11 @@ process.stdin.on("data", (chunk) => {
       expect(outcome?.state).toBe("terminal-required");
       expect(outcome?.note).toContain("@effect");
     } finally {
+      clearTimeout(deadlineTimer);
+      timers.mockRestore();
+      httpTimeout.mockRestore();
       hangAll = false;
+      onHungRequest = undefined;
       onTyped = undefined;
       for (const release of withheld) release();
       withheld.clear();

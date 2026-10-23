@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#12100e">
   <title>Ovis</title>
   <link rel="stylesheet" href="shell.css">
 </head>
@@ -20,24 +21,31 @@
   <!-- self-contained: on Android, Capacitor serves error.html alone while a PC is open (no shell.js
        or shell.css beside it), so app/scripts/build-web.ts puts shell.css in and the script is inline,
        with its own copy of shell.js's Korean switch. There Capacitor's bridge is not on this page
-       either: MainActivity's HerdrErrorPage listener, open to this origin only, answers instead. -->
+       either: MainActivity's HerdrErrorPage listener, open to this origin only, answers instead, and
+       on a WebView too old for that listener MainActivity catches a move to /_ovis/retry or
+       /_ovis/change-pc. The buttons work before anything is asked, whichever way answers. -->
   <script type="module">
     const korean = /^ko\b/i.test(navigator.language ?? "");
     if (korean) {
       document.documentElement.lang = "ko";
       for (const element of document.querySelectorAll("[data-ko]")) element.textContent = element.dataset.ko;
     }
-    const shell = (method, options = {}) => window.Capacitor.nativePromise("HerdrShell", method, options);
+    const capacitor = window.Capacitor;
     const android = window.HerdrErrorPage;
+    const ask = (method, androidMessage, path) => {
+      if (android) android.postMessage(androidMessage);
+      else if (capacitor) void capacitor.nativePromise("HerdrShell", method, {});
+      else location.href = path;
+    };
+    document.getElementById("retry").addEventListener("click", () => ask("retry", "retry", "/_ovis/retry"));
+    document.getElementById("change").addEventListener("click", () => ask("disconnect", "changePc", "/_ovis/change-pc"));
     const state = android
-      ? await new Promise((resolve) => { android.onmessage = (event) => resolve({ last: event.data, failure: "" }); android.postMessage("last"); })
-      : await shell("getState");
+      ? await new Promise((resolve) => { android.onmessage = (event) => resolve(JSON.parse(event.data)); android.postMessage("state"); })
+      : capacitor ? await capacitor.nativePromise("HerdrShell", "getState", {}) : {};
     document.getElementById("what").textContent = state.last
       ? (korean ? `앱이 ${state.last}을(를) 열지 못했습니다.` : `The app could not open ${state.last}.`)
       : (korean ? "앱이 PC를 열지 못했습니다." : "The app could not open it.");
     document.getElementById("reason").textContent = state.failure ?? "";
-    document.getElementById("retry").addEventListener("click", () => void (android ? android.postMessage("retry") : shell("retry")));
-    document.getElementById("change").addEventListener("click", () => void (android ? android.postMessage("changePc") : shell("disconnect")));
   </script>
 </body>
 </html>

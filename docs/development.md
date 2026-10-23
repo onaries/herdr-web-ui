@@ -503,11 +503,13 @@ after changing the staged session. Files, images, push and remote PCs are not pa
    fragments; then add the `by @login` credits; a fragment merged later must be moved into the
    version by hand, since the release workflow refuses while one is left), and tells the release
    in [release-summaries.json](../release-summaries.json) the way a game's patch notes do: under
-   the version, for each language in `SUMMARY_LANGUAGES` (`shared/update.ts`: `en`, `ko`, `ja` and `zh`), the lists `new`, `improved` and `fixed` (a list with nothing to say is left out), each a few lines of
-   plain text, 90 characters at most, the same number of lines in every language. It is what
-   an install shows before and after the update, with the changelog section folded under it,
-   so a line names what changes for the people who use the app and leaves out PR numbers and
-   internals. The unit suite and the release workflow fail without every language.
+   the version, for each language in `SUMMARY_LANGUAGES` (`shared/update.ts`: `en`, `ko`, `ja` and `zh`), the lists `new`, `improved` and `fixed` (a list with nothing to say is left out), the same number of
+   lines in every language. From 0.5.0 the notes are short: at most five lines in a list, each one
+   plain sentence of at most 70 characters in English (about as short in the other languages),
+   naming the change most people will notice first. A change that does not make the cut stays in
+   the changelog section, so no line joins two changes to fit it in. It is what an install shows
+   before and after the update, with the changelog section folded under it, so a line names what
+   changes for the people who use the app and leaves out PR numbers and internals. The unit suite and the release workflow fail without every language.
    The GitHub release is written from the same files by `scripts/release-notes.ts`: the
    English lists under New features, Improvements and Bug fixes, then the version's whole
    changelog section folded under **Full changelog**.
@@ -697,9 +699,11 @@ pages or credentials.
 
 ### Self-hosted runner
 
-Linux CI/CD jobs run on GitHub-hosted `ubuntu-24.04` unless the repository variable
-`CI_SELF_HOSTED_LABELS` holds a JSON array of runner labels that contains `"self-hosted"`, for
-example `["self-hosted","linux","x64","herdr-ci"]`. Set, it routes:
+`ci.yml`'s Linux jobs of a push or a same-repository pull request run on the maintainer PC's runners
+(labels `["self-hosted","self-hosted-ovis"]`) by default; other events stay on `ubuntu-24.04`. The repository variable `CI_SELF_HOSTED_LABELS`
+overrides that with another JSON array of runner labels that contains `"self-hosted"`, or with the
+JSON string `"ubuntu-24.04"` to keep every job GitHub-hosted while that PC is offline. `pages.yml`
+and `release.yml` stay on `ubuntu-24.04` unless the variable holds labels. The variable routes:
 
 - in `ci.yml`: Fast checks, Integration tests and both Browser regression jobs;
 - in `pages.yml`: the site build and the deploy after successful same-repository main push CI,
@@ -710,7 +714,10 @@ Detect changes, the Integration and browser summary, the Windows and macOS jobs,
 `remote-bundles.yml` and `windows-install.yml` always stay GitHub-hosted.
 
 In `ci.yml`, Detect changes picks the runner with `scripts/ci-runner-route.sh`. A fork pull request
-always gets `ubuntu-24.04`, whatever the variable says. Otherwise the `self_hosted_labels`
+always gets `ubuntu-24.04`, whatever the variable says. Since that script runs from the pull
+request's own revision, the runner also refuses fork code itself: its job-started hook kills the
+job's worker before any step, `if: always()` ones included, can run
+(`scripts/self-hosted-runner/job-started.sh`). Otherwise the `self_hosted_labels`
 workflow_dispatch input, when not empty, overrides the variable for that one manual run. A value
 that is not a non-empty array of strings containing `"self-hosted"` fails the job instead of
 falling back. `pages.yml` and `release.yml` read the variable directly.

@@ -388,10 +388,15 @@ describe("an omp pane's chat", () => {
     const store = join(home, ".omp/profiles/personal/agent/sessions/-project");
     mkdirSync(store, { recursive: true });
     const path = join(store, "2026-10-01_s1.jsonl");
-    writeFileSync(path, transcript(pane.cwd!));
+    writeFileSync(path, [
+      transcript(pane.cwd!),
+      JSON.stringify({ type: "model_change", modelId: "claude-opus-5-5" }),
+      JSON.stringify({ type: "thinking_level_change", thinkingLevel: "high" }),
+    ].join("\n") + "\n");
     agentSession = { agent: "omp", kind: "path", value: path };
     const answer = await paneConversation(pane.pane_id);
     expect(answer.source).toBe("omp-transcript");
+    expect(answer.metadata).toEqual({ model: "claude-opus-5-5", reasoning_effort: "high" });
     expect(answer.turns.map((turn) => turn.parts[0])).toEqual([
       { kind: "text", text: "synthetic question" }, { kind: "text", text: "synthetic answer" },
     ]);
@@ -406,19 +411,6 @@ describe("an omp pane's chat", () => {
     symlinkSync(outside, path);
     agentSession = { agent: "omp", kind: "path", value: path };
     await expect(paneConversation(pane.pane_id)).rejects.toThrow("no_session_path");
-  });
-
-  it("leaves an unwritten session's model unknown without reading its status line", async () => {
-    // omp names its file at start and writes it with the first answer; `/switch` writes nothing
-    const store = join(home, ".omp/agent/sessions/-project");
-    mkdirSync(store, { recursive: true });
-    agentSession = { agent: "omp", kind: "path", value: join(store, "2026-10-19_s2.jsonl") };
-    const read = spyOn(herdr, "paneRead");
-    restores.push(() => read.mockRestore());
-    const started = await paneConversation(pane.pane_id);
-    expect(started).toMatchObject({ source: "omp-transcript", turns: [], metadata: { model: null, reasoning_effort: null } });
-    expect(started.screen).toBeUndefined();
-    expect(read).not.toHaveBeenCalled();
   });
 
   it.skipIf(process.platform !== "linux")("reads the transcript the pane's omp process holds open when herdr names none", async () => {

@@ -7,8 +7,14 @@
  * reports it, by the record of a Resume a moment ago (RecentResume, kept by App across the dialog's
  * openings): the dialog's own in-flight guard ends with the dialog, and a list reopened before
  * herdr has looked at the new pane would otherwise start a second agent on the same session.
+ *
+ * Claude keeps one store per CLAUDE_CONFIG_DIR, and two stores can hold the same session id: a Claude
+ * row is the session in the store its list was read from (`resume.source`), and is resumed through
+ * POST /api/sessions/resume, which starts it in that store or answers with the pane already showing
+ * it there. A pane reporting the same id is that row's only when it is the source pane itself;
+ * another may be on another store. A Claude row without a source offers no Resume.
  */
-import type { CreateTabRequest, HerdrPane, SessionHistoryAgent, SessionHistoryRow } from "../../shared/protocol.ts";
+import type { CreateTabRequest, HerdrPane, SessionHistoryAgent, SessionHistoryRow, SessionResumeRequest } from "../../shared/protocol.ts";
 import { formatChatTimestamp } from "./chatTimestamp.ts";
 import type { Translate } from "./i18n.ts";
 
@@ -32,6 +38,16 @@ export function sessionHistoryAgent(agent: string | null | undefined): SessionHi
   return agent && (SESSION_HISTORY_AGENTS as readonly string[]).includes(agent) ? (agent as SessionHistoryAgent) : null;
 }
 
+/** The list's source, with panes in tab order: prefer a running Claude before using a default store. */
+export function sessionHistorySourcePane(agent: SessionHistoryAgent, panes: readonly HerdrPane[], request: { readonly workspaceId: string; readonly askingPaneId?: string | null; readonly selectedPaneId?: string | null }): string | null {
+  const workspacePanes = panes.filter((pane) => pane.workspace_id === request.workspaceId);
+  const asking = workspacePanes.find((pane) => pane.pane_id === request.askingPaneId);
+  const selected = workspacePanes.find((pane) => pane.pane_id === request.selectedPaneId);
+  const candidates = [asking, selected, ...workspacePanes];
+  const claude = agent === "claude" ? candidates.find((pane) => pane !== undefined && sessionHistoryAgent(pane.agent) === "claude") : undefined;
+  return (claude ?? asking ?? selected ?? workspacePanes[0])?.pane_id ?? null;
+}
+
 /**
  * A session file's name says the session: Claude names the file by the id, Codex ends the rollout
  * name with it, pi's family puts it after the start time and an underscore.
@@ -53,12 +69,37 @@ export function paneShowingSession(panes: readonly HerdrPane[], workspaceId: str
   });
 }
 
+/**
+ * The pane of the workspace that shows the row's session. For Claude only the source pane counts:
+ * the same id in another pane may be another store's session (the server decides those on Resume).
+ */
+export function paneShowingRow(panes: readonly HerdrPane[], workspaceId: string, agent: SessionHistoryAgent, row: SessionHistoryRow): HerdrPane | undefined {
+  if (agent !== "claude") return paneShowingSession(panes, workspaceId, agent, row.id);
+  const source = row.resume?.source;
+  // the source pane itself, wherever the roster lists it: another pane reporting the id first proves nothing
+  return source === undefined ? undefined : paneShowingSession(panes.filter((pane) => pane.pane_id === source.pane_id), workspaceId, agent, row.id);
+}
+
+/** A row's store key: a Claude row's source store, else "" (one store per agent). */
+export const rowStore = (row: SessionHistoryRow): string => row.resume?.source?.store_key ?? "";
+/** A row's identity in the list: its store and its id, since two stores can hold one id. */
+export const rowKey = (row: SessionHistoryRow): string => `${rowStore(row)}:${row.id}`;
+
+/** POST /api/sessions/resume for a Claude row; null for a row its bridge gave no source (no Resume). */
+export function claudeResumeRequest(row: SessionHistoryRow, workspaceId: string): SessionResumeRequest | null {
+  const source = row.resume?.source;
+  if (row.resume?.argv[0] !== "claude" || source === undefined || source.pane_id === "" || source.store_key === "") return null;
+  return { workspace_id: workspaceId, pane_id: source.pane_id, agent: "claude", session_id: row.id, store_key: source.store_key };
+}
+
 /** A session Resume started a moment ago: its new pane shows the session until herdr says so itself (or says otherwise). */
 export interface RecentResume {
   machineId: string;
   workspaceId: string;
   agent: SessionHistoryAgent;
   id: string;
+  /** the row's store (rowStore); absent or "" for an agent with one store */
+  store?: string;
   /** the pane POST /api/tab/create answered with */
   paneId: string;
   /** Date.now() at the answer */
@@ -98,13 +139,13 @@ export function observeRecentResume(record: RecentResume, panes: readonly HerdrP
   const ran = record.ran === true || sessionHistoryAgent(pane.agent) === record.agent;
   return record.seen && record.ran === ran ? record : { ...record, seen: true, ran };
 }
-/** The standing record of this session's Resume, if there is one: no Resume is offered while it stands. */
-export function standingResume(records: readonly RecentResume[], panes: readonly HerdrPane[] | undefined, machineId: string, workspaceId: string, agent: SessionHistoryAgent, id: string, now: number): RecentResume | undefined {
-  return records.find((record) => record.machineId === machineId && record.workspaceId === workspaceId && record.agent === agent && record.id === id && !recentResumeEnded(record, panes, now));
+/** The standing record of this session's Resume, in this store, if there is one: no Resume is offered while it stands. */
+export function standingResume(records: readonly RecentResume[], panes: readonly HerdrPane[] | undefined, machineId: string, workspaceId: string, agent: SessionHistoryAgent, id: string, now: number, store = ""): RecentResume | undefined {
+  return records.find((record) => record.machineId === machineId && record.workspaceId === workspaceId && record.agent === agent && record.id === id && (record.store ?? "") === store && !recentResumeEnded(record, panes, now));
 }
 /** The pane a standing record names, once the roster lists it: opened by selecting it, as a pane that reports the session is. */
-export function recentlyResumedPane(records: readonly RecentResume[], panes: readonly HerdrPane[], machineId: string, workspaceId: string, agent: SessionHistoryAgent, id: string, now: number): HerdrPane | undefined {
-  const record = standingResume(records, panes, machineId, workspaceId, agent, id, now);
+export function recentlyResumedPane(records: readonly RecentResume[], panes: readonly HerdrPane[], machineId: string, workspaceId: string, agent: SessionHistoryAgent, id: string, now: number, store = ""): HerdrPane | undefined {
+  const record = standingResume(records, panes, machineId, workspaceId, agent, id, now, store);
   return record === undefined ? undefined : panes.find((pane) => pane.pane_id === record.paneId && pane.workspace_id === workspaceId);
 }
 /**
@@ -118,10 +159,13 @@ export function sessionRowTime(row: Pick<SessionHistoryRow, "startedAt" | "updat
   return { label: updated.label, title: started === null ? updated.full : t("Started {started} · last active {updated}", { started: started.full, updated: updated.full }) };
 }
 
-/** POST /api/tab/create for the row: its argv's first word is the agent kind, the rest its arguments; null without a verified resume. */
+/**
+ * POST /api/tab/create for the row: its argv's first word is the agent kind, the rest its arguments;
+ * null without a verified resume, and for Claude, whose Resume is bound to its store (claudeResumeRequest).
+ */
 export function resumeTabRequest(row: SessionHistoryRow, workspaceId: string, cwd: string | null): CreateTabRequest | null {
   const [kind, ...args] = row.resume?.argv ?? [];
-  if (!kind) return null;
+  if (!kind || kind === "claude") return null;
   return { workspace_id: workspaceId, cwd, label: null, agent: { kind, args } };
 }
 

@@ -8,6 +8,33 @@ export function parseElapsed(text: string): number | null {
   return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes!)) * 60 + Number(seconds!);
 }
 
+type StartReading = { readonly started: number; readonly lower: number };
+type StartSpawn = (argv: string[], options: {
+  readonly stdout: "pipe"; readonly stderr: "ignore"; readonly timeout: number; readonly killSignal: "SIGKILL";
+}) => { readonly exitCode: number; readonly stdout: { toString(): string }; readonly exitedDueToTimeout?: boolean };
+
+/** Read a fresh macOS start on every call: a live PID may belong to a replacement process. */
+export function createDarwinStartReader(
+  spawn: StartSpawn = (argv, options) => Bun.spawnSync(argv, options),
+  now: () => number = Date.now,
+): (pid: number) => StartReading | null {
+  return (pid) => {
+    const before = now();
+    try {
+      const ps = spawn(["/bin/ps", "-o", "etime=", "-p", String(pid)], {
+        stdout: "pipe", stderr: "ignore", timeout: 1000, killSignal: "SIGKILL",
+      });
+      const elapsed = ps.exitCode === 0 && !ps.exitedDueToTimeout ? parseElapsed(ps.stdout.toString()) : null;
+      if (elapsed === null) return null;
+      return { started: now() - elapsed * 1000, lower: before - (elapsed + 1) * 1000 };
+    } catch {
+      return null;
+    }
+  };
+}
+
+const darwinStart = createDarwinStartReader();
+
 /**
  * When a process started, in ms since the epoch: Linux counts it in /proc (USER_HZ
  * ticks after boot); macOS has no /proc, so there `ps` tells how long it has run (to the
@@ -15,13 +42,7 @@ export function parseElapsed(text: string): number | null {
  */
 export function processStartedAt(pid: number): number | null {
   if (process.platform === "darwin") {
-    try {
-      const ps = Bun.spawnSync(["/bin/ps", "-o", "etime=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
-      const elapsed = ps.exitCode === 0 ? parseElapsed(ps.stdout.toString()) : null;
-      return elapsed === null ? null : Date.now() - elapsed * 1000;
-    } catch {
-      return null;
-    }
+    return darwinStart(pid)?.started ?? null;
   }
   return linuxBirth(pid);
 }
@@ -109,13 +130,7 @@ function linuxReadStart(pid: number): number | null {
  */
 export function processStartLowerBound(pid: number): number | null {
   if (process.platform === "darwin") {
-    // the clock read before `ps`, which counts whole seconds: the start is after now - (etime + 1) s
-    const now = Date.now();
-    try {
-      const ps = Bun.spawnSync(["/bin/ps", "-o", "etime=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
-      const elapsed = ps.exitCode === 0 ? parseElapsed(ps.stdout.toString()) : null;
-      return elapsed === null ? null : now - (elapsed + 1) * 1000;
-    } catch { return null; }
+    return darwinStart(pid)?.lower ?? null;
   }
   if (process.platform !== "linux") return null;
   // the earlier of both readings, less one tick: no later than the real start (the uptime's), nor

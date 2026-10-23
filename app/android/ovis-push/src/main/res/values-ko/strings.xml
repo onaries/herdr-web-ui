@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ovis_push_channel">에이전트 알림</string>
+    <string name="ovis_push_fallback">herdr가 확인을 기다리고 있습니다</string>
+</resources>

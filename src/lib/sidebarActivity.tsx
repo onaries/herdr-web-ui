@@ -6,6 +6,7 @@ import type { SeenFinish } from "../../shared/seen.ts";
 import { liveSeqs, newSeqMemory, shownStatus, type SeenRecord, type SeqMemory } from "./sidebarOrder.ts";
 import { cleanSeen, loadSeen, saveSeen, seenKey, SEEN_LIMIT, subscribeSeen } from "./seenFinishes.ts";
 import { conversationFinishEvidence } from "./panePresentation.ts";
+import { fetchBridgeHealth } from "./api.ts";
 
 export interface SidebarActivity {
   seqs(machineId: string): ReadonlyMap<string, number>;
@@ -17,9 +18,16 @@ export const SidebarActivityProvider = SidebarActivityContext.Provider;
 export const useSidebarActivity = (): SidebarActivity => useContext(SidebarActivityContext);
 
 interface MachineSeen { epoch: string; record: SeenRecord }
-interface SharedFinish extends SeenFinish { state: "pending" | "success" | "failed" | "answered-error" }
+interface SharedFinish extends SeenFinish {
+  retry?: () => Promise<boolean>;
+}
+interface ShareRecovery {
+  timer: ReturnType<typeof setTimeout> | undefined;
+  unauthorized: boolean;
+  running: boolean;
+  wait: number;
+}
 const unobscured = () => true;
-const answeredError = (error: unknown) => error instanceof Error && typeof (error as { status?: unknown }).status === "number";
 
 function sameSeen(left: ReadonlyMap<string, MachineSeen>, right: ReadonlyMap<string, MachineSeen>): boolean {
   if (left.size !== right.size) return false;
@@ -48,6 +56,7 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
   const epochs = useRef(new Map<string, string>());
   // One latest acknowledgement per pane; bounded independently of how many finishes arrive.
   const shared = useRef(new Map<string, SharedFinish>());
+  const recovery = useRef<ShareRecovery>({ timer: undefined, unauthorized: false, running: false, wait: 1_000 });
   const shareRef = useRef(share); shareRef.current = share;
   useEffect(() => {
     const onVisibility = () => setPageVisible(document.visibilityState === "visible");
@@ -73,9 +82,52 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
     return () => {
       stopReceiving();
       document.removeEventListener("visibilitychange", onVisibility);
+      clearTimeout(recovery.current.timer);
+      recovery.current = { timer: undefined, unauthorized: false, running: false, wait: 1_000 };
+      shared.current.clear();
     };
   }, []);
   useEffect(() => {
+    const gate = recovery.current;
+    const schedule = () => {
+      if (recovery.current !== gate) return;
+      if (![...shared.current.values()].some((finish) => finish.retry)) {
+        clearTimeout(gate.timer);
+        gate.timer = undefined;
+        return;
+      }
+      if (gate.timer !== undefined || gate.running) return;
+      gate.timer = setTimeout(() => { gate.timer = undefined; void recover(); }, gate.wait);
+    };
+    const recover = async () => {
+      gate.running = true;
+      try {
+        // All finishes pause behind one authentication observation, not one poll per pane.
+        if (gate.unauthorized) {
+          const health = await fetchBridgeHealth();
+          if (recovery.current !== gate) return;
+          if (!health.auth.authenticated) { gate.wait = Math.min(gate.wait * 2, 30_000); return; }
+          gate.unauthorized = false;
+        }
+        // Probe an outage with one queued finish. A failure ends this window; success drains
+        // the remaining finishes serially, so neither retry volume nor concurrency fans out.
+        for (const finish of shared.current.values()) {
+          const resend = finish.retry;
+          if (!resend) continue;
+          delete finish.retry;
+          const completed = await resend();
+          if (recovery.current !== gate) return;
+          if (!completed) { gate.wait = Math.min(gate.wait * 2, 30_000); return; }
+          gate.wait = 1_000;
+        }
+      } catch (error) {
+        gate.wait = Math.min(gate.wait * 2, 30_000);
+        console.warn("Could not tell the other browsers about a read finish", error);
+      } finally {
+        gate.running = false;
+        schedule();
+      }
+    };
     for (const machine of machines) {
       const epoch = machine.snapshot?.finish_epoch;
       if (!epoch) continue;
@@ -83,7 +135,9 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
       if (previousEpoch && previousEpoch !== epoch) {
         cleanSeen([{ pc: machine.id, epoch: previousEpoch }]);
         for (const [key, finish] of shared.current) {
-          if (finish.pc === machine.id && finish.epoch === previousEpoch) shared.current.delete(key);
+          if (finish.pc === machine.id && finish.epoch === previousEpoch) {
+            shared.current.delete(key);
+          }
         }
       }
       epochs.current.delete(machine.id);
@@ -97,29 +151,35 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
         const finish: SeenFinish = { pc: machine.id, epoch, pane: pane.pane_id, id: pane.finish_id, ...(answer === undefined ? {} : { answer }) };
         const key = JSON.stringify([finish.pc, finish.epoch, finish.pane]);
         const previous = shared.current.get(key);
-        const sameFinish = previous?.id === finish.id
-          && (previous.answer === answer || (previous.answer !== undefined && answer === undefined));
         const answerUpgrade = previous?.id === finish.id && previous.answer === undefined && answer !== undefined;
-        if (!previous || finish.id > previous.id || answerUpgrade || (sameFinish && previous.state === "failed")) {
+        if (!previous || finish.id > previous.id || answerUpgrade) {
           const sender = shareRef.current;
           if (sender) {
-            const payload: SeenFinish = sameFinish && previous?.answer !== undefined && answer === undefined
-              ? { ...finish, answer: previous.answer } : finish;
-            const sent: SharedFinish = { ...payload, state: "pending" };
+            const sent: SharedFinish = { ...finish };
             shared.current.delete(key);
             shared.current.set(key, sent);
-            while (shared.current.size > SEEN_LIMIT) shared.current.delete(shared.current.keys().next().value!);
-            const failed = (error: unknown) => {
-              if (shared.current.get(key) === sent) {
-                sent.state = answeredError(error) ? "answered-error" : "failed";
+            while (shared.current.size > SEEN_LIMIT) {
+              const oldest = shared.current.keys().next().value!;
+              shared.current.delete(oldest);
+            }
+            const send = async () => {
+              if (shared.current.get(key) !== sent || recovery.current !== gate) return true;
+              if (gate.unauthorized) { sent.retry = send; return false; }
+              try {
+                await sender(finish);
+              } catch (error) {
+                if (shared.current.get(key) !== sent || recovery.current !== gate) return true;
+                const status = error instanceof Error && "status" in error && typeof error.status === "number" ? error.status : undefined;
+                if (status === 401) gate.unauthorized = true;
+                const transient = status === undefined || status === 401 || status >= 502;
+                if (transient) { sent.retry = send; schedule(); }
+                console.warn("Could not tell the other browsers about a read finish", error);
+                return !transient;
               }
-              console.warn("Could not tell the other browsers about a read finish", error);
+              return true;
             };
-            try {
-              void Promise.resolve(sender(payload)).then(() => {
-                if (shared.current.get(key) === sent) sent.state = "success";
-              }, failed);
-            } catch (error) { failed(error); }
+            if (gate.unauthorized || gate.running || gate.timer !== undefined) sent.retry = send;
+            else void send();
           }
         } else if (finish.id === previous.id) {
           // Keep frequently observed panes in the bounded latest-state window.
@@ -128,6 +188,7 @@ export function useSidebarActivityState(machines: readonly Machine[], selectedMa
         }
       }
     }
+    schedule();
     // Read after every acknowledgement and epoch retirement: a later machine can evict an
     // earlier machine's oldest entry while enforcing the shared cap.
     const next = new Map<string, MachineSeen>();

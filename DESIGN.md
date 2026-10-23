@@ -1208,7 +1208,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   note is dim, red for an expired sign-in or a failed request.
 
 ### New workspace dialog
-- Agent select comes from `GET /api/agents`; shell-only is always available. Directory defaults to
+- Agent select comes from `GET /api/agents`; shell-only is always available. The bridge offers the
+  agents it types into the pane's shell itself (omo, gjc) exactly where it can start them: its own
+  PATH first, then on Unix the PATH its user's login shell sets (`server/shell-agent.ts`
+  ShellAgentLocator), and the start types the same absolute path the offer found. The login shell
+  runs only on demand: when `/api/agents` or a shell-agent start asks for an agent its own PATH
+  misses and the last answer is more than a minute old, never from a timer, and concurrent askers
+  share one run. Each run is bounded (2 s, 64 KiB of output, a short wait after a kill or the
+  shell's exit); a run that finds no PATH is a miss, and the server logs why once each time the
+  reason changes. A server run as a service with a bare PATH therefore still offers an agent
+  installed under `~/.local/bin` or a version manager. The agents herdr starts keep their own
+  environment's answer. The picker itself is unchanged. Directory defaults to
   the selected pane cwd and name is an optional workspace label. **Browse** updates Directory as
   each folder opens (`onFolder`), so **Start** uses the path shown in the browser even when
   **Use this folder** was not pressed; Directory keeps the `~/…` form for a folder under home, as
@@ -1416,6 +1426,28 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   An empty store says **No earlier Codex sessions in this folder.**; a PC whose bridge answers
   404 for the route says the bridge does not offer this yet, and the workspace menu of such a PC
   has no item (the bridge is asked once, without a workspace, so nothing is listed by the probe).
+- Claude keeps one store per `CLAUDE_CONFIG_DIR`, and two stores can hold the same session id. A
+  Claude list is the store of the pane it is opened from (the pane asking; from a workspace row,
+  the selected pane, else the workspace's first in tab order), and each row's Resume is bound to
+  that pane and store: it goes to `POST /api/sessions/resume`, never the argv-only tab request,
+  which starts it in the same store or names the pane already showing it there (selected, as
+  **Open** is). A pane that reports the same id is **Already open** for the row only when it is the
+  list's own pane; another may be on another store. A store that changed since the list is read
+  again in place: the rows stay where they are without their buttons until the new ones come, the
+  focus goes back to the row that asked, and the `role="status"` line under the rows says so. That
+  line (`.session-status`) is kept one line high under every non-empty list, empty until it says
+  **Resuming…**, **Reading sessions…** or why the list was read again, so no row moves under the
+  pointer when it speaks. A pane whose store cannot be told (herdr reports none of its processes,
+  two Claudes in front of it, an environment that cannot be read in full, as Linux's `/proc` and
+  macOS's `sysctl` give it, or, on Windows, Claude's live PID record in no store, in two (a store
+  copied while Claude ran) or in one that cannot be read) lists nothing and says why in words,
+  with the next step: one Claude in the pane, its store folder there, then open the list again. A row its bridge bound to
+  no store (an older bridge, or a store a new tab would not repeat: none exported by the pane's
+  Claude while the environment a new tab inherits exports one; that is herdr's own on Linux and
+  the bridge's elsewhere) shows a quiet **Resume unavailable** pill
+  instead of the button: no store selector is added, and nothing is started in the default store
+  in its place. This keeps the Codex CLI and Claude Code pickers' one-session-per-row design;
+  Claude Code itself only ever lists the store it runs on, which is what binding to the pane does.
 - Keyboard: the first row's button takes the focus once the rows are in (the agent field until
   then; focus the user moved meanwhile stays), ArrowUp/ArrowDown and Home/End move along the
   rows' buttons, Tab stays inside, Enter resumes, Escape, the X, Cancel and the scrim close, and
@@ -1427,6 +1459,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   above them because the folder may hold several agents' sessions.
 - The browser demo answers `GET /api/sessions/history` with two fictional sessions per agent and
   marks a tab resumed through it as showing that session, so the **Already open** path shows too.
+  Its flaky-retry-test workspace answers Claude's list as an older bridge would (no store source,
+  no resume route), so **Resume unavailable** shows there.
 
 ### Changes list and diff viewer (`.repo-changes`, `.repo-diff*`)
 - Like Collie's Settings → Device → Changes, Settings → Chat → Changes offers **Look for

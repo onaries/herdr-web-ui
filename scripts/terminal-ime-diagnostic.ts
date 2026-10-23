@@ -136,7 +136,7 @@ try {
   const trace: Plugin = {
     name: "owned-terminal-ime-trace", enforce: "pre",
     transform(code, id) {
-      if (!id.endsWith("/src/components/PaneTerminal.tsx")) return;
+      if (!id.endsWith("/src/lib/useTerminalMount.ts")) return;
       const anchor = "const onData = term.onData((data) => {";
       assert.equal(code.split(anchor).length, 2, "onData trace anchor changed");
       return code.replace(anchor, `${anchor}\n(window as any).terminalImeTrace({kind: "onData", data, pane: paneRef.current});`);

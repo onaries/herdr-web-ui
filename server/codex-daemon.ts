@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, readlink, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { constants } from "node:fs";
+import { lstat, open, readlink, realpath } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { SlashCommand } from "../shared/protocol.ts";
 import { registerCatalogSource } from "./catalog-sources.ts";
@@ -432,16 +433,32 @@ export function closeCodexDaemonSources(): void {
  * process's CODEX_HOME, else that process's HOME/.codex. Read from /proc only (no process is started
  * for it); null when it cannot be read (another platform, no Codex process, an unreadable environment).
  */
-export async function paneDaemonHome(paneId: string, configured?: string, platform = process.platform): Promise<string | null> {
+export async function paneDaemonHome(paneId: string, configured?: string, platform = process.platform, processFiles: {
+  readonly lookup: typeof paneCodexProcess;
+  readonly environ: (pid: number) => readonly string[] | null;
+  readonly cwd?: (pid: number) => Promise<string>;
+} = { lookup: paneCodexProcess, environ: processEnviron }): Promise<string | null> {
   if (configured) return configured;
   if (platform !== "linux") return null;
-  const codex = await paneCodexProcess(paneId).catch(() => null);
-  const environ = codex ? processEnviron(codex.pid) : null;
+  const codex = await processFiles.lookup(paneId).catch(() => null);
+  if (!codex) return null;
+  const environ = processFiles.environ(codex.pid);
   if (!environ) return null;
-  const value = (key: string): string | null => environ.filter((word) => word.startsWith(`${key}=`)).at(-1)?.slice(key.length + 1) || null;
+  const value = (key: string): string | null => environ.find((word) => word.startsWith(`${key}=`))?.slice(key.length + 1) || null;
   const own = value("CODEX_HOME");
   const home = value("HOME");
-  return own ?? (home ? join(home, ".codex") : null);
+  if (!own) return home ? join(home, ".codex") : null;
+  try {
+    const base = isAbsolute(own) ? `/proc/${codex.pid}/root` : await processFiles.cwd?.(codex.pid) ?? `/proc/${codex.pid}/cwd`;
+    // Bun realpath normalizes ".." before following links. Let the kernel traverse the raw
+    // path first; Linux O_PATH (0x200000) needs no directory read permission.
+    const directory = await open(`${base}/${own}`, 0x200000 | constants.O_DIRECTORY);
+    try {
+      const canonical = await realpath(`/proc/self/fd/${directory.fd}`);
+      return (await directory.stat()).nlink === 0 ? null : canonical;
+    }
+    finally { await directory.close(); }
+  } catch { return null; }
 }
 
 registerCatalogSource({

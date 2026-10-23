@@ -33,6 +33,7 @@
     "server",
     "shared",
     "telemetry",
+    "push-relay",
     "vite.config.ts"
   ]
 }

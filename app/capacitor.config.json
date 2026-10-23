@@ -2,7 +2,17 @@
   "appId": "sh.ovis.app",
   "appName": "Ovis",
   "webDir": "www",
+  "loggingBehavior": "none",
   "ios": {
-    "contentInset": "never"
+    "contentInset": "never",
+    "backgroundColor": "#12100e"
+  },
+  "android": {
+    "backgroundColor": "#12100e"
+  },
+  "plugins": {
+    "SystemBars": {
+      "style": "DARK"
+    }
   }
 }

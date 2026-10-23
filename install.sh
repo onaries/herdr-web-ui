@@ -58,6 +58,17 @@ latest_release() {
     sed -n 's|.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' |
     sort -t. -k1.2,1n -k2,2n -k3,3n | tail -n 1
 }
+# The plugin id a ref installs under, or nothing when it cannot be told. Releases before the rename
+# (0.4.13 and older) name the old id. Its manifest says so; raw.githubusercontent.com can be blocked
+# where github.com is not, and then a release tag's version tells it.
+ref_plugin_id() {
+  ref_id=$(curl -fsSL --max-time 10 "https://raw.githubusercontent.com/$REPO/$1/herdr-plugin.toml" 2>/dev/null </dev/null |
+    sed -n '/^id *=/{s/^id *= *"\([^"]*\)".*/\1/p;q;}') || ref_id=""
+  if [ -z "$ref_id" ] && printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    if at_least 0.4.14 "${1#v}"; then ref_id=$PLUGIN; else ref_id=$LEGACY_PLUGIN; fi
+  fi
+  printf '%s' "$ref_id"
+}
 # at_least 1.4.0 1.10.2: is the second dotted version the first or newer
 at_least() {
   awk -v want="$1" -v have="$2" 'BEGIN { split(want, w, "."); split(have, h, ".");
@@ -278,8 +289,28 @@ main() {
   node_major=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
   [ "${node_major:-0}" -ge 18 ] || install_node
 
+  # The ref to install is settled before anything moves: a release from before the rename still
+  # names the plugin by its old id, and installing it cannot move an install to the new one
+  ref=""
+  move=1
+  if ! herdr plugin list 2>/dev/null | grep -q "$PLUGIN "; then
+    need git
+    ref=${OVIS_REF:-${HERDR_WEB_UI_REF:-$(latest_release)}}
+    [ -n "$ref" ] || fail "could not look up the latest release on github.com. Check the connection and run this again."
+    case "$(ref_plugin_id "$ref")" in
+      # that release installs, runs and updates under the old id: the move waits for a release
+      # that names the new one, which Settings → Updates or this script brings
+      "$LEGACY_PLUGIN") PLUGIN=$LEGACY_PLUGIN ;;
+      # a branch whose manifest cannot be read: an install under the old id is left running, since
+      # the ref may not be able to move it
+      "") move=0 ;;
+    esac
+  fi
+
   legacy_root=""
-  if herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
+  if [ "$move" = 0 ] && herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
+    say "could not read the plugin id at $ref, so the install under $LEGACY_PLUGIN is left as it is; run this again to move it"
+  elif [ "$PLUGIN" != "$LEGACY_PLUGIN" ] && herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
     legacy_root=$(plugin_root "$LEGACY_PLUGIN")
     say "moving the installed plugin to its Ovis id; its settings and token come along"
     # stopped first: removed with its server up, the old checkout would keep serving, and the new
@@ -292,9 +323,6 @@ main() {
   if herdr plugin list 2>/dev/null | grep -q "$PLUGIN "; then
     say "already installed as a herdr plugin; Settings → Updates keeps it current"
   else
-    need git
-    ref=${OVIS_REF:-${HERDR_WEB_UI_REF:-$(latest_release)}}
-    [ -n "$ref" ] || fail "could not look up the latest release on github.com. Check the connection and run this again."
     say "installing the herdr plugin at $ref (herdr clones and builds it: about a minute)"
     # herdr previews the whole manifest first; on success its last word is enough, on failure all of it
     log=$(mktemp)
@@ -310,9 +338,14 @@ main() {
   fi
 
   root=$(plugin_root "$PLUGIN")
+  # the id unknown before the install: the ref may have named the old one
+  if [ -z "$root" ] && [ "$move" = 0 ]; then
+    PLUGIN=$LEGACY_PLUGIN
+    root=$(plugin_root "$PLUGIN")
+  fi
   [ -n "$root" ] || fail "herdr does not list the plugin after installing it; see: herdr plugin list"
 
-  if herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
+  if [ "$PLUGIN" != "$LEGACY_PLUGIN" ] && [ "$move" = 1 ] && herdr plugin list 2>/dev/null | grep -q "$LEGACY_PLUGIN "; then
     adopt_legacy_config
     herdr plugin uninstall "$LEGACY_PLUGIN" </dev/null >/dev/null || fail "could not remove the plugin's old id; run: herdr plugin uninstall $LEGACY_PLUGIN"
   fi

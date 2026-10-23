@@ -263,6 +263,22 @@ describe("ovis-site/llms.txt", () => {
   });
 });
 
+describe("ovis-site/_redirects", () => {
+  const rules = read("ovis-site/_redirects").split("\n").filter((line) => line.trim() && !line.startsWith("#")).map((line) => line.trim().split(/\s+/));
+
+  it("hands guessed paths to repository files that exist and to home page sections that exist", () => {
+    const ids = new Set([...html(HOME).matchAll(/\bid="([^"]+)"/g)].map(([, id]) => id!));
+    const offenders = rules.flatMap(([from, to]) => {
+      const blob = /^https:\/\/github\.com\/devswha\/ovis\/blob\/main\/([^#]+)/.exec(to ?? "");
+      if (blob) return existsSync(join(repo, blob[1]!)) ? [] : [`${from} -> ${to}: no ${blob[1]} in the repository`];
+      const section = /^\/#(.+)$/.exec(to ?? "");
+      if (section) return ids.has(section[1]!) ? [] : [`${from} -> ${to}: no id="${section[1]}" in ${HOME}`];
+      return [];
+    });
+    fail(offenders, "Fix these rules in ovis-site/_redirects: a rule that hands a path to the repository names a file on main, and one to the home page names a section it has.");
+  });
+});
+
 describe("ovis-site/_headers", () => {
   const rules = read("ovis-site/_headers").split(/\n(?=\S)/).map((block) => block.split("\n").filter((line) => line.trim() && !line.startsWith("#")))
     .filter((lines) => lines.length).map(([url, ...headers]) => ({ url: url!.trim(), headers: headers.map((line) => line.trim()) }));

@@ -40,7 +40,7 @@ export function useRecentResumes(machines: readonly RosteredMachine[]): {
   const remember = useCallback((record: Omit<RecentResume, "at" | "seen" | "ran">) => {
     const now = Date.now();
     setRecords((current) => [
-      ...current.filter((kept) => !(kept.machineId === record.machineId && kept.workspaceId === record.workspaceId && kept.agent === record.agent && kept.id === record.id) && !recentResumeEnded(kept, panesOf(kept.machineId), now)),
+      ...current.filter((kept) => !(kept.machineId === record.machineId && kept.workspaceId === record.workspaceId && kept.agent === record.agent && kept.id === record.id && (kept.store ?? "") === (record.store ?? "")) && !recentResumeEnded(kept, panesOf(kept.machineId), now)),
       observeRecentResume({ ...record, at: now, seen: false }, panesOf(record.machineId)),
     ]);
   }, [panesOf]);

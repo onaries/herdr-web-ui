@@ -11,6 +11,7 @@ import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { readUpdateIpcRequest } from "../shared/update.ts";
 import { defaultStateDir, HANDOVER_EXIT, moveLegacyStateDir, updateStateDir } from "./update-state.ts";
 import { herdrSocketPath } from "./herdr/client.ts";
+import { legacyLauncherStateDir, withLegacyNames } from "./legacy-env.ts";
 import { acquireOwnerDirectory } from "./owner-guard.ts";
 import { Updater, type Release } from "./updater.ts";
 
@@ -20,10 +21,13 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   const host = process.env["HOST"] ?? "127.0.0.1";
   const probeHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "[::1]" : host.includes(":") ? `[${host}]` : host;
   const origin = `http://${probeHost}:${port}`;
-  moveLegacyStateDir();
-  const appStateDir = resolve(defaultStateDir());
+  // a launcher from before the rename finds its releases only under the old state dir: the move
+  // waits for a launcher of this version
+  const legacyStateDir = legacyLauncherStateDir(process.env);
+  if (legacyStateDir === null) moveLegacyStateDir();
+  const appStateDir = resolve(legacyStateDir ?? defaultStateDir());
   const socketPath = resolve(herdrSocketPath());
-  const stateDir = updateStateDir(root, port);
+  const stateDir = updateStateDir(root, port, appStateDir);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   // A crash or a forced Windows shutdown skips lock cleanup, and the old PID may belong to
   // someone else by now: the lock records the owner's birth, so only a provably gone owner is replaced.
@@ -54,11 +58,12 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   async function launch(release: Release | null) {
     if (stopping) throw new Error("Server is stopping");
     const bootId = crypto.randomUUID();
+    const settings = { OVIS_MANAGED: "1", OVIS_BOOT_ID: bootId, OVIS_STATE_DIR: appStateDir, OVIS_REVISION: release?.revision ?? "" };
     const candidate = Bun.spawn([process.execPath, "server/index.ts"], {
       cwd: release?.directory ?? root, windowsHide: true, stdin: "ignore", stdout: "inherit", stderr: "inherit",
-      env: { ...process.env, OVIS_MANAGED: "1", OVIS_BOOT_ID: bootId,
-        OVIS_STATE_DIR: appStateDir, HERDR_SOCKET: socketPath,
-        OVIS_REVISION: release?.revision ?? "" },
+      // a launcher from before the rename runs from a checkout from before it, where a release that
+      // fails falls back to: that bridge reads its settings under the old names
+      env: { ...process.env, ...(legacyStateDir === null ? settings : withLegacyNames(settings)), HERDR_SOCKET: socketPath },
       ipc(message) {
         if (message?.type === "update-status-request") publish();
         // an unbound `install` (an older bridge's) is refused: an install names the revision offered

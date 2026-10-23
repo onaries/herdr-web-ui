@@ -16,6 +16,7 @@ let reported: boolean;
 let ompPid: number;
 let calls: { method: string; params: Record<string, unknown> }[];
 let onPaneGet: (() => void) | undefined;
+let refusePrompt: boolean;
 /** a process started just now, standing in for an omp that is still starting */
 let fresh: ReturnType<typeof Bun.spawn> | undefined;
 
@@ -26,6 +27,7 @@ beforeEach(() => {
   ompPid = 1;
   calls = [];
   onPaneGet = undefined;
+  refusePrompt = false;
   // the omp stand-ins and this process share a home with herdr's omp integration installed
   homeBefore = process.env["HOME"];
   process.env["HOME"] = root;
@@ -44,12 +46,16 @@ beforeEach(() => {
         if (!socket.data.buffer.includes("\n")) return;
         const request = JSON.parse(socket.data.buffer) as { id: string; method: string; params?: Record<string, unknown> };
         calls.push({ method: request.method, params: request.params ?? {} });
+        if (request.method === "agent.prompt" && refusePrompt) {
+          socket.end(`${JSON.stringify({ id: request.id, error: { code: "agent_not_ready", message: "not ready" } })}\n`);
+          return;
+        }
         if (request.method === "pane.get") onPaneGet?.();
         const session = reported ? { agent_session: { agent: "omp", kind: "path", source: "herdr:omp", value: join(root, "session.jsonl") } } : {};
         const result = request.method === "pane.get"
           ? { pane: { pane_id: "w:p1", workspace_id: "w", tab_id: "w:t1", terminal_id: "w:p1", cwd: root, focused: false, revision: 0, agent, ...session } }
           : request.method === "pane.process_info" ? { process_info: { foreground_processes: [{ pid: ompPid, argv: ["omp"], cwd: root }] } }
-          : request.method === "agent.prompt" || request.method === "pane.send_keys" ? {}
+          : request.method === "agent.prompt" || request.method === "pane.send_keys" || request.method === "pane.send_text" ? {}
           : null;
         if (result === null) throw new Error(`unexpected RPC ${request.method}`);
         socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
@@ -112,6 +118,36 @@ async function until(what: string, done: () => boolean): Promise<void> {
 const posix = process.platform !== "win32";
 
 describe("a message sent to omp", () => {
+  it.each([
+    { target: "omp", text: "/model", expected: "/switch" },
+    { target: "codex", text: "/model", expected: "/model" },
+    { target: "omp", text: "/model x", expected: "/model x" },
+  ])("sends $expected when $target receives $text", async ({ target, text, expected }) => {
+    // Given an agent ready to receive a chat command.
+    agent = target;
+    reported = target === "omp";
+    // When the chat command is sent immediately.
+    await submitter()("w:p1", text, text, Date.now());
+    // Then only omp's bare model command opens its session picker.
+    expect(calls.find((call) => call.method === "agent.prompt")?.params["text"]).toBe(expected);
+  });
+
+  it.each([
+    { target: "omp", text: "/model", expected: "/switch" },
+    { target: "codex", text: "/model", expected: "/model" },
+    { target: "omp", text: "/model x", expected: "/model x" },
+  ])("types $expected when $target refuses $text", async ({ target, text, expected }) => {
+    // Given an agent whose prompt RPC refuses immediate delivery.
+    agent = target;
+    reported = target === "omp";
+    refusePrompt = true;
+    // When the send falls back to terminal input.
+    await submitter()("w:p1", text, text, Date.now());
+    // Then the fallback preserves the immediate path's command choice.
+    expect(calls.find((call) => call.method === "pane.send_text")?.params["text"]).toBe(expected);
+    expect(calls.find((call) => call.method === "pane.send_keys")?.params["keys"]).toEqual(["Enter"]);
+  });
+
   it("is sent at once to an omp whose integration has reported its session", async () => {
     reported = true;
     ompPid = posix ? await startedNow() : 1;

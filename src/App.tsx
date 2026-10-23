@@ -1,8 +1,8 @@
 import { type CSSProperties, type DragEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
-import type { AgentStatus, ServerMessage, AccessRefusal, HealthAuth, HerdrPane, SessionHistoryAgent } from "../shared/protocol.ts";
-import { ApiError, authenticate, createTab, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, routeMissing, sendTestPush, shareSeen, signOut, splitPane, verifySourceBoot, zoomPane, type HealthInfo } from "./lib/api.ts";
+import type { AgentStatus, AccessRefusal, HealthAuth, HerdrPane, SessionHistoryAgent } from "../shared/protocol.ts";
+import { ApiError, authenticate, createTab, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, sendTestPush, shareSeen, signOut, splitPane, verifySourceBoot, zoomPane, type HealthInfo } from "./lib/api.ts";
 import { applyHealthRead, healthFreshness, machineHealth, type HealthBook } from "./lib/healthPresentation.ts";
 import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { alertPaneTitle, displayPaneTitle } from "./components/Sidebar.tsx";
@@ -16,7 +16,7 @@ import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
 import { SessionHistory } from "./components/SessionHistory.tsx";
-import { sessionHistoryAgent, sessionHistoryListAgent } from "./lib/sessionHistory.ts";
+import { sessionHistoryAgent, sessionHistoryListAgent, sessionHistorySourcePane } from "./lib/sessionHistory.ts";
 import { useRecentResumes } from "./lib/useRecentResumes.ts";
 import { forgetSessionHistoryProbesOfPcsAway } from "./lib/useSessionHistoryOffered.ts";
 import { passingFolder, recentDirectories } from "./lib/recent-directories.ts";
@@ -24,7 +24,8 @@ import { usePreferencesSync } from "./lib/preferencesSync.ts";
 import { keepEventStream } from "./lib/eventStream.ts";
 import { TabStrip } from "./components/TabStrip.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
-import { loadedOnSettingsEntry, onSettingsHistory, recordSettings, settingsEntry } from "./lib/settingsHistory.ts";
+import { loadedOnSettingsEntry, settingsEntry } from "./lib/settingsHistory.ts";
+import { useSettingsDialog } from "./lib/useSettingsDialog.ts";
 import { sheetSteppedOff, usePhoneSheetBack } from "./lib/sheetHistory.ts";
 import { peekFor, type PeekRequest, type TerminalPeek } from "./lib/terminalPeek.ts";
 import { fileFromLink, isNavigation, linkSearch, linksSomewhere, NAV_KEY, readLink, resolveLink, slugOf, type AppLink, type CreateDraft, type LinkNote } from "./lib/deepLink.ts";
@@ -34,11 +35,9 @@ import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
-import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
 import { receiveSeen } from "./lib/seenFinishes.ts";
 import { useSidebarActivityState } from "./lib/sidebarActivity.tsx";
 import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
-import { FILE_PANEL_DOCK_QUERY, storedFilePanelWidth } from "./lib/filePanelWidth.ts";
 import { openPresentation, type FilePresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
@@ -86,16 +85,18 @@ import { useFileViewer } from "./lib/useFileViewer.ts";
 import { useFocusReturn } from "./lib/useFocusTrap.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
 import { useT } from "./lib/i18n.ts";
+import { useConnectionChip, useServerMessageHandler } from "./lib/useConnectionChip.ts";
 import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
 import { followsHerdrFocus } from "./lib/followFocus.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
-import { watchDrawerSwipe } from "./lib/edgeSwipe.ts";
+import { useSidebarLayout } from "./lib/useSidebarLayout.ts";
 import { Droplet } from "./components/Droplet.tsx";
 import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./lib/droplet.ts";
 import { canPlayAlertSound, playAlertSound, unlockAlertSound, type AlertSoundKind } from "./lib/alertSound.ts";
 import { createAlertTurnPlayer } from "./lib/alertTurns.ts";
 import { dockPane, draggedPane, paneDragData, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, slotSide, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./lib/split.ts";
 import { paneDrag } from "./lib/paneDrag.ts";
+import { useLayoutNotice, useLayoutRefused } from "./lib/useLayoutNotice.ts";
 import { PaneFollowContext } from "./lib/paneSubmitContext.ts";
 import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
@@ -282,13 +283,7 @@ export function App() {
   // what the app says about this PC beyond its herdr's capabilities: kept through one failed read, as the header's details are
   const shownHealth = localFreshness === "unavailable" ? null : health;
   const [error, setError] = useState<string | null>(null);
-  // a palette layout call a PC's bridge could not take: a line over the pane, gone after a moment as the tab strip's is
-  const [layoutNotice, setLayoutNotice] = useState<string | null>(null);
-  useEffect(() => {
-    if (!layoutNotice) return;
-    const timer = window.setTimeout(() => setLayoutNotice(null), 6000);
-    return () => window.clearTimeout(timer);
-  }, [layoutNotice]);
+  const { layoutNotice, setLayoutNotice } = useLayoutNotice();
   // null until the server has said whether it wants a token: the shell, and with it
   // the WebSocket, never mounts before that is known
   const [locked, setLocked] = useState<boolean | null>(null);
@@ -365,13 +360,7 @@ export function App() {
   // App picked the selected pane itself because the one selected closed: it must not raise a
   // phone's keyboard (over the drawer the close was tapped in) until the user picks a pane or lens
   const [autoSelected, setAutoSelected] = useState(false);
-  // a phone opened by a link that says so starts with its drawer out (lib/deepLink.ts)
-  const [drawerOpen, setDrawerOpen] = useState(() => initialLink?.sidebar === "shown" && window.matchMedia?.("(min-width: 769px)").matches !== true);
-  const drawerOpenRef = useRef(drawerOpen); drawerOpenRef.current = drawerOpen;
-  // from 769px the drawer is a plain sidebar column and its toggle is hidden, so a drawer a
-  // narrow window opened must not come back (with its scrim) the next time the window narrows
-  const wideScreen = useMediaQuery("(min-width: 769px)");
-  useEffect(() => { if (wideScreen) setDrawerOpen(false); }, [wideScreen]);
+  const { drawerOpen, setDrawerOpen, drawerOpenRef, wideScreen, sidebarCollapsed, setSidebarCollapsed, sidebarWidth, setSidebarWidth, filePanelAvailable, filePanelWidth, setFilePanelWidth } = useSidebarLayout({ initialLink });
   // with a generation (lib/selectionMark.ts): a call that answers after the user opened another pane or PC leaves
   // the selection alone. Marked at commit, not in render: a render React throws away (Strict Mode, a replay)
   // must not move the generation on, and every reader runs from an event or a reply, after the commit
@@ -379,27 +368,6 @@ export function App() {
   useLayoutEffect(() => {
     selectionRef.current = markSelection(selectionRef.current, selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);
-  // on a phone the drawer follows a swipe in from the left edge, and a swipe back (lib/edgeSwipe.ts)
-  useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
-  // Escape puts the open drawer away and goes no further: in the capture phase, so a terminal that kept the
-  // focus never receives it. A dialog or an IME composition on top keeps its own Escape
-  useEffect(() => {
-    const onEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || !drawerOpenRef.current || event.isComposing || event.keyCode === 229) return;
-      if (document.querySelector('[role="dialog"]')) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setDrawerOpen(false);
-    };
-    window.addEventListener("keydown", onEscape, true);
-    return () => window.removeEventListener("keydown", onEscape, true);
-  }, []);
-  // a desktop opened by a link that says so starts with the sidebar collapsed, and the address says so while it is
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => initialLink?.sidebar === "hidden");
-  // the width the sidebar's edge was dragged to on this device; null is the density's own
-  const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
-  const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
-  const [filePanelWidth, setFilePanelWidth] = useState(storedFilePanelWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
   // Explicit lens choices stay authoritative in this page even when storage cannot be written.
   const [viewPicks, setViewPicks] = useState<ReadonlyMap<string, PaneView>>(() => new Map());
@@ -512,29 +480,7 @@ export function App() {
     if (filePanelAvailable && openPresentation(path, settings.fileOpen) === "panel") setFilesOpen(false);
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
   }, [openFile, selectedPaneId, selectedMachineId, filePanelAvailable, settings.fileOpen]);
-  // a link to Settings opens it on its page, for that first opening alone
-  const [settingsOpen, setSettingsOpen] = useState(() => initialLink?.settings != null);
-  const [settingsLinkPage, setSettingsLinkPage] = useState<string | null>(() => initialLink?.settings ?? null);
-  // the group on that page a link named: in the address while that page is shown
-  const [settingsLinkSection, setSettingsLinkSection] = useState<string | null>(() => initialLink?.section ?? null);
-  // the page Settings shows, for the address
-  const [settingsPage, setSettingsPage] = useState<string | null>(null);
-  // set by a button that points at one section of Settings, for that opening alone
-  const [settingsSection, setSettingsSection] = useState<"updates" | null>(null);
-  const closeSettings = useCallback(() => { setSettingsOpen(false); setSettingsSection(null); setSettingsLinkPage(null); setSettingsLinkSection(null); setSettingsPage(null); }, []);
-  const settingsLinkPageRef = useRef(settingsLinkPage); settingsLinkPageRef.current = settingsLinkPage;
-  const onSettingsPage = useCallback((page: string | null) => {
-    setSettingsPage(page);
-    if (page !== settingsLinkPageRef.current) setSettingsLinkSection(null);
-  }, []);
-  // Settings is in the history (lib/settingsHistory.ts): Back out of its last entry closes it,
-  // Forward onto one opens it again, and closing it any other way takes its entries off
-  useEffect(() => onSettingsHistory((entry, own) => {
-    if (own) return;
-    if (entry === null) closeSettings();
-    else setSettingsOpen(true);
-  }), [closeSettings]);
-  useEffect(() => { if (!settingsOpen) recordSettings([]); }, [settingsOpen]);
+  const { settingsOpen, setSettingsOpen, settingsLinkPage, setSettingsLinkPage, settingsLinkSection, settingsPage, settingsSection, setSettingsSection, closeSettings, onSettingsPage } = useSettingsDialog(initialLink);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   // the New workspace dialog in the address (lib/deepLink.ts): the fields a link filled for this
   // opening, and what the fields say now
@@ -545,14 +491,8 @@ export function App() {
   // the dialog makes a tab in this workspace instead of a workspace, while set
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   // the earlier sessions of a workspace's folder (components/SessionHistory.tsx), while open
-  const [sessionHistory, setSessionHistory] = useState<{ machineId: string; workspaceId: string; agent: SessionHistoryAgent } | null>(null);
-  const [connected, setConnected] = useState(false);
-  /** the active terminal's socket has been connected on this page before (PaneTerminal reports it): not
-   *  connected, the chip says reconnecting; before this page's first connection to the PC, connecting */
-  const [connectedBefore, setConnectedBefore] = useState(false);
-  // the active slot's pane could not be drawn: no terminal is attached there to say so itself
-  const paneLost = useCallback(() => setConnected(false), []);
-  const [outputStopped, setOutputStopped] = useState(false);
+  const [sessionHistory, setSessionHistory] = useState<{ machineId: string; workspaceId: string; agent: SessionHistoryAgent; paneId: string | null; askingPaneId: string | null; selectedPaneId: string | null } | null>(null);
+  const { connected, setConnected, connectedBefore, setConnectedBefore, paneLost, outputStopped, setOutputStopped } = useConnectionChip();
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   // this device has a server-side push subscription: alerts come from the server, not the tab
   const [pushOn, setPushOn] = useState(false);
@@ -799,9 +739,7 @@ export function App() {
     });
   }, [locked, scheduleRefetch, dropIn, chime, reorderCoordinator]);
 
-  const handleServerMessage = useCallback((message: ServerMessage) => {
-    if (message.type === "error" && message.code === "output_stalled") setOutputStopped(true);
-  }, []);
+  const handleServerMessage = useServerMessageHandler(setOutputStopped);
 
   const enableNotifications = useCallback(async () => {
     // in-app alerts need no permission: the switch goes on whatever the browser answers
@@ -988,13 +926,7 @@ export function App() {
     setDrawerOpen(false);
   }, []);
 
-  // a layout call the palette made and the PC refused: a bridge from before the route says so
-  // over the pane (the tab's own menu has a line of its own); anything else is logged, as
-  // other background failures are
-  const layoutRefused = useCallback((what: string, err: unknown): void => {
-    if (routeMissing(err)) setLayoutNotice(t("This PC's bridge does not offer this yet"));
-    else console.warn(what, err);
-  }, [t]);
+  const layoutRefused = useLayoutRefused(setLayoutNotice, t);
 
   // a tapped notification focuses this window and names the pane (public/sw.js). A pane not known
   // yet waits as a link does (this also keeps a cold start's link, which the worker names again
@@ -1482,8 +1414,14 @@ export function App() {
         // a pane's own agent, or nothing; for a workspace, the agent named, else the pane in front's, else any of it
         const agent = sessionHistoryListAgent(target, found.agent, found.panes.map((pane) => pane.agent));
         if (agent === null) return;
+        // Claude's list prefers a pane running Claude, so a selected shell never hides its store.
+        const selected = selectionRef.current.machineId === found.machineId ? selectionRef.current.paneId : null;
+        const tabs = machinesRef.current.find((m) => m.id === found.machineId)?.snapshot?.tabs ?? [];
+        const tabNumber = (tabId: string) => tabs.find((tab) => tab.tab_id === tabId)?.number ?? Number.MAX_SAFE_INTEGER;
+        const askingPaneId = target?.paneId ?? null;
+        const paneId = sessionHistorySourcePane(agent, [...found.panes].sort((one, other) => tabNumber(one.tab_id) - tabNumber(other.tab_id)), { workspaceId: found.workspace.workspace_id, askingPaneId, selectedPaneId: selected });
         setDrawerOpen(false);
-        setSessionHistory({ machineId: found.machineId, workspaceId: found.workspace.workspace_id, agent });
+        setSessionHistory({ machineId: found.machineId, workspaceId: found.workspace.workspace_id, agent, paneId, askingPaneId, selectedPaneId: selected });
       },
       openPalette,
       agentStarted: (machineId, paneId) => lenses.startedAgent(paneStorageId(machineId, paneId), window.matchMedia?.("(pointer: coarse)").matches === true),
@@ -1593,7 +1531,8 @@ export function App() {
     if (sessionHistory === null) return null;
     const roster = machines.find((m) => m.id === sessionHistory.machineId)?.snapshot;
     const workspace = roster?.workspaces.find((candidate) => candidate.workspace_id === sessionHistory.workspaceId);
-    return roster && workspace ? { workspace, panes: roster.panes } : null;
+    const tabNumber = (tabId: string) => roster?.tabs.find((tab) => tab.tab_id === tabId)?.number ?? Number.MAX_SAFE_INTEGER;
+    return roster && workspace ? { workspace, panes: [...roster.panes].sort((one, other) => tabNumber(one.tab_id) - tabNumber(other.tab_id)) } : null;
   }, [machines, sessionHistory]);
   useEffect(() => { if (sessionHistory !== null && sessionHistoryWorkspace === null) setSessionHistory(null); }, [sessionHistory, sessionHistoryWorkspace]);
 
@@ -1910,7 +1849,7 @@ export function App() {
                         onPeek={active && item && item.pane_id === selectedPaneId && attach ? (request: PeekRequest) => setTerminalPeek({ ...request, slot, machineId, paneId: item.pane_id }) : undefined}
                         onEndPeek={endPeek}
                         // /resume lists the pane's own agent's sessions, and only for an agent whose store is read
-                        onOpenHistory={item && sessionHistoryAgent(item.agent) !== null ? () => actions.openSessionHistory({ machineId, workspaceId: item.workspace_id, agent: item.agent, scope: "pane" }) : undefined}
+                        onOpenHistory={item && sessionHistoryAgent(item.agent) !== null ? () => actions.openSessionHistory({ machineId, workspaceId: item.workspace_id, agent: item.agent, scope: "pane", paneId: item.pane_id }) : undefined}
                         // the composer's new-agent button: the New tab dialog on this pane's workspace, as the tab menu opens it
                         onOpenNewSession={item ? () => actions.openNewTab({ machineId, workspaceId: item.workspace_id }) : undefined}
                         // the other half never takes the keyboard: a press in it makes it active first
@@ -1972,13 +1911,16 @@ export function App() {
         workspace={sessionHistoryWorkspace.workspace}
         panes={sessionHistoryWorkspace.panes}
         agent={sessionHistory.agent}
+        sourcePaneId={sessionHistory.paneId}
+        askingPaneId={sessionHistory.askingPaneId}
+        selectedPaneId={sessionHistory.selectedPaneId}
         recent={recentResumes}
         onClose={closeSessionHistory}
         onSelectPane={(paneId) => { closeSessionHistory(); selectTarget(sessionHistory.machineId, paneId); }}
         onResumed={(opened, session) => {
           closeSessionHistory();
           if (opened.agent_started) {
-            rememberResume({ machineId: sessionHistory.machineId, workspaceId: sessionHistory.workspaceId, agent: session.agent, id: session.id, paneId: opened.pane_id });
+            rememberResume({ machineId: sessionHistory.machineId, workspaceId: sessionHistory.workspaceId, agent: session.agent, id: session.id, store: session.store, paneId: opened.pane_id });
             actions.agentStarted(sessionHistory.machineId, opened.pane_id);
           }
           selectTarget(sessionHistory.machineId, opened.pane_id);

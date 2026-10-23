@@ -181,6 +181,36 @@ describe("UI wording", () => {
       .filter((file) => !file.endsWith(".test.ts"))
       .flatMap((file) => read(file).split("\n").flatMap((line, index) =>
         /^\s*(?:\/\/|\/?\*)/.test(line) || !/\bNew [Ss]ession\b/.test(line) ? [] : [`${file}:${index + 1}: ${line.trim()}`]));
-    fail(offenders, "UI text says \"New workspace\", not \"New session\" (AGENTS.md, UI wording). Change the string and its i18n entries in src/lib/i18n.*.ts.");
+    fail(offenders, "UI text says \"New workspace\", not \"New session\" (AGENTS.md, UI wording). Change the string and its i18n entries in src/lib/i18n.*.ts or src/lib/i18n/*.ts.");
+  });
+});
+
+describe("terminal mount", () => {
+  // The attach stream is the only writer of the terminal and herdr owns scrollback (AGENTS.md): xterm
+  // keeps none, or the fit addon reserves a scrollbar column and the last columns go dead.
+  it("creates every xterm Terminal with scrollback: 0", () => {
+    const options: string[] = [];
+    for (const file of scan("src/**/*.{ts,tsx}").filter((name) => !/\.test\./.test(name))) {
+      const source = read(file);
+      for (const match of source.matchAll(/new Terminal\(\{/g)) {
+        let depth = 1;
+        let end = match.index + match[0].length;
+        for (; depth > 0 && end < source.length; end++) depth += source[end] === "{" ? 1 : source[end] === "}" ? -1 : 0;
+        options.push(`${file}: ${source.slice(match.index, end)}`);
+      }
+    }
+    expect(options.length).toBeGreaterThan(0);
+    fail(options.filter((entry) => !/\bscrollback:\s*0\b/.test(entry)).map((entry) => entry.split("\n")[0]!),
+      "Every new Terminal({...}) sets scrollback: 0: herdr owns scrollback, and xterm's own would reserve a scrollbar column (AGENTS.md).");
+  });
+
+  // The mount hook is called before usePaneAttach (whose reset effect cancels pending input before the next task).
+  it("mounts the terminal before the attach reset effect runs", () => {
+    const source = read("src/components/PaneTerminal.tsx");
+    const mount = source.indexOf("useTerminalMount(");
+    const reset = source.indexOf("usePaneAttach(");
+    expect(mount).toBeGreaterThan(-1);
+    expect(reset).toBeGreaterThan(-1);
+    expect(mount).toBeLessThan(reset);
   });
 });

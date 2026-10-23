@@ -33,9 +33,15 @@ file. Chat follows the session Herdr reported only when that process holds its
 written more recently than every other held session's `events.jsonl`. Older open session
 files do not hide it. Duplicate held IDs remain ambiguous even when only one directory has
 `updates.jsonl`; tied write times also use the terminal view.
-The held session events files must be fully resolved. A session events file under the
-sessions tree that is deleted, renamed (such as `events.jsonl.old`) or
-cannot be statted as a real file, makes the binding ambiguous and uses the terminal.
+For a held path shaped as `<group>/<session>/<file>`, with an accepted session ID and a
+file name starting with `events.jsonl`, a deleted file, a suffix rename such as
+`events.jsonl.old`, or a file that cannot be resolved and statted as a real file uses the
+terminal. Its device and inode must match the held descriptor; a replacement file at the
+same path also uses the terminal. Write times come from the held descriptors, not path
+replacements. Other file names and paths whose session IDs fail the filter are ignored.
+Renaming to `old-events.jsonl` or moving a session to `.archived-resumed` can therefore hide
+a newer held session and leave the previous conversation visible. Which other files real
+Grok builds legitimately keep open in the store still needs native descriptor captures.
 
 The newest file only confirms Herdr's ID; it never chooses another session. A missing held
 file or a newer write to another held session uses the terminal view. An in-TUI `/resume`

@@ -8,7 +8,7 @@ import { fail, files, lineOf, read, repo, stripComments } from "./source-scan.ts
 // Repo-wide rules from AGENTS.md that used to be prose only. Each failure says what to change;
 // client rules are in src/conventions.test.ts, server rules in server/conventions.test.ts.
 
-const SOURCES = [...files("{src,server,shared,scripts,site,telemetry}/**/*.{ts,tsx,mjs,js}"), "vite.config.ts"];
+const SOURCES = [...files("{src,server,shared,scripts,site,telemetry,integrations}/**/*.{ts,tsx,mjs,js}"), "vite.config.ts"];
 
 /** Module specifiers of static imports and re-exports, side-effect imports and `import("…")` with a literal. */
 const SPECIFIER = /(?:^|[\s;])(?:import|export)\s[^;]*?\sfrom\s*["']([^"']+)["']|(?:^|[\s;])import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gm;

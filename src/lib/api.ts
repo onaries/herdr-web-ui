@@ -51,6 +51,8 @@ import type {
   ResizePaneRequest,
   SessionHistoryAgent,
   SessionHistoryResponse,
+  SessionResumeRequest,
+  SessionResumeResponse,
   SessionSnapshot,
   SetSplitRatioRequest,
   SlashCommand,
@@ -727,10 +729,18 @@ export async function openWorktree(request: OpenWorktreeRequest, machineId = "lo
   return (await response.json()) as WorktreeOpened;
 }
 
-/** GET /api/sessions/history: the earlier sessions of `agent` in the workspace's folder, newest first; never cached. */
-export function fetchSessionHistory(workspaceId: string, agent: SessionHistoryAgent, machineId = "local"): Promise<SessionHistoryResponse> {
-  const query = new URLSearchParams({ workspace_id: workspaceId, agent });
+/**
+ * GET /api/sessions/history: the earlier sessions of `agent` in the workspace's folder, newest first;
+ * never cached. `paneId` is the pane the list was asked for from: Claude's are that pane's store's.
+ */
+export function fetchSessionHistory(workspaceId: string, agent: SessionHistoryAgent, machineId = "local", paneId: string | null = null): Promise<SessionHistoryResponse> {
+  const query = new URLSearchParams({ workspace_id: workspaceId, agent, ...(paneId === null ? {} : { pane_id: paneId }) });
   return getJson<SessionHistoryResponse>(`${machinePath(machineId, "sessions/history")}?${query.toString()}`, { cache: "no-store" });
+}
+/** POST /api/sessions/resume: a Claude row's Resume, in the store it was listed from. */
+export async function resumeSession(request: SessionResumeRequest, machineId = "local"): Promise<SessionResumeResponse> {
+  const response = await sendJson(machinePath(machineId, "sessions/resume"), "POST", request);
+  return (await response.json()) as SessionResumeResponse;
 }
 /**
  * Whether the PC's bridge has the session history route, asked without a query so no session is

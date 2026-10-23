@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 13 and later ask before an app shows notifications (OvisPushPlugin.subscribe) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <service
+            android:name=".OvisMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- registers OvisPushPlugin with Capacitor's activity before its bridge starts -->
+        <provider
+            android:name=".OvisPushInitializer"
+            android:authorities="${applicationId}.ovispush"
+            android:exported="false" />
+
+        <!-- no FCM token, and so no contact with Google, until a PC subscribes this phone -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+    </application>
+</manifest>

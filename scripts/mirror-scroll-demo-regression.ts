@@ -102,13 +102,52 @@ try {
           await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", terminalWheelSpeed: 2, alertsOn: false })));
           const page = await context.newPage();
           page.setDefaultTimeout(10000);
+          const waitForStep = async (step: string, action: () => Promise<unknown>): Promise<void> => {
+            try { await action(); }
+            catch (cause) {
+              const diagnosticsMs = 1000;
+              let timer: ReturnType<typeof setTimeout> | undefined;
+              // This deadline runs outside the renderer: the timed-out page may not answer.
+              const deadline = new Promise<string>((resolve) => {
+                timer = setTimeout(() => resolve(`unavailable (page did not answer within ${diagnosticsMs} ms)`), diagnosticsMs);
+              });
+              const snapshot = page.evaluate(() => {
+                const fixture = window.mirrorFixture;
+                return {
+                  connected: !!document.querySelector(".conn-live"),
+                  viewport: { width: innerWidth, height: innerHeight },
+                  fonts: { status: document.fonts.status, loaded: [...document.fonts].filter(face => face.status === "loaded").map(face => face.family) },
+                  fixture: fixture ? { reads: fixture.reads, offset: fixture.offset, offsets: fixture.offsets, inputs: fixture.inputs,
+                    sockets: fixture.sockets.map(socket => ({ readyState: socket.readyState, url: socket.url })) } : null,
+                  panes: [...document.querySelectorAll<HTMLElement>(".pane-terminal")].map(host => ({
+                    pane: host.closest("[data-layout-pane]")?.getAttribute("data-layout-pane"),
+                    current: !!host.closest(".pane-frame.is-current"),
+                    adopted: host.hasAttribute("data-adopted-grid"),
+                    scrollTop: host.scrollTop, scrollLeft: host.scrollLeft,
+                    scrollHeight: host.scrollHeight, clientHeight: host.clientHeight,
+                    localPanStart: host.textContent?.includes("LOCAL-PAN-START"),
+                    localPanChanged: host.textContent?.includes("LOCAL-PAN-CHANGED"),
+                  })),
+                };
+              }).then(value => JSON.stringify(value))
+                .catch(error => JSON.stringify({ diagnosticsError: error instanceof Error ? error.message : String(error) }));
+              const observed = await Promise.race([snapshot, deadline]).finally(() => clearTimeout(timer));
+              const error = new Error(
+                `${kind}: ${step}: ${cause instanceof Error ? cause.message : String(cause)}; observed=${observed}`,
+                { cause },
+              );
+              // The browser lane recognizes TimeoutError when extracting its failure summary.
+              if (cause instanceof Error) error.name = cause.name;
+              throw error;
+            }
+          };
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
           await page.goto(`http://127.0.0.1:${server.port}${prefix}?pane=${encodeURIComponent(pane)}&view=terminal&history=${kind}`);
-          await page.locator(".conn-live").waitFor();
-          await appFaces(page);
-          await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.reads > 0);
-          await page.locator(".pane-frame.is-current .pane-terminal[data-adopted-grid]").waitFor();
+          await waitForStep("connection live", () => page.locator(".conn-live").waitFor());
+          await waitForStep("app fonts loaded", () => appFaces(page));
+          await waitForStep("initial scroll metrics read", () => page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.reads > 0));
+          await waitForStep("fixed grid adopted", () => page.locator(".pane-frame.is-current .pane-terminal[data-adopted-grid]").waitFor());
           await settled(page);
           const terminal = page.locator(".pane-frame.is-current .pane-terminal");
           const box = await terminal.boundingBox();
@@ -118,10 +157,10 @@ try {
           await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
           await page.mouse.wheel(0, -120);
           if (kind === "native") {
-            await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset === 6);
+            await waitForStep("native wheel up reaches offset 6", () => page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset === 6));
             assert.deepEqual((await state(page)).inputs, [], "native history never sends typing");
             await page.mouse.wheel(0, 120);
-            await page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset === 0);
+            await waitForStep("native wheel down reaches offset 0", () => page.waitForFunction(() => (window as FixtureWindow).mirrorFixture.offset === 0));
           } else {
             // a mirror carries no mouse modes: nothing says the program reads wheel reports, Pi's included
             await settled(page);
@@ -139,7 +178,7 @@ try {
           await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + 150 }] });
           await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
           if (kind === "native") {
-            await page.waitForFunction((offset) => (window as FixtureWindow).mirrorFixture.offset > offset, beforeTouch.offset);
+            await waitForStep(`native phone touch increases offset from ${beforeTouch.offset}`, () => page.waitForFunction((offset) => (window as FixtureWindow).mirrorFixture.offset > offset, beforeTouch.offset));
             assert.ok((await state(page)).offset > beforeTouch.offset, "positive vertical touch still scrolls native history");
             assert.deepEqual((await state(page)).inputs, beforeTouch.inputs, "touch on native history never sends typing");
           } else {
@@ -174,11 +213,11 @@ try {
           await page.evaluate((paneId) => (window as FixtureWindow).mirrorFixture.sockets.at(-1)!.push({
             type: "pty-data", fixture: "mirror", pane_id: paneId, data: "\x1b[40;1H\x1b[2KLOCAL-PAN-START",
           }), pane);
-          await page.waitForFunction(() => document.querySelector(".pane-terminal .xterm-rows")?.textContent?.includes("LOCAL-PAN-START"));
+          await waitForStep("local pan start frame rendered", () => page.waitForFunction(() => document.querySelector(".pane-terminal .xterm-rows")?.textContent?.includes("LOCAL-PAN-START")));
           await terminal.evaluate((node: HTMLElement) => { node.style.height = "200px"; node.style.maxHeight = "200px"; node.style.flex = "none"; node.scrollTop = 80; });
           // ResizeObserver follows the cursor after its resize debounce, not after two paint frames.
           // Wait for that adjustment before placing the grid between its local edges for the wheel.
-          await page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop !== 80);
+          await waitForStep("resize follows cursor away from scrollTop 80", () => page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop !== 80));
           await terminal.evaluate((node) => { node.scrollTop = 80; });
           assert.equal(await terminal.evaluate((node) => node.scrollTop), 80, "the oversized grid starts between its local edges");
           const beforePan = await state(page);
@@ -186,14 +225,14 @@ try {
           assert.ok(panBox);
           await page.mouse.move(panBox.x + panBox.width / 2, panBox.y + 100);
           await page.mouse.wheel(0, -30);
-          await page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop < 80);
+          await waitForStep("local wheel pans above scrollTop 80", () => page.waitForFunction(() => document.querySelector<HTMLElement>(".pane-frame.is-current .pane-terminal")!.scrollTop < 80));
           assert.deepEqual((await state(page)).inputs, beforePan.inputs, "local wheel pan sends no application input");
           assert.deepEqual((await state(page)).offsets, beforePan.offsets, "local wheel pan leaves shared history alone");
           const pannedTop = await terminal.evaluate((node) => node.scrollTop);
           await page.evaluate((paneId) => (window as FixtureWindow).mirrorFixture.sockets.at(-1)!.push({
             type: "pty-data", fixture: "mirror", pane_id: paneId, data: "\x1b[40;1H\x1b[2KLOCAL-PAN-CHANGED",
           }), pane);
-          await page.waitForFunction(() => document.querySelector(".pane-terminal .xterm-rows")?.textContent?.includes("LOCAL-PAN-CHANGED"));
+          await waitForStep("local pan changed frame rendered", () => page.waitForFunction(() => document.querySelector(".pane-terminal .xterm-rows")?.textContent?.includes("LOCAL-PAN-CHANGED")));
           assert.equal(await terminal.evaluate((node) => node.scrollTop), pannedTop, "new output at the last row preserves the locally panned grid");
           assert.deepEqual((await state(page)).inputs, beforePan.inputs, "new mirror output sends no application input");
           assert.deepEqual((await state(page)).offsets, beforePan.offsets, "new mirror output does not request shared history scrolling");

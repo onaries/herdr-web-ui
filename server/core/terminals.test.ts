@@ -1,16 +1,18 @@
-import { afterEach, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
 import { ReplayBuffer } from "../output-window.ts";
 import { connectionData, type Client } from "./connections.ts";
 import type { PaneAttachment } from "./terminal-process.ts";
+import * as terminalProcess from "./terminal-process.ts";
+import * as pty from "../pty/session.ts";
+import * as herdr from "../herdr/client.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 
 let attachment: PaneAttachment;
-mock.module("./terminal-process.ts", () => ({
-  ATTACH_HELD_MESSAGE: "Held",
-  createSpawnAttachment: ({ attachments }: { attachments: Map<string, PaneAttachment> }) => ({
+beforeEach(() => {
+  spyOn(terminalProcess, "createSpawnAttachment").mockImplementation(({ attachments }) => ({
     spawnAttachment: async (pane: string) => { attachments.set(pane, attachment); return attachment; },
-  }),
-}));
+  }));
+});
 const { createTerminalRegistry } = await import("./terminals.ts");
 
 afterEach(() => mock.restore());
@@ -67,3 +69,84 @@ for (const readOnly of [false, true]) {
     expect(frames.filter((frame) => frame.type === "input-ready")).toEqual([]);
   });
 }
+
+it("marks a newcomer recovering after a ready stream ends and clears it when the next attach takes", async () => {
+  // Given the real process lifecycle, with only its PTY and herdr lookup controlled.
+  mock.restore();
+  const snapshot = (terminalId: string) => ({
+    panes: [{ pane_id: "p", terminal_id: terminalId, workspace_id: "w", tab_id: "t", cwd: "/fixture", focused: false, revision: 0, agent_status: "idle" as const }],
+    layouts: [], agents: [], workspaces: [], tabs: [], protocol: 22, version: "fixture",
+  });
+  const lookup = Promise.withResolvers<ReturnType<typeof snapshot>>();
+  spyOn(herdr, "sessionSnapshot").mockResolvedValueOnce(snapshot("old")).mockImplementation(() => lookup.promise);
+  spyOn(Bun, "which").mockReturnValue("/fixture/herdr");
+  const attempts: pty.PtySessionOptions[] = [];
+  const restarted = Promise.withResolvers<pty.PtySessionOptions>();
+  const RealPtySession = pty.PtySession;
+  mock.module("../pty/session.ts", () => ({
+    PtySession: class {
+      private readonly exit = Promise.withResolvers<void>();
+      readonly exited = this.exit.promise;
+      constructor(options: pty.PtySessionOptions) {
+        attempts.push(options);
+        if (attempts.length === 2) restarted.resolve(options);
+      }
+      kill() { this.exit.resolve(); }
+      pause() {}
+      resume() {}
+      resize() {}
+      winch() {}
+      write() { return true; }
+    },
+  }));
+  const record = () => {
+    const frames: ServerMessage[] = [];
+    const client = {
+      data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN,
+      getBufferedAmount: () => 0, send(raw: string) { frames.push(JSON.parse(raw)); return raw.length; }, close() {},
+    } as unknown as Client;
+    return { client, frames };
+  };
+  const owner = record(), recovering = record(), recovered = record();
+  let ready = Promise.withResolvers<void>();
+  const registry = createTerminalRegistry({
+    options: {}, clients: new Set([owner.client, recovering.client, recovered.client]), stopped: () => false,
+    terminalAttach: async () => true, holdFor: 0, heldRetry: 0, retryFor: 0, relookupFor: 5_000,
+    holdPending() {}, holdPendingPane() {}, attached() {}, inputReady() { ready.resolve(); }, end() {},
+  });
+  const attach = { type: "attach", pane_id: "p", cols: 80, rows: 24, keep_size: true } as const;
+  try {
+    await registry.terminalFrames.attach(owner.client, attach);
+    const first = attempts[0];
+    if (!first) throw new Error("initial PTY was not started");
+    first.onData("retained screen");
+    await ready.promise;
+
+    // When a ready stream ends, a newcomer joins before its replacement takes.
+    first.onExit(0);
+    await registry.terminalFrames.attach(recovering.client, attach);
+    // Then the real lifecycle marks the retained screen as recovering, without readiness.
+    expect(recovering.frames.filter((frame) => ["output-recovering", "pty-data", "input-ready"].includes(frame.type))).toEqual([
+      { type: "output-recovering", pane_id: "p" },
+      { type: "pty-data", pane_id: "p", data: "retained screen", replay: true },
+    ]);
+
+    // When herdr supplies the replacement terminal and its attach takes.
+    ready = Promise.withResolvers<void>();
+    lookup.resolve(snapshot("new"));
+    const next = await restarted.promise;
+    expect(next.args).toEqual(["terminal", "attach", "new"]);
+    next.onData("current screen");
+    await ready.promise;
+    await registry.terminalFrames.attach(recovered.client, attach);
+    // Then later newcomers get readiness and replay without a stale recovery mark.
+    expect(recovered.frames.filter((frame) => ["output-recovering", "pty-data", "input-ready"].includes(frame.type))).toEqual([
+      { type: "pty-data", pane_id: "p", data: "retained screencurrent screen", replay: true },
+      { type: "input-ready", pane_id: "p" },
+    ]);
+  } finally {
+    registry.closeAttachment("p");
+    registry.conversations.stop();
+    mock.module("../pty/session.ts", () => ({ PtySession: RealPtySession }));
+  }
+});

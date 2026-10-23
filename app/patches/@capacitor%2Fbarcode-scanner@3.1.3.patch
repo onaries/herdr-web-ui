@@ -1,0 +1,35 @@
+diff --git a/ios/Sources/CapacitorBarcodeScannerPlugin/CapacitorBarcodeScannerPlugin.swift b/ios/Sources/CapacitorBarcodeScannerPlugin/CapacitorBarcodeScannerPlugin.swift
+index 85e9b22f3e089693438e69a2a2a121facc259978..b3518a5d4c085d8fc8a3af19f094a17b69002459 100644
+--- a/ios/Sources/CapacitorBarcodeScannerPlugin/CapacitorBarcodeScannerPlugin.swift
++++ b/ios/Sources/CapacitorBarcodeScannerPlugin/CapacitorBarcodeScannerPlugin.swift
+@@ -10,26 +10,14 @@ public class CapacitorBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin {
+     public let pluginMethods: [CAPPluginMethod] = [
+         CAPPluginMethod(name: "scanBarcode", returnType: CAPPluginReturnPromise)
+     ]
+-    var manager: OSBARCManagerProtocol?
+-
+-    override public func load() {
+-        guard let viewController = self.bridge?.viewController else {
+-            CAPLog.print("Error (Barcode Plugin Load): Capacitor bridge or viewController is not initialized.")
+-            return
+-        }
+-
+-        self.manager = OSBARCManagerFactory.createManager(with: viewController)
+-    }
+-
+     @objc func scanBarcode(_ call: CAPPluginCall) {
+-        if self.manager == nil {
+-            self.load()
+-        }
+-
+-        guard let manager = self.manager else {
++        // Made for each scan, not kept: the manager holds the view controller, which holds the
++        // bridge and this plugin, so a kept one never let a replaced view controller go (Ovis).
++        guard let viewController = self.bridge?.viewController else {
+             call.sendError(with: OSBarcodeError.bridgeNotInitialized)
+             return
+         }
++        let manager = OSBARCManagerFactory.createManager(with: viewController)
+ 
+         guard let argumentsData = try? JSONSerialization.data(withJSONObject: call.jsObjectRepresentation),
+               let scanArguments = try? JSONDecoder().decode(OSBARCScanParameters.self, from: argumentsData) else {

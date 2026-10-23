@@ -15,7 +15,7 @@ import { UsageService } from "../server/usage.ts";
 import type { HerdrPane, ServerMessage } from "../shared/protocol.ts";
 
 const root = mkdtempSync(join(tmpdir(), "omo-plan-browser-"));
-const evidence = process.env.UI_EVIDENCE_DIR ?? join(root, "evidence");
+const evidence = process.env.UI_EVIDENCE_DIR || join(root, "evidence");
 mkdirSync(evidence, { recursive: true });
 const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 const id = "synthetic-omo-plan-session";
