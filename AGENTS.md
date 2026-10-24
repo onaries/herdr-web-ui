@@ -37,7 +37,7 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
   a `mkdtempSync` `stateDir` and `port: 0` for every `createServer`. Never run the real
   `herdr update` in a test.
 - Screenshots and recordings come from the demo or a test session, never the user's live one.
-- A web UI server an agent starts for someone to open (manual QA, a preview) binds to this PC's
+- An Ovis server an agent starts for someone to open (manual QA, a preview) binds to this PC's
   Tailscale address, not loopback: `HOST=$(tailscale ip -4) PORT=<free port> bun run server`,
   then hand over `http://<that address>:<port>`. A Tailscale-only bind stays inside the tailnet
   (`lanExposed` in `server/access.ts`); never bind `0.0.0.0` for it. Tests keep `port: 0` on

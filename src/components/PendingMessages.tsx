@@ -84,7 +84,7 @@ export function PendingMessages({ messages, active = true, connected, agent, blo
             }}><X aria-hidden="true" /></button>
         </div>
         {message.error && !uncertain && <p className="pending-message-note" role="status">{message.error.code === "still_open" ? message.error.message
-          : (message.error.code === "input_draft" || message.error.code === "held_input" || message.error.code === "not_transmitted" || message.error.code === "rewind_dialog_open" || message.error.code === "first_message_unattended") ? submitNote(message.error.code, message.error.message, agent) : t("Not sent: {message}", { message: message.error.message })}</p>}
+          : (message.error.code === "input_draft" || message.error.code === "held_input" || message.error.code === "not_transmitted" || message.error.code === "capabilities_unknown" || message.error.code === "rewind_dialog_open" || message.error.code === "first_message_unattended") ? submitNote(message.error.code, message.error.message, agent) : t("Not sent: {message}", { message: message.error.message })}</p>}
       </li>;
     })}
   </ol>;

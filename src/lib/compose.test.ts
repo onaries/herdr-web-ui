@@ -146,6 +146,9 @@ describe("composerMessage and submitNote", () => {
     // regression #541: a send dropped before its frame left the browser typed nothing
     expect(submitNotTyped("not_transmitted")).toBe(true);
     expect(submitNote("not_transmitted", "the connection dropped before this message was sent")).toBe("Not sent: the connection dropped before this message left. Send it again.");
+    // a send whose wait ended before the PC said what it supports typed nothing, and the note names that, not a drop (#1806)
+    expect(submitNotTyped("capabilities_unknown")).toBe(true);
+    expect(submitNote("capabilities_unknown", "this PC has not said yet what it supports; nothing was sent")).toBe("Not sent: this PC has not said yet what it supports. Send it again.");
     // a Send now that never left proves a held row unsent, not a queued one its turn's end may still type
     expect(pendingActionUncertain("not_transmitted", "held")).toBe(false);
     expect(pendingActionUncertain("not_transmitted", "queued")).toBe(true);

@@ -10,7 +10,7 @@ bun() {
     scripts/demo-build.ts) printf 'DEMO_DIR=%s\\n' "$HERDR_DEMO_BUILD";;
     scripts/*)
       [ "\${CHROME_PATH:-}" = /stub/chrome ] || return 91
-      printf 'STEP=%s EVIDENCE=%s\\n' "$1" "\${UI_EVIDENCE_DIR:-}";;
+      printf 'PASS stubbed browser step\\nFAIL stubbed browser marker\\nSERVER listening on http://127.0.0.1:3000\\nSTEP=%s EVIDENCE=%s\\n' "$1" "\${UI_EVIDENCE_DIR:-}";;
   esac
   if [ "$1" = "\${FAIL_SCRIPT:-}" ]; then return 7; fi
 }
@@ -35,7 +35,7 @@ async function lane(fail = "", kept = false, ci = "") {
     });
     const [text, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     expect(error).toBe("");
-    const demo = text.match(/^DEMO_DIR=(.+)$/m)?.[1];
+    const demo = text.match(/^\[[^\]]+\] DEMO_DIR=(.+)$/m)?.[1];
     expect(demo).toBeDefined();
     expect(existsSync(demo ?? "")).toBe(false);
     return { text, code, evidence: existsSync(join(dir, kept ? "" : ".ci", "browser-evidence")) };
@@ -63,14 +63,20 @@ describe("browser lane", () => {
       { script: "scripts/herdr-restart-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/sticky-modifiers-regression.ts", seconds: expect.any(Number), code: 7 },
     ]);
-    expect(text).not.toContain("STEP=scripts/key-bar-customization-demo-regression.ts");
-    expect(text).toMatch(/scripts\/sticky-modifiers-regression\.ts.*seconds=\d+.*exit=7/);
+    expect(text).not.toMatch(/STEP=scripts\/key-bar-customization-demo-regression\.ts/);
+    expect(text).toMatch(/^TIMING scripts\/sticky-modifiers-regression\.ts seconds=\d+ exit=7$/m);
+    expect(text).toMatch(/^scripts\/sticky-modifiers-regression\.ts\s+\d+\s+7$/m);
+    expect(text).toMatch(/^\[\d{4}-\d\d-\d\dT[^\]]+\] SERVER listening on http:\/\/127\.0\.0\.1:3000$/m);
+    expect(text).toMatch(/^PASS stubbed browser step$/m);
+    expect(text).toMatch(/^FAIL stubbed browser marker$/m);
+    expect(text).toMatch(/^Browser lane total: seconds=\d+ exit=7$/m);
   });
 
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(84);
+    expect(rows(text)).toHaveLength(85);
+    expect(rows(text).map((row) => row.script)).toContain("scripts/phone-glass-header-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/replay-clipboard-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/theme-first-paint-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/opencode-prompt-regression.ts");
@@ -117,6 +123,9 @@ describe("browser lane", () => {
     expect(rows(text).at(-1)?.script).toBe("scripts/herdr-profiles-browser-qa.ts");
     expect(evidence).toBe(false);
     expect(text).not.toMatch(/EVIDENCE=.+/);
+    expect(text).toMatch(/^\[\d{4}-\d\d-\d\dT[^\]]+\] SERVER listening on http:\/\/127\.0\.0\.1:3000$/m);
+    expect(text).toMatch(/^PASS stubbed browser step$/m);
+    expect(text).toMatch(/^FAIL stubbed browser marker$/m);
   });
 
   it("keeps only cheap existing screenshots when CHECK_DIR is set", async () => {
@@ -124,10 +133,10 @@ describe("browser lane", () => {
     expect(code).toBe(0);
     expect(evidence).toBe(true);
     for (const script of ["sticky-modifiers-regression.ts", "file-viewer-regression.ts"]) {
-      expect(text).toMatch(new RegExp(`STEP=scripts/${script} EVIDENCE=.+/browser-evidence`));
+      expect(text).toMatch(new RegExp(`^\\[[^\\]]+\\] STEP=scripts/${script} EVIDENCE=.+/browser-evidence$`, "m"));
     }
     for (const script of ["ui-regression.ts", "ui-contexts-regression.ts", "key-bar-customization-demo-regression.ts"]) {
-      expect(text).toContain(`STEP=scripts/${script} EVIDENCE=\n`);
+      expect(text).toMatch(new RegExp(`^\\[[^\\]]+\\] STEP=scripts/${script} EVIDENCE=$`, "m"));
     }
   });
 
@@ -135,6 +144,7 @@ describe("browser lane", () => {
     const { text, code, evidence } = await lane("", false, "1");
     expect(code).toBe(0);
     expect(evidence).toBe(true);
-    expect(text).toContain("STEP=scripts/file-viewer-regression.ts EVIDENCE=.ci/browser-evidence\n");
+    expect(text).toMatch(/^\[[^\]]+\] STEP=scripts\/file-viewer-regression\.ts EVIDENCE=.ci\/browser-evidence$/m);
+    expect(text).toMatch(/^Browser lane total: seconds=\d+ exit=0$/m);
   });
 });

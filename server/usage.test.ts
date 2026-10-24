@@ -22,6 +22,7 @@ let replies: Map<string, Reply>;
 let requests: Array<{ url: string; init: RequestInit }>;
 let keychain: Map<string, KeychainRead>;
 let commands: Map<string, string>;
+let commandCalls: string[][];
 
 function context(platform: NodeJS.Platform = "linux"): UsageContext {
   return {
@@ -35,7 +36,10 @@ function context(platform: NodeJS.Platform = "linux"): UsageContext {
       return new Response(JSON.stringify(reply.body ?? {}), { status: reply.status ?? 200, headers: reply.headers });
     },
     keychain: async (service, account) => keychain.get(`${service}|${account ?? ""}`) ?? { status: "missing" },
-    run: async (argv) => commands.get(argv.join(" ")) ?? null,
+    run: async (argv) => {
+      commandCalls.push(argv);
+      return commands.get(argv.join(" ")) ?? null;
+    },
   };
 }
 
@@ -78,6 +82,7 @@ beforeEach(() => {
   requests = [];
   keychain = new Map();
   commands = new Map();
+  commandCalls = [];
 });
 
 afterEach(() => rmSync(home, { recursive: true, force: true }));
@@ -421,6 +426,36 @@ describe("providers", () => {
         { kind: "session", scope: null, used_percent: 20, resets_at: "2026-09-29T16:00:00.000Z" },
       ],
     });
+  });
+
+  it("reads Antigravity from the Linux desktop keyring without a token file", async () => {
+    commands.set("secret-tool lookup service gemini username antigravity", JSON.stringify({
+      token: { access_token: "ya29-keyring", expiry: new Date(NOW + HOUR).toISOString() },
+      id_token: jwt({ email: "keyring@example.com", sub: "keyring-sub" }),
+    }));
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { response: { groups: [] } } });
+    const [usage] = (await new UsageService(context("linux"), only("antigravity")).report()).providers;
+    expect(usage).toMatchObject({ id: "antigravity", key: "antigravity:keyring-sub", account: "keyring@example.com" });
+    expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer ya29-keyring");
+  });
+
+  it.each(["missing", "failing"] as const)("does not show Antigravity when Linux secret-tool is %s", async (result) => {
+    if (result === "failing") commands.set("secret-tool lookup service gemini username antigravity", "");
+    const report = await new UsageService(context("linux"), only("antigravity")).report();
+    expect(report.providers).toEqual([]);
+    expect(commandCalls).toEqual([["secret-tool", "lookup", "service", "gemini", "username", "antigravity"]]);
+  });
+
+  it.each([
+    { name: "the token file when it expires after the keyring item", file: NOW + 8 * HOUR, item: NOW - HOUR, bearer: "file" },
+    { name: "the keyring item when the token file is older", file: NOW - HOUR, item: NOW + 8 * HOUR, bearer: "keyring" },
+  ])("keeps $name on Linux", async ({ file, item, bearer }) => {
+    const token = (access: string, expiry: number) => JSON.stringify({ token: { access_token: access, expiry: new Date(expiry).toISOString() } });
+    commands.set("secret-tool lookup service gemini username antigravity", token("keyring", item));
+    write(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), token("file", file));
+    replies.set("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", { body: { response: { groups: [] } } });
+    await new UsageService(context("linux"), only("antigravity")).report();
+    expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe(`Bearer ${bearer}`);
   });
 
   it.each([

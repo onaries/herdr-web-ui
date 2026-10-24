@@ -12,6 +12,7 @@ import { codexImageParts } from "./codex-images.ts";
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 import type { TranscriptParser } from "./transcript-records.ts";
+import type { AgentInfo } from "../shared/herdr-api.generated.ts";
 import { agentGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { resolveAgent } from "./pane-context.ts";
 
@@ -869,20 +870,31 @@ function answerAnchor(text: string): string | null {
 
 /** Shared app-server TUIs do not hold rollout descriptors. For read-only display,
  * require a unique substantial assistant-message match in this pane's output.
- * Directory recency alone is never evidence: multiple panes can share a cwd. */
-export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[]): string | null {
+ * Directory recency alone is never evidence: multiple panes can share a cwd.
+ * A `scrutinized` candidate (one only a title offered, from another folder) counts only on an
+ * answer no other candidate ever gave, however long ago: one the others gave too is no proof the
+ * pane shows it, and leaves the choice open rather than letting another win by elimination. */
+export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set()): string | null {
   const lastHeader = screen.lastIndexOf("OpenAI Codex (v");
   const display = normalizeDisplay(lastHeader >= 0 ? screen.slice(lastHeader) : screen);
+  const answersOf = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "assistant")
+    .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").map((part) => part.text);
+  const parsed = candidates.map((candidate) => parseCodexTranscript(candidate.text, Infinity));
+  // every answer each candidate gave, as answerAnchor reads one (cut at link targets), read once
+  let shown: string[] | undefined;
+  const givenElsewhere = (index: number, anchor: string) => (shown ??= parsed.map((turns) =>
+    answersOf(turns).flatMap((text) => text.split(/\]\([^)\s]*\)/).map(normalizeDisplay)).join("")))
+    .some((given, at) => at !== index && given.includes(anchor));
   const matching = new Set<string>();
-  for (const candidate of candidates) {
-    const prose = parseCodexTranscript(candidate.text).filter((turn) => turn.role === "assistant")
-      .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").slice(-8);
-    if (prose.some((part) => {
-      const anchor = answerAnchor(part.text);
-      return anchor !== null && display.includes(anchor);
-    })) matching.add(candidate.path);
+  let open = false;
+  for (const [index, candidate] of candidates.entries()) {
+    const anchors = answersOf(parsed[index]!.slice(-100)).slice(-8).map(answerAnchor)
+      .filter((anchor): anchor is string => anchor !== null && display.includes(anchor));
+    if (anchors.length === 0) continue;
+    if (!scrutinized.has(candidate.path) || anchors.some((anchor) => !givenElsewhere(index, anchor))) matching.add(candidate.path);
+    else open = true;
   }
-  return matching.size === 1 ? [...matching][0]! : null;
+  return !open && matching.size === 1 ? [...matching][0]! : null;
 }
 
 /**
@@ -1097,6 +1109,77 @@ export function matchCodexFirstExchange(
   return match.candidate.path;
 }
 
+/** Codex's thread-id title item as 0.163.0 shows it: the whole id, or its first 29 characters and "...". */
+const TITLE_ID = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-(?:[0-9a-f]{12}|[0-9a-f]{5}\.\.\.))$/i;
+
+/**
+ * The thread id, or the start of one, that Codex's opt-in `thread-id` title item ("Current thread
+ * identifier", [tui].terminal_title) shows in a Codex TUI's terminal title as herdr reports it. Codex
+ * joins its items with " | ", the activity spinner first with a space: only an item that is exactly a
+ * whole id or Codex's shortened form counts, and only one such item; an id inside other text is a name.
+ */
+export function titledThread(title: string | null | undefined): string | null {
+  const ids = (title ?? "").split(" | ").flatMap((item, index) =>
+    TITLE_ID.exec((index === 0 ? item.replace(/^[\u2800-\u28ff]\s+/, "") : item).trim())?.[1] ?? []);
+  return ids.length === 1 ? ids[0]!.toLowerCase().replace(/\.\.\.$/, "") : null;
+}
+
+/**
+ * What Codex drops from a terminal title (codex-rs rust-v0.163.0, tui/src/terminal_title.rs,
+ * is_disallowed_terminal_title_char): control characters and invisible or bidi formatting ones.
+ * Whitespace among them is not dropped but turned into a space, as Codex looks at it first.
+ */
+const TITLE_DROPPED = /(?!\p{White_Space})[\p{Cc}\u00AD\u034F\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE00-\uFE0F\uFEFF\uFFF9-\uFFFB\u{1BCA0}-\u{1BCA3}\u{E0100}-\u{E01EF}]/gu;
+
+/** What Codex writes under GNU Screen (STY) for the activity spinner and its dot; any other non-ASCII character is "?". */
+const SCREEN_TITLE: Readonly<Record<string, string>> = {
+  "\u280b": "|", "\u283c": "|", "\u2807": "|", "\u2819": "/", "\u2834": "/", "\u280f": "/",
+  "\u2839": "-", "\u2826": "-", "\u2838": "\\", "\u2827": "\\", "\u25cf": "*",
+};
+
+/**
+ * Text as Codex writes it into a terminal title (sanitize_terminal_title, the same file): those
+ * characters dropped, whitespace runs one space; under GNU Screen, printable ASCII only.
+ */
+export function asCodexTitle(text: string, screen = false): string {
+  const shown = text.replace(TITLE_DROPPED, "").replace(/\p{White_Space}+/gu, " ").trim();
+  return screen ? shown.replace(/[^\x00-\x7f]/gu, (character) => SCREEN_TITLE[character] ?? "?") : shown;
+}
+
+/**
+ * The rollout of the one unarchived thread the store holds under the id (or the start of one) a
+ * Codex pane's title shows (titledThread), while a Codex process runs in the pane. Unlike the
+ * command line, the title follows /new and a resume through the picker, from any folder (#896).
+ * It is only a candidate for the screen to match, never taken on the title alone. The same text in
+ * the pane's folders, or in any stored thread's folder or name, as Codex writes them into the title
+ * (asCodexTitle), may be its project or thread name rather than its thread-id item (a folder named
+ * after a thread): then the title tells nothing.
+ */
+function titledCandidate(agent: Pick<AgentInfo, "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd">, codexProcesses: readonly unknown[], db: Database, home: string): string | null {
+  const id = titledThread(agent.terminal_title_stripped ?? agent.terminal_title);
+  if (id === null || codexProcesses.length === 0) return null;
+  // as Codex writes it, under GNU Screen too (STY), where some of its characters become "-"; without
+  // its spaces, as at its 240-character cap Codex drops a space before the last character it writes
+  const shows = (text: string | null | undefined) => typeof text === "string"
+    && [false, true].some((screen) => asCodexTitle(text, screen).replaceAll(" ", "").toLowerCase().includes(id));
+  if ([agent.cwd, agent.foreground_cwd].some(shows)) return null;
+  const columns = new Set(db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('threads')").all().map((column) => column.name));
+  const named = ["cwd", "name", "title"].filter((column) => columns.has(column));
+  // the text itself without its spaces, or any text with a character outside printable ASCII (all
+  // Codex drops or turns into "-" is), which is then read as Codex would write it; SQLite's text
+  // functions stop at a NUL, so that one is looked for in the bytes
+  const texts = named.length === 0 ? [] : db.query<Record<string, string | null>, string[]>(
+    `SELECT ${named.join(", ")} FROM threads WHERE ${named.map((column) =>
+      `instr(lower(replace(${column}, ' ', '')), ?) > 0 OR ${column} GLOB '*[^ -~]*' OR instr(CAST(${column} AS BLOB), X'00') > 0`).join(" OR ")}`,
+  ).all(...named.map(() => id));
+  if (texts.some((row) => named.some((column) => shows(row[column])))) return null;
+  // ids are lowercase hex and dashes, all before "g": the range is every id that starts with this one
+  const rows = db.query<{ rollout_path: string }, [string, string]>(
+    "SELECT rollout_path FROM threads WHERE id >= ? AND id < ? AND archived = 0 LIMIT 2",
+  ).all(id, `${id}g`);
+  return rows.length === 1 ? codexRolloutPath(rows[0]!.rollout_path, home) : null;
+}
+
 /** `codex resume <thread>`: the thread a TUI was started on, straight from its command line. */
 export function resumedThread(argvs: readonly (readonly string[])[]): string | null {
   for (const argv of argvs) {
@@ -1107,8 +1190,12 @@ export function resumedThread(argvs: readonly (readonly string[])[]): string | n
   return null;
 }
 
-/** The rollout each pane's Codex was last matched to on screen, the processes that were running it, and when. */
-const boundRollouts = new Map<string, { processes: string; path: string; at: number }>();
+/**
+ * The rollout each pane's Codex was last matched to on screen, the processes that were running it, and
+ * when; `titled` when it was the conversation only the title offered, which then holds only while the
+ * title still names it (the picker may have opened another since).
+ */
+const boundRollouts = new Map<string, { processes: string; path: string; at: number; titled?: boolean }>();
 
 /**
  * Threads begun in this cwd since `since` (seconds) that this pane's Codex may have moved
@@ -1554,19 +1641,21 @@ async function openRollouts(paneId: string, home: string): Promise<{ codexProces
  * matches the pane again.
  */
 export async function codexOpenRollout(paneId: string, cwd: string | null | undefined, home = defaultCodexHome()): Promise<string | null> {
-  const session = (await agentGet(paneId)).agent_session;
+  const agent = await agentGet(paneId);
+  const session = agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
-  const { processes, open } = await openRollouts(paneId, home);
+  const { codexProcesses, processes, open } = await openRollouts(paneId, home);
   if (open.size === 1) return [...open][0]!;
   const bound = boundRollouts.get(paneId);
   if (bound === undefined || bound.processes !== processes || processes === "" || !cwd || codexRolloutPath(bound.path, home) === null) return null;
   let db: Database | undefined;
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
+    if (bound.titled === true && titledCandidate(agent, codexProcesses, db, home) !== bound.path) return null;
     return newerThreads(db, cwd, Math.floor(bound.at / 1000), null, paneId, home).length === 0 ? bound.path : null;
   } catch {
-    // no store to ask, as codexTranscriptPath then keeps its binding too
-    return bound.path;
+    // no store to ask, as codexTranscriptPath then keeps its binding too; one the title made cannot be checked
+    return bound.titled === true ? null : bound.path;
   } finally { db?.close(); }
 }
 
@@ -1587,7 +1676,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     const open = new Set(panes.map((pane) => pane.pane_id));
     for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
   }
-  const session = (await agentGet(paneId)).agent_session;
+  const agent = await agentGet(paneId);
+  const session = agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
 
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
@@ -1601,12 +1691,14 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   /** the first message of each newer thread, when the store keeps it */
   const firsts = new Map<string, string>();
   const bound = boundRollouts.get(paneId);
-  const boundHere = bound !== undefined && bound.processes === processes && processes !== "" ? bound : undefined;
+  let boundHere = bound !== undefined && bound.processes === processes && processes !== "" ? bound : undefined;
   let boundNewer: string[] = [];
   /** the rollout of the thread herdr has for this pane */
   let reported: string | null = null;
   /** whether every interactive thread in this cwd is among the candidates */
   let listed = false;
+  /** the conversation only the title offers (titledCandidate), from another folder */
+  let titledElsewhere: string | null = null;
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (session?.value && UUID.test(session.value)) {
@@ -1640,17 +1732,27 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     const rollouts = rows.slice(0, 32).map((row) => codexRolloutPath(row.rollout_path, home));
     // a thread whose rollout is gone or outside the store is still a conversation of this cwd
     listed = rows.length <= 32 && !rollouts.includes(null);
+    // since Codex 0.157 the shared app-server daemon, not the TUI, holds the rollout open, and a resume
+    // through the picker leaves no id on the command line: the title may name a thread of another folder
     paths = [...new Set([...paths, ...(reported !== null ? [reported] : []), ...rollouts.filter((path): path is string => path !== null)])];
+    const titled = titledCandidate(agent, codexProcesses, db, home);
+    if (titled !== null && !paths.includes(titled)) { titledElsewhere = titled; paths.push(titled); }
   } catch { /* Older installations can still resolve their open descriptors. */ }
   finally { db?.close(); }
+  // a binding the title made holds only while the title still names that thread
+  if (boundHere?.titled === true && titledElsewhere !== boundHere.path) {
+    boundRollouts.delete(paneId);
+    boundHere = undefined;
+    boundNewer = [];
+  }
   const screen = paths.length ? await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true }) : null;
   const candidates = paths.flatMap((path) => {
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
-  const matched = screen ? matchCodexTranscript(screen.text, candidates) : null;
+  const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere])) : null;
   if (matched !== null) {
     boundRollouts.delete(paneId);
-    boundRollouts.set(paneId, { processes, path: matched, at: Date.now() });
+    boundRollouts.set(paneId, { processes, path: matched, at: Date.now(), ...(matched === titledElsewhere ? { titled: true } : {}) });
     if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
     return matched;
   }
@@ -1694,5 +1796,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   } catch { return null; }
   const short = matchShortCodexAnswers(screen.text, candidates.map((candidate, index) => ({ ...candidate, cut: cut[index] })));
   if (short !== null) return short;
+  // it weighs this folder's threads only: beside a conversation the title offers from another
+  // folder, the same short exchange there would be left out of the choice
+  if (titledElsewhere !== null) return null;
   return shortThreadFromProcess(paneId, cwd, home, screen.text, codexProcesses, panes);
 }

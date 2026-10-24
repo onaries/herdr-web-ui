@@ -590,6 +590,17 @@
   font-size: var(--fs-2xs);
 }
 
+/* The block's chrome is not code: its language label, "Show all" toggle, copy error and "Too
+   long to highlight" note stay out of a selection dragged across the block, so a copy gives the
+   code alone, as the block's own Copy does. Selection.toString() skips unselectable text. */
+.markdown-code-header,
+.markdown-code-more,
+.markdown-code-error,
+.markdown-code .hl-note {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* With a mouse a code block has no header strip: its language and copy control sit over the
    top right corner and show on hover or focus. Touch keeps the strip, where nothing can
    cover the code. */

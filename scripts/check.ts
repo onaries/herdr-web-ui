@@ -23,7 +23,8 @@
  *
  * A few herdr-backed runs at a time on this PC (CHECK_MAX_RUNS, see maxRuns): contract and browser
  * tests are bound by timing, so too many side by side fail each other. Each run holds a slot, a
- * loopback port it listens on (LOCK_PORT and the ports after it), so a run that died holds nothing.
+ * loopback port it listens on (CHECK_LOCK_PORT, default 41737, and the ports after it), so a run
+ * that died holds nothing.
  * A run that finds every slot taken names the holders and exits, and so does a second run in the
  * same checkout, which would share its dist/ and generated types.
  *
@@ -33,7 +34,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, createWriteStream, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -165,6 +166,9 @@ export function isolate(base: Record<string, string | undefined>, kept: string |
     LANGUAGE: "en_US:en",
     XDG_CONFIG_HOME: config,
     [DISPOSABLE_CONFIG_ENV]: config,
+    // the run's own session (where scripts/test-herdr.ts starts it), so a server started by hand
+    // inside `check run` never falls back to the herdr the user works in
+    HERDR_SOCKET: join(sessions, session, "herdr.sock"),
     XDG_STATE_HOME: join(dir, "state"),
     OVIS_STATE_DIR: join(dir, "web-state"),
     HERDR_TEST_SESSION: session,
@@ -233,10 +237,19 @@ export async function teardown(stops: readonly (() => void | Promise<void>)[], i
   return { failures, retained: null };
 }
 
-/** The first loopback port a herdr-backed run listens on while it runs: slot 1. Slot n is LOCK_PORT + n - 1. */
-export const LOCK_PORT = 41737;
+/** The first loopback port a herdr-backed run listens on while it runs: slot 1. */
+export const DEFAULT_LOCK_PORT = 41737;
+export function lockPort(env: Record<string, string | undefined>): number {
+  const asked = env["CHECK_LOCK_PORT"];
+  if (asked === undefined || asked === "") return DEFAULT_LOCK_PORT;
+  const port = /^\d+$/.test(asked) ? Number(asked) : Number.NaN;
+  if (!(port >= 1024 && port <= MAX_LOCK_PORT)) throw new Error(`CHECK_LOCK_PORT must be a whole number from 1024 to ${MAX_LOCK_PORT}, not "${asked}"`);
+  return port;
+}
 /** The most slots CHECK_MAX_RUNS may ask for; every run looks at all of them for its own checkout. */
 export const MAX_RUNS_LIMIT = 8;
+/** The highest lock base: acquire() listens on the slots and on the admission port above them, up to base + MAX_RUNS_LIMIT. */
+export const MAX_LOCK_PORT = 65535 - MAX_RUNS_LIMIT;
 
 /**
  * How many herdr-backed runs may share this PC: CHECK_MAX_RUNS (1 to 8), else one per eight cores,
@@ -279,6 +292,15 @@ export function waitSeconds(env: Record<string, string | undefined>): number {
   return seconds;
 }
 
+/** The Node major CI's runners use (scripts/self-hosted-runner/Dockerfile's NODE_VERSION; a test keeps them equal). */
+export const CI_NODE_MAJOR = 22;
+export function warnNodeVersionMismatch(version: string | null, warn: (message: string) => void, ciMajor = CI_NODE_MAJOR): void {
+  const major = version?.match(/^v(\d+)\./)?.[1];
+  if (major !== undefined && Number(major) !== ciMajor) {
+    warn(`check: warning: local Node ${version} differs from CI Node ${ciMajor}`);
+  }
+}
+
 /** What a slot's holder says: its pid (NaN when what listens there is no run) and its checkout, when it names one. */
 export type Holder = { heldBy: number; checkout?: string };
 
@@ -306,7 +328,7 @@ function ask(port: number): Promise<Holder | null> {
  * holds it answers a connection with its pid and checkout. Resolves with the release, or with who
  * holds it (NaN when something else listens there).
  */
-export function lock(port = LOCK_PORT, pid = process.pid, checkout?: string): Promise<{ release: () => void } | Holder> {
+export function lock(port = DEFAULT_LOCK_PORT, pid = process.pid, checkout?: string): Promise<{ release: () => void } | Holder> {
   return new Promise((resolve, reject) => {
     const answer = checkout === undefined ? String(pid) : `${pid}\n${checkout}`;
     const server = createServer((socket) => { socket.on("error", () => undefined); socket.end(answer); });
@@ -323,16 +345,81 @@ export function lock(port = LOCK_PORT, pid = process.pid, checkout?: string): Pr
 }
 
 export type SlotHolder = Holder & { port: number };
+type MarkerOwner = { pid: number; checkout: string };
+
+/**
+ * Claims `marker` for this run, or names the live run that holds it. A marker a dead run left, or one
+ * an older check cut short, is taken over only by the run holding `<marker>.reclaim`, which reads the
+ * marker again under it: runs on other CHECK_LOCK_PORT bases are not serialized by this run's
+ * admission port. A marker that is gone is created again, never removed. Both files are written beside
+ * and linked into place, so a reader never sees one half written. A `.reclaim` a dead run left is not
+ * removed: no lock guards that removal, so two runs could each take the other's fresh claim. The run
+ * stops and names the file, to be deleted by hand once no check is running.
+ */
+function claimMarker(marker: string, pid: number, checkout: string, alive: (pid: number) => boolean): MarkerOwner | null {
+  const create = (path: string): boolean => {
+    const draft = `${path}.${pid}.draft`;
+    try {
+      writeFileSync(draft, JSON.stringify({ pid, checkout }), { mode: 0o600 });
+      linkSync(draft, path);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    } finally { rmSync(draft, { force: true }); }
+  };
+  // who a file names: gone, a live run, or a dead run (a write cut short counts as dead). A file that
+  // cannot be read may be a live holder's, so that error is not swallowed
+  const state = (path: string): { gone: true } | { owner: MarkerOwner } | { dead: true } => {
+    let text: string;
+    try { text = readFileSync(path, "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { gone: true };
+      throw error;
+    }
+    let owner: MarkerOwner;
+    try { owner = JSON.parse(text) as MarkerOwner; } catch { return { dead: true }; }
+    if (owner === null || typeof owner !== "object" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error(`invalid check lock owner: ${path}`);
+    return alive(owner.pid) ? { owner } : { dead: true };
+  };
+  const reclaim = `${marker}.reclaim`;
+  // other runs claiming and releasing at the same moment can make one attempt come back empty-handed
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (create(marker)) return null;
+    const found = state(marker);
+    if ("owner" in found) return found.owner;
+    if ("gone" in found) continue;
+    if (!create(reclaim)) {
+      const reclaimer = state(reclaim);
+      if ("owner" in reclaimer) return reclaimer.owner;
+      if ("dead" in reclaimer) throw new Error(`${reclaim} was left by a check that ended while taking over a lock; delete it if no \`bun run check\` is running`);
+      continue;
+    }
+    try {
+      const again = state(marker);
+      if ("owner" in again) return again.owner;
+      if ("gone" in again) continue;
+      // dead under the reclaim: no other run can replace it until it is removed
+      rmSync(marker, { force: true });
+      if (create(marker)) return null;
+      const winner = state(marker);
+      if ("owner" in winner) return winner.owner;
+    } finally {
+      rmSync(reclaim, { force: true });
+    }
+  }
+  throw new Error(`could not claim ${marker}`);
+}
 
 /**
  * Admission is serialized on the port after the slot range. While holding it, claim explicit
  * resources and take a candidate slot, then scan ALL slots again: an earlier holder may have
  * turned over while we asked it. Zero slots claims only resources (fast needs no herdr slot).
- * The admission port also serializes dead-pid marker reclamation, so two reclaimers cannot
- * unlink each other's newly acquired marker. A busy admission port refuses rather than waits.
+ * Taking over a dead run's marker is serialized by claimMarker's reclaim file, not by this port, since
+ * runs on other CHECK_LOCK_PORT bases do not share it. A busy admission port refuses rather than waits.
  */
 export async function acquire(
-  { slots, checkout, base = LOCK_PORT, pid = process.pid, scan = MAX_RUNS_LIMIT, resources = [], reports = [] }: { slots: number; checkout: string; base?: number; pid?: number; scan?: number; resources?: readonly string[]; reports?: readonly string[] },
+  { slots, checkout, base = DEFAULT_LOCK_PORT, pid = process.pid, scan = MAX_RUNS_LIMIT, resources = [], reports = [], checkoutLock }: { slots: number; checkout: string; base?: number; pid?: number; scan?: number; resources?: readonly string[]; reports?: readonly string[]; checkoutLock?: string },
 ): Promise<{ release: () => void; port: number | null } | { refused: "busy" | "same-checkout" | "resource"; holders: SlotHolder[]; resource?: string }> {
   const admissionPort = base + Math.max(slots, scan);
   const admission = await lock(admissionPort, pid, checkout);
@@ -347,38 +434,26 @@ export async function acquire(
   try {
     // A report is written by renaming over its name (check-report.ts), which replaces a symlink
     // there whatever it points to: its lock is the name in its real directory, never the target.
-    const claims = [...resources.map((path) => ({ path, report: false })), ...reports.map((path) => ({ path, report: true }))];
-    for (const { path, report } of claims) {
+    const claims = [...resources.map((path) => ({ path, report: false, checkout: false })), ...reports.map((path) => ({ path, report: true, checkout: false }))];
+    if (slots > 0 && checkoutLock) claims.push({ path: checkoutLock, report: true, checkout: true });
+    for (const { path, report, checkout: checkoutClaim } of claims) {
       const absolute = resolve(path);
       mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
       const isDir = !report && existsSync(absolute) && statSync(absolute).isDirectory();
       const canonical = isDir ? realpathSync(absolute) : join(realpathSync(dirname(absolute)), basename(absolute));
       const marker = isDir ? join(canonical, ".check-lock") : `${canonical}.check-lock`;
       if (markers.includes(marker)) continue;
-      if (existsSync(marker)) {
-        // a marker that cannot be read may be a live holder's: only one that was read and is not
-        // JSON (a write cut short) is taken over
-        const text = readFileSync(marker, "utf8");
-        let owner: { pid: number; checkout: string };
-        try {
-          owner = JSON.parse(text) as { pid: number; checkout: string };
-        } catch {
-          rmSync(marker, { force: true });
-          writeFileSync(marker, JSON.stringify({ pid, checkout }), { flag: "wx", mode: 0o600 });
-          markers.push(marker);
-          continue;
-        }
-        if (owner === null || typeof owner !== "object" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) throw new Error(`invalid check lock owner: ${marker}`);
-        let dead = false;
-        try { process.kill(owner.pid, 0); }
+      const owner = claimMarker(marker, pid, checkout, (ownerPid) => {
+        try { process.kill(ownerPid, 0); return true; }
         catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-          dead = true;
+          return false;
         }
-        if (!dead) return { refused: "resource", resource: canonical, holders: [{ port: admissionPort, heldBy: owner.pid, checkout: owner.checkout }] };
-        rmSync(marker);
+      });
+      if (owner) {
+        if (checkoutClaim) return { refused: "same-checkout", holders: [{ port: admissionPort, heldBy: owner.pid, checkout: owner.checkout }] };
+        return { refused: "resource", resource: canonical, holders: [{ port: admissionPort, heldBy: owner.pid, checkout: owner.checkout }] };
       }
-      writeFileSync(marker, JSON.stringify({ pid, checkout }), { flag: "wx", mode: 0o600 });
       markers.push(marker);
     }
     for (let index = 0; index < slots; index++) {
@@ -483,7 +558,12 @@ export async function main(groupSeams: GroupSeams & {
       } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
       const waitStarted = Date.now();
       let waited = false;
-      const held = await acquireWaiting({ slots, checkout: checkoutIdentity(realpathSync(cwd)), resources, reports }, {
+      let base: number;
+      try { base = lockPort(process.env); } catch (error) { console.error(`check: ${(error as Error).message}`); process.exit(2); }
+      const checkout = checkoutIdentity(realpathSync(cwd));
+      const checkoutLock = needsHerdr ? join(realpathSync(cwd), "node_modules", ".cache", "check", "checkout.lock") : undefined;
+      if (checkoutLock) mkdirSync(dirname(checkoutLock), { recursive: true, mode: 0o700 });
+      const held = await acquireWaiting({ slots, checkout, base, resources, reports, ...(checkoutLock ? { checkoutLock } : {}) }, {
         waitMs: wait * 1000,
         onWait: (holders) => {
           waited = true;
@@ -603,6 +683,7 @@ export async function main(groupSeams: GroupSeams & {
   const nodeVersion = spawnSync("node", ["--version"], { encoding: "utf8", timeout: 5_000 });
   const nodeVersionLine = nodeVersion.stdout?.trim().split(/\r?\n/, 1)[0] ?? "";
   report.toolchain.nodeVersion = nodeVersion.status === 0 && /^v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(nodeVersionLine) ? nodeVersionLine : null;
+  warnNodeVersionMismatch(report.toolchain.nodeVersion, (warning) => console.warn(warning));
   try { sourceStart = sourceIdentity(cwd, sourceExcludes); }
   catch (error) {
     const reason = String((error as Error).message || error).replace(/[\r\n\t]+/g, " ").trim().slice(0, 512) || "source identity could not be captured";

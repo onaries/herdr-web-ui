@@ -11,11 +11,11 @@
  *   bun scripts/film/render.ts loop [--start 2.4]          site/media/chat-loop.{mp4,jpg} + docs/media/chat-loop.gif
  *   bun scripts/film/render.ts check                       acceptance grabs, sizes, seam PSNR, duplicate frames
  *
- * `film` writes _film/renders/film-master.mp4 (CRF 10, animated grain) and site/media/herdr-web-ui-film.mp4
+ * `film` writes _film/renders/film-master.mp4 (CRF 10, animated grain) and site/media/ovis-film.mp4
  * (CRF 19, preset veryslow, no grain, ≤ 20 MB): at a web bitrate x264 freezes per-frame grain into blocky
  * mottle that only refreshes on I-frames (a visible 2 s pulse), and even a static grain field costs ~3 MB
  * that the UI text needs more; the site draws its own static grain over the stage.
- * and the poster site/media/herdr-web-ui-film.jpg (the frame at 34.40 s). A full render takes a few
+ * and the poster site/media/ovis-film.jpg (the frame at 34.40 s). A full render takes a few
  * minutes on 32 cores. Needs /usr/bin/google-chrome (CHROME_PATH) and ffmpeg; the brand mark comes
  * from _film/brand/mark-paper.png, made by the brief's ffmpeg derivation from docs/brand/icon-source.png
  * (`render.ts` runs it when the file is missing).
@@ -41,8 +41,8 @@ import { DURATION, FPS, LOOP_FPS, LOOP_LEN, LOOP_START, frame, loopFrame, report
 
 const CHROME = process.env["CHROME_PATH"] ?? "/usr/bin/google-chrome";
 const RENDERS = join(REPO, "_film/renders");
-const FILM_MP4 = join(REPO, "site/media/herdr-web-ui-film.mp4");
-const FILM_JPG = join(REPO, "site/media/herdr-web-ui-film.jpg");
+const FILM_MP4 = join(REPO, "site/media/ovis-film.mp4");
+const FILM_JPG = join(REPO, "site/media/ovis-film.jpg");
 const LOOP_MP4 = join(REPO, "site/media/chat-loop.mp4");
 const LOOP_JPG = join(REPO, "site/media/chat-loop.jpg");
 const LOOP_GIF = join(REPO, "docs/media/chat-loop.gif");

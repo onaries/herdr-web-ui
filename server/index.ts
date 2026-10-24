@@ -51,6 +51,7 @@ import { bridgeIdentity, registerBridge } from "./bridge.ts";
 import { handleMachineRequest, nonCanonicalPath, slowMachinePath } from "./machine-api.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import { HerdrSidebarConfig, herdrConfigPath } from "./herdr-sidebar.ts";
+import { readHerdrUi } from "./herdr-ui.ts";
 import { closeCodexDaemonSources } from "./codex-daemon.ts";
 import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
@@ -147,7 +148,7 @@ export function createServer(
     machines?: boolean;
     /** Read-only saved profiles from the local herdr client; tests supply their own catalog. */
     herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
-    /** herdr's config.toml, for its sidebar rows (server/herdr-sidebar.ts); unset, where herdr itself reads it. Tests pass a temp file. */
+    /** herdr's config.toml, for its sidebar rows (server/herdr-sidebar.ts) and its copy_on_select (server/herdr-ui.ts); unset, where herdr itself reads it. Tests pass a temp file. */
     herdrConfigPath?: string;
     registerBridge?: boolean;
     /** PLUGIN_ACTION_WAIT_MS in server/plugin-routes.ts; a test shortens it to see a run that outlasts the wait */
@@ -461,6 +462,11 @@ export function createServer(
         } catch (error) {
           return errorResponse(error);
         }
+      }
+
+      if (pathname === "/api/herdr-ui") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        return jsonResponse(readHerdrUi(options.herdrConfigPath), 200, { "cache-control": "no-store" });
       }
 
       if (pathname === "/api/access") {

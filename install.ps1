@@ -208,7 +208,7 @@ function Invoke-GhApi([string]$Arguments) {
     if (-not $gh) { return }
     $job = [IntPtr]::Zero
     try {
-        if (-not ('HerdrWebUi.GhJob' -as [type])) {
+        if (-not ('Ovis.GhJob' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -216,7 +216,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
-namespace HerdrWebUi {
+namespace Ovis {
     public static class GhJob {
         [StructLayout(LayoutKind.Sequential)]
         struct BasicLimits {
@@ -356,7 +356,7 @@ namespace HerdrWebUi {
 }
 '@
         }
-        $job = [HerdrWebUi.GhJob]::Create()
+        $job = [Ovis.GhJob]::Create()
     } catch { $job = [IntPtr]::Zero } # taskkill fallback cannot find an orphan after its launcher exits
     $start = New-Object Diagnostics.ProcessStartInfo
     $ghArguments = "api --hostname github.com --include $Arguments"
@@ -376,9 +376,9 @@ namespace HerdrWebUi {
     $process = $null
     try {
         if ($job -ne [IntPtr]::Zero) {
-            $process = [HerdrWebUi.GhJob]::StartSuspended($start.FileName, $start.Arguments)
-            if (-not [HerdrWebUi.GhJob]::Assign($job, $process.Handle)) {
-                $null = [HerdrWebUi.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero
+            $process = [Ovis.GhJob]::StartSuspended($start.FileName, $start.Arguments)
+            if (-not [Ovis.GhJob]::Assign($job, $process.Handle)) {
+                $null = [Ovis.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero
             }
             $process.Resume()
         } else {
@@ -389,7 +389,7 @@ namespace HerdrWebUi {
         $null = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit(10000) -or -not $said.Wait(2000)) {
             # closing the job kills gh and every process it started, also one whose parent has exited
-            if ($job -ne [IntPtr]::Zero) { $null = [HerdrWebUi.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero }
+            if ($job -ne [IntPtr]::Zero) { $null = [Ovis.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero }
             try { & $env:ComSpec /d /c "taskkill /T /F /PID $($process.Id) >nul 2>&1" } catch { }
             return
         }
@@ -398,7 +398,7 @@ namespace HerdrWebUi {
         @{ code = $process.ExitCode; status = $status }
     } finally {
         # what gh left running after it answered ends here too
-        if ($job -ne [IntPtr]::Zero) { $null = [HerdrWebUi.GhJob]::CloseHandle($job) }
+        if ($job -ne [IntPtr]::Zero) { $null = [Ovis.GhJob]::CloseHandle($job) }
         if ($process) {
             # Dispose leaves the pipe readers open on .NET Framework; a reader still busy with its
             # ReadToEndAsync may refuse to close, and then the job has ended the writers already

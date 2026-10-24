@@ -268,11 +268,16 @@ function write(pc: string, epoch: string, pane: string, id: number, answer?: str
   hydrate();
   const key = seenKey(pc, epoch, pane);
   const held = records.get(key);
+  const storage = storageNow();
   if (held?.stored && (held.id > id || (held.id === id && (held.answer !== undefined || answer === undefined)))) {
-    return { id: held.id, changes: [] };
+    // A subscriber's storage listener keeps `stored` true to what other tabs did. With none, another
+    // tab may have removed the key since it was read: look, and write the record back if so.
+    if (listeningWindow !== null || !storage) return { id: held.id, changes: [] };
+    let current: StoredFinish | null = null;
+    try { current = parse(storage.getItem(key)); } catch { return { id: held.id, changes: [] }; }
+    if (current !== null && current.id >= held.id) return { id: held.id, changes: [] };
   }
 
-  const storage = storageNow();
   let saved: StoredFinish | null = null;
   let read = false;
   try {

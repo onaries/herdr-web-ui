@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
+import type { HerdrUiConfig } from "../shared/protocol.ts";
 import type {} from "./chat-history-fixture.tsx";
 import { parseAgyTranscript } from "../server/agy.ts";
 import { buildXtermSource } from "./build-xterm.ts";
@@ -41,6 +42,8 @@ try {
     if (path === "/ws") return new Response(null, { status: 404 });
     // Product connection failures report only metadata; this fictional server consumes it locally.
     if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
+    // the terminal reads herdr's copy_on_select as it mounts
+    if (path === "/api/herdr-ui") return Response.json({ copy_on_select: true } satisfies HerdrUiConfig, { headers: { "cache-control": "no-store" } });
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
     if (path.endsWith("/pane/omo-tasks")) return Response.json({ tasks: [], runs: [] });
     // a desktop's composer asks whether dictation can work here before it shows the mic

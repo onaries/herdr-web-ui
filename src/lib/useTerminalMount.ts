@@ -1,4 +1,4 @@
-import { useLayoutEffect, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useLayoutEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -31,6 +31,7 @@ import { visibleTerminalInputBounds } from "./terminalViewport.ts";
 import type { PaneSubmitRetention } from "./paneSubmitRetention.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
 import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, inUse, connectedSockets, plainError } from "./paneTerminalShared.ts";
+import { copyOnSelect, herdrUiKnown, loadHerdrUi } from "./herdrUi.ts";
 
 /**
  * Build-time constant: on only in the browser lane's demo build (lib/crashProbe.ts). Read it through
@@ -149,6 +150,16 @@ export interface TerminalMountDeps {
 export function useTerminalMount(deps: TerminalMountDeps): void {
   const { activeRef, barKeyRef, baseFontRef, cachedRef, cachedReleaseRef, cancelLeaveRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, composingRef, compositionCommitPendingRef, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, watchingRef, wheelStateRef } = deps;
 
+    // Where this terminal is: its pane, and whether it is active, presented, shown and not the chat view.
+    // Counted on every commit that changes it: an explicit copy still waiting for herdr's text is
+    // cancelled when the user leaves, even to come back (the copy made on release still finishes).
+    const viewRef = useRef({ key: "", changes: 0 });
+    useLayoutEffect(() => {
+      const key = JSON.stringify([paneRef.current, activeRef.current, presentedRef.current, shownRef.current, chatViewRef.current]);
+      if (key === viewRef.current.key) return;
+      viewRef.current.key = key;
+      viewRef.current.changes++;
+    });
     // Install before the pane layout effect so resets cancel pending input before the next task.
     useLayoutEffect(() => {
       const host = hostRef.current;
@@ -217,13 +228,10 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       // the one attribute Chrome turns into the keyboard's NO_SUGGESTIONS
       term.textarea?.setAttribute("autocomplete", "off");
       const syncInputViewport = (): void => {
-        // only a grid this browser does not size (a mirror, an observer's, a followed one) scrolls its helper
-        // out of view; a grid it drives keeps stock xterm: the browser brings the prompt back into view, and a
-        // long IME preedit at the right edge stays whole
-        if (!fixedGridRef.current && !observeRef.current && !followRef.current) {
-          term.setTextAreaViewportBounds(undefined);
-          return;
-        }
+        // every grid confines xterm's helper textarea and IME preedit to the host's visible box: a grid
+        // this browser drives fits the host's width, so it never pans, yet a long preedit (a phone's voice
+        // typing sends one, growing with every word) made the browser scroll the host sideways to keep the
+        // helper's caret in view, and the whole grid slid off to the left and stayed there
         const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
         if (!screen) return;
         const hostRect = host.getBoundingClientRect();
@@ -416,15 +424,38 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       let disposed = false;
       // Run after xterm's own copy listener, including for Cmd+C and context-menu
       // Copy. Its buffer contains only the visible part of a scrolled selection.
+      /** herdr's text for the last drag while it is on its way, and whether an explicit copy already waits for it */
+      let awaitedText: { generation: number; text: Promise<string>; scrolled: boolean; reserved: boolean } | null = null;
+      // An explicit copy made before herdr's text arrived writes that text when it does, reserved in
+      // this gesture: the copy's own clearing of the selection must not leave the visible rows alone.
+      const reserveAwaitedText = (): void => {
+        const awaited = awaitedText;
+        if (!awaited || awaited.reserved || awaited.generation !== selectionGeneration) return;
+        if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return;
+        awaited.reserved = true;
+        const view = viewRef.current.changes;
+        const left = (): boolean => disposed || viewRef.current.changes !== view;
+        const blob = awaited.text.then((value) => {
+          // left before herdr answered: this copy is cancelled, and the clipboard keeps the rows native copy took
+          if (left()) throw new Error("left the pane");
+          return new Blob([value], { type: "text/plain" });
+        });
+        void navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]).catch(() => {
+          // denied (native copy took the visible rows): a selection still there is copied whole by the next Copy
+          if (!left() && awaited.scrolled) noteClipboard(awaited.generation === selectionGeneration ? "copied the visible part; Copy or Ctrl+C copies the whole selection" : "clipboard write blocked by the browser");
+        });
+      };
       const onCopy = (event: ClipboardEvent): void => {
         if (!term.hasSelection() || copiedText === null || !event.clipboardData) return;
         event.clipboardData.setData("text/plain", copiedText);
         event.preventDefault();
+        reserveAwaitedText();
       };
       host.addEventListener("copy", onCopy);
       const copySelection = (): void => {
         const text = copiedText ?? term.getSelection();
         if (!text) return;
+        reserveAwaitedText();
         // Native copy still works in a user gesture when a Chromium/PWA site has
         // denied the async clipboard permission, or plain HTTP has no clipboard API.
         if (document.execCommand("copy")) {
@@ -589,7 +620,14 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       // scrolled drag from its stale screen anchor
       const onMouseMove = (event: MouseEvent): void => {
         const d = drag;
-        if (!d) return;
+        if (!d) {
+          // With herdr's copy_on_select off the selection is kept to be copied: a buttonless move over
+          // the grid would reach the program as a hover report, and xterm clears its selection on any
+          // input. herdr reports no moves to a pane holding a selection either. Copying on, the first
+          // move clears the copied highlight as herdr's does, so Ctrl+C interrupts again.
+          if (event.buttons === 0 && !copyOnSelect() && term.hasSelection() && term.element?.contains(event.target as Node)) event.stopPropagation();
+          return;
+        }
         const { cell, edge } = cellAt(event);
         // a press that left its cell is a drag, even one that comes back: it is no click (cellAt clamps
         // a pointer beside the grid to the edge column, so leaving sideways counts too)
@@ -646,7 +684,9 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         if (!term.hasSelection()) return;
         const visibleText = term.getSelection();
         copiedText = visibleText;
-        copySelection();
+        // herdr's copy_on_select: letting go copies, or only selects for Ctrl+C or Copy (herdr's text below either way)
+        const autoCopy = copyOnSelect();
+        if (autoCopy) copySelection();
         const generation = selectionGeneration;
         const current = (): boolean => !disposed && paneRef.current === d.pane && generation === selectionGeneration;
         // offered to the chat draft at once with what is on screen; herdr's text and rows replace it below
@@ -667,11 +707,14 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         // herdr's text covers the whole range; the visible text in its place does not, so the quote
         // then names no line range rather than one its text does not hold
         let fromHerdr = true;
-        const text = fetchPaneSelection(d.pane, range[0], range[1], machineId).catch(() => {
+        const herdrText = fetchPaneSelection(d.pane, range[0], range[1], machineId).catch(() => {
           if (current() && d.scrolled) noteClipboard("could not read the selection from herdr");
           fromHerdr = false;
           return visibleText;
-        }).then((value) => {
+        });
+        const awaited = { generation, text: herdrText.then((value) => value || visibleText), scrolled: d.scrolled, reserved: false };
+        awaitedText = awaited;
+        const text = herdrText.then((value) => {
           if (!current()) throw new Error("selection changed");
           // A redraw can remove the range before herdr reads it. Keep what the user
           // actually selected instead of replacing a successful copy with nothing.
@@ -679,6 +722,12 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           setSelectionQuote({ pane: d.pane, text: copiedText, range: fromHerdr && value ? { start: range[0].row, end: range[1].row } : null });
           return copiedText;
         });
+        // arrived: an explicit copy from now on takes copiedText, which holds it
+        void herdrText.then(() => { if (awaitedText === awaited) awaitedText = null; });
+        if (!autoCopy) {
+          void text.catch(() => {});
+          return;
+        }
         // Reserve the write NOW, supplying the server text when it arrives. Never
         // start a fresh clipboard write from a delayed response or an older drag.
         if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
@@ -701,6 +750,10 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       window.addEventListener("mousemove", onMouseMove, { capture: true });
       window.addEventListener("blur", onBlur);
       window.addEventListener("mouseup", onMouseUp);
+      // herdr's copy_on_select, read again on each mount; a failed read is tried again once online
+      void loadHerdrUi();
+      const onOnline = (): void => { if (!herdrUiKnown()) void loadHerdrUi(); };
+      window.addEventListener("online", onOnline);
 
       // Output reaches xterm one frame at a time, so the frame being parsed is known: a frame the
       // bridge marked `replay` (the screen from before this attach) is presentation history, and a
@@ -827,8 +880,14 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       let outputLifetime = 0;
       let outputRecovering = false;
       let deferredAttach = false;
+      // set by a disconnect: the first frame after the reconnect tries a preference that could not be read again
+      let rereadHerdrUi = false;
       const off = session.on((message, sent) => {
         onServerMessageRef.current?.(message);
+        if (rereadHerdrUi) {
+          rereadHerdrUi = false;
+          if (!herdrUiKnown()) void loadHerdrUi();
+        }
         pendingScopeRef.current = session.scope;
         pendingEpochRef.current = session.epoch;
         // Every pane-addressed frame, errors included, belongs only to that pane's renderer.
@@ -1039,6 +1098,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         setConversationPushes(socket.conversationPushes());
       });
       const offDisconnect = session.onDisconnect(() => {
+        rereadHerdrUi = true;
         clearModifiers();
         pendingScopeRef.current = session.scope;
         pendingEpochRef.current = session.epoch;
@@ -1750,6 +1810,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         window.removeEventListener("mousemove", onMouseMove, { capture: true });
         window.removeEventListener("blur", onBlur);
         window.removeEventListener("mouseup", onMouseUp);
+        window.removeEventListener("online", onOnline);
         host.removeEventListener("copy", onCopy);
         stopEdge();
         selectionChange.dispose();

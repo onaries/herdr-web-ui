@@ -876,6 +876,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   A lone pane beside such a `⋯` draws no second ellipsis (its actions are in the tab's menu), on a
   desktop as on touch. The pane's own context menu carries pane actions; it opens at the pointer
   without changing which pane is focused. The pane header's ellipsis opens the same menu on touch.
+  A lone tab with no row (a phone's screen made short by its keyboard) keeps that ellipsis at the
+  pane's top right, below a glass header and never under the header's own `⋯`, as an iPhone
+  navigation bar (and the Claude iOS app) keeps one overflow button in the bar and the content's
+  controls below it. Wherever that ellipsis shows to a finger, the pane's banners (View only and the
+  rest) start below it, so none covers it.
 
 ### Badge (`.badge`)
 - Agent states read **READY**, **RUN**, **INPUT**, **DONE**; unknown reads **—**. **BG** is a pane
@@ -2185,7 +2190,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   still open in the terminal**): the reader may have opened another screen there. A listed command
   whose screen had not opened when the reader left (gjc's `/sessions` loads for seconds behind its
   empty box) leaves a silent guard that the first frame showing its screen turns into the notice,
-  and that a turn of the agent drops. The notice goes on the first whole frame that shows the row
+  and that a turn of the agent drops. For Claude Code and Codex, whose recognizers read a missing
+  row as a screen over it, a screen opened any other way (Codex's transcript search, Claude's
+  /config, a peek's screen the Terminal lens kept) gets the unnamed notice too, once the chat shows
+  it with the agent at rest and the recognizer has read the pane's empty row before; its **Show
+  terminal** opens the Terminal lens, a dismissal holds until the row is drawn again, and a turn
+  drops it. The notice goes on the first whole frame that shows the row
   back, with another pane, agent, terminal or session, or when dismissed. No key is sent to close
   anything. Claude Code has a recognizer for this (its box between the screen's last two rules,
   as `server/prompt.ts` reads it) while its own return stays on its record. It follows the

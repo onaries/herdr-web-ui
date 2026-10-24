@@ -151,7 +151,11 @@ queued message's **Send now** are held the same way, without it. A command on th
 screen had not opened yet when the reader left (gjc's `/sessions` keeps its empty box for 10 to
 15 seconds while it loads) gets the notice once a frame shows the screen, unless the agent starts
 a turn first. The notice goes as soon as a frame shows the row back, or with another pane, agent
-or session; a peek left for another pane sets none. Messages the PC delivers by itself at the end
+or session; a peek left for another pane sets none. For Claude Code and Codex, a screen opened
+over the input row some other way (Codex's transcript search, Claude Code's `/config`, a peek's
+screen kept in the Terminal lens) gets the same notice, **A screen is still open in the
+terminal**, once Chat shows it with the agent at rest; its **Show terminal** opens the Terminal
+lens, and dismissing it holds until the row is back. Messages the PC delivers by itself at the end
 of a turn are not held. Nothing is typed to close the screen.
 
 Rows marked `agent-hidden` mirror the agent's own menu, which hides them (Claude Code's

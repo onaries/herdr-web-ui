@@ -76,8 +76,11 @@ setInterval(() => {}, 1000);
       const message = JSON.parse(String(payload));
       if (message.type === "input") inputs.push(message.text);
     }));
+    // letting go copies once herdr's copy_on_select is known: on here, as herdr's default with no config
+    const preference = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/herdr-ui");
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await page.locator(".pane-terminal .xterm-rows").waitFor();
+    assert.deepEqual(await (await preference).json(), { copy_on_select: true }, "no herdr config: herdr's default copies on release");
     await paneSendText(pane, `clear; node ${script}\r`);
     const first = page.locator(".pane-terminal .xterm-rows > div", { hasText: "DRAGCOPY-first-line" });
     await first.waitFor();

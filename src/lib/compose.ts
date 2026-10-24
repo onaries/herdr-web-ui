@@ -42,7 +42,9 @@ export function submitNotTyped(code: string): boolean {
     // refused by this view while the terminal holds input (PaneTerminal), before anything was sent
     "held_input",
     // the connection dropped before the request's frame left the browser (HerdrSocket)
-    "not_transmitted"].includes(code);
+    "not_transmitted",
+    // the wait for the bridge's snapshot ended before it said what the bridge takes: nothing left (HerdrSocket)
+    "capabilities_unknown"].includes(code);
 }
 
 /**
@@ -91,6 +93,7 @@ export function submitNote(code: string, message: string, agent?: string | null)
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");
   if (code === "not_transmitted") return t("Not sent: the connection dropped before this message left. Send it again.");
+  if (code === "capabilities_unknown") return t("Not sent: this PC has not said yet what it supports. Send it again.");
   if (code === "first_message_unattended") return t("Not sent: the page that started this agent left before it was ready. Send it now or discard it.");
   if (code === "disconnected" || code === "timeout") return t("Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.");
   return t("Not sent: {message}", { message });

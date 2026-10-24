@@ -68,8 +68,11 @@ edit to `telemetry/worker.ts` or `shared/telemetry.ts` counts, comments included
 changes nothing is sometimes the price.
 
 The Worker answers at `https://herdr-web-ui-telemetry.<account>.workers.dev/v1/events`, and
-`TELEMETRY_URL` in `server/telemetry.ts` must name that address. `HERDR_WEB_TELEMETRY_URL` does not
+`TELEMETRY_URL` in `server/telemetry.ts` must name that address. `OVIS_TELEMETRY_URL` does not
 exist on purpose: an install cannot be pointed elsewhere by its environment.
+
+The Worker and its D1 database keep the `herdr-web-ui-telemetry` name they had before Ovis took its
+name: installs already send to that address, and a D1 database cannot be renamed.
 
 ## Reading the counts
 

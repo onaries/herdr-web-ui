@@ -352,10 +352,13 @@ it("starts the GJC executable found on the server PATH by absolute path", async 
     const created = await workspaceCreate({ cwd: home, label: "ovis-test-gjc-start" }, socketPath);
     workspaces.push(created.workspace.workspace_id);
     await startShellAgent("gjc", created.root_pane.pane_id, [sessions]);
-    const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>(
-      "pane.process_info", { pane_id: created.root_pane.pane_id }, socketPath,
-    );
-    expect(info.process_info?.foreground_processes?.find((candidate) => isGjcProcess(candidate.argv ?? []))?.argv?.slice(-1)).toEqual([sessions]);
+    // read until herdr shows it: one read right after the start can still miss the process it reported in front (#1462)
+    const gjcArgv = (info: { process_info?: { foreground_processes?: { argv?: string[] }[] } }) =>
+      info.process_info?.foreground_processes?.find((candidate) => isGjcProcess(candidate.argv ?? []))?.argv;
+    const info = await until(Date.now() + 10_000,
+      () => herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>("pane.process_info", { pane_id: created.root_pane.pane_id }, socketPath),
+      (read) => gjcArgv(read)?.at(-1) === sessions, "the started gjc, given the sessions directory, in the pane's foreground");
+    expect(gjcArgv(info)?.slice(-1)).toEqual([sessions]);
 
     process.env["PATH"] = "/nonexistent";
     const missing = await workspaceCreate({ cwd: home, label: "ovis-test-gjc-missing" }, socketPath);

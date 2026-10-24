@@ -185,6 +185,8 @@ describe("names from before Ovis", () => {
     "server/auth.test.ts": "tests the old cookies",
     "server/pty/pty-host.mjs": "keeps the token from the attach under either name",
     "server/pty/session.ts": "keeps the token from the sidecar under either name",
+    "crates/pty-sidecar/src/pty.rs": "keeps the token from the attach under either name, as pty-host.mjs does",
+    "server/pty/host.test.ts": "tests that both PTY hosts keep the token from the command under either name",
     "server/remote-host.ts": "a remote bundle published before the rename reads the old name",
     "install.sh": "reads the old settings of an earlier install",
     "install.ps1": "reads the old settings of an earlier install",

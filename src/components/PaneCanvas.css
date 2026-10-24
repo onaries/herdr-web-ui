@@ -39,8 +39,9 @@
 .pane-frame-menu { flex: none; width: var(--control-h); height: var(--control-h); pointer-events: auto; }
 .pane-frame-body { flex: 1; min-width: 0; min-height: 0; position: relative; }
 /* A lone pane's head floats over the terminal's top right corner, where a full-screen program may
-   draw a control of its own (Claude Code's diff panel close): only its ellipsis takes a press */
-/* The phone's glass header overlaps this canvas; keep the pane's menu below it. */
+   draw a control of its own (Claude Code's diff panel close): only its ellipsis takes a press. Under
+   a phone's glass header (--header-over, styles.css) it starts below the bar, as the banners do,
+   never under the header's own ellipsis */
 .pane-frame.is-single > .pane-frame-head { position: absolute; right: 0; top: var(--header-over, 0px); z-index: var(--z-banner); background: transparent; pointer-events: none; }
 .pane-frame.is-single .pane-frame-title { display: none; }
 /* A mouse uses right-click; keyboard users reveal the ellipsis by tabbing to it. A screen that
@@ -53,6 +54,13 @@
 .pane-frame.is-single:has(.find-bar) > .pane-frame-head { display: none; }
 /* the tab strip's touch menu carries the open pane's actions: a lone pane draws no second ellipsis */
 .pane-column:has(.tab-strip-menu) .pane-frame.is-single > .pane-frame-head { display: none; }
+/* Where that ellipsis shows (a finger's screen, no tab row, no find bar), the pane's banner column
+   (PaneTerminal.css) starts below it: a banner such as View only never covers the menu. */
+@media (hover: none), (pointer: coarse), (pointer: none), (any-pointer: coarse) {
+  .pane-column:not(:has(.tab-strip-menu)) .pane-frame.is-single:not(:has(.find-bar)) > .pane-frame-body .terminal-banners {
+    top: calc(var(--header-over, 0px) + var(--touch-target) + var(--space-1));
+  }
+}
 .pane-divider {
   position: absolute;
   z-index: var(--z-banner);

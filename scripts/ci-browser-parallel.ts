@@ -15,7 +15,7 @@
  */
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const repo = join(import.meta.dir, "..");
@@ -55,7 +55,7 @@ interface ScriptResult {
  * Either is null when the log does not hold it.
  */
 export function failureSite(log: string): { site: string | null; message: string | null } {
-  const lines = log.split(/\r?\n/);
+  const lines = log.split(/\r?\n/).map((line) => line.replace(/^\[[^\]]+\] /, ""));
   const index = lines.findIndex((line) => /^\s*[A-Za-z_$][\w.$]*Error:/.test(line));
   if (index < 0) return { site: null, message: null };
   const message = lines[index]?.trim() ?? null;
@@ -107,26 +107,38 @@ async function buildDemo(dir: string): Promise<void> {
   console.log(`[setup] Demo build completed in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
+async function timestampLog(stream: ReadableStream<Uint8Array>, log: string): Promise<void> {
+  let partial = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of stream) {
+    const lines = (partial + decoder.decode(chunk, { stream: true })).split("\n");
+    partial = lines.pop() ?? "";
+    for (const line of lines) appendFileSync(log, `[${new Date().toISOString()}] ${line}\n`);
+  }
+  partial += decoder.decode();
+  if (partial) appendFileSync(log, `[${new Date().toISOString()}] ${partial}\n`);
+}
+
 async function runScript(script: string, env: Record<string, string>, log: string): Promise<ScriptResult> {
   const started = Date.now();
-  const fd = openSync(log, "w");
-  try {
-    const child = Bun.spawn(["bun", script], {
-      cwd: repo,
-      env: { ...process.env, ...env },
-      stdin: "ignore",
-      stdout: fd,
-      stderr: fd,
-    });
-    // A hung script shows up as a repeated line instead of silence.
-    const heartbeat = setInterval(() => {
-      console.log(`[running] ${script} (${Math.round((Date.now() - started) / 1000)}s, log ${log})`);
-    }, HEARTBEAT_MS);
-    const code = await child.exited.finally(() => clearInterval(heartbeat));
-    return { script, seconds: (Date.now() - started) / 1000, code, log };
-  } finally {
-    closeSync(fd);
-  }
+  writeFileSync(log, "");
+  const child = Bun.spawn(["bun", script], {
+    cwd: repo,
+    env: { ...process.env, ...env },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // A hung script shows up as a repeated line instead of silence.
+  const heartbeat = setInterval(() => {
+    console.log(`[running] ${script} (${Math.round((Date.now() - started) / 1000)}s, log ${log})`);
+  }, HEARTBEAT_MS);
+  const [code] = await Promise.all([
+    child.exited.finally(() => clearInterval(heartbeat)),
+    timestampLog(child.stdout, log),
+    timestampLog(child.stderr, log),
+  ]);
+  return { script, seconds: (Date.now() - started) / 1000, code, log };
 }
 
 async function main(): Promise<void> {

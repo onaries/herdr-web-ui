@@ -76,18 +76,9 @@ export class ConversationFinishEvidence {
         const previous = completedProof(known.answer), current = completedProof(answer);
         if (!previous || !current || current.identity === previous.identity || current.time <= previous.time) return false;
       }
-      if (id > known.id + 1) {
-        // Intermediate finishes were not observed here. This completion could belong to
-        // one of them; establish a baseline and wait for a different answer.
-        this.latest.set(scope, { id: id - 1, answer });
-        return false;
-      }
-      if (id > known.id && known.answer === undefined) {
-        this.latest.set(scope, { id: known.id, answer });
-        if (this.latest.size > 256) this.latest.delete(this.latest.keys().next().value!);
-        return false;
-      }
     }
+    // The transcript ends in a final answer even when finishes were skipped or no answer
+    // was saved. Bind it to this finish, not an earlier baseline that may never advance.
     // A 304 for another presentation key is not a new proof. A first independently read
     // completion establishes the baseline; subsequent IDs must advance that baseline.
     if (conversation === before) return false;

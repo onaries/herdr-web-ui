@@ -274,6 +274,7 @@ jobs:
         with:
           name: browser-main-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            .ci/report.json
             .ci/browser-logs/**
             .ci/browser-evidence/**/*.png
             .ci/browser-evidence/**/*.json
@@ -335,6 +336,7 @@ jobs:
         with:
           name: browser-other-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            .ci/report.json
             .ci/browser-logs/**
             .ci/browser-evidence/**/*.png
             .ci/browser-evidence/**/*.json

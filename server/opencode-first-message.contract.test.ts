@@ -6,13 +6,15 @@
  * session the service does not hold (a brand-new OpenCode 2 before its first prompt, or an OpenCode 1
  * TUI) has no version the bridge can vouch for, so its '@' is read as v1's file mention: plain text,
  * never recorded as a skill. The service is the server's own (createServer's openCodeStateDir), and an
- * opencode.json that is a FIFO holds neither the scan nor the send.
+ * opencode.json that is a FIFO holds neither the scan nor the send. A chat message sent at once types its
+ * skill the same way, and stops at the sender's own refusal.
  */
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
+import * as herdr from "./herdr/client.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import { closeOpenCodeNative } from "./opencode-native.ts";
 import { forgetOpenCodeService, openCodeServiceOptions } from "./opencode-service.ts";
@@ -74,8 +76,8 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** A new OpenCode pane (the stand-in), its session reported or not, and the create route's first message for it, typed when it is first ready. */
-async function firstMessage(label: string, session: string | null, cwd = root) {
+/** A new OpenCode pane (the stand-in), its session reported or not, in `state`. */
+async function openCodePane(label: string, session: string | null, cwd: string, state: "working" | "idle"): Promise<string> {
   const created = await workspaceCreate({ cwd, label: `ovis-test-opencode-first-${label}` });
   workspaces.push(created.workspace.workspace_id);
   const pane = created.root_pane.pane_id;
@@ -85,9 +87,12 @@ async function firstMessage(label: string, session: string | null, cwd = root) {
     await Bun.sleep(50);
   }
   if (session) await herdrRpc("pane.report_agent_session", { pane_id: pane, source: "herdr:opencode", agent: "opencode", agent_session_id: session, session_start_source: "select" });
-  const reported = session ? { agent_session_id: session } : {};
-  await herdrRpc("pane.report_agent", { pane_id: pane, source: "herdr:opencode", agent: "opencode", ...reported, state: "working" });
-  // the page's connection, open before its request: the one that types the first message on its own
+  await herdrRpc("pane.report_agent", { pane_id: pane, source: "herdr:opencode", agent: "opencode", ...(session ? { agent_session_id: session } : {}), state });
+  return pane;
+}
+
+/** A page's connection to the server, with `frame`: the first frame `match` takes, received already or still to come. */
+function connect(label: string) {
   const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
   const frames: any[] = [];
   const waiters = new Set<{ match: (frame: any) => boolean; done: (frame: any) => void }>();
@@ -106,6 +111,15 @@ async function firstMessage(label: string, session: string | null, cwd = root) {
       waiters.add(waiter);
     });
   };
+  return { socket, frame };
+}
+
+/** A new OpenCode pane, its session reported or not, and the create route's first message for it, typed when it is first ready. */
+async function firstMessage(label: string, session: string | null, cwd = root) {
+  const pane = await openCodePane(label, session, cwd, "working");
+  const reported = session ? { agent_session_id: session } : {};
+  // the page's connection, open before its request: the one that types the first message on its own
+  const { socket, frame } = connect(label);
   const { connection } = await frame((item) => item.type === "snapshot", "no snapshot");
   const message = await server.queueFirstMessage(pane, "@effect apply it", "opencode", connection);
   socket.send(JSON.stringify({ type: "attach", pane_id: pane, cols: 80, rows: 24 }));
@@ -130,6 +144,35 @@ it("attaches the skill through OpenCode's autocomplete when its service is verif
   expect(sent.outcomes).toHaveLength(1);
   expect(sent.outcomes[0]).toMatchObject({ text: "@effect apply it" });
   expect(sent.outcomes[0]!.state).not.toBe("terminal-required");
+}, 60_000);
+
+it("answers a sender that switched to observe while its @skill was on its way with its own refusal, typing nothing", async () => {
+  const label = "observe";
+  const pane = await openCodePane(label, SESSION, root, "idle");
+  const { socket, frame } = connect(label);
+  await frame((item) => item.type === "snapshot", "no snapshot");
+  socket.send(JSON.stringify({ type: "attach", pane_id: pane, cols: 80, rows: 24 }));
+  await frame((item) => item.type === "input-ready" && item.pane_id === pane, "the pane's input never became ready", 10_000);
+  const originalSend = herdr.paneSendText;
+  const written: string[] = [];
+  // every check before the first key has passed; the sender switches to watching before herdr is written to
+  const send = spyOn(herdr, "paneSendText").mockImplementation(async (paneId, text, socketPath, guard) => {
+    if (paneId === pane && text === "@effect") {
+      socket.send(JSON.stringify({ type: "role", mode: "observe" }));
+      await frame((item) => item.type === "role-ack" && item.mode === "observe", "the role switch was not acknowledged");
+    }
+    await originalSend(paneId, text, socketPath, guard);
+    written.push(text);
+  });
+  try {
+    socket.send(JSON.stringify({ type: "submit", id: 1, pane_id: pane, text: "@effect apply it", payload: "@effect apply it" }));
+    expect(await frame((item) => item.type === "submit-result" && item.id === 1, "no submit result")).toMatchObject({ ok: false, code: "read_only" });
+    expect(written).toEqual([]);
+    expect(typed(label)).toBe("");
+  } finally {
+    send.mockRestore();
+    socket.close();
+  }
 }, 60_000);
 
 it("sends a brand-new OpenCode 2's first message once as plain text, its '@' not claimed as a skill before a session vouches for the pane's version", async () => {

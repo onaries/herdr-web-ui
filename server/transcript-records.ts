@@ -112,7 +112,11 @@ export function piImageBlock(message: Row, toolCallId: string, index: number): {
 /** Enough turns for a conversation. */
 export const MAX_TURNS = 100;
 
-/** GJC stores internal IRC deliveries as agent-attributed custom messages. */
+/**
+ * Internal IRC deliveries between panes, stored as custom messages. gjc 0.18.12 and omp 18.8.7 write
+ * each with `attribution: "agent"`; an older gjc build wrote no attribution, and gjc's own IRC reader
+ * takes every record of these types as a delivery. Only one a user is credited with stays a notice.
+ */
 const GJC_IRC_MESSAGES = new Set(["irc:incoming", "irc:autoreply", "irc:relay"]);
 
 /**
@@ -123,7 +127,7 @@ const GJC_IRC_MESSAGES = new Set(["irc:incoming", "irc:autoreply", "irc:relay"])
 export function piNotice(value: unknown): Extract<ConversationPart, { kind: "notice" }> | null {
   const entry = record(value);
   if (entry.type !== "custom_message" || entry.display === false || typeof entry.content !== "string") return null;
-  if (entry.attribution === "agent" && typeof entry.customType === "string" && GJC_IRC_MESSAGES.has(entry.customType)) return null;
+  if ((entry.attribution === "agent" || entry.attribution === undefined) && typeof entry.customType === "string" && GJC_IRC_MESSAGES.has(entry.customType)) return null;
   const text = entry.content.trim().replace(/^<system-notice>\s*/, "").replace(/\s*<\/system-notice>$/, "").trim();
   if (text.length === 0) return null;
   return typeof entry.customType === "string" ? { kind: "notice", text, source: entry.customType } : { kind: "notice", text };

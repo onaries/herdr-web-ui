@@ -75,7 +75,7 @@ bun run check run --build bun scripts/ui-regression.ts                     # bui
 ```
 
 `fast` needs no herdr. The other modes run on a herdr of their own: its config, its plugin state
-and the web UI's state live in a directory made for the run (`XDG_CONFIG_HOME`, `XDG_STATE_HOME`,
+and Ovis's state live in a directory made for the run (`XDG_CONFIG_HOME`, `XDG_STATE_HOME`,
 `OVIS_STATE_DIR`), under a session name made for the run. Nothing reads your herdr config,
 so no plugin installed there starts with the test servers, and two runs on one PC share no
 socket and no file. The run stops its herdr servers and removes the directory when it ends, also
@@ -429,7 +429,7 @@ comes from `scripts/film/render.ts loop`.
 
 ## The film
 
-The film (`site/media/herdr-web-ui-film.mp4`, 56 s) and chat loop (`site/media/chat-loop.mp4`, with the README's
+The film (`site/media/ovis-film.mp4`, 56 s) and chat loop (`site/media/chat-loop.mp4`, with the README's
 `docs/media/chat-loop.gif`) are the real client on the demo's fixtures, recorded and composited by `scripts/film/`.
 Raw footage and renders go to `_film/` (gitignored); only the outputs under `docs/media/` are committed.
 herdrweb.dev no longer publishes `site/media/` (it forwards to ovis.sh), so the film and loop MP4s wait for a
@@ -439,7 +439,7 @@ home on ovis.sh. Needs ffmpeg and Chrome at `/usr/bin/google-chrome` (`CHROME_PA
 bun run build:site                              # the demo the takes are recorded from
 bun scripts/film/capture.ts [stills] [rec] [stepped] [R10 R11 … | still names]   # _film/footage/
 bun scripts/readme-media/banner.ts              # banner, look-*.png from the stills
-bun scripts/film/render.ts film                 # site/media/herdr-web-ui-film.{mp4,jpg}
+bun scripts/film/render.ts film                 # site/media/ovis-film.{mp4,jpg}
 bun scripts/film/render.ts loop                 # site/media/chat-loop.{mp4,jpg}, docs/media/chat-loop.gif
 bun scripts/film/render.ts check                # acceptance frame grabs, sizes, loop seam
 ```

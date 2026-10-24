@@ -120,6 +120,9 @@ class Socket {
 
 const paste = (text: string) => `\u001b[200~${text}\u001b[201~`;
 
+// #1174: typed raw, a long line reached Claude Code in pty-sized reads, and it kept only the tail
+const longLine = Array.from({ length: 24 }, (_, i) => `This is sentence number ${i + 1} of a long dictated message.`).join(" ");
+
 /** A promise the test settles itself: it orders a server's step against the test's own. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -872,7 +875,7 @@ describe("WebSocket submit", () => {
     try {
       socket.send({ type: "submit", id: 29, pane_id: agent.pane, text: "chat message", payload: "chat message" });
       expect(await socket.result(29)).toMatchObject({ ok: true, pane_id: agent.pane });
-      expect(prompt).toHaveBeenCalledWith(agent.pane, "chat message");
+      expect(prompt).toHaveBeenCalledWith(agent.pane, "chat message", undefined, expect.any(Function));
       expect(sendText).not.toHaveBeenCalled();
       expect(sendKeys).not.toHaveBeenCalled();
     } finally {
@@ -924,7 +927,7 @@ describe("WebSocket submit", () => {
     try {
       socket.send({ type: "submit", id: 32, pane_id: hermes.pane, text: "PINEAPPLE", payload: "PINEAPPLE" });
       expect(await socket.result(32)).toMatchObject({ ok: true, pane_id: hermes.pane });
-      expect(prompt).toHaveBeenCalledWith(hermes.pane, "PINEAPPLE");
+      expect(prompt).toHaveBeenCalledWith(hermes.pane, "PINEAPPLE", undefined, expect.any(Function));
       expect(sendText).not.toHaveBeenCalled();
     } finally {
       sendText.mockRestore();
@@ -949,7 +952,7 @@ describe("WebSocket submit", () => {
       expect(prompt).not.toHaveBeenCalled();
       socket.send({ type: "submit", id: 91, pane_id: agent.pane, text: "chat message", payload: "chat message", send_anyway: true });
       expect(await socket.result(91)).toMatchObject({ ok: true, pane_id: agent.pane });
-      expect(prompt).toHaveBeenCalledWith(agent.pane, "chat message");
+      expect(prompt).toHaveBeenCalledWith(agent.pane, "chat message", undefined, expect.any(Function));
       expect(sendText).not.toHaveBeenCalled();
       expect(sendKeys).not.toHaveBeenCalled();
       // the refusal is used up: a second send anyway is refused, typing nothing
@@ -1125,7 +1128,7 @@ describe("WebSocket submit", () => {
       socket.send({ type: "submit", id: 67, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", clear_draft: "ㅔ" });
       expect(await socket.result(67)).toMatchObject({ ok: true, pane_id: agent.pane });
       expect(sendKeys).toHaveBeenCalledWith(agent.pane, ["ctrl+k", "ctrl+u"], undefined, expect.any(Function));
-      expect(prompt).toHaveBeenCalledWith(agent.pane, "이 스킬 pr 올려줘");
+      expect(prompt).toHaveBeenCalledWith(agent.pane, "이 스킬 pr 올려줘", undefined, expect.any(Function));
       expect(order).toEqual(["ctrl+k ctrl+u", "prompt"]);
       expect(sendText).not.toHaveBeenCalled();
     } finally {
@@ -1328,11 +1331,48 @@ describe("WebSocket submit", () => {
       expect(await socket.result(41)).toMatchObject({ ok: true });
       // each Esc asks the sender's right again right before herdr is written to
       expect(sendKeys.mock.calls).toEqual([[agent.pane, ["esc"], undefined, expect.any(Function)], [agent.pane, ["esc"], undefined, expect.any(Function)]]);
-      expect(prompt).toHaveBeenLastCalledWith(agent.pane, "second message");
+      expect(prompt).toHaveBeenLastCalledWith(agent.pane, "second message", undefined, expect.any(Function));
       expect(sendText).not.toHaveBeenCalled();
     } finally {
       sendKeys.mockRestore();
       sendText.mockRestore();
+      prompt.mockRestore();
+      scroll.mockRestore();
+      read.mockRestore();
+      socket.close();
+    }
+  }, 30_000);
+
+  it("answers a sender that switched to observe while an Esc for Claude's restored copy was on its way with its own refusal", async () => {
+    const socket = await Socket.connect();
+    let shown = claudeInputScreen("\u276f\u00a0");
+    const originalRead = herdr.paneRead;
+    const read = spyOn(herdr, "paneRead").mockImplementation(async (options, socketPath) => {
+      const result = await originalRead(options, socketPath);
+      return options.paneId === agent.pane ? { ...result, text: shown } : result;
+    });
+    const scroll = spyOn(herdr, "paneScrollInfo").mockResolvedValue(null);
+    const prompt = spyOn(herdr, "agentPrompt").mockResolvedValue(undefined);
+    const written: string[][] = [];
+    // herdr is reached for the first Esc after the sender switched to watching; herdrRpc asks the guard then
+    const sendKeys = spyOn(herdr, "paneSendKeys").mockImplementation(async (paneId, keys, _socketPath, guard) => {
+      if (paneId !== agent.pane || keys?.[0] !== "esc") return;
+      socket.send({ type: "role", mode: "observe" });
+      await socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+      if (guard && !guard()) throw new herdr.HerdrError("cancelled", "herdr pane.send_keys was not sent");
+      written.push(keys);
+    });
+    try {
+      socket.send({ type: "submit", id: 42, pane_id: agent.pane, text: "chat message", payload: "chat message" });
+      expect(await socket.result(42)).toMatchObject({ ok: true });
+      // as on a cancel right after it: Claude removes the turn and puts the text back, typed
+      shown = claudeInputScreen("\u276f chat message");
+      socket.send({ type: "submit", id: 43, pane_id: agent.pane, text: "second message", payload: "second message" });
+      expect(await socket.result(43)).toMatchObject({ ok: false, code: "read_only" });
+      expect(written).toEqual([]);
+      expect(prompt).not.toHaveBeenCalledWith(agent.pane, "second message", undefined, expect.any(Function));
+    } finally {
+      sendKeys.mockRestore();
       prompt.mockRestore();
       scroll.mockRestore();
       read.mockRestore();
@@ -1481,7 +1521,7 @@ describe("WebSocket submit", () => {
     try {
       socket.send({ type: "submit", id: 30, pane_id: codex.pane, text: "follow up", payload: "unused" });
       expect(await socket.result(30)).toMatchObject({ ok: true, pane_id: codex.pane });
-      expect(prompt).toHaveBeenCalledWith(codex.pane, "follow up");
+      expect(prompt).toHaveBeenCalledWith(codex.pane, "follow up", undefined, expect.any(Function));
       expect(read).not.toHaveBeenCalled();
     } finally {
       prompt.mockRestore();
@@ -1533,6 +1573,34 @@ describe("WebSocket submit", () => {
       // the pane's recorder stamps each read when it gets it: a text read that comes a moment late
       // shortens the gap it sees (119 on CI), so this takes the tolerance the shell case has
       if (enter > 0) expect(read[enter]!.at - read[enter - 1]!.at).toBeGreaterThanOrEqual(SUBMIT_DELAY_MS - 20);
+    } finally {
+      await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
+      socket.close();
+    }
+  }, 30_000);
+
+  it("hands an agent one long line from the terminal's input line through agent.prompt, pasted whole", async () => {
+    const socket = await Socket.connect();
+    try {
+      const from = chunks(agent).length;
+      socket.send({ type: "submit", id: 1174, pane_id: agent.pane, text: longLine, payload: longLine, typed: true });
+      expect(await socket.result(1174)).toMatchObject({ ok: true });
+      await received(agent, from, 1);
+      expect(typed(agent, from)).toBe(`${paste(longLine)}\r`);
+    } finally {
+      socket.close();
+    }
+  }, 30_000);
+
+  it("types one long line from the terminal's input line into an agent waiting for an answer, as the keyboard would", async () => {
+    const socket = await Socket.connect();
+    await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "blocked" });
+    try {
+      const from = chunks(agent).length;
+      socket.send({ type: "submit", id: 1175, pane_id: agent.pane, text: longLine, payload: longLine, typed: true });
+      expect(await socket.result(1175)).toMatchObject({ ok: true });
+      await received(agent, from, 1);
+      expect(typed(agent, from)).toBe(`${longLine}\r`);
     } finally {
       await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
       socket.close();
@@ -2158,6 +2226,113 @@ describe("typing without terminal attach, at the edges", () => {
     } finally {
       gate.resolve();
       keys.mockRestore();
+      sender.close();
+      keeper.close();
+      bare.stop();
+    }
+  }, 30_000);
+
+  it("writes no long input-line line for a sender that switched to observe while herdr was being reached", async () => {
+    const bare = createServer({ port: 0, stateDir: join(root, "observe-long-line"), terminalAttach: false });
+    const sender = await Socket.connect(bare.port);
+    const keeper = await Socket.connect(bare.port);
+    const gate = deferred();
+    const entered = deferred();
+    const originalPrompt = herdr.agentPrompt;
+    // every check before the RPC has passed; the sender switches to watching before herdr is written to
+    const prompt = spyOn(herdr, "agentPrompt").mockImplementation(async (target, text, socketPath, guard) => {
+      if (target === agent.pane && text === longLine) { entered.resolve(); await gate.promise; }
+      return originalPrompt(target, text, socketPath, guard);
+    });
+    try {
+      for (const socket of [keeper, sender]) await attached(socket, agent.pane);
+      const from = chunks(agent).length;
+      sender.send({ type: "submit", id: 1176, pane_id: agent.pane, text: longLine, payload: longLine, typed: true });
+      await entered.promise;
+      sender.send({ type: "role", mode: "observe" });
+      await sender.waitFor((message) => message.type === "role-ack" && message.mode === "observe");
+      gate.resolve();
+      expect(await sender.result(1176)).toMatchObject({ ok: false, code: "read_only" });
+      keeper.send({ type: "submit", id: 1177, pane_id: agent.pane, text: "after", payload: "after", typed: true });
+      expect(await keeper.result(1177)).toMatchObject({ ok: true });
+      await received(agent, from, 1);
+      expect(typed(agent, from)).toBe("after\r");
+    } finally {
+      gate.resolve();
+      prompt.mockRestore();
+      sender.close();
+      keeper.close();
+      bare.stop();
+    }
+  }, 30_000);
+
+  it("writes no chat message for a sender that switched to observe while herdr was being reached", async () => {
+    const bare = createServer({ port: 0, stateDir: join(root, "observe-chat-prompt"), terminalAttach: false });
+    const sender = await Socket.connect(bare.port);
+    const keeper = await Socket.connect(bare.port);
+    const gate = deferred();
+    const entered = deferred();
+    const message = "a chat message held while herdr is reached";
+    const screen = mockClaudeInput(agent.pane, claudeInputScreen("\u276f\u00a0"));
+    const originalPrompt = herdr.agentPrompt;
+    // every check before the RPC has passed; the sender switches to watching before herdr is written to
+    const prompt = spyOn(herdr, "agentPrompt").mockImplementation(async (target, text, socketPath, guard) => {
+      if (target === agent.pane && text === message) { entered.resolve(); await gate.promise; }
+      return originalPrompt(target, text, socketPath, guard);
+    });
+    try {
+      for (const socket of [keeper, sender]) await attached(socket, agent.pane);
+      const from = chunks(agent).length;
+      sender.send({ type: "submit", id: 1178, pane_id: agent.pane, text: message, payload: message });
+      await entered.promise;
+      sender.send({ type: "role", mode: "observe" });
+      await sender.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+      gate.resolve();
+      expect(await sender.result(1178)).toMatchObject({ ok: false, code: "read_only" });
+      keeper.send({ type: "submit", id: 1179, pane_id: agent.pane, text: "after", payload: "after", typed: true });
+      expect(await keeper.result(1179)).toMatchObject({ ok: true });
+      await received(agent, from, 1);
+      expect(typed(agent, from)).toBe("after\r");
+    } finally {
+      gate.resolve();
+      prompt.mockRestore();
+      screen.scroll.mockRestore();
+      screen.read.mockRestore();
+      sender.close();
+      keeper.close();
+      bare.stop();
+    }
+  }, 30_000);
+
+  it("types nothing of an input line for a sender that switched to observe while herdr was being reached", async () => {
+    const bare = createServer({ port: 0, stateDir: join(root, "observe-typed-line"), terminalAttach: false });
+    const sender = await Socket.connect(bare.port);
+    const keeper = await Socket.connect(bare.port);
+    const gate = deferred();
+    const entered = deferred();
+    const line = "a line held while herdr is reached";
+    const originalSend = herdr.paneSendText;
+    // every check before the RPC has passed; the sender switches to watching before herdr is written to
+    const send = spyOn(herdr, "paneSendText").mockImplementation(async (paneId, text, socketPath, guard) => {
+      if (paneId === shell.pane && text === line) { entered.resolve(); await gate.promise; }
+      return originalSend(paneId, text, socketPath, guard);
+    });
+    try {
+      for (const socket of [keeper, sender]) await attached(socket, shell.pane);
+      const from = chunks(shell).length;
+      sender.send({ type: "submit", id: 1180, pane_id: shell.pane, text: line, payload: line, typed: true });
+      await entered.promise;
+      sender.send({ type: "role", mode: "observe" });
+      await sender.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+      gate.resolve();
+      expect(await sender.result(1180)).toMatchObject({ ok: false, code: "read_only" });
+      keeper.send({ type: "submit", id: 1181, pane_id: shell.pane, text: "after", payload: "after", typed: true });
+      expect(await keeper.result(1181)).toMatchObject({ ok: true });
+      await received(shell, from, 1);
+      expect(typed(shell, from)).toBe("after\r");
+    } finally {
+      gate.resolve();
+      send.mockRestore();
       sender.close();
       keeper.close();
       bare.stop();

@@ -632,7 +632,10 @@ const antigravity: UsageProvider = {
   async signIns(ctx) {
     const dir = ctx.env["ANTIGRAVITY_APP_DATA_DIR"] || join(ctx.home, ".gemini", "antigravity-cli");
     const file = antigravitySignIn(readText(join(dir, "antigravity-oauth-token")));
-    return keychainOrFile(await fromKeychain(ctx, "gemini", ["antigravity"], antigravitySignIn), file, "keychain");
+    const keychain = ctx.platform === "linux"
+      ? antigravitySignIn(await ctx.run(["secret-tool", "lookup", "service", "gemini", "username", "antigravity"]))
+      : await fromKeychain(ctx, "gemini", ["antigravity"], antigravitySignIn);
+    return keychainOrFile(keychain, file, "keychain");
   },
   async read(ctx, signIn) {
     const init: RequestInit = {

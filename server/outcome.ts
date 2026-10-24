@@ -305,13 +305,16 @@ const sendAnchor = (snapshot: readonly string[], lines: readonly string[], snaps
 
 /**
  * Whether the send's own screen already shows, each complete, every Chat echo an earlier same-command send may still
- * be owed: then the first echo after that screen is this send's. The latest earlier send whose count is known is owed
- * exactly its reserved echoes after its screen (the sends after it included); the history rows place that screen's
- * last line here, with no text anchor, so only when both screens kept their row. Fewer complete blocks below it, or
- * a row missing, leaves the earlier sends' blocks ambiguous and this send unreserved.
+ * be owed: then the first echo after that screen is this send's. The latest earlier send whose count and history row
+ * are known is owed exactly its reserved echoes after its screen (the sends after it included); the history rows place
+ * that screen's last line here, with no text anchor, so only when both screens kept their row. A later send that kept
+ * no row (its two scroll reads disagreed) is passed over, not taken for proof that nothing can be placed (#1550).
+ * Fewer complete blocks below it, or this send's row missing, leaves the earlier sends' blocks ambiguous and this send
+ * unreserved.
  */
 function printedPastEarlier(sent: CommandSend, same: readonly CommandSend[], lines: readonly string[], reader: DialogReader, readers: readonly DialogReader[]): boolean {
-  const known = [...same].reverse().find((candidate) => typeof candidate.resultEchoes?.[reader.id] === "number"
+  const known = [...same].reverse().find((candidate) => candidate.top !== undefined
+    && typeof candidate.resultEchoes?.[reader.id] === "number"
     && typeof candidate.resultEchoLimit?.[reader.id] === "number");
   const owed = known?.resultEchoLimit?.[reader.id];
   if (!known || typeof owed !== "number" || known.top === undefined || sent.top === undefined) return false;
@@ -346,6 +349,9 @@ export function reserveResultEchoes(sent: CommandSend, previous: readonly Comman
     if (!prior) { reservations[reader.id] = 1; continue; }
     const past = (): number | null => printedPastEarlier(sent, same, lines, reader, readers) ? 1 : null;
     if (priorOrdinal === null || priorLimit === null) { reservations[reader.id] = past(); continue; }
+    // the history rows outrank the prior screen's text: on a screen of identical blocks its tail also matches the
+    // screen's own bottom and counts none of the echoes printed since, so the debt would never be paid (#1550)
+    if (past() === 1) { reservations[reader.id] = 1; continue; }
     const before = withoutChrome(screenLines(prior.screen), sent.agent, readers);
     if (before === null) { reservations[reader.id] = null; continue; }
     const anchor = sendAnchor(before, lines, prior.top, sent.top);

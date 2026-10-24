@@ -309,7 +309,7 @@ public static class ImmediateGh {
     }
 }
 '@
-    $assignment = '[HerdrWebUi.GhJob]::Assign($job, $process.Handle)'
+    $assignment = '[Ovis.GhJob]::Assign($job, $process.Handle)'
     $orderedSource = $ghApi.Extent.Text.Replace("`r`n", "`n").Replace($assignment, '(Assign-TestGhJob $job $process)')
     Assert ($orderedSource -ne $ghApi.Extent.Text) 'control: interpose at the real job assignment boundary'
     function Assign-TestGhJob($Job, $Process) {
@@ -317,13 +317,13 @@ public static class ImmediateGh {
             Assert ($ready.WaitOne(5000)) 'control: the runnable shim must reach child-ready before assignment'
         }
         Assert (-not $ready.WaitOne(0)) 'regression: shim ran before job assignment'
-        [HerdrWebUi.GhJob]::Assign($Job, $Process.Handle)
+        [Ovis.GhJob]::Assign($Job, $Process.Handle)
     }
     $suspendedLaunch = @'
         if ($job -ne [IntPtr]::Zero) {
-            $process = [HerdrWebUi.GhJob]::StartSuspended($start.FileName, $start.Arguments)
+            $process = [Ovis.GhJob]::StartSuspended($start.FileName, $start.Arguments)
             if (-not (Assign-TestGhJob $job $process)) {
-                $null = [HerdrWebUi.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero
+                $null = [Ovis.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero
             }
             $process.Resume()
         } else {
@@ -333,7 +333,7 @@ public static class ImmediateGh {
     $runnableLaunch = @'
         $process = [Diagnostics.Process]::Start($start)
         if ($job -ne [IntPtr]::Zero -and -not (Assign-TestGhJob $job $process)) {
-            $null = [HerdrWebUi.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero
+            $null = [Ovis.GhJob]::CloseHandle($job); $job = [IntPtr]::Zero
         }
 '@
     # Scratch-source reversion of exactly the pre-fix runnable Start/Assign ordering; no repository file changes.

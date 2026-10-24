@@ -55,6 +55,26 @@ function normalizeConfigBom(text: string): string {
   }).join("\n");
 }
 
+/**
+ * herdr's config.toml at `path`, parsed, or null when it is no regular file of a config's size, cannot
+ * be read whole, or is no TOML. The opened file is checked too: a FIFO swapped in after a stat must not
+ * block the server. A file that grew while being read is not taken (a later read takes it whole).
+ */
+export function readHerdrConfig(path: string): unknown {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_CONFIG_BYTES) return null;
+    const buffer = Buffer.alloc(stat.size + 1);
+    let length = 0;
+    for (let count = 1; count > 0 && length < buffer.length; length += count) count = readSync(fd, buffer, length, buffer.length - length, null);
+    if (length > stat.size) return null;
+    return Bun.TOML.parse(normalizeConfigBom(buffer.subarray(0, length).toString("utf8")));
+  } catch { return null; }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
 /** A rule with exactly one condition of its kind, as herdr accepts it; anything else herdr refuses, and is left out. */
 function tokenRule(value: unknown): PaneTokenRule | null {
   const rule = table(value);
@@ -166,23 +186,8 @@ export class HerdrSidebarConfig {
     this.stamp = stamp;
     let next: AgentRowTokens | null = null;
     if (stamp !== null) {
-      let fd: number | undefined;
-      try {
-        // Check the opened file too: a FIFO swapped in after stat must not block the server.
-        fd = openSync(this.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-        const stat = fstatSync(fd);
-        if (stat.isFile() && stat.size <= MAX_CONFIG_BYTES) {
-          const buffer = Buffer.alloc(stat.size + 1);
-          let length = 0;
-          for (let count = 1; count > 0 && length < buffer.length; length += count) count = readSync(fd, buffer, length, buffer.length - length, null);
-          // A file that grew while being read is retried once its stamp changes.
-          if (length <= stat.size) {
-            const text = normalizeConfigBom(buffer.subarray(0, length).toString("utf8"));
-            next = agentRowTokens(Bun.TOML.parse(text));
-          }
-        }
-      } catch { next = null; }
-      finally { if (fd !== undefined) closeSync(fd); }
+      const parsed = readHerdrConfig(this.path);
+      try { next = parsed === null ? null : agentRowTokens(parsed); } catch { next = null; }
     }
     const changed = JSON.stringify(next) !== JSON.stringify(this.layout);
     this.layout = next;

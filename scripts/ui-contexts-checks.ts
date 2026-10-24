@@ -10,6 +10,7 @@ import { checkPushSettings } from "./push-settings-regression.ts";
 import { checkWakeLock } from "./wake-lock-regression.ts";
 import { checkSecretInput } from "./secret-input-regression.ts";
 import { checkTerminalCopy } from "./terminal-copy-regression.ts";
+import { checkTerminalCopyOff } from "./terminal-copy-off-regression.ts";
 import { checkPaneFind } from "./pane-find-regression.ts";
 import { checkUsageMeters } from "./usage-regression.ts";
 import { checkNotificationStartup } from "./notification-startup-regression.ts";
@@ -19,6 +20,7 @@ import { checkTerminalPinch } from "./terminal-pinch-regression.ts";
 import { checkKeyBarKeepsKeyboardDown } from "./keybar-focus-regression.ts";
 import { checkMobileTabs } from "./mobile-tabs-regression.ts";
 import { checkHeaderLensSwitch } from "./header-lens-switch-regression.ts";
+import { checkTerminalComposition } from "./terminal-composition-regression.ts";
 import { checkTabMenu } from "./tab-menu-regression.ts";
 import { checkDefaultView } from "./default-view-regression.ts";
 import { checkTerminalInputSpacing } from "./terminal-input-spacing-regression.ts";
@@ -77,7 +79,8 @@ export async function runUiContextChecks(): Promise<void> {
     const paneB = createdB.root_pane.pane_id;
     await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
 
-    server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root, usage: new UsageService(undefined, []) });
+    // herdr's config is none here, whatever HERDR_CONFIG_PATH the shell passed on: checkTerminalCopy asserts herdr's default
+    server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root, usage: new UsageService(undefined, []), herdrConfigPath: join(root, "no-herdr-config.toml") });
     const origin = `http://127.0.0.1:${server.port}`;
     browser = await chromium.launch({
       executablePath: chromePath(),
@@ -89,6 +92,7 @@ export async function runUiContextChecks(): Promise<void> {
     await timed("checkWakeLock", () => checkWakeLock(browser!, origin, paneA));
     await timed("checkSecretInput", () => checkSecretInput(browser!, origin));
     await timed("checkTerminalCopy", () => checkTerminalCopy(browser!, origin));
+    await timed("checkTerminalCopyOff", () => checkTerminalCopyOff(browser!));
     await timed("checkPaneFind", () => checkPaneFind(browser!, origin));
     await timed("checkUsageMeters", () => checkUsageMeters(browser!, origin));
     await timed("checkNotificationStartup", () => checkNotificationStartup(browser!, origin, paneA, paneB));
@@ -98,6 +102,7 @@ export async function runUiContextChecks(): Promise<void> {
     await timed("checkKeyBarKeepsKeyboardDown", () => checkKeyBarKeepsKeyboardDown(browser!, origin));
     await timed("checkMobileTabs", () => checkMobileTabs(browser!, origin));
     await timed("checkHeaderLensSwitch", () => checkHeaderLensSwitch(browser!, origin));
+    await timed("checkTerminalComposition", () => checkTerminalComposition(browser!, origin));
     await timed("checkTabMenu", () => checkTabMenu(browser!, origin));
     await timed("checkDefaultView", () => checkDefaultView(browser!, origin));
     await timed("checkTerminalInputSpacing", () => checkTerminalInputSpacing(browser!, origin));

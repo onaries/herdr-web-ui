@@ -60,6 +60,8 @@ const SOCKET_CLOSED = 3;
 const DISCONNECTED: SubmitResult = { ok: false, code: "disconnected", message: "the connection dropped before the pane confirmed this message" };
 /** The connection dropped before the request's frame left: nothing can have reached the pane. */
 const NOT_TRANSMITTED: SubmitResult = { ok: false, code: "not_transmitted", message: "the connection dropped before this message was sent" };
+/** The socket is open, but the snapshot that says what the bridge takes has not come: nothing was sent (#1806). */
+const CAPABILITIES_UNKNOWN: SubmitResult = { ok: false, code: "capabilities_unknown", message: "this PC has not said yet what it supports; nothing was sent" };
 
 /**
  * Where the connection stands. `connected` and the input checks still read the socket itself:
@@ -861,6 +863,9 @@ export class HerdrSocket {
       // a liveness probe in flight is waited out: nothing is sent on a socket that may be dead
       if (!(await this.probeSettled(socket))) return NOT_TRANSMITTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages." };
+      // the wait ended before the snapshot said what this bridge takes: one that takes `submit` would get the
+      // message as raw typed input, past every check it makes before typing (#1591), so nothing is sent
+      if (!this.snapshotKnown) return CAPABILITIES_UNKNOWN;
       if (delivery === "agent-queue" && (!this.features.has("submit") || !this.features.has("agent-queue"))) {
         return { ok: false, code: "agent_queue_unsupported", message: "Update this PC to use the agent's native queue. Nothing was sent." };
       }

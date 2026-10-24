@@ -78,6 +78,7 @@ export const COMPOSER_ZH: Record<string, string> = {
   "Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.": "未发送：终端中 Claude Code 的输入框可能不是空的。输入框中显示“{box}”。",
   "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.": "未发送：在前一条消息之后等待过久，且未输入任何内容。请重新发送。",
   "Not sent: the connection dropped before this message left. Send it again.": "未发送：消息发出前连接已断开。请重新发送。",
+  "Not sent: this PC has not said yet what it supports. Send it again.": "未发送：这台电脑尚未告知它支持的功能。请重新发送。",
   "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.": "未确认：窗格未确认此消息。重新发送前请检查终端。",
   "Not sent: {message}": "未发送：{message}",
   "Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.": "未确认：终端草稿已被清除或可能发生了变化。您的消息仍保留在这里。再次发送前请检查终端。",

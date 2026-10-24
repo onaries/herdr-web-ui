@@ -78,6 +78,7 @@ export const COMPOSER_KO: Record<string, string> = {
   "Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.": "보내지 않음: 터미널의 Claude Code 입력란이 비어 있지 않을 수 있습니다. 입력란에 “{box}”가 보입니다.",
   "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.": "보내지 않음: 앞선 메시지 뒤에서 너무 오래 기다렸고 아무것도 입력되지 않았습니다. 다시 보내세요.",
   "Not sent: the connection dropped before this message left. Send it again.": "보내지 않음: 메시지가 나가기 전에 연결이 끊겼습니다. 다시 보내세요.",
+  "Not sent: this PC has not said yet what it supports. Send it again.": "보내지 않음: 이 PC가 아직 지원하는 기능을 알려 주지 않았습니다. 다시 보내세요.",
   "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.": "확인되지 않음: 패널이 이 메시지를 확인하지 않았습니다. 다시 보내기 전에 터미널을 확인하세요.",
   "Not sent: {message}": "보내지 않음: {message}",
   "Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.": "확인되지 않음: 터미널 초안이 지워졌거나 변경되었을 수 있습니다. 메시지는 여기에 남아 있습니다. 다시 보내기 전에 터미널을 확인하세요.",

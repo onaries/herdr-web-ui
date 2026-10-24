@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { acquire, acquireWaiting, checkoutIdentity, describeGroup, describeHolders, endGroup, isolate, lock, maxRuns, needsLock, plan, sanitizeCommand, stopSessions, teardown, waitSeconds } from "./check.ts";
+import { CI_NODE_MAJOR, MAX_LOCK_PORT, MAX_RUNS_LIMIT, acquire, acquireWaiting, checkoutIdentity, describeGroup, describeHolders, endGroup, isolate, lock, lockPort, maxRuns, needsLock, plan, sanitizeCommand, stopSessions, teardown, waitSeconds, warnNodeVersionMismatch } from "./check.ts";
 
 const made: string[] = [];
 afterEach(() => { for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -41,6 +41,47 @@ describe("plan", () => {
     expect(needsLock(plan(["concurrent"]))).toBe(true);
     expect(sanitizeCommand(["bun", "--api-token", "private", "--access-token=value", "https://example.test/?token=secret"]))
       .toEqual(["bun", "--api-token", "[REDACTED]", "--access-token=[REDACTED]", "https://example.test/?token=[REDACTED]"]);
+  });
+});
+
+describe("check environment", () => {
+  it("uses CHECK_LOCK_PORT within the allowed range and keeps the default", () => {
+    expect(lockPort({})).toBe(41737);
+    expect(lockPort({ CHECK_LOCK_PORT: "" })).toBe(41737);
+    expect(lockPort({ CHECK_LOCK_PORT: "1024" })).toBe(1024);
+    expect(lockPort({ CHECK_LOCK_PORT: String(MAX_LOCK_PORT) })).toBe(MAX_LOCK_PORT);
+    expect(lockPort({ CHECK_LOCK_PORT: "50000" })).toBe(50000);
+    for (const value of ["1023", String(MAX_LOCK_PORT + 1), "65535", "65536", "-1", "1.5", "port", " 5000"]) {
+      expect(() => lockPort({ CHECK_LOCK_PORT: value })).toThrow("CHECK_LOCK_PORT");
+    }
+  });
+
+  it("acquires every slot and the admission port at the highest CHECK_LOCK_PORT it accepts", async () => {
+    const base = lockPort({ CHECK_LOCK_PORT: String(MAX_LOCK_PORT) });
+    // the most slots a run can ask for, so the admission port is the highest one acquire() uses.
+    // CI's runners share one loopback: a checkout of this run's own, and a wait, let two runs of
+    // this test meet at the top range without refusing each other
+    const top = { slots: MAX_RUNS_LIMIT, scan: MAX_RUNS_LIMIT, pid: process.pid, checkout: `/top-${process.pid}` };
+    const held = await acquireWaiting({ ...top, base }, { waitMs: 10_000, pollMs: 20 });
+    if (!("release" in held)) throw new Error(`the top lock range is held on this PC: ${describeHolders(held.holders)}`);
+    held.release();
+    // one port higher and the admission port would be past 65535
+    await expect(acquire({ ...top, base: MAX_LOCK_PORT + 1 })).rejects.toThrow("65536");
+  });
+
+  it("warns only when the local Node major differs from CI", () => {
+    const warnings: string[] = [];
+    const warn = (message: string): void => { warnings.push(message); };
+    warnNodeVersionMismatch("v24.18.0", warn);
+    expect(warnings).toEqual(["check: warning: local Node v24.18.0 differs from CI Node 22"]);
+    warnNodeVersionMismatch("v22.16.0", warn);
+    warnNodeVersionMismatch(null, warn);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("compares with the Node major the CI runner image installs", () => {
+    const dockerfile = readFileSync(fileURLToPath(new URL("./self-hosted-runner/Dockerfile", import.meta.url)), "utf8");
+    expect(Number(dockerfile.match(/^ARG NODE_VERSION=(\d+)\./m)?.[1])).toBe(CI_NODE_MAJOR);
   });
 });
 
@@ -117,7 +158,9 @@ describe("isolate", () => {
     expect(() => isolate({ HERDR_TEST_LIVE: "1" }, scratch())).toThrow("HERDR_TEST_LIVE");
     // as a shell inside one of the user's panes has them
     const { env } = isolate({ HERDR_SOCKET: "/live.sock", HERDR_SOCKET_PATH: "/live.sock", HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_TAB_ID: "w1:t1", HERDR_WORKSPACE_ID: "w1", OVIS_HERDR_BIN: "/bin/herdr" }, scratch());
-    expect(Object.keys(env).filter((name) => name.startsWith("HERDR_") || name.startsWith("OVIS_")).sort()).toEqual(["HERDR_TEST_DISPOSABLE_CONFIG", "HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "OVIS_HERDR_BIN", "OVIS_STATE_DIR"]);
+    expect(Object.keys(env).filter((name) => name.startsWith("HERDR_") || name.startsWith("OVIS_")).sort()).toEqual(["HERDR_SOCKET", "HERDR_TEST_DISPOSABLE_CONFIG", "HERDR_TEST_SESSION", "HERDR_TEST_SHARDS", "OVIS_HERDR_BIN", "OVIS_STATE_DIR"]);
+    // the socket it hands on is the run's own session's, where scripts/test-herdr.ts starts it
+    expect(env["HERDR_SOCKET"]).toBe(join(env["XDG_CONFIG_HOME"]!, "herdr", "sessions", env["HERDR_TEST_SESSION"]!, "herdr.sock"));
   });
 });
 
@@ -238,6 +281,123 @@ describe("slots", () => {
       release(elsewhere);
     } finally {
       release(same);
+    }
+  });
+
+  it("refuses different lock ranges while the checkout claim is live, then admits after release", async () => {
+    const firstBase = await freeRange(3);
+    let secondBase = await freeRange(3);
+    while (Math.abs(firstBase - secondBase) <= 3) secondBase = await freeRange(3);
+    const checkoutLock = join(scratch(), "checkout.lock");
+    const first = await acquire({ slots: 1, scan: 3, base: firstBase, checkout: "/same", checkoutLock });
+    try {
+      expect("release" in first).toBe(true);
+      const refused = await acquire({ slots: 1, scan: 3, base: secondBase, checkout: "/same", checkoutLock });
+      try {
+        expect(refused).toEqual({ refused: "same-checkout", holders: [{ port: secondBase + 3, heldBy: process.pid, checkout: "/same" }] });
+      } finally { release(refused); }
+    } finally { release(first); }
+    const next = await acquire({ slots: 1, scan: 3, base: secondBase, checkout: "/same", checkoutLock });
+    expect("release" in next).toBe(true);
+    release(next);
+  });
+
+  it("takes over a checkout claim left by a dead pid", async () => {
+    const base = await freeRange(3);
+    const checkoutLock = join(scratch(), "checkout.lock");
+    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+    expect(finished.status).toBe(0);
+    writeFileSync(`${checkoutLock}.check-lock`, JSON.stringify({ pid: Number(finished.stdout.trim()), checkout: "/dead" }));
+    const result = await acquire({ slots: 1, scan: 3, base, checkout: "/mine", checkoutLock });
+    try {
+      expect("release" in result).toBe(true);
+      expect(JSON.parse(readFileSync(`${checkoutLock}.check-lock`, "utf8")).pid).toBe(process.pid);
+    } finally { release(result); }
+  });
+
+  it("refuses a stale checkout marker while a live process holds its reclaim claim", async () => {
+    const base = await freeRange(3);
+    const checkoutLock = join(scratch(), "checkout.lock");
+    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+    expect(finished.status).toBe(0);
+    const marker = `${checkoutLock}.check-lock`;
+    writeFileSync(marker, JSON.stringify({ pid: Number(finished.stdout.trim()), checkout: "/dead" }));
+    writeFileSync(`${marker}.reclaim`, JSON.stringify({ pid: process.pid, checkout: "/reclaimer" }));
+    const result = await acquire({ slots: 1, scan: 3, base, checkout: "/mine", checkoutLock });
+    try {
+      expect(result).toEqual({ refused: "same-checkout", holders: [{ port: base + 3, heldBy: process.pid, checkout: "/reclaimer" }] });
+      expect(readFileSync(marker, "utf8")).toContain('"/dead"');
+    } finally { release(result); }
+  });
+
+  it("stops at a reclaim claim a dead run left, naming it, and touches neither file", async () => {
+    const checkoutLock = join(scratch(), "checkout.lock");
+    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+    expect(finished.status).toBe(0);
+    const marker = `${checkoutLock}.check-lock`;
+    const stale = JSON.stringify({ pid: Number(finished.stdout.trim()), checkout: "/dead" });
+    writeFileSync(marker, stale);
+    writeFileSync(`${marker}.reclaim`, stale);
+    // two runs on other lock bases, as two checks started at once would be: neither may take over
+    const firstBase = await freeRange(3);
+    let secondBase = await freeRange(3);
+    while (Math.abs(firstBase - secondBase) <= 3) secondBase = await freeRange(3);
+    const results = await Promise.allSettled([firstBase, secondBase].map((base) => acquire({ slots: 1, scan: 3, base, checkout: "/mine", checkoutLock })));
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(String(result.reason)).toContain(`${marker}.reclaim`);
+    }
+    expect(readFileSync(marker, "utf8")).toBe(stale);
+    expect(readFileSync(`${marker}.reclaim`, "utf8")).toBe(stale);
+  });
+
+  it("admits exactly one cross-base contender reclaiming a stale checkout marker", async () => {
+    const checkoutLock = join(scratch(), "checkout.lock");
+    const marker = `${checkoutLock}.check-lock`;
+    const finished = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+    expect(finished.status).toBe(0);
+    const script = fileURLToPath(new URL("./check.ts", import.meta.url));
+    for (let round = 0; round < 10; round++) {
+      writeFileSync(marker, JSON.stringify({ pid: Number(finished.stdout.trim()), checkout: "/dead" }));
+      const firstBase = await freeRange(3);
+      let secondBase = await freeRange(3);
+      while (Math.abs(firstBase - secondBase) <= 3) secondBase = await freeRange(3);
+      const bases = [firstBase, secondBase];
+      const childCode = `import { readFileSync } from "node:fs"; import { acquire } from ${JSON.stringify(script)}; console.log("READY"); await new Promise(resolve => process.stdin.once("data", resolve)); const result = await acquire({ slots: 1, scan: 3, base: Number(process.env.BASE), checkout: "/same", checkoutLock: process.env.CHECKOUT_LOCK }); console.log("RESULT " + ("release" in result ? "held " + process.pid + " " + readFileSync(process.env.CHECKOUT_LOCK + ".check-lock", "utf8") : result.refused)); if ("release" in result) { await new Promise(resolve => { process.stdin.once("data", resolve); process.stdin.once("end", resolve); }); result.release(); }`;
+      const children = bases.map((base) => Bun.spawn([process.execPath, "-e", childCode], {
+        env: { ...process.env, BASE: String(base), CHECKOUT_LOCK: checkoutLock },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      }));
+      const output = children.map(() => "");
+      const readers = children.map((child) => child.stdout.getReader());
+      const ready = readers.map(async (reader, index) => {
+        while (!output[index]?.includes("READY")) {
+          const { value, done } = await reader.read();
+          if (done) throw new Error(`cross-base contender ${index} exited before ready`);
+          output[index] += new TextDecoder().decode(value);
+        }
+      });
+      await Promise.all(ready);
+      for (const child of children) child.stdin.write("GO");
+      // the winner holds until both have answered, so the loser always meets a live claim
+      const outcomes = await Promise.all(readers.map(async (reader, index) => {
+        while (!/RESULT .*\n/.test(output[index] ?? "")) {
+          const { value, done } = await within(reader.read(), 5_000, `cross-base contender ${index} gave no result in round ${round}`);
+          if (done) break;
+          output[index] += new TextDecoder().decode(value);
+        }
+        const result = /RESULT (.*)/.exec(output[index] ?? "")?.[1];
+        return result?.startsWith("held ") ? "held" : result;
+      }));
+      for (const child of children) { child.stdin.write("RELEASE"); child.stdin.end(); }
+      await Promise.all(children.map(async (child) => {
+        const stderr = await new Response(child.stderr).text();
+        expect(await within(child.exited, 5_000, `cross-base contender timed out in round ${round}`), stderr).toBe(0);
+      }));
+      // either contender may win; exactly one must
+      expect({ outcomes: outcomes.sort(), bases }).toEqual({ outcomes: ["held", "same-checkout"], bases });
     }
   });
 

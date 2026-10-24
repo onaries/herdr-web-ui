@@ -71,11 +71,11 @@ it("binds a completed answer to one finish and rejects unchanged new-finish resp
   expect(evidence.accept("unread-scope", 1, next)).toBe(false);
   expect(evidence.accept("unread-scope", 2, next)).toBe(true);
   expect(evidence.accept("skipped-scope", 1, first)).toBe(true);
-  expect(evidence.accept("skipped-scope", 3, next)).toBe(false);
+  expect(evidence.accept("skipped-scope", 3, next)).toBe(true);
   const third = structuredClone(next);
   third.turns[0]!.ts = "2026-10-19T00:02:00Z";
   third.turns[0]!.parts[0]!.text = "Third";
-  expect(evidence.accept("skipped-scope", 3, third)).toBe(true);
+  expect(evidence.accept("skipped-scope", 3, third)).toBe(false);
   const local = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
     getItem: (key: string) => key === "pc:epoch:pane" ? JSON.stringify({ id: 1, at: 1, answer: evidence.answer("pc:new-epoch:pane", 1) }) : null,
@@ -89,6 +89,46 @@ it("binds a completed answer to one finish and rejects unchanged new-finish resp
     else Reflect.deleteProperty(globalThis, "localStorage");
   }
 });
+
+it("accepts finish 10 after finish 4 without waiting for the resting agent to answer again", () => {
+  const evidence = new ConversationFinishEvidence();
+  const first = { source: "pi-transcript", history_id: "session", turns: [
+    { role: "assistant", ts: "2026-10-19T00:00:00Z", parts: [{ kind: "text", text: "First", phase: "final_answer" }] },
+  ] } satisfies Parameters<typeof conversationFinishPresented>[0];
+  const final = { ...first, turns: [
+    { role: "assistant", ts: "2026-10-19T00:10:00Z", parts: [{ kind: "text", text: "Finished", phase: "final_answer" }] },
+  ] } satisfies Parameters<typeof conversationFinishPresented>[0];
+  expect(evidence.accept("resting-scope", 4, first)).toBe(true);
+
+  expect(evidence.accept("resting-scope", 10, structuredClone(first))).toBe(false);
+  expect(evidence.accept("resting-scope", 10, final, final)).toBe(false);
+  expect(evidence.accept("resting-scope", 10, final, first)).toBe(true);
+  expect(evidence.answer("resting-scope", 10)).toBeDefined();
+  expect(evidence.accept("resting-scope", 10, final, final)).toBe(true);
+  expect(evidence.accept("resting-scope", 10, structuredClone(final), final)).toBe(true);
+  expect(evidence.accept("resting-scope", 9, final)).toBe(false);
+});
+
+for (const id of [5, 10]) {
+  it(`accepts finish ${id} when the saved finish 4 has no answer proof`, () => {
+    const local = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+      getItem: (key: string) => key === "terminal-baseline" ? JSON.stringify({ id: 4, at: 1 }) : null,
+    } });
+    try {
+      const evidence = new ConversationFinishEvidence();
+      const final = { source: "pi-transcript", turns: [
+        { role: "assistant", ts: "2026-10-19T00:10:00Z", parts: [{ kind: "text", text: "Finished", phase: "final_answer" }] },
+      ] } satisfies Parameters<typeof conversationFinishPresented>[0];
+      expect(evidence.accept("terminal-baseline", id, final, final)).toBe(false);
+      expect(evidence.accept("terminal-baseline", id, final)).toBe(true);
+      expect(evidence.accept("terminal-baseline", id, final, final)).toBe(true);
+    } finally {
+      if (local) Object.defineProperty(globalThis, "localStorage", local);
+      else Reflect.deleteProperty(globalThis, "localStorage");
+    }
+  });
+}
 
 /** Exercise the production selector with Bun's CSS selector engine, not a string assertion. */
 async function covered(html: string): Promise<boolean> {

@@ -78,6 +78,7 @@ export const COMPOSER_JA: Record<string, string> = {
   "Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.": "未送信: ターミナルの Claude Code 入力欄が空ではない可能性があります。入力欄には「{box}」と表示されています。",
   "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.": "未送信: 前のメッセージの後で長く待ちすぎたため、何も入力されませんでした。もう一度送信してください。",
   "Not sent: the connection dropped before this message left. Send it again.": "未送信: メッセージが送られる前に接続が切れました。もう一度送信してください。",
+  "Not sent: this PC has not said yet what it supports. Send it again.": "未送信: この PC が対応する機能をまだ知らせていません。もう一度送信してください。",
   "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.": "未確認: ペインがこのメッセージを確認しませんでした。再送信する前にターミナルを確認してください。",
   "Not sent: {message}": "未送信: {message}",
   "Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.": "未確認: ターミナルの下書きが消去されたか、変更された可能性があります。メッセージはここに残っています。再送信する前にターミナルを確認してください。",

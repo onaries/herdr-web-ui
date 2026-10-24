@@ -662,10 +662,37 @@ try {
       await sendIn(owner, after);
       await page.waitForFunction(([pane, text]) => (window as unknown as PeekWindow).sentFrames.some((frame) => frame.type === "submit" && frame.pane_id === pane && frame.text === text), [owner, after] as const);
       await finish(page);
+      console.log(`PASS ${tag}: Claude's /btw left open holds Send behind the notice; Send anyway sends once; its close clears the notice`);
+
+      // #1552: a screen left open by any other way back to Chat (Keep Terminal, then the header's Chat)
+      // would take the next message just the same: Send holds it behind the same notice
+      const ANY_OPEN = "A screen is still open in the terminal";
+      await of(owner).chat.locator(".composer-status[data-status='done'], .composer-status[data-status='idle']").waitFor();
+      await sendIn(owner, "/btw and the retry?");
+      await of(owner).peek.waitFor();
+      await screen(owner, "Escape to dismiss").waitFor();
+      await hint(page).getByRole("button", { name: "Keep Terminal", exact: true }).click();
+      await of(owner).peek.waitFor({ state: "detached" });
+      await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+      await of(owner).chat.locator(".composer").waitFor();
+      const kept = "Is that screen still up?";
+      await sendIn(owner, kept);
+      await of(owner).chat.locator(".composer-note", { hasText: "Not sent: a screen is still open in the terminal." }).waitFor();
+      assert.equal(await of(owner).box.inputValue(), kept, "the message stays in the box");
+      assert.equal(await submits(owner, kept), 0, "nothing is typed into a screen the terminal lens left open");
+      const anyOpen = of(owner).chat.locator(".composer-notice", { hasText: ANY_OPEN });
+      await anyOpen.waitFor();
+      await capture(page, `${tag}-left-open-held`);
+      // the screen closed in the terminal: the first frame with Claude's empty box clears the notice
+      await page.evaluate((pane) => (window as unknown as { demoSocket: WebSocket }).demoSocket.send(JSON.stringify({ type: "input", pane_id: pane, text: "\x1b" })), owner);
+      await anyOpen.waitFor({ state: "detached" });
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      await page.waitForFunction(([pane, text]) => (window as unknown as PeekWindow).sentFrames.some((frame) => frame.type === "submit" && frame.pane_id === pane && frame.text === text), [owner, kept] as const);
+      await finish(page);
       assert.deepEqual(await page.evaluate("window.sentFrames.filter(frame => frame.type === 'focus' || frame.type === 'take-over')"), []);
       assert.deepEqual(await page.evaluate("window.focusCalls"), [], "no peek or notice moves herdr's focus");
       assert.deepEqual(errors, []);
-      console.log(`PASS ${tag}: Claude's /btw left open holds Send behind the notice; Send anyway sends once; its close clears the notice`);
+      console.log(`PASS ${tag}: a screen left open through the terminal lens holds Send behind the notice; its close clears it`);
     } finally { await context.close(); }
   }
 

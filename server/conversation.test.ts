@@ -1209,6 +1209,21 @@ describe("gjc sessions", () => {
     } finally { forgetTranscriptState(); }
   });
 
+  it("hides IRC deliveries a gjc build older than their attribution wrote (#1541)", () => {
+    const delivery = (customType: string, content: string) => JSON.stringify({ type: "custom_message", customType, display: true, content });
+    const text = [
+      JSON.stringify({ type: "message", timestamp: "2026-10-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "coordinate with the other pane" }] } }),
+      delivery("irc:incoming", "[IRC `0-WindowsPaths` → you]\n\nMy bash is restricted..."),
+      delivery("irc:autoreply", "[IRC you → `0-WindowsPaths` (auto)]\n\nI will handle it."),
+      delivery("irc:relay", "[IRC `you` → `0-WindowsPaths`]\n\nI will handle it."),
+      JSON.stringify({ type: "message", timestamp: "2026-10-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "Done." }] } }),
+    ].join("\n");
+    expect(parseOmpTranscript(text).map((turn) => turn.parts)).toEqual([
+      [{ kind: "text", text: "coordinate with the other pane" }],
+      [{ kind: "text", text: "Done." }],
+    ]);
+  });
+
   it("keeps user-attributed IRC records and ordinary notices whose text quotes IRC", () => {
     const content = "[IRC `0-WindowsPaths` → you]\n\nA quoted example, not an internal delivery.";
     const text = [

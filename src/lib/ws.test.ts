@@ -172,6 +172,25 @@ it("refuses clear-and-send on a legacy bridge without sending payload or Enter",
   }
 });
 
+it("sends nothing when the bridge has not said what it supports by the end of the wait (#1591)", async () => {
+  jest.useFakeTimers();
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  try {
+    // no snapshot yet: whether this bridge takes `submit` is unknown, not "an older bridge"
+    const result = client.submit("w1:p1", "chat message", "chat message");
+    jest.advanceTimersByTime(2_000);
+    // not a dropped connection: the socket is open, only its snapshot is late (#1806)
+    expect(await result).toMatchObject({ ok: false, code: "capabilities_unknown" });
+    expect(submissions(socket)).toEqual([]);
+  } finally {
+    client.close();
+    jest.useRealTimers();
+  }
+});
+
 it("keeps ordinary immediate sends working on a legacy bridge", async () => {
   const client = new HerdrSocket("ws://test/ws");
   client.connect();

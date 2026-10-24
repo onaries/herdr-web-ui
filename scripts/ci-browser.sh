@@ -22,14 +22,19 @@ finish() {
 trap finish EXIT
 
 run_script() {
-  local started=$SECONDS code=0 evidence="${UI_EVIDENCE_DIR:-}"
+  local started=$SECONDS code=0 evidence="${UI_EVIDENCE_DIR:-}" line
   if [ -n "${CI:-}${CHECK_DIR:-}" ]; then
     # These evidence branches add viewport changes, assertions or font waits, not just captures.
     case "$1" in
       scripts/ui-regression.ts|scripts/ui-contexts-regression.ts|scripts/key-bar-customization-demo-regression.ts) evidence="";;
     esac
   fi
-  UI_EVIDENCE_DIR="$evidence" bun "$@" || code=$?
+  UI_EVIDENCE_DIR="$evidence" bun "$@" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      PASS\ *|FAIL\ *) printf '%s\n' "$line";;
+      *) printf '[%s] %s\n' "$(date -Is)" "$line";;
+    esac
+  done || code=$?
   local seconds=$((SECONDS - started))
   printf 'TIMING %s seconds=%s exit=%s\n' "$1" "$seconds" "$code"
   timings="${timings}$(printf '%-60s %7s %5s' "$1" "$seconds" "$code")"$'\n'
@@ -100,6 +105,7 @@ run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/file-viewer-table-scroll-regression.ts
 run_script scripts/droplet-demo-regression.ts
+run_script scripts/phone-glass-header-demo-regression.ts
 run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/restored-draft-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts

@@ -709,6 +709,27 @@ describe("phone access", () => {
   });
 });
 
+describe("herdr's selection preference", () => {
+  it("answers this PC's herdr copy_on_select, read again on each request, uncached and behind the token gate", async () => {
+    const state = mkdtempSync(join(tmpdir(), "ovis-herdr-ui-route-"));
+    const configPath = join(state, "config.toml");
+    writeFileSync(configPath, "[ui]\ncopy_on_select = false\n");
+    const gated = createServer({ port: 0, stateDir: state, token: "test-herdr-ui-token", herdrConfigPath: configPath });
+    try {
+      const url = `http://localhost:${gated.port}/api/herdr-ui`;
+      expect((await fetch(url)).status).toBe(401);
+      const headers = { authorization: "Bearer test-herdr-ui-token" };
+      const response = await fetch(url, { headers });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({ copy_on_select: false });
+      writeFileSync(configPath, "[ui]\ncopy_on_select = true\n");
+      expect(await (await fetch(url, { headers })).json()).toEqual({ copy_on_select: true });
+      expect((await fetch(url, { method: "POST", headers: { ...headers, origin: `http://localhost:${gated.port}` } })).status).toBe(400);
+    } finally { gated.stop(); rmSync(state, { recursive: true, force: true }); }
+  });
+});
+
 describe("Portal API", () => {
   it("does not serve requests until startup cleanup completes", async () => {
     const state = mkdtempSync(join(tmpdir(), "herdr-portal-startup-gate-"));

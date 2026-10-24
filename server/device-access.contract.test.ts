@@ -188,6 +188,8 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
     // the shared settings: a watching device reads them, and cannot change them for every browser
     expect((await fetch(`${base}/api/preferences`, { headers })).status).toBe(200);
     expect((await fetch(`${base}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ settings: { theme: "light" }, pins: [] }) })).status).toBe(403);
+    // herdr's copy_on_select: a watching device selects text too, so it reads it (#1559)
+    expect((await fetch(`${base}/api/herdr-ui`, { headers })).status).toBe(200);
     // what was read in the other browsers: a watching device sees it, and its own views stay its own
     expect((await fetch(`${base}/api/seen`, { headers })).status).toBe(200);
     const told = await fetch(`${base}/api/seen`, { method: "POST", headers, body: JSON.stringify({ pc: "local", epoch: "e", pane: "p", id: 1 }) });

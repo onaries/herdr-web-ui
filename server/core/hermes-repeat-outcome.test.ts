@@ -180,6 +180,20 @@ describe("a /status whose earlier /status lost its anchor", () => {
     expect(observe(blind, fourth.after).state).toBe("accepted");
   });
 
+  it("lets the repeats after a lost send whose scroll reads disagreed own their blocks on a screen of identical blocks (#1550)", () => {
+    // a full screen of identical /status blocks; each send's block moves the history 12 rows
+    const at = (top: number): Read => ({ ...fifth.sent, top });
+    const ledger = new CommandReservations();
+    const known = send(ledger, at(55), 0);
+    expect(observe(known, at(67)).state).toBe("result-observed");
+    // Hermes redrew its input area right before agent.prompt: the send's two scroll reads disagreed, so it kept no row
+    const lost = send(ledger, { ...fifth.sent, top: undefined as unknown as number }, 1);
+    expect(observe(lost, at(79)).state).toBe("accepted");
+    const next = send(ledger, at(79), 2);
+    observe(lost, at(79), next.at);
+    expect(observe(next, at(91)).state).toBe("result-observed");
+  });
+
   it("counts every earlier send a later one may owe, not only the one whose count is known", () => {
     const ledger = new CommandReservations();
     const known = send(ledger, third.sent, 0);

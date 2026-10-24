@@ -126,8 +126,8 @@ it("keeps repeated omp model outcomes under the original command rather than its
   await submitter()(target.pane_id, "/model", "/model", now);
   now++;
   await submitter()(target.pane_id, "/model", "/model", now);
-  expect(deliver).toHaveBeenNthCalledWith(1, target.pane_id, "/switch");
-  expect(deliver).toHaveBeenNthCalledWith(2, target.pane_id, "/switch");
+  expect(deliver).toHaveBeenNthCalledWith(1, target.pane_id, "/switch", undefined, expect.any(Function));
+  expect(deliver).toHaveBeenNthCalledWith(2, target.pane_id, "/switch", undefined, expect.any(Function));
   const first = prepare.mock.results[0]?.value as ReturnType<typeof prepareCommandSend>;
   expect(first?.text).toBe("/model");
   expect(first?.transcriptClosedAt).toBeUndefined();
@@ -144,7 +144,7 @@ it("does not rewrite /model when the resolved pane agent is OmO", async () => {
   const deliver = spyOn(client, "agentPrompt").mockResolvedValue();
   try {
     await submitter()(target.pane_id, "/model", "/model", Date.now());
-    expect(deliver).toHaveBeenCalledWith(target.pane_id, "/model");
+    expect(deliver).toHaveBeenCalledWith(target.pane_id, "/model", undefined, expect.any(Function));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -265,8 +265,8 @@ it("delivers a terminal input-line command without requiring paneGet", async () 
   const text = spyOn(client, "paneSendText").mockResolvedValue();
   const keys = spyOn(client, "paneSendKeys").mockResolvedValue();
   await submitter()(pane.pane_id, "/context", "/context", Date.now(), true);
-  expect(text).toHaveBeenCalledWith(pane.pane_id, "/context");
-  expect(keys).toHaveBeenCalledWith(pane.pane_id, ["Enter"]);
+  expect(text).toHaveBeenCalledWith(pane.pane_id, "/context", undefined, expect.any(Function));
+  expect(keys).toHaveBeenCalledWith(pane.pane_id, ["Enter"], undefined, expect.any(Function));
   expect(paneGet).not.toHaveBeenCalled();
 });
 

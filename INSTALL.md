@@ -203,7 +203,7 @@ address is open to anyone who reaches it, as before; the server warns on startup
 plain `http://` is readable by anyone on the network path: prefer HTTPS (Tailscale or a
 TLS-terminating proxy) for any address others can reach.
 
-Other PCs over SSH are added from the web UI (Settings → Remote PCs → **Add PC**), not by an install step here.
+Other PCs over SSH are added in Ovis (Settings → Remote PCs → **Add PC**), not by an install step here.
 
 ## Configuration
 

@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexOpenRollout, codexTranscriptPath, paneRunsCodex } from "./codex.ts";
+import { asCodexTitle, codexOpenRollout, codexTranscriptPath, paneRunsCodex } from "./codex.ts";
 import * as processStart from "./process-start.ts";
 import { processStartedAt } from "./process-start.ts";
 
@@ -21,6 +21,10 @@ let foreground: { pid: number; name?: string; argv?: string[] }[];
 let foregrounds: Map<string, { pid: number; name?: string; argv?: string[] }[]>;
 let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;
+/** The terminal title herdr reports for the pane (Codex's [tui].terminal_title), null for none. */
+let title: string | null;
+/** The pane's folders herdr reports. */
+let agentFolders: { cwd?: string; foreground_cwd?: string };
 const children: ReturnType<typeof Bun.spawn>[] = [];
 
 beforeEach(() => {
@@ -37,6 +41,8 @@ beforeEach(() => {
   db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli')").run(thread, path, root);
   db.close();
   screen = "";
+  title = null;
+  agentFolders = {};
   peerScreens = new Map();
   foreground = [];
   foregrounds = new Map();
@@ -56,7 +62,7 @@ beforeEach(() => {
           socket.end(`${JSON.stringify({ id: request.id, error: { code: "pane_not_found", message: peerScreen.message } })}\n`);
           return;
         }
-        const result = request.method === "agent.get" ? { agent: {} }
+        const result = request.method === "agent.get" ? { agent: { ...agentFolders, ...(title === null ? {} : { terminal_title: title, terminal_title_stripped: title }) } }
           : request.method === "pane.process_info" ? { process_info: { foreground_processes: foregrounds.get(request.params?.pane_id ?? "") ?? foreground } }
           : request.method === "pane.read" ? { read: { text: peerScreen ?? screen } }
           : null;
@@ -168,6 +174,225 @@ it("gives a background reader the chat's binding only while no newer thread may 
   );
   db.close();
   expect(await codexOpenRollout(root, root, home)).toBeNull();
+});
+
+/** A thread of another folder, as `codex resume` (the picker) can open from this one (#896). */
+const other = "01a16b22-7e1f-7072-8897-d5e46a0d5f1f";
+const otherAnswer = "An answer of the other folder's conversation, which this pane resumed through the picker.";
+function otherFolderThread(messages: { type: string; message: string }[] = [{ type: "agent_message", message: otherAnswer }]): string {
+  const elsewhere = join(root, "elsewhere");
+  mkdirSync(elsewhere, { recursive: true });
+  const rollout = join(home, "sessions", `rollout-${other}.jsonl`);
+  writeFileSync(rollout, [
+    { type: "session_meta", payload: { id: other, cwd: elsewhere } },
+    ...messages.map((payload) => ({ type: "event_msg", payload })),
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  const db = new Database(join(home, "state_5.sqlite"));
+  db.query("INSERT INTO threads (id, rollout_path, cwd, archived, agent_role, created_at, updated_at, source) VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')").run(other, rollout, elsewhere);
+  db.close();
+  return rollout;
+}
+
+/** The title Codex 0.163.0 sets with its thread-id item: the id shortened to 29 characters. */
+const shortened = `Use the other folder | elsewhere | ${other.slice(0, 29)}...`;
+const picker = [{ pid: 2147483647, argv: ["codex", "resume", "--all"] }];
+
+it("cleans title text as Codex 0.163.0 does (tui/src/terminal_title.rs, its own test cases)", () => {
+  expect(asCodexTitle("  Project\t|\nWorking\x1b\x07\u009D\u009C |  Thread  ")).toBe("Project | Working | Thread");
+  expect(asCodexTitle("Pro\u202Ej\u2066e\u200Fc\u061Ct\u200B \uFEFFT\u2060itle")).toBe("Project Title");
+  const mixed = " \u25cf \u2807 | \u011b[31m thread \u202e\x07| \u65e5\u672c\u8a9e \u0107af\u00e9  ";
+  expect(asCodexTitle(mixed, true)).toBe("* | | ?[31m thread | ??? ?af?");
+  expect(asCodexTitle(mixed)).toBe("\u25cf \u2807 | \u011b[31m thread | \u65e5\u672c\u8a9e \u0107af\u00e9");
+  expect(asCodexTitle("\u65e5\u672c\u8a9e", true)).toBe("???");
+  expect(asCodexTitle("\x07\x1b\u202E\uFEFF", true)).toBe("");
+});
+
+describe("the thread id a Codex pane's terminal title shows, from another folder (#896)", () => {
+  it("is matched on screen like the pane's own threads, and the match then serves a background reader", async () => {
+    const rollout = otherFolderThread();
+    foreground = picker;
+    title = shortened;
+    screen = otherAnswer;
+    expect(await resolve()).toBe(rollout);
+    expect(await codexOpenRollout(root, root, home)).toBe(rollout);
+  });
+
+  it("is never taken on the title alone: a name that only looks like the id leaves the screen to decide", async () => {
+    otherFolderThread();
+    foreground = picker;
+    title = `Working | ${other}`;
+    expect(await resolve()).toBeNull();
+    expect(await codexOpenRollout(root, root, home)).toBeNull();
+    screen = answer;
+    expect(await resolve()).toBe(path);
+  });
+
+  it("follows the title's thread over the one the command line resumed, as after /new", async () => {
+    const rollout = otherFolderThread();
+    foreground = [{ pid: 2147483647, argv: ["codex", "resume", thread] }];
+    title = `\u280b ${other} | elsewhere`;
+    screen = otherAnswer;
+    expect(await resolve()).toBe(rollout);
+  });
+
+  /** `count` more exchanges of this folder's conversation, two turns each */
+  const later = (from: number, count: number) => `\n${Array.from({ length: count }, (_, index) => [
+    { type: "user_message", message: `Question ${from + index}` },
+    { type: "agent_message", message: `Later answer number ${from + index} of this folder's own conversation.` },
+  ].map((payload) => JSON.stringify({ type: "event_msg", payload })).join("\n")).join("\n")}`;
+
+  it("takes no answer this folder's conversation gave too, however long ago", async () => {
+    otherFolderThread([{ type: "agent_message", message: answer }]);
+    foreground = picker;
+    title = `Working | ${other}`;
+    screen = answer;
+    // past its last eight answers, then past the last hundred turns a chat shows
+    for (const [from, count] of [[0, 8], [8, 60]] as const) {
+      appendFileSync(path, later(from, count));
+      expect(await resolve()).toBeNull();
+      expect(await codexOpenRollout(root, root, home)).toBeNull();
+    }
+  });
+
+  it("leaves an answer both conversations gave lately undecided, rather than this folder's by elimination", async () => {
+    otherFolderThread([{ type: "agent_message", message: answer }]);
+    foreground = picker;
+    title = `Working | ${other}`;
+    screen = answer;
+    expect(await resolve()).toBeNull();
+  });
+
+  it("takes no id that a folder or a thread's name could have put in the title (R1)", async () => {
+    // the pane really runs C, resumed from a folder named after B's id, with no thread-id title item:
+    // the title's project name is B's id, and C and B gave the same answer
+    otherFolderThread([{ type: "agent_message", message: answer }]);
+    const named = join(root, `project-${other}`);
+    mkdirSync(named, { recursive: true });
+    const actual = "01a16b22-7e1f-7072-8897-cccccccccccc";
+    const rollout = join(home, "sessions", `rollout-${actual}.jsonl`);
+    writeFileSync(rollout, [
+      { type: "session_meta", payload: { id: actual, cwd: named } },
+      { type: "event_msg", payload: { type: "agent_message", message: answer } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.query("INSERT INTO threads (id, rollout_path, cwd, archived, agent_role, created_at, updated_at, source) VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')").run(actual, rollout, named);
+    db.close();
+    writeFileSync(path, [
+      { type: "session_meta", payload: { id: thread, cwd: root } },
+      { type: "event_msg", payload: { type: "agent_message", message: "This folder's own conversation answered something else entirely, long enough to count." } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    foreground = picker;
+    screen = answer;
+    title = `Ask about the project | ${other}`;
+    expect(await resolve()).toBeNull();
+    expect(await codexOpenRollout(root, root, home)).toBeNull();
+  });
+
+  it("compares names as Codex writes them into the title, without the characters it drops (R2)", async () => {
+    // C's name (then its folder) is B's id with invisible characters Codex strips from its title
+    otherFolderThread([{ type: "agent_message", message: answer }]);
+    const actual = "01a16b22-7e1f-7072-8897-cccccccccccc";
+    const folder = join(root, "project");
+    mkdirSync(folder, { recursive: true });
+    const rollout = join(home, "sessions", `rollout-${actual}.jsonl`);
+    writeFileSync(rollout, [
+      { type: "session_meta", payload: { id: actual, cwd: folder } },
+      { type: "event_msg", payload: { type: "agent_message", message: answer } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.exec("ALTER TABLE threads ADD COLUMN name TEXT");
+    db.query("INSERT INTO threads (id, rollout_path, cwd, archived, agent_role, created_at, updated_at, source) VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')")
+      .run(actual, rollout, folder);
+    db.close();
+    writeFileSync(path, [
+      { type: "session_meta", payload: { id: thread, cwd: root } },
+      { type: "event_msg", payload: { type: "agent_message", message: "This folder's own conversation answered something else entirely, long enough to count." } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    foreground = picker;
+    screen = answer;
+    title = `${other} | project`;
+    const found: [string, string | null, string | null][] = [];
+    for (const name of [
+      `${other.slice(0, 8)}\u200b${other.slice(8, 20)}\u2061\ufeff${other.slice(20)}`,
+      // a NUL, which SQLite's text functions stop at
+      `${other.slice(0, 8)}\u0000${other.slice(8)}`,
+      // what Codex writes as "-" under GNU Screen (STY)
+      `${other.slice(0, 8)}\u2839${other.slice(9, 13)}\u2826${other.slice(14)}`,
+      // a space Codex drops when the name reaches its 240-character title cap
+      `${other.slice(0, 35)} ${other.slice(35)}`,
+    ]) {
+      const named = new Database(join(home, "state_5.sqlite"));
+      named.query("UPDATE threads SET name = ? WHERE id = ?").run(name, actual);
+      named.close();
+      found.push([JSON.stringify(name), await resolve(), await codexOpenRollout(root, root, home)]);
+    }
+    expect(found.filter(([, chat, reader]) => chat !== null || reader !== null).map(([name]) => name)).toEqual([]);
+  });
+
+  it("compares the pane's folders as Codex writes them into the title too (R2)", async () => {
+    otherFolderThread();
+    foreground = picker;
+    screen = otherAnswer;
+    title = `Working | ${other}`;
+    agentFolders = { cwd: join(root, `${other.slice(0, 13)}\u00ad${other.slice(13)}`), foreground_cwd: root };
+    expect(await resolve()).toBeNull();
+  });
+
+  it("counts an answer another conversation split into parts as given there too", async () => {
+    otherFolderThread([{ type: "agent_message", message: answer }]);
+    const half = answer.indexOf(" ", answer.length / 2);
+    writeFileSync(path, [
+      { type: "session_meta", payload: { id: thread, cwd: root } },
+      { type: "event_msg", payload: { type: "agent_message", message: answer.slice(0, half) } },
+      { type: "event_msg", payload: { type: "agent_message", message: answer.slice(half) } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    foreground = picker;
+    title = shortened;
+    screen = answer;
+    expect(await resolve()).toBeNull();
+  });
+
+  it("drops a binding the title made once the title names another thread", async () => {
+    const rollout = otherFolderThread();
+    foreground = picker;
+    title = shortened;
+    screen = otherAnswer;
+    expect(await resolve()).toBe(rollout);
+    // the same Codex resumed another folder's thread through the picker; none of its answers shows yet
+    const next = "01a16b22-7e1f-7072-8897-eeeeeeeeeeee";
+    const nextRollout = join(home, "sessions", `rollout-${next}.jsonl`);
+    writeFileSync(nextRollout, `${JSON.stringify({ type: "session_meta", payload: { id: next, cwd: join(root, "elsewhere") } })}\n`);
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.query("INSERT INTO threads (id, rollout_path, cwd, archived, agent_role, created_at, updated_at, source) VALUES (?, ?, ?, 0, NULL, 3, 3, 'cli')").run(next, nextRollout, join(root, "elsewhere"));
+    db.close();
+    title = `Another one | elsewhere | ${next.slice(0, 29)}...`;
+    screen = "";
+    expect(await codexOpenRollout(root, root, home)).toBeNull();
+    expect(await resolve()).toBeNull();
+    title = shortened;
+    expect(await codexOpenRollout(root, root, home)).toBeNull();
+  });
+
+  it("offers nothing from another folder without the id in the title, without a Codex process, or for an id the store does not hold", async () => {
+    otherFolderThread();
+    screen = otherAnswer;
+    foreground = picker;
+    title = "Use the other folder | elsewhere";
+    expect(await resolve()).toBeNull();
+    title = shortened;
+    foreground = [{ pid: 2147483647, argv: ["bash"] }];
+    expect(await resolve()).toBeNull();
+    foreground = [];
+    expect(await resolve()).toBeNull();
+    foreground = picker;
+    title = "Use the other folder | elsewhere | 01a16b22-7e1f-7072-8897-ffffffffffff";
+    expect(await resolve()).toBeNull();
+    // an id inside other text, or cut anywhere but where Codex cuts it, is no thread-id item
+    for (const named of [`Use the other folder | proj-${other}`, `Use the other folder | ${other.slice(0, 30)}...`, `${other} | ${other.slice(0, 29)}...`]) {
+      title = named;
+      expect(await resolve()).toBeNull();
+    }
+  });
 });
 
 it("does not guess a session when argv and proc data are unavailable", async () => {
@@ -289,6 +514,14 @@ shortIt("accepts a headerless peer only with a substantial match to a different 
     peerScreens.set("peer", mixed);
     expect(await codexTranscriptPath(root, root, home, [fixturePane(root), fixturePane("peer")])).toBeNull();
   }
+});
+
+shortIt("leaves a short first exchange undecided while the title offers another folder's conversation with the same one (#896)", async () => {
+  await shortSession();
+  expect(await resolve()).toBe(path);
+  otherFolderThread([{ type: "user_message", message: shortPrompt }, { type: "agent_message", message: shortAnswer }]);
+  title = `${shortPrompt} | elsewhere | ${other}`;
+  expect(await resolve()).toBeNull();
 });
 
 shortIt("resolves a seconds-only schema when creation is provably after process start", async () => {

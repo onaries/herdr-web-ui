@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { ptyHost } from "./host.ts";
 
 const HOST_SCRIPT = join(import.meta.dir, "pty-host.mjs");
 
@@ -42,7 +43,7 @@ export class PtySession {
     delete env["OVIS_TOKEN"];
     delete env["HERDR_WEB_TOKEN"];
     this.proc = Bun.spawn(
-      ["node", HOST_SCRIPT, String(options.cols), String(options.rows), options.command, ...options.args],
+      [...ptyHost(HOST_SCRIPT), String(options.cols), String(options.rows), options.command, ...options.args],
       { stdin: "pipe", stdout: "pipe", stderr: "inherit", env },
     );
 

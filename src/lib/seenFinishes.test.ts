@@ -1,0 +1,67 @@
+import { afterEach, beforeEach, expect, it } from "bun:test";
+import { loadSeen, receiveSeen, saveSeen, seenKey, subscribeSeen } from "./seenFinishes.ts";
+
+// A finish this page acknowledged must reach storage again once another tab removed it while no
+// subscriber here listened for storage events (#1539); a subscriber's listener keeps the cache true.
+const descriptors = new Map<string, PropertyDescriptor | undefined>();
+let data: Map<string, string>;
+let writes: number;
+
+beforeEach(() => {
+  for (const key of ["window", "localStorage"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  data = new Map();
+  writes = 0;
+  const events = new EventTarget();
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events),
+  } });
+  // a new object each test: the module drops what it cached for another storage
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    get length() { return data.size; }, key: (index: number) => [...data.keys()][index] ?? null,
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => { writes++; data.set(key, value); },
+    removeItem: (key: string) => { data.delete(key); },
+  } });
+});
+
+afterEach(() => {
+  for (const [key, descriptor] of descriptors) {
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
+  }
+  descriptors.clear();
+});
+
+const finish = { pc: "local", epoch: "e1", pane: "w1:p1", id: 3, answer: "done" };
+const key = seenKey(finish.pc, finish.epoch, finish.pane);
+
+it("stores a finish again that another tab removed while nothing here listened", () => {
+  receiveSeen([finish]);
+  expect(data.has(key)).toBe(true);
+  data.delete(key);
+  receiveSeen([finish]);
+  expect(JSON.parse(data.get(key) ?? "null")).toMatchObject({ id: 3, answer: "done" });
+  expect(loadSeen(finish.pc, finish.epoch)[finish.pane]).toBe(3);
+});
+
+it("reads storage for a repeated acknowledgement only while no subscriber hears other tabs", () => {
+  const stop = subscribeSeen(() => {});
+  try {
+    saveSeen(finish.pc, finish.epoch, finish.pane, finish.id, finish.answer);
+    let reads = 0;
+    const getItem = localStorage.getItem.bind(localStorage);
+    localStorage.getItem = (name) => { reads++; return getItem(name); };
+    saveSeen(finish.pc, finish.epoch, finish.pane, finish.id, finish.answer);
+    expect(reads).toBe(0);
+  } finally { stop(); }
+});
+
+it("keeps a newer finish it holds when storage lost it, and writes nothing while storage still has it", () => {
+  saveSeen(finish.pc, finish.epoch, finish.pane, 5, "later");
+  const before = writes;
+  saveSeen(finish.pc, finish.epoch, finish.pane, 3, "done");
+  expect(writes).toBe(before);
+  data.delete(key);
+  saveSeen(finish.pc, finish.epoch, finish.pane, 3, "done");
+  expect(JSON.parse(data.get(key) ?? "null")).toMatchObject({ id: 5, answer: "later" });
+});
